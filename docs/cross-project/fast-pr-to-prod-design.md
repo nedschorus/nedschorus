@@ -1,43 +1,53 @@
 ---
-status: draft
+status: specification
 ---
 
-# fast-pr-to-prod — the single-writer throat (for the boss + new-vp markup)
+# fast-pr-to-prod — the single-writer throat (specification)
 
-How a change reaches main (= production, until the first long-running process exists) in nedschorus. Re-derived from the actual requirement — one human, one writing agent, one drafting companion — rather than migrated from the quarry's many-writer design (`git-clean-slate-plan.md`, frozen quarry reference). Companion issue: nedschorus#3.
+How a change reaches main in nedschorus. Main is production until the first long-running process exists; the deploy gap is designed when that process appears. Actors: choirmaster (the single writer), the companion (drafts in its own clone), the boss.
 
-## The architecture: one throat to main
+## The throat
 
-- **One identity can push to main, ever** — enforced by branch protection (its single surviving job: a lock with one keyholder, not a referee among N writers). The quarry's sanctioned-path lesson: a throat enforced by convention gets bypassed; this one is structural.
-- **Choirmaster's own change:** edit in the canonical checkout → commit at every coherent change (session id in the message) → push. Three verbs, no branch, no PR, no parking state.
-- **The companion's change:** draft freely in its own clone (any paths, never pushes) → promotion request → the promotion job validates against CURRENT main, stamps provenance (whose draft, which session), writes the entry-manifest line if a quarry import, commits, pushes. Best-of-both synthesis is choirmaster merging drafts before promotion.
-- **The promotion job is as dumb as possible:** a script for the simple case; a spawn-per-job background subagent (cheap model, dies when done) for multi-step promotions; choirmaster only for rare oddities. No persistent committer.
-- **Gates sit upstream, verified at the throat:** for boss-designated gated classes, review happens before promotion and the throat mechanically refuses a promotion whose gate evidence is missing. Quality is an input the throat checks; serialization is what the throat is.
+- **Exactly one identity can push to main: choirmaster's credential.** Enforced by branch protection — a lock with one keyholder, not a referee among writers. The companion has no git identity; its attribution rides the provenance stamp the promotion job writes into each commit message (whose draft, which session).
+- **Choirmaster's own change:** edit in the canonical checkout → commit at every coherent change, session id in the message → push. Three verbs; no branch, no pull request, no parking state.
+- **The companion's change:** draft freely in its own clone (any paths; it never pushes) → promotion request → the promotion job lands it through the throat. Best-of-both synthesis (both heads drafted the same artifact) is choirmaster merging drafts before promotion.
+- **The promotion job is as dumb as possible:** a script for the simple case; a spawn-per-job background subagent for multi-step promotions (reading a proposal, placement, collision with moved main); choirmaster itself only for rare oddities. No persistent committer process exists.
 
-## States (four, none where work ages)
+## The checks — all at the throat, from day one
+
+One path means every check has one place to live. The promotion script carries, from its first day:
+
+| Check | Refuses when |
+|---|---|
+| Provenance | The commit message lacks the producing session id (and, for companion drafts, whose draft it is). |
+| Entry manifest | The promotion contains quarry-sourced files without a matching `entry-manifest.md` line in the same commit. |
+| Subsystem hygiene | A file carries no known subsystem token; two-plus same-token files sit loose in one root; a test lacks the test marker. A NEVER-seen token is routed to the `boss-review` queue ("new subsystem, or synonym drift?"), never blocked. |
+| Gate evidence | The artifact belongs to a boss-designated gated class and carries no review evidence. Review happens before promotion; the throat only verifies it happened. |
+| Current-main validation | The draft was made against a stale tree and no longer applies cleanly to current main. |
+
+Every refusal is structured and named — what failed, why, next step. No silent failures.
+
+## States (four; none is a place where work ages)
 
 | State | Meaning | Exit |
 |---|---|---|
 | EDITING | Uncommitted work in a checkout | Commit (as-you-go) |
 | COMMITTED | In the single writer's local main | Push |
-| PROMOTION-PENDING | A companion draft awaiting its promotion job | The job lands or refuses it |
-| LANDED | On origin/main | — (deploy = landed, until the first daemon exists; that gap is designed when it appears) |
+| PROMOTION-PENDING | A companion draft awaiting its promotion job | The job lands it or refuses it with the named defect |
+| LANDED | On origin/main | — |
 
-## Checks ship with the throat, day one
+## Reading discipline
 
-One path means every check has one place to live and one flow to cover (boss ruling 2026-07-21: "not after, but asap"). In the promotion script from the start: provenance stamp, entry-manifest presence for imports, subsystem-structure hygiene, gate evidence for gated classes, current-main validation. Each is a few lines because it polices one door — the quarry's checks grew huge policing N paths and every bypass spelling.
+Any checkout other than the canonical one (the companion's clone, a subagent workspace) pulls before drafting. The mechanical backstop is the throat's current-main validation: a stale draft is caught at the one moment it matters.
 
-## From the quarry's git plan: survives / dissolves / defers
+## Relationship to the quarry's git design
 
-- **Survives (task-1 imports, small):** the two-line git config (§2.1, adapted); workflow rules rewritten for the four-state machine; protection as the single-identity lock; enforcement-at-the-remote as principle; stay-near-main as a read-side habit (companion pulls before drafting) + the throat's promotion-time validation as the mechanical backstop.
-- **Dissolves (never imported):** three GitHub Apps; credential helper and per-agent tokens; per-agent branches and the PR pipeline for ordinary work; all parking states; the orphaned-ephemeral-author problem; the one-OS-user reviewer-key hole (no reviewer key exists to mis-load).
-- **Defers, each with a reopening trigger:** PR flow for a designated artifact class (trigger: the boss wants a review-parked class — may never fire); multi-writer machinery (trigger: a genuine third head or true co-writing); merge-vs-deployed handling (trigger: the first long-running process).
+The quarry's `git-clean-slate-plan.md` (read-only reference, `~/Projects/nedlern/docs/working/proposed/`) designed the many-writer version of this problem. From it, nedschorus imports only: the two-line git config, the workflow rules rewritten for the four-state machine, protection as the single-identity lock, and enforcement-at-the-remote as the principle. Never imported: the three GitHub Apps, the credential helper, per-agent branches and the PR pipeline for ordinary work, the parking states. Deferred with reopening triggers: PR flow for a designated artifact class (trigger: the boss wants a review-parked class); multi-writer machinery (trigger: a genuine third head or true co-writing); merge-versus-deployed handling (trigger: the first long-running process).
 
-## Task-1 consequence
+## Build slice (choirmaster task 1)
 
-Choirmaster's first task = git config + the throat script with its built-in checks + the protection lock + the prompt rules. Bounded, testable, code-heavy, first-task-sized.
+Git config + the throat script with its built-in checks + the protection lock + the workflow rules as prompt lines. Bounded, testable, code-heavy.
 
-## Open for the boss
+## Open
 
-- ~~The throat identity~~ RULED 2026-07-21: choirmaster's own credential is the lock — simpler is better, no obvious win from multiple identities. Companion attribution rides the promotion job's provenance stamp. Revisit trigger: a mistake class arguing even choirmaster's interactive credential should route through the script.
-- Which artifact classes are gated (review-before-promotion) from day one, if any.n
+- Which artifact classes are gated (review-before-promotion) from day one, if any. The boss designates.
