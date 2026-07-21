@@ -39,5 +39,5 @@ Choirmaster's first task = git config + the throat script with its built-in chec
 
 ## Open for the boss
 
-- The throat identity: choirmaster's own credential, or a dedicated committer identity choirmaster wields? (Attribution rides in commit messages either way.)
-- Which artifact classes are gated (review-before-promotion) from day one, if any.
+- ~~The throat identity~~ RULED 2026-07-21: choirmaster's own credential is the lock — simpler is better, no obvious win from multiple identities. Companion attribution rides the promotion job's provenance stamp. Revisit trigger: a mistake class arguing even choirmaster's interactive credential should route through the script.
+- Which artifact classes are gated (review-before-promotion) from day one, if any.n
