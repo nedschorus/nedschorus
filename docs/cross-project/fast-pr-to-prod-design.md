@@ -15,11 +15,13 @@ How a change reaches main in nedschorus. Main is production until the first long
 
 ## The checks — inside `throat.py land`, from day one
 
-Checks run per landing; a refusal refuses the whole landing, structured and named — what failed, why, the next step. No silent failures.
+Checks run per landing, against the exact tree being landed (the composed result after any reconciliation, not the earlier working tree); a refusal refuses the whole landing, structured and named — what failed, why, the next step. No silent failures.
 
 | Check | Behavior |
 |---|---|
-| Provenance | The script WRITES the stamp itself (session id; drafts' attribution) — injected, not remembered. Refuses only if it cannot determine the producing session (missing/empty session-id environment). |
+| Provenance | The script WRITES the stamp itself — injected, not remembered — as a fixed parseable trailer schema: base SHA, producing session and runtime, drafts' attribution, task/issue id, declared imports, review evidence, validation result (readable with `git interpret-trailers`; the trailers ARE the machine-readable record). Refuses only if it cannot determine the producing session (missing/empty session-id environment). |
+| Declared-vs-actual paths | Refuses when the landing's actual diff touches paths outside the promotion request's declared path list. Binds promotions; choirmaster's own landings declare implicitly (the working diff is the declaration). |
+| Replay protection | Refuses a promotion request whose request id already appears in a landed commit's trailers — one request lands at most once. |
 | Entry manifest | Refuses when the landing's DECLARED quarry imports (from the promotion request, or named by choirmaster for its own work) lack a matching `entry-manifest.md` line — matched on repo path — in the same landing. An undeclared import is undetectable mechanically; that residual is accepted and caught by the boss's reading. |
 | Subsystem hygiene | Refuses when a file's path and name carry no token from the known set (the set = top-level subsystem directory names currently in the repo), or when two-plus same-token files sit directly in one top-level root that should hold a subsystem subdirectory (the lazy-subdirectory rule). A token not in the known set is NOT a refusal: the landing proceeds and the script files a `boss-review` issue ("new subsystem, or synonym drift?"). Test-naming rules are enforced at writing time by the writing skills, not here. |
 | Gate evidence | Dormant until the boss designates a gated artifact class; the evidence format is defined at designation. Once designated: refuses a landing of that class carrying no review evidence. (Distinct from the deferred PR flow: gating verifies review happened before landing; PR flow would park the artifact in a GitHub review state — that machinery stays out unless the boss wants it.) |
