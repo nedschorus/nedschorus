@@ -80,9 +80,14 @@ Everything else is uncommitted scratch (session scratchpads, bridge logs — alr
 | [handoff-lite-skill-draft.md](handoff-lite-skill-draft.md) | SUPERSEDED by fast-handoff-design.md; kept as the record of the earlier shape. |
 | git-clean-slate-plan.md (quarry: `~/Projects/nedlern/docs/working/proposed/git-clean-slate-plan.md`) | Quarry source for the first task (step 7) — read-only reference, never imported wholesale. |
 
-## Companion timing (one open ruling)
+## Companion timing — early, in two stages (boss direction 2026-07-21: "the sooner nedschorus is double headed, the better"; staging PROPOSED)
 
-The Codex companion needs: an `AGENTS.md` kernel (the Codex runtime reads that file, not CLAUDE.md — the calibration applies twice, once per runtime), the mini-comms logs, launcher additions. Options: admit it after task 1 lands (the git rules make a second writer safe; the companion is their first test), or earlier in advisory mode (consult/review only, no writes). Boss's call.
+The reconciliation: separate **parallel cognition** (wanted immediately) from **shared write access** (needs the git foundation). Two stages:
+
+- **8a — early admission, right after choirmaster's boot test passes** (one variable at a time: choirmaster boots alone first, the companion follows within days). Needs: the companion's `AGENTS.md` kernel (the zero-context calibration applies twice, once per runtime), mini-comms live (Monitor-armed on the Claude side; a small codex-side watcher, quarry prior art), and **path partitioning**: choirmaster holds the pen on all shared files; the companion writes only its own surfaces (its mini-comms log, its proposals directory). Disjoint paths cannot conflict, so no referee machinery is needed. Mode: advisory + proposed artifacts + cross-runtime review — the boss's parallel workflow (both sides propose, cross-compare, best-of-both synthesized by choirmaster) works fully in this stage.
+- **8b — full co-writer status, with the git foundation:** shared paths, distinct git authors, branch protection (git-clean-slate §2.2) — the referee machinery lands together, when two writers actually share files.
+
+**Future candidate, recorded:** the parallel-proposal workbench — a custom UI for running both runtimes side by side, coordinating mid-discussion, and merging proposed artifacts (boss: too big for now, good early nedschorus build). Mini-comms is its minimal precursor.
 
 ## Other open markup targets
 
