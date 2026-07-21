@@ -24,6 +24,14 @@ nedschorus is the restart that keeps it that way: start from the simple system t
 - **choirmaster** — the primary agent (Claude runtime). The single writer to main.
 - **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; its work lands through the throat.
 
+## The agent model
+
+Three agent lifetimes, used deliberately:
+
+- **Sustained agents** (choirmaster, the companion): live indefinitely as a chain of sessions. Continuity is the handoff system — a numbered handoff file plus the session's denoised transcript, written at each session's end and read automatically at the next session's start — so succession is cheap and near-automatic, and a session's death loses minutes, not context.
+- **Task-scoped agents**: spawned for one bounded task (a promotion job, a dogfood run) with exactly the context that task needs; they end with the task.
+- **One-shot agents** ("kleenex"): spawned for a single job and discarded — a zero-context drafter, a review pass, a probe. Their empty context is the point: they are the system's test instrument for zero-context readability and its guard against context contamination.
+
 ## Where things live
 
 | Place | Holds |
