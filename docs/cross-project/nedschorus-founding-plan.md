@@ -32,6 +32,8 @@ Three committed homes plus the shared place — no `docs/working/` ever exists:
 
 **The MD-GHI pair:** a request for a durable MD IS a request for a doc + issue pair (the boss's trigger word: "memorialize"). `md-write` searches existing pairs first, then disposes NEW / REVISE (default on subject match) / REPLACE (supersede, old issue closed same commit) / REMOVE; ambiguity goes to the `boss-review` queue, never blocks. Session provenance: MDs via commit messages; issues via a footer line.
 
+**Accepted residuals (boss-ruled 2026-07-21):** when the boss overrides a review objection — accepts a risk, declines a mitigation — the artifact records it at the decision point as a named block: `Accepted residual (boss-ruled <date>):` the objection in one line, why it is not a concern for this project, and the reopening trigger (the evidence class that would legitimately re-raise it). Reviewer instructions carry the standing counterpart rule: a recorded accepted residual is re-flagged only with new evidence matching its trigger, filed as a separate RULING CHALLENGE, never as an ordinary finding. One grep on `Accepted residual` returns every such decision. The `md-write` and `d-review` skills embed both halves at build.
+
 **Subsystem structure:** co-locate when free; subsystem subdirectories inside pinned roots at the second file; the subsystem token verbatim in every name (one grep returns the whole subsystem); a hygiene script (a throat check) verifies tokens, subdirectory moves, and test markers — placement itself stays the writer's judgment; a never-seen token routes to `boss-review`.
 
 ## The steps
