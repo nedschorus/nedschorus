@@ -72,6 +72,7 @@ Everything else is uncommitted scratch (session scratchpads, bridge logs — alr
 
 | Document | Status |
 |---|---|
+| [../../README.md](../../README.md) | The charter: what nedschorus is, why, founding principles, actors, layout. Fills manifest row 2. |
 | [boot-pack-manifest.md](boot-pack-manifest.md) | The artifact list (rows 1–9, incl. the boss launcher scripts). Pre-calibration text; rewrite pending. |
 | This plan | The boot-up sequence of record. |
 | [fast-handoff-design.md](fast-handoff-design.md) | The handoff system, fully designed and d-reviewed (v9); next build step is the `handoff.py` prototype. |
