@@ -36,7 +36,7 @@ Three committed homes plus the shared place — no `docs/working/` ever exists:
 
 ## The steps
 
-**1. Assemble the starting skills — FIVE:** d-review and walk-me-through (quarry trims through the checkpoint); the handoff skill; `ghi-write` (issue-only artifacts) and `md-write` (the pair), each small, embedding the zero-context-reader rule with the composed-in three-test check (subject identifiable; why stated; actionable without the conversation). The companion later gets `ghi-write`/`md-write` as Codex-side skills.
+**1. Assemble the starting skills — FIVE:** d-review and walk-me-through (quarry trims through the checkpoint); the handoff skill; `ghi-write` (issue-only artifacts) and `md-write` (the pair), each small, embedding the zero-context-reader rule with the composed-in three-test check (subject identifiable; why stated; actionable without the conversation). The companion later gets `ghi-write`/`md-write` as Codex-side skills. Each skill build DRAINS any staged lessons that name it from the old system's memory store (skills are the trigger-bearing surface; memories only stage lessons whose home doesn't exist yet) — walk-me-through drains the two 2026-07-21 walk lessons: purpose-before-mechanism ordering for decision items, and capture-the-decision-never-the-meeting.
 
 **2. Revise CLAUDE.md for them.** The kernel, per sentence: training covers it → cut; training silent → state plainly; training conflicts → NOT/DO override. No rationale, no history, present-tense truth. The seed draft is input, not the base. Line-by-line boss admission. Product: the kernel.
 
