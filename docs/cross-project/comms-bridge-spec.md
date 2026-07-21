@@ -6,6 +6,8 @@ status: draft
 
 **The boss's design, adopted verbatim (2026-07-20):** the simplest thing that works — no daemons, no delivery lifecycle, no wake problem, fully inspectable.
 
+**Re-derivation inputs (ruled 2026-07-21, borrowings walk item 5 — dispositions on https://github.com/nedlern/nedschorus/issues/5):** this spec is owed re-derivation before its review (founding-plan open ruling). Fixed at ruling: NO comms-substrate import — no mailbox server, no event store; two single-writer append-only files remain the protocol. Six requirements for the re-derived version: (1) when the two writers live in separate clones (companion era), the logs move to ONE shared directory outside both clones — gitignored files do not propagate between clones, so two per-clone `bridge/` directories would coordinate into the void; today's old↔new usage in the single canonical checkout is unaffected. (2) Atomic appends — a reader must never observe a half-written entry. (3) Minimal fixed entry header: entry id, UTC timestamp, author, reply-to id, base SHA whenever code is referenced. (4) Durable decisions stay OUT of the logs, linked by entry id (the persistence rule below already states this). (5) When both heads draft the same artifact, blind first passes complete before either reads the other's. (6) Open question to rule at re-derivation: whether ceremony-time snapshots of the logs join the committed record — active logs stay out of git regardless.
+
 ## Mechanism
 
 - Two append-only files in the NEW repo: `bridge/from-old.log.md` (old system writes, new system reads) and `bridge/from-new.log.md` (new system writes, old system reads).
