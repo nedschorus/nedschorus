@@ -1,8 +1,10 @@
-Issue: https://github.com/nedlern/nedschorus/issues/5
+---
+design-as-of: 2026-07-21
+---
 
-## Founding-context note (new-vp, 2026-07-21)
+# Prior-art cross-check of the nine founding patterns
 
-Research by Codex gpt-5.6-sol (xhigh, web search, this repository read-only at HEAD 188ee38). Report admitted verbatim below. Verdicts feed the README/principles update; borrowings feed the borrow-list; the bridge topology defect routes to the bridge re-derivation. Dispose (delete or promote) in the commit that closes issue 5.
+Production is the source of truth: this page records the two-pass research verdicts as of its date; the built system and open issues may have advanced past it. Both reports are by Codex gpt-5.6-sol (xhigh reasoning, web search, this repository read-only at HEAD 188ee38), admitted verbatim below — including the second pass's references to this file's pre-promotion path, `docs/issues/5-prior-art-cross-check.md`. Origin pair: https://github.com/nedlern/nedschorus/issues/5 (closed at this page's promotion; every borrowing's disposition is a comment there). Deferred mechanisms with raise-triggers: https://github.com/nedlern/nedschorus/issues/6.
 
 # Scope and evidence boundary
 
