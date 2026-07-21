@@ -26,7 +26,7 @@ The preparation the boss + new-vp (the old system's VP agent) do to bring choirm
 Three committed homes plus the shared place — no `docs/working/` ever exists:
 
 1. **`docs/wiki/`** — permanent truth (Obsidian vault; `.obsidian/` gitignored, matching the quarry's practice — config is per-vault, so the old wiki cannot be affected).
-2. **`docs/issues/<n>-<slug>.md`** — working material, one document per substantial issue; header carries the issue link only (the issue's open/closed state is the sole status authority); at issue close the same commit disposes the document (delete, or promote to the wiki with `design-as-of:` frontmatter and the production-is-SSOT line).
+2. **`docs/issues/<n>-<slug>.md`** — working material, one document per substantial issue; header carries the issue link only (the issue's open/closed state is the sole status authority); at issue close the same commit disposes the document (delete, or promote to the wiki with `design-as-of:` frontmatter and the production-is-SSOT line). The choice between them (boss-ruled 2026-07-21): promote only distilled standing knowledge; an evidence archive or reference file DELETES, with the extracted decisions memorialized in their governing documents and a `git show <sha>:<path>` recovery pointer on the closing issue.
 3. **`handoff/`** — the numbered handoff series with transcripts.
 4. **`docs/cross-project/`** — artifacts shared with the old system, including the founding documents (migrated here from the quarry, frozen there at 78ed90f0).
 
