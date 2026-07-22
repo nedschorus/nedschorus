@@ -1,15 +1,14 @@
 # Entry manifest
 
-Every component imported from the quarry (`~/Projects/nedlern`, read-only reference) gets one line here, in the same commit as the import: the quarry commit SHA it came from, a one-line purpose, and the date.
+Every component imported from the quarry (`~/Projects/nedlern`, read-only reference) gets one line here, in the same commit as the import. The line schema is the throat specification's field list — one normative schema (boss-ruled 2026-07-21, package-review S6): source revision and paths, content digest, destination paths, admission date, purpose, why existing successor code was insufficient, transformations applied.
 
-| Quarry SHA | Imported artifact | Purpose | Date |
-|---|---|---|---|
-| 78ed90f0 | docs/cross-project/nedschorus-founding-plan.md | The founding pair's boot-up plan of record | 2026-07-20 |
-| 78ed90f0 | docs/cross-project/fast-handoff-design.md | The session-handoff specification | 2026-07-20 |
-| 78ed90f0 | docs/cross-project/fast-pr-to-prod-design.md | The single-writer throat specification | 2026-07-20 |
-| 78ed90f0 | docs/cross-project/comms-bridge-spec.md | The two-log coordination channel specification | 2026-07-20 |
-| 78ed90f0 | docs/cross-project/boot-pack-manifest.md | Historical artifact list from the boot-pack phase | 2026-07-20 |
-| 78ed90f0 | docs/cross-project/seed-claude-md-draft.md | Pre-calibration input to the kernel rewrite | 2026-07-20 |
-| 78ed90f0 | docs/cross-project/handoff-lite-skill-draft.md | Superseded handoff draft, kept as record | 2026-07-20 |
+| Source revision | Source paths | Content digest | Destination paths | Date | Purpose | Why insufficient | Transformations |
+|---|---|---|---|---|---|---|---|
+| 78ed90f0 | docs/working/next-system-boot-pack/nedschorus-founding-plan.md | git-blob:d391d11c680e | docs/cross-project/nedschorus-founding-plan.md | 2026-07-20 | The founding pair's boot-up plan of record | Founding document — no successor content existed | migration-note paragraph added; one quarry link re-pointed absolute |
+| 78ed90f0 | docs/working/next-system-boot-pack/fast-handoff-design.md | git-blob:7d4a781b80d1 | docs/cross-project/fast-handoff-design.md | 2026-07-20 | The session-handoff specification | Founding document — no successor content existed | verbatim |
+| 78ed90f0 | docs/working/next-system-boot-pack/comms-bridge-spec.md | git-blob:e2ea26196583 | docs/cross-project/comms-bridge-spec.md | 2026-07-20 | The two-log coordination channel specification | Founding document — no successor content existed | verbatim |
+| 78ed90f0 | docs/working/next-system-boot-pack/boot-pack-manifest.md | git-blob:61401b3a88b4 | docs/cross-project/boot-pack-manifest.md | 2026-07-20 | Historical artifact list from the boot-pack phase | Founding document — no successor content existed | verbatim |
+| 78ed90f0 | docs/working/next-system-boot-pack/seed-claude-md-draft.md | git-blob:1cd461966f9b | docs/cross-project/seed-claude-md-draft.md | 2026-07-20 | Pre-calibration input to the kernel rewrite | Founding document — no successor content existed | verbatim |
+| 78ed90f0 | docs/working/next-system-boot-pack/handoff-lite-skill-draft.md | git-blob:5a7bc96df204 | docs/cross-project/handoff-lite-skill-draft.md | 2026-07-20 | Superseded handoff draft, kept as record | Founding document — no successor content existed | verbatim |
 
-(The seven lines above are the founding-migration backfill, boss-ruled 2026-07-21 at package-review S5 — recorded after the fact so the ledger is true from the repository's first day; every later import records in the same commit as the import itself.)
+(The six lines above are the founding-migration backfill, boss-ruled 2026-07-21 at package-review S5 — recorded after the fact so the ledger is true from the repository's first day; every later import records in the same commit as the import itself. Digests are git blob ids of the migrated copies, verified against quarry `78ed90f0` at backfill — `verbatim` means blob-identical to the quarry copy. Correction 2026-07-22: the original backfill carried a seventh line for `fast-pr-to-prod-design.md`; it was removed because that specification was authored natively in this repository (first commit `7d17963`) and never existed in the quarry — it is not an import.)
