@@ -1,8 +1,11 @@
 ---
 status: specification
+design-as-of: 2026-07-22
 ---
 
 # fast-handoff — the session handoff system (specification)
+
+**Implementation status:** `scripts/handoff.py` is DESIGNED, NOT YET BUILT — the build order below starts it in the quarry. Ceremony behavior described in present tense is the contract for that build, not running behavior; the manual rehearsals to date follow the ceremony by hand (markers boss-ruled 2026-07-21, package-review item 9).
 
 Continuity between sessions in this repo. Actors: the boss (human), the session agent (ending its session), a fresh drafting subagent, the successor session. The skill and script are named `handoff` (`handoff.py`); the skill carries the working alias `fast-handoff` only while it is prototyped inside the quarry — the predecessor repo at `~/Projects/nedlern`, read-only reference (see README).
 
