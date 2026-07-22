@@ -40,7 +40,7 @@ Three agent lifetimes, used deliberately:
 | `docs/issues/<n>-<slug>.md` | Working documents, one per GitHub issue, disposed when the issue closes. |
 | `docs/cross-project/` | Artifacts both systems read, including the founding documents and specifications. |
 | `handoff/` | Numbered session handoffs and their transcripts. |
-| `notes-queue/` | Boss-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
+| `nc-queue/` | Boss-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
 | `entry-manifest.md` | The ledger of everything imported from the quarry. |
 | Issues labeled `boss-review` | Suggested updates awaiting the boss's review — same format as every issue, walkable; no work ever waits on one, and nothing requiring the boss's admission takes effect without it. |
 

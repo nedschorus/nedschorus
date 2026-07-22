@@ -1,4 +1,4 @@
-# notes-queue
+# nc-queue (the NC walk queue)
 
 The landing directory for boss-requested notes awaiting their initial walk (boss-ruled 2026-07-22; the rule of record is [nedschorus-founding-plan.md](../docs/cross-project/nedschorus-founding-plan.md) § Project organization).
 
