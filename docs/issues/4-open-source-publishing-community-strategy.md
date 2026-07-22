@@ -7,6 +7,16 @@ Issue: https://github.com/nedschorus/nedschorus/issues/4
 - The strategy's seven publishing skills join the skills roster AFTER the five founding skills; each is built (or imported through the entry checkpoint) when its channel goes live, not before.
 - Body below is cops's staged text, admitted verbatim; revisions ride this pair as ordinary REVISE dispositions.
 
+## REVISE — five pre-execution requirements gate the first external action (boss-ruled 2026-07-21, package-review item 10)
+
+The program stays paused by the boss's standing deferral; these five requirements additionally gate its FIRST external action, and where they conflict with the admitted body below, these rule:
+
+1. **Publication state ledger before the first post.** A machine-readable ledger — publication intent, destination, attempt state, resulting canonical URL — exists before anything is posted anywhere, so a retry can never double-post and a partial multi-channel publication is always reconstructable. (Strengthens the body's "record the canonical URL and distribution results" step from an after-step to a precondition.)
+2. **License before claim.** A license, a contributing guide, and security-reporting information precede the public open-source claim and the journal launch. (Reorders the body's Recommended Launch Sequence, which opens the repository after publishing entries.)
+3. **Every publishing skill is draft-only against the boss's accounts.** The boss publishes; no skill posts to LinkedIn, Reddit, Substack, Bluesky, or any external account — stated flatly in each skill's text at build time. (Overrides any reading of the body's skill behaviors — "publish", "post", "syndicate" — as skill-executed actions; they are draft-and-prepare actions.)
+4. **Cadences are targets, not obligations.** The cadence column and the daily/weekly workflows are aspirations staged against the earned-complexity ladder; a channel-stop decision requires a minimum observation window, never a low-sample thirty-day verdict.
+5. **Platform behaviors are dated planning assumptions.** Every footnoted platform behavior in the body is a planning assumption as of its citation date; the executor revalidates it at execution time before relying on it.
+
 # Ned's Chorus Open-Source Publishing and Community Strategy
 
 Ned's Chorus should publish from an owned home, use social platforms for discovery, and give technical participants a clear path from reader to contributor. The daily journal is the source; newsletters and social posts are edited derivatives, not competing archives.
