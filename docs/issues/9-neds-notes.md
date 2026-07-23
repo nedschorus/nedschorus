@@ -94,6 +94,19 @@ The NedsChorus skill should preserve this proven interaction pattern and the
 decisions recorded here, but its packaging should be rebuilt and reviewed for
 NedsChorus rather than copied wholesale from either quarry file.
 
+processed 2026-07-22 → boss-ruled during the founding walk: the quarry's two
+walk skills are being updated NOW with two behaviors from this section — the
+walked-document-as-ledger rule (each item's disposition marked in place before
+advancing; a walk with no document gets a ledger file first) and the re-plan
+rule (a ruling that changes later items revises the remaining walk and reports
+the changed count or sequence) — quarry PR link to be edited in here when it
+opens. The six scenario tests above are deferred to the NC step-1 walk-me
+build, judged per the agent-facing test doctrine in
+`nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
+Recorded by edit per the same-day revision convention (revise the artifact,
+never stack additive records); nedschorus#12 was opened for this deferral and
+closed as consolidated here.
+
 ## Working skill shortlist
 
 These are candidates for careful review, not a boot-set decision.
