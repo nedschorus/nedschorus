@@ -237,6 +237,47 @@ Sources worth adapting or investigating:
 - Whether this note remains an internal working document or becomes public. If
   public, the leaked-source archive should probably be omitted entirely.
 
+## Combined walk ledger (pairs #9 + #10) — the walk-state of record
+
+Per the walked-document-as-ledger rule (boss-approved 2026-07-22; quarry PR
+[nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162)). The
+anchor after any interruption is the first unmarked item.
+
+Stack state: an INNER walk ("marking conventions and skill-creation") sits on
+top of this outer walk. Inner item 1 (marking/archive conventions) — processed
+2026-07-21/22 → folded (mark-in-place, nc-queue archive convention, pair-doc
+close lifecycle). Inner item 2 (walk-me-through: update now vs NC step-1) —
+processed 2026-07-22 → ruled NOW; landed as quarry PR
+[nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162); scenario
+tests deferred to NC step-1 (see the processed mark above). Inner item 3
+(criteria-page home) — open, THE ANCHOR. After it: pop to outer item 2.
+
+Outer walk, 17 items:
+
+1. Foundations — processed 2026-07-22 → the seven principles are search
+   scaffolding or duplicate doctrine EXCEPT 5 (skill interface contract) and 6
+   (five adversarial test classes), which are scoped, not retired: they bind
+   agent-facing skills and the agent-side halves of boss-facing skills;
+   boss-supervised interaction behavior iterates live. Not landed as doctrine —
+   the material rides the skill-creation deep-dive queue note into item 11.
+2. `define-work` — open.
+3. `plan-rewrite-slice` — open.
+4. `design-change` — open.
+5. `write-test-plan` — open.
+6. `attack-artifact` — open.
+7. `implement-with-evidence` — open.
+8. `diagnose-failure` — open.
+9. `review-change` — open.
+10. `eval-agent-change` — open.
+11. Skill-creator review — open; walk input
+    `nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md`.
+12. Boot-set roll-up (ruling) — open.
+13. Rewrite policy (ruling) — open.
+14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
+15. First bounded test task (ruling) — open.
+16. Agent organization / lifecycle roles (capture-only) — open.
+17. Operational backlogs (capture-only) — open.
+
 ## Related working note
 
 Publishing and community decisions are currently recorded separately in
