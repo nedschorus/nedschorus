@@ -293,7 +293,23 @@ Outer walk, 17 items:
     (a) explain-why default, NOT/DO reserved for training overrides;
     (b) standalone reference MD, per above; (c) description-tuning machinery
     excluded with its evidence bar recorded in the checklist.
-12. Boot-set roll-up (ruling) — open.
+12. Boot-set roll-up (ruling) — IN PROGRESS 2026-07-24, two parts:
+    (a) the boot-set rule itself is APPROVED — boot set = the five founding
+    skills only; candidates join one at a time when a real task exposes the
+    missing decision (first expected pull: write-test-plan at the step-7
+    throat task); RECORDING owed (closes founding-plan open question 8) but
+    gated on (b). (b) The recording question spawned an UNRESOLVED
+    artifact-lifecycle ruling, fully presented to the boss and awaiting his
+    approve/amend when he called handoff (session ad0a3708): every artifact
+    is final-at-home or in a destination-rooted queue with one drain process
+    — wiki/queue/ for doctrine candidates, docs/issues/queue/ for pair
+    candidates, `draft` label (renamed from boss-review) for issues; drain =
+    boss walks a queue, four outcomes (promote=git mv, edit, demote, drop
+    with reason in commit message); scrub step reports each queue's depth +
+    oldest age. Successor: re-present that proposal verbatim from the
+    handoff before any other outer-walk work. Interim consequence: the
+    skill-authoring checklist sits at docs/reference/ (wrong bucket if the
+    ruling lands) — do not treat its location as settled.
 13. Rewrite policy (ruling) — open.
 14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
 15. First bounded test task (ruling) — open.
