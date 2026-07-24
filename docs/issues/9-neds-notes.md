@@ -293,26 +293,27 @@ Outer walk, 17 items:
     (a) explain-why default, NOT/DO reserved for training overrides;
     (b) standalone reference MD, per above; (c) description-tuning machinery
     excluded with its evidence bar recorded in the checklist.
-12. Boot-set roll-up (ruling) — IN PROGRESS 2026-07-24, two parts:
-    (a) the boot-set rule itself is APPROVED — boot set = the five founding
+12. Boot-set roll-up (ruling) — processed 2026-07-24 → both parts landed
+    (session 23789ca5; re-presented verbatim per the handoff, boss word:
+    "approved"). (a) Boot-set rule recorded: boot set = the five founding
     skills only; candidates join one at a time when a real task exposes the
-    missing decision (first expected pull: write-test-plan at the step-7
-    throat task); RECORDING owed (closes founding-plan open question 8) but
-    gated on (b). (b) The recording question spawned an UNRESOLVED
-    artifact-lifecycle ruling, fully presented to the boss and awaiting his
-    approve/amend when he called handoff (session ad0a3708): every artifact
-    is final-at-home or in a destination-rooted queue with one drain process
-    — wiki/queue/ for doctrine candidates, docs/issues/queue/ for pair
-    candidates, `draft` label (renamed from boss-review) for issues; drain =
-    boss walks a queue, four outcomes (promote=git mv, edit, demote, drop
-    with reason in commit message); scrub step reports each queue's depth +
-    oldest age. Successor: re-present that proposal verbatim from the
-    handoff before any other outer-walk work. Interim consequence: the
-    skill-authoring checklist sits at docs/reference/ (wrong bucket if the
-    ruling lands) — do not treat its location as settled. ADDENDUM (boss,
-    post-handoff): the drain/maintenance procedure is captured as
-    nedschorus#24 — the queues become system, not notes, only with their
-    drain; the GHI holds regardless of how the bucket naming lands.
+    missing decision; first expected pull = write-test-plan (nedschorus#18)
+    at the step-7 throat task. Founding-plan open question 8 RESOLVED
+    (commit fa54e52); pair-#9 tracking question 1 marked resolved.
+    (b) Artifact-lifecycle ruling APPROVED and executed (commit 4b20892):
+    every artifact final-at-home or in a destination-rooted queue with one
+    four-outcome drain (promote / edit / demote / drop). Queues created at
+    docs/wiki/queue/ + docs/issues/queue/ (destination-rooted under the
+    plan's ruled homes — the verbatim proposal's bare `wiki/queue/` spelling
+    reconciled to `docs/wiki/queue/`); skill-authoring checklist git mv'd
+    there and docs/reference/ removed; step-1 pointer + candidate GHIs
+    #15–#23 re-pointed; `boss-review` renamed `draft` doctrine-wide and the
+    label created on GitHub; three-state rule superseded by the
+    artifact-lifecycle rule (founding plan § Project organization + #13);
+    founding-plan open question 5 (gated classes) substantially resolved —
+    landing-class residual stays in fast-pr-to-prod-design § Open. Drain
+    procedure stays tracked on nedschorus#24 (scrub reporting runs as
+    discipline until the NC handoff skill builds it). ANCHOR = item 13.
 13. Rewrite policy (ruling) — open.
 14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
 15. First bounded test task (ruling) — open.
