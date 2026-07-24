@@ -230,8 +230,10 @@ Sources worth adapting or investigating:
 
 ## Still under review
 
-- Which small subset of the nine candidate skills belongs in the initial
-  NedsChorus boot set.
+- Boot set — RESOLVED 2026-07-24 (walk item 12, founding-plan open question 8,
+  commit fa54e52): the five founding skills only; candidates join one at a
+  time when a real task exposes the missing decision (first expected pull:
+  write-test-plan, nedschorus#18).
 - The rewrite policy: which Nedlern behaviors are genuine compatibility
   requirements and which should be abandoned, corrected, or re-decided.
 - Whether this note remains an internal working document or becomes public. If
