@@ -267,7 +267,13 @@ Outer walk, 17 items:
    agent-facing skills and the agent-side halves of boss-facing skills;
    boss-supervised interaction behavior iterates live. Not landed as doctrine —
    the material rides the skill-creation deep-dive queue note into item 11.
-2. `define-work` — open.
+2. `define-work` — processed 2026-07-24 → boss ruled GHI-NOT-BUILD ("at best
+   it's worth a GHI in nc"); files with the batch below. RE-PLAN (boss-directed,
+   same ruling): items 3–10 collapse from full evidence presentations to
+   rapid-fire summary dispositions — GHI-or-cut per item off the summaries MD
+   (session ad0a3708, `/tmp/nc-candidate-skills-walk-summaries-2026-07-24.md`;
+   durable evidence stays in the two nc-queue files). Approved GHIs file in
+   nedschorus in one batch, each pointing at the nc-queue evidence.
 3. `plan-rewrite-slice` — open.
 4. `design-change` — open.
 5. `write-test-plan` — open.
