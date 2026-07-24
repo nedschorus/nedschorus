@@ -309,7 +309,10 @@ Outer walk, 17 items:
     oldest age. Successor: re-present that proposal verbatim from the
     handoff before any other outer-walk work. Interim consequence: the
     skill-authoring checklist sits at docs/reference/ (wrong bucket if the
-    ruling lands) — do not treat its location as settled.
+    ruling lands) — do not treat its location as settled. ADDENDUM (boss,
+    post-handoff): the drain/maintenance procedure is captured as
+    nedschorus#24 — the queues become system, not notes, only with their
+    drain; the GHI holds regardless of how the bucket naming lands.
 13. Rewrite policy (ruling) — open.
 14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
 15. First bounded test task (ruling) — open.
