@@ -273,15 +273,15 @@ Outer walk, 17 items:
    rapid-fire summary dispositions — GHI-or-cut per item off the summaries MD
    (session ad0a3708, `/tmp/nc-candidate-skills-walk-summaries-2026-07-24.md`;
    durable evidence stays in the two nc-queue files). Approved GHIs file in
-   nedschorus in one batch, each pointing at the nc-queue evidence.
-3. `plan-rewrite-slice` — open.
-4. `design-change` — open.
-5. `write-test-plan` — open.
-6. `attack-artifact` — open.
-7. `implement-with-evidence` — open.
-8. `diagnose-failure` — open.
-9. `review-change` — open.
-10. `eval-agent-change` — open.
+   nedschorus in one batch, each pointing at the nc-queue evidence. Filed as nedschorus#15.
+3. `plan-rewrite-slice` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#16.
+4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#17.
+5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading throat-task dogfood).
+6. `attack-artifact` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#19, framed as the d-review comparison question.
+7. `implement-with-evidence` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#20.
+8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
+9. `review-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#22.
+10. `eval-agent-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#23.
 11. Skill-creator review — open; walk input
     `nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md`.
 12. Boot-set roll-up (ruling) — open.
