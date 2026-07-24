@@ -282,8 +282,17 @@ Outer walk, 17 items:
 8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
 9. `review-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#22.
 10. `eval-agent-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#23.
-11. Skill-creator review — open; walk input
-    `nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md`.
+11. Skill-creator review — processed 2026-07-24 → boss approved
+    read-for-ideas-only with two landing amendments he drove: the creation
+    doctrine lands NOT in the founding plan but as NC's first landed-reference
+    MD, `docs/reference/skill-authoring-checklist.md` (five nuggets + cops's
+    four description refinements + agent-facing test rules + the excluded
+    eval-machinery's reopening trigger); the founding plan step 1 carries one
+    pointer; and every candidate-skill GHI (#15-#23) carries the same pointer
+    ("put the reference exactly where it's needed"). Sub-questions resolved:
+    (a) explain-why default, NOT/DO reserved for training overrides;
+    (b) standalone reference MD, per above; (c) description-tuning machinery
+    excluded with its evidence bar recorded in the checklist.
 12. Boot-set roll-up (ruling) — open.
 13. Rewrite policy (ruling) — open.
 14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
