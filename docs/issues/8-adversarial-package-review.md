@@ -25,7 +25,7 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 
 ## Fixed rulings — do not relitigate
 
-The following are boss-ruled and out of scope as findings: the single-writer throat; the earned-complexity ladder; python-liberal/python-light; the zero-context-reader rule; the three committed homes and the ban on `docs/working/`; the quarry-with-entry-checkpoint doctrine; the two-log bridge with no message broker or mailbox substrate; the naked-drafter handoff ceremony with session-agent correction; the two-account layout (machine account sole pusher, human admin with no push path).
+The following are boss-ruled and out of scope as findings: the single-writer git-gatekeeper; the earned-complexity ladder; python-liberal/python-light; the zero-context-reader rule; the three committed homes and the ban on `docs/working/`; the legacy-with-entry-checkpoint doctrine; the two-log bridge with no message broker or mailbox substrate; the naked-drafter handoff ceremony with session-agent correction; the two-account layout (machine account sole pusher, human admin with no push path).
 
 If you believe one of these rulings is itself defective, say so in a clearly separated section titled RULING CHALLENGE, with the failure scenario — do not weave it through ordinary findings.
 

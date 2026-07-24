@@ -2,7 +2,7 @@ Issue: https://github.com/nedschorus/nedschorus/issues/9
 
 ## Admission note (new-vp, 2026-07-21)
 
-Authored by cops during the boss's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair #4, the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a quarry import — fresh authorship, no entry-manifest line.
+Authored by cops during the boss's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair #4, the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line.
 
 # Ned's Notes: NedsChorus Engineering Methods and Sources
 
@@ -11,7 +11,7 @@ Authored by cops during the boss's skills-and-methods walkthrough, admitted verb
 
 NedsChorus is a ground-up successor informed by six months of studying,
 building, testing, and observing failures in Nedlern. Nedlern is evidence and a
-quarry, not a template. Nothing should transfer merely because it already
+legacy, not a template. Nothing should transfer merely because it already
 exists.
 
 This review is limited to software-engineering lifecycle methods that directly
@@ -69,7 +69,7 @@ Preserve the original research as evidence, but keep the working document
 aligned with the current conclusion. Questions and reactions that do not change
 a decision do not require document churn.
 
-This rule was merged for the quarry's Claude and Codex skills in
+This rule was merged for the legacy system's Claude and Codex skills in
 [nedlern PR #2158](https://github.com/nedlern/nedlern/pull/2158). It must still
 cross the nedschorus entry checkpoint before becoming a NedsChorus skill.
 
@@ -92,14 +92,14 @@ correct resumption, and a response that changes later items.
 
 The NedsChorus skill should preserve this proven interaction pattern and the
 decisions recorded here, but its packaging should be rebuilt and reviewed for
-NedsChorus rather than copied wholesale from either quarry file.
+NedsChorus rather than copied wholesale from either legacy file.
 
-processed 2026-07-22 → boss-ruled during the founding walk: the quarry's two
+processed 2026-07-22 → boss-ruled during the founding walk: the legacy system's two
 walk skills are being updated NOW with two behaviors from this section — the
 walked-document-as-ledger rule (each item's disposition marked in place before
 advancing; a walk with no document gets a ledger file first) and the re-plan
 rule (a ruling that changes later items revises the remaining walk and reports
-the changed count or sequence) — quarry PR link to be edited in here when it
+the changed count or sequence) — legacy PR link to be edited in here when it
 opens. The six scenario tests above are deferred to the NC step-1 walk-me
 build, judged per the agent-facing test doctrine in
 `nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
@@ -241,7 +241,7 @@ Sources worth adapting or investigating:
 
 ## Combined walk ledger (pairs #9 + #10) — the walk-state of record
 
-Per the walked-document-as-ledger rule (boss-approved 2026-07-22; quarry PR
+Per the walked-document-as-ledger rule (boss-approved 2026-07-22; legacy PR
 [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162)). The
 anchor after any interruption is the first unmarked item.
 
@@ -249,7 +249,7 @@ Stack state: an INNER walk ("marking conventions and skill-creation") sat on
 top of this outer walk — now COMPLETE and popped. Inner item 1 (marking/archive
 conventions) — processed 2026-07-21/22 → folded (mark-in-place, nc-queue
 archive convention, pair-doc close lifecycle). Inner item 2 (walk-me-through:
-update now vs NC step-1) — processed 2026-07-22 → ruled NOW; landed as quarry
+update now vs NC step-1) — processed 2026-07-22 → ruled NOW; landed as legacy
 PR [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162);
 scenario tests deferred to NC step-1 (see the processed mark above). Inner
 item 3 (criteria-page home) — processed 2026-07-23 → ruled: NO separate page;
@@ -278,7 +278,7 @@ Outer walk, 17 items:
    nedschorus in one batch, each pointing at the nc-queue evidence. Filed as nedschorus#15.
 3. `plan-rewrite-slice` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#16.
 4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#17.
-5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading throat-task dogfood).
+5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading git-gatekeeper-task dogfood).
 6. `attack-artifact` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#19, framed as the d-review comparison question.
 7. `implement-with-evidence` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#20.
 8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
@@ -300,7 +300,7 @@ Outer walk, 17 items:
     "approved"). (a) Boot-set rule recorded: boot set = the five founding
     skills only; candidates join one at a time when a real task exposes the
     missing decision; first expected pull = write-test-plan (nedschorus#18)
-    at the step-7 throat task. Founding-plan open question 8 RESOLVED
+    at the step-7 git-gatekeeper task. Founding-plan open question 8 RESOLVED
     (commit fa54e52); pair-#9 tracking question 1 marked resolved.
     (b) Artifact-lifecycle ruling APPROVED and executed (commit 4b20892):
     every artifact final-at-home or in a destination-rooted queue with one

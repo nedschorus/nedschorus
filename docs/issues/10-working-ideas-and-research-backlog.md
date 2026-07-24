@@ -46,7 +46,7 @@ The governing approach is:
 
 - NedsChorus is a ground-up successor informed by six months of study,
   implementation, testing, and failure analysis.
-- Nedlern is a quarry and evidence source, not a template.
+- Nedlern is a legacy reference and evidence source, not a template.
 - Nothing crosses from Nedlern merely because it already exists.
 - Useful behavior must be identified, understood, reviewed, and deliberately
   re-admitted.

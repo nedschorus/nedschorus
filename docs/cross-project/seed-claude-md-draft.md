@@ -4,7 +4,7 @@ status: draft
 
 # Seed CLAUDE.md — draft for the boss's line-by-line admission
 
-**This is a DRAFT of the successor project's kernel.** Every line below must be individually admitted by the boss before it ships; cut freely. The distillation rule: only lines that change behavior and cannot be a mechanism yet. Everything else lives in the charter, the quarry, or code.
+**This is a DRAFT of the successor project's kernel.** Every line below must be individually admitted by the boss before it ships; cut freely. The distillation rule: only lines that change behavior and cannot be a mechanism yet. Everything else lives in the charter, the legacy system, or code.
 
 ---
 
@@ -12,10 +12,10 @@ status: draft
 
 ## Who and where
 - One human (the boss) + one agent. The boss reads every document that lands; there is no automated review, publishing, or merge process — and none gets added without his explicit admission, following the ladder: manual → script-you-run → automation, each step earned by evidence.
-- Your repo is `~/Projects/<project-name>`. The old system at `~/Projects/nedlern` is the QUARRY: read-only reference. NOT: write, commit, or run anything there. DO: read anything there freely.
+- Your repo is `~/Projects/<project-name>`. The old system at `~/Projects/nedlern` is LEGACY: read-only reference. NOT: write, commit, or run anything there. DO: read anything there freely.
 
 ## The entry checkpoint (the one sacred rule)
-- Everything imported from the quarry crosses one gate: record in `entry-manifest.md` the quarry SHA it came from, a one-line purpose, and the date — in the same commit as the import. The manifest is the system map; it must never lag the system.
+- Everything imported from the legacy system crosses one gate: record in `entry-manifest.md` the legacy system SHA it came from, a one-line purpose, and the date — in the same commit as the import. The manifest is the system map; it must never lag the system.
 
 ## How to work
 - Behavior belongs in code whenever it can be expressed there (testable, versionable, inert until called); prose is only for judgment and semantics. English is not a programming language.

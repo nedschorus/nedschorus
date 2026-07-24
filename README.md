@@ -1,12 +1,12 @@
 # nedschorus
 
-A system in which one human and a small number of AI agents build and improve the software-development system they themselves run on — restarted from minimum as the successor to the nedlern project, which keeps running during the founding and then quiesces into a read-only reference.
+A system in which one human and a small number of AI agents build and improve the software-development system they themselves run on — a fresh minimal system succeeding the nedlern project. nedschorus is not a rebuild of nedlern: it starts from its own requirements, and cherry-picks from nedlern only the pieces that earn entry through the checkpoint. nedlern keeps running during the founding and then quiesces into a read-only legacy reference.
 
 ## Why this project exists
 
 Its predecessor (nedlern, at `~/Projects/nedlern`) grew a working but heavy system: multi-agent messaging with delivery lifecycles, an eleven-state PR pipeline, layered enforcement hooks, a large doctrine corpus. Examined closely, most of that complexity was organizational — the cost of coordinating many agents, plus accumulated patches — not essential to the work being done. Re-derived from actual requirements with the minimal set of actors, each subsystem turned out small: messaging between agents became a pair of append-only log files; session continuity became one numbered handoff file plus its committed transcript; the path from change to production became a single writing agent and four states. Each re-derivation is specified under `docs/cross-project/`.
 
-nedschorus is the restart that keeps it that way: start from the simple system that works, and let complexity be earned — never assumed.
+nedschorus keeps it that way: start from the simple system that works, cherry-pick from the legacy system only what earns entry, and let complexity be earned — never assumed.
 
 ## Founding principles
 
@@ -14,15 +14,15 @@ nedschorus is the restart that keeps it that way: start from the simple system t
 2. **Complexity is earned, step by step:** manual → script the human runs → automation. Each step admitted on evidence, by the human.
 3. **Behavior belongs in code wherever it can be expressed there** — testable, versionable, inert until called. Prose is for judgment only. When it is a choice between python and a prompt, python; between bash and python, python — bash only for one-liners not worth a file.
 4. **Durable artifacts are written for a zero-context reader** — an agent with repository access, the project instructions, and the document itself, but no conversation history — and tested by handing them to exactly such an agent.
-5. **One writer to main.** choirmaster is the only identity that ever pushes. Every check-in — its own work or another agent's draft — lands through a single scripted gate (the throat), where every mechanical check runs from day one. All other agents draft in their own clones and never push; their work arrives via promotion through the throat.
-6. **The old system is the quarry:** read-only reference, freely read. Content that enters this repository from it is an import, and every import records one line in `entry-manifest.md`, in the same commit; the line's schema is defined once, in the throat specification ([fast-pr-to-prod-design.md](docs/cross-project/fast-pr-to-prod-design.md)).
+5. **One writer to main.** choirmaster is the only identity that ever pushes. Every check-in — its own work or another agent's draft — lands through a single scripted gate (the git-gatekeeper), where every mechanical check runs from day one. All other agents draft in their own clones and never push; their work arrives via promotion through the git-gatekeeper.
+6. **The old system is legacy:** read-only reference, freely read. Content that enters this repository from it is an import, and every import records one line in `entry-manifest.md`, in the same commit; the line's schema is defined once, in the git-gatekeeper specification ([fast-pr-to-prod-design.md](docs/cross-project/fast-pr-to-prod-design.md)).
 7. **Present-tense truth.** Documents state what is; git history holds what was. The built system is the source of truth — a design page carries the date on which it described that truth, and newer code and open issues may have advanced past it.
 
 ## The actors
 
 - **The boss** — the human. Reads every document that lands, admits every rung of automation, owns every judgment only a human can make.
-- **choirmaster** — the primary agent (Claude runtime). The single writer to main; operates the throat.
-- **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; never pushes; its work lands via promotion through the throat.
+- **choirmaster** — the primary agent (Claude runtime). The single writer to main; operates the git-gatekeeper.
+- **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; never pushes; its work lands via promotion through the git-gatekeeper.
 
 ## The agent model
 
@@ -42,7 +42,7 @@ Three agent lifetimes, used deliberately:
 | `handoff/` | Numbered session handoffs and their transcripts. |
 | `nc-queue/` | Boss-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
 | `docs/wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and pair-bound documents awaiting the boss's drain (promote / edit / demote / drop). |
-| `entry-manifest.md` | The ledger of everything imported from the quarry. |
+| `entry-manifest.md` | The ledger of everything imported from the legacy system. |
 | Issues labeled `draft` | Draft issues awaiting the boss's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the boss's admission takes effect without it. |
 
 ## Status

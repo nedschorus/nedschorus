@@ -20,7 +20,7 @@ versus-split evaluation proves a real trigger or decision-quality gain.
 
 ### Outer item 3 — `plan-rewrite-slice`
 
-Retain. The four-way quarry classification is essential:
+Retain. The four-way legacy classification is essential:
 `MUST PRESERVE`, `INTENTIONAL CHANGE`, `OLD BUG`, `UNRESOLVED`. Require evidence
 and oracle ownership per classification. Parity is a measurement; “zero
 differences” is not the goal when old behavior is defective.
@@ -35,8 +35,8 @@ The skill also needs `needs-feasibility-evidence`, `needs-human-decision`,
 ### Outer item 5 — `write-test-plan`
 
 Highest-value missing packaged capability and the leading first dogfood
-candidate for the already-designed throat build. The complete proposed
-contract is below. Its read-only throat application returned
+candidate for the already-designed git-gatekeeper build. The complete proposed
+contract is below. Its read-only git-gatekeeper application returned
 `needs-design-clarification`, identifying nine missing executable/test
 bindings rather than inventing commands. Recent benchmarks reinforce that
 generated tests need executed fail-to-pass, fault-detection, preservation, and
@@ -46,7 +46,7 @@ repository-reach evidence; coverage and plausibility are insufficient.
 
 Do not admit separately yet. It overlaps heavily with the required boot
 `d-review`. First compare trimmed `d-review`, that trim plus isolation/intent-
-gaming/clean-result deltas, and a separate skill. Remove the quarry rule to
+gaming/clean-result deltas, and a separate skill. Remove the legacy system rule to
 report uncertain LOW findings and leave filtering to the reader.
 
 ### Outer item 7 — `implement-with-evidence`
@@ -92,5 +92,5 @@ human.
 
 Keep the five founding skills. Do not add the whole candidate lifecycle. Select
 one candidate from the first real task's missing decision. On the current
-throat task, `write-test-plan` has the strongest fit; it should be one
+git-gatekeeper task, `write-test-plan` has the strongest fit; it should be one
 `SKILL.md` with manual evaluation, no helper framework.
