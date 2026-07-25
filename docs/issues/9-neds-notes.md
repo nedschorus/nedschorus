@@ -355,7 +355,23 @@ Outer walk, 17 items:
     copyright-concern framing retired); Still-under-review and pair question
     3 resolved: the note is public as committed, nothing omitted.
     ANCHOR = item 15.
-15. First bounded test task (ruling) — open.
+15. First bounded test task (ruling) — IN PROGRESS 2026-07-24 (session
+    23789ca5): boss expanded this item into a careful full-process design
+    walk of the git-gatekeeper before confirming it as the first build task
+    ("we need to specify what this python program does, its inputs and
+    outputs, its state machine, errors"; mission-critical: near-perfect
+    autonomous operation). Rulings already banked mid-item, to fold into
+    the specification as the walk confirms them: (a) honest singleton
+    restatement — branch protection restricts the ACCOUNT, not processes;
+    (b) check-ins parallel by default, serialize on conflict (boss);
+    (c) CLAUDE.md is documentation, never enforcement — never depend on it
+    (boss verbatim: python scripts don't read it; different machines may
+    carry different copies); mechanical enforcement = the dedicated
+    gatekeeper-identity rung; (d) trivial head movement must not block or
+    invalidate a pending check-in — revalidation scoped to what actually
+    changed (boss's head-churn concern). Sub-walk ledger: the item list in
+    this mark once presented; anchor = sub-item 1. Items 16–17 unchanged
+    behind it.
 16. Agent organization / lifecycle roles (capture-only) — open.
 17. Operational backlogs (capture-only) — open.
 
