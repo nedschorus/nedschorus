@@ -316,7 +316,18 @@ Outer walk, 17 items:
     landing-class residual stays in fast-pr-to-prod-design § Open. Drain
     procedure stays tracked on nedschorus#24 (scrub reporting runs as
     discipline until the NC handoff skill builds it). ANCHOR = item 13.
-13. Rewrite policy (ruling) — open.
+13. Rewrite policy (ruling) — IN PROGRESS 2026-07-24 (session 23789ca5).
+    Ruled so far: (a) terminology — git-gatekeeper (component class:
+    gatekeeper), legacy (never "quarry"), NC is not-a-rebuild (cherry-pick
+    framing) — executed repo-wide at 2997cc0; (b) classification vocabulary
+    boss-simplified and APPROVED: preserve-feature (feature contract, probably
+    not implementation; named + test-pinned) / update-feature / remove-feature
+    (reason recorded; absorbs old-bug) / consider-feature (blocks nothing,
+    re-decided when work depends on it) — replaces the four-way
+    MUST PRESERVE/INTENTIONAL CHANGE/OLD BUG/UNRESOLVED set; nothing
+    transfers silently. Remaining: classification timing (per-slice vs
+    inventory) + record home, then the policy records (founding-plan open
+    question 9, pair question 2, nedschorus#16 fold).
 14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
 15. First bounded test task (ruling) — open.
 16. Agent organization / lifecycle roles (capture-only) — open.
