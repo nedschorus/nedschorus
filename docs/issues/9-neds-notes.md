@@ -417,8 +417,12 @@ Outer walk, 17 items:
     superseded in fast-handoff-design.md; (q) check-in timing:
     infrequently-updated files check in immediately after update;
     append-type log files at a logical breakpoint (session end / next
-    session start) — recorded in founding plan § Standing decisions,
-    destined for CLAUDE.md at step 2; (r) "ceremony" retired from the
+    session start) — re-homed to nedschorus#25 same day (boss: Standing
+    decisions cover the boot-up phase ONLY; post-boot needs are GHIs —
+    short ones issue-only, long ones MD-GHI pairs; possible NEXT WALK
+    topic flagged by the boss: applying that scope rule across the
+    Standing-decisions section); destined for CLAUDE.md at step 2;
+    (r) "ceremony" retired from the
     vocabulary (AI jargon) — plain "writing a handoff" / "the write
     procedure" swept through fast-handoff-design, comms-bridge-spec,
     founding plan, gatekeeper spec, nc-queue README, package-review doc.
