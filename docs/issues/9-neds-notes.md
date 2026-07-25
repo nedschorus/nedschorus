@@ -218,7 +218,7 @@ Sources worth adapting or investigating:
 
 - [Piebald's versioned Claude Code prompt extraction](https://github.com/Piebald-AI/claude-code-system-prompts): the best focused non-official source found for comparing shipped Claude Code prompt and tool-description changes across versions. Use for version archaeology and hypothesis generation, never as a supported contract or executable dependency.
 - [Asgeirtj's cross-vendor prompt archive](https://github.com/asgeirtj/system_prompts_leaks): useful for broad historical comparison. Provenance varies by file, so any derived claim needs the model, surface, version/date, extraction method, and confidence recorded.
-- [DonutShinobu Claude Code fork](https://github.com/DonutShinobu/claude-code-fork) and [Tanbiralam Claude Code mirror](https://github.com/tanbiralam/claude-code): retained only so the original research trail is not lost. They are duplicate, stale leaked-source archives with provenance and copyright concerns. Do not clone, execute, install, depend on, or cite them in public NedsChorus material.
+- [DonutShinobu Claude Code fork](https://github.com/DonutShinobu/claude-code-fork) and [Tanbiralam Claude Code mirror](https://github.com/tanbiralam/claude-code): duplicate, stale snapshots of the same material — superseded by Piebald's versioned archive for nearly all purposes; kept for the research trail. (Reframed per the public-links policy, boss-ruled 2026-07-24, walk item 14: sources are judged on usefulness and reliability only — the earlier do-not-cite-publicly quarantine framing is retired.)
 
 ## Deliberately excluded from the shortlist
 
@@ -244,8 +244,10 @@ Sources worth adapting or investigating:
   update-feature / remove-feature / consider-feature), records in the slice
   plan or entry-manifest line, undecided features to `legacy-feature-queue/`,
   unexamined never preserved.
-- Whether this note remains an internal working document or becomes public. If
-  public, the leaked-source archive should probably be omitted entirely.
+- Public-vs-internal — RESOLVED 2026-07-24 (walk item 14): the note is public
+  as committed, nothing omitted. Links are judged on usefulness and
+  reliability only (public-links policy, founding plan § Standing decisions);
+  the leaked-source archives stay, treated like every other source.
 
 ## Combined walk ledger (pairs #9 + #10) — the walk-state of record
 
@@ -342,7 +344,17 @@ Outer walk, 17 items:
     the drain, no TTL; (e) default: unexamined is never preserved.
     nedschorus#16 re-worded to the new vocabulary; shortlist §2 and
     Still-under-review updated in this doc. ANCHOR = item 14.
-14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
+14. Public-links ruling — processed 2026-07-24 → boss REVERSED my quarantine
+    recommendation (session 23789ca5): links in this public repository are
+    judged on usefulness and reliability only; no provenance-based class
+    ("treat them like everything else"). The leaked archives stay linked —
+    they provide documentation and insight not offered elsewhere; unofficial
+    extractions remain never-contracts (a reliability call, accepted
+    principle 4). Policy recorded in founding plan § Standing decisions; the
+    pair-doc research-sources bullet reframed (do-not-cite-publicly and
+    copyright-concern framing retired); Still-under-review and pair question
+    3 resolved: the note is public as committed, nothing omitted.
+    ANCHOR = item 15.
 15. First bounded test task (ruling) — open.
 16. Agent organization / lifecycle roles (capture-only) — open.
 17. Operational backlogs (capture-only) — open.
