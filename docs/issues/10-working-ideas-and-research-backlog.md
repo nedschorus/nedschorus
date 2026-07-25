@@ -4,7 +4,7 @@ Issue: https://github.com/nedschorus/nedschorus/issues/10
 
 - Boss-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair #10. Capture ≠ commitment: nothing here is scheduled work, and the boss's walk rules which candidates advance.
 - The "Related detailed documents" links name cops-local filenames; in this repository that material is [pair #4](4-open-source-publishing-community-strategy.md) (publishing strategy) and [pair #9](9-neds-notes.md) (engineering methods).
-- One redaction from the otherwise-verbatim body: the two raw leaked-source mirror URLs under "Raw Claude Code mirrors" are omitted from this public copy, per that subsection's own retain-privately / do-not-cite-publicly instruction; they remain in cops's peer-local original (`tasks/sessions/cops-nedschorus-working-ideas-and-research-backlog-2026-07-22.md`, old-system side). The broader which-links-are-public question is one of the body's own unresolved questions — boss walk pending.
+- The 2026-07-22 admission redacted the two raw mirror URLs under "Raw Claude Code mirrors" per that subsection's own retain-privately instruction. REVERSED 2026-07-24 by the public-links ruling (walk item 14: links in this public repository are judged on usefulness and reliability only — no provenance-based quarantine): the URLs are restored below, matching pair #9's research-sources section.
 - Revisions ride this pair as ordinary REVISE dispositions.
 
 # NedsChorus Working Ideas and Research Backlog
@@ -633,14 +633,15 @@ endorsement.
 
 #### Raw Claude Code mirrors
 
-- (two mirror URLs omitted from this public copy — see the admission note; they remain in the private research trail)
+- <https://github.com/DonutShinobu/claude-code-fork>
+- <https://github.com/tanbiralam/claude-code>
 
-- **Disposition:** retain only in this private research trail so the original
-  links are not lost.
-- **Why excluded:** apparently duplicative stale leaked-source archives with
-  provenance, copyright, security, and supply-chain concerns.
-- **Do not:** clone, execute, install, depend on, or cite in public NedsChorus
-  material.
+- **Disposition:** duplicate, stale snapshots of the same material —
+  superseded by Piebald's versioned archive for nearly all purposes; kept for
+  the research trail. (URLs restored to this public copy 2026-07-24 under the
+  public-links policy, walk item 14.)
+- **Limit:** stale duplicates; verify any derived claim against the versioned
+  archive or experimentally.
 
 ### JSONL references and tools
 
@@ -693,14 +694,22 @@ conclusions are:
 
 ## Unresolved high-level questions
 
-- Which small subset of candidate engineering skills belongs in the initial
-  NedsChorus boot set?
-- Which Nedlern behaviors are genuine compatibility requirements, intentional
-  changes, old defects, or unresolved?
-- Which ideas in this backlog should eventually become public, and which
-  internal/security research links should be omitted from public artifacts?
+- Boot set — RESOLVED 2026-07-24 (walk item 12; founding-plan open question
+  8): the five founding skills only; candidates join one at a time when a
+  real task exposes the missing decision (first expected pull:
+  write-test-plan, nedschorus#18).
+- Legacy behaviors — RESOLVED 2026-07-24 (walk item 13, the rewrite policy;
+  founding plan § Standing decisions): per-cherry-pick four-class feature
+  classification (preserve-feature / update-feature / remove-feature /
+  consider-feature); records in the slice plan or entry-manifest line;
+  undecided features to `legacy-feature-queue/`; unexamined is never
+  preserved.
+- Public-vs-internal links — RESOLVED 2026-07-24 (walk item 14, the
+  public-links policy): links are judged on usefulness and reliability only;
+  nothing is omitted from public artifacts on provenance grounds.
 - What is the first bounded NedsChorus task that can test the chosen skills and
-  workflow without importing an entire predecessor subsystem?
+  workflow without importing an entire predecessor subsystem? (open — walk
+  item 15)
 
 These questions should be resolved through bounded work, evidence, and Ned's
 review—not by expanding this capture document into a master implementation
