@@ -410,9 +410,21 @@ Outer walk, 17 items:
     SPEC FOLDED: full rewrite of git-gatekeeper-design.md + README
     principles 5/6 + actors + entry-manifest retired-to-historical +
     comms-bridge promotion-transport retired + founding-plan pointers.
-    Remaining to close item 15: boss reads the folded spec; the flagged
-    fast-handoff S2 cross-spec consequence needs his word; then confirm
-    the first bounded test task = the git-gatekeeper build slice.
+    Later rulings, continued: (p) S2 RESOLVED (boss-approved 2026-07-24):
+    handoff.py submits its files through check-in like any requester —
+    files written to disk first, so a session boundary is never blocked by
+    a failed submission; the local-commit + next-push-catch-up rule is
+    superseded in fast-handoff-design.md; (q) check-in timing:
+    infrequently-updated files check in immediately after update;
+    append-type log files at a logical breakpoint (session end / next
+    session start) — recorded in founding plan § Standing decisions,
+    destined for CLAUDE.md at step 2; (r) "ceremony" retired from the
+    vocabulary (AI jargon) — plain "writing a handoff" / "the write
+    procedure" swept through fast-handoff-design, comms-bridge-spec,
+    founding plan, gatekeeper spec, nc-queue README, package-review doc.
+    Remaining to close item 15: boss reads the folded spec
+    (docs/cross-project/git-gatekeeper-design.md), then confirms the
+    first bounded test task = the git-gatekeeper build slice.
     Items 16–17 unchanged behind it.
 16. Agent organization / lifecycle roles (capture-only) — open.
 17. Operational backlogs (capture-only) — open.

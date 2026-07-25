@@ -4,7 +4,7 @@ status: draft
 
 # handoff-lite — the successor project's handoff skill (draft for the boss's markup)
 
-**Design constraints:** one human + one agent, one repo, no fleet, no postal, no task stores, no auto-push machinery. The whole ceremony must survive being run at 5% context by a tired agent — so it is one file, four sections, three commands, nothing conditional.
+**Design constraints:** one human + one agent, one repo, no fleet, no postal, no task stores, no auto-push machinery. The whole procedure must survive being run at 5% context by a tired agent — so it is one file, four sections, three commands, nothing conditional.
 
 ---
 
@@ -45,6 +45,6 @@ git push
 
 ## What was deliberately cut from the old system's handoff skill (for the record, so the cuts are auditable)
 
-Mail drain (no postal) · session-id scripts and resume pointers (the harness's own resume covers it; if not, the boss relaunches fresh — the file IS the continuity) · task-store carryover ceremony (no task stores yet) · overflow files and safe-pattern staging (one file, one repo) · co-author/session trailers (one agent; git author is identity) · size-cap debates (no cap; clarity wins) · the prior-handoff audit step (the successor reads HANDOFF.md as its first act per CLAUDE.md — auditing is its natural next move, not a ceremony).
+Mail drain (no postal) · session-id scripts and resume pointers (the harness's own resume covers it; if not, the boss relaunches fresh — the file IS the continuity) · task-store carryover procedure (no task stores yet) · overflow files and safe-pattern staging (one file, one repo) · co-author/session trailers (one agent; git author is identity) · size-cap debates (no cap; clarity wins) · the prior-handoff audit step (the successor reads HANDOFF.md as its first act per CLAUDE.md — auditing is its natural next move, not a ceremony).
 
 Each cut is a re-admission candidate the day the system grows the thing that needed it.

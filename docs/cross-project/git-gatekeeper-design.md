@@ -126,7 +126,7 @@ Everything rests on one property GitHub provides: **a push either wins cleanly o
 
 - **Branch protection, LIVE since 2026-07-21:** pushes to `main` restricted to the machine credential (`NedLern`) alone; enforce-admins on; force-push and deletion blocked. The org has two owners (`NedLern`, also the machine credential; `NedLerner`, settings and emergency power, no push), so either account can recover the org if the other is lost; a protection change by any owner is a deliberate, visible act, never a standing path. The boss never commits directly; a boss-originated change is drafted with an agent and checked in like any other. Issues cost nothing: the repository is public, so opening and commenting needs no repository permission.
 - **The honest singleton statement (boss ruling):** branch protection restricts the *account*, not processes — anything running as that account, on any machine, can push. Process-level ordering needs no lock: the atomic push arbitrates. What remains procedural in version 1 is only that agents *use the program* rather than raw `git push`.
-- **CLAUDE.md is documentation, never enforcement (boss ruling; his rationale verbatim: a python script does not read it, and different machines may carry different copies).** Nothing in this design depends on it. The raw-push residual is *detected*, not prevented: a standing audit at each handoff ceremony's scrub scans main for commits missing valid trailers and files a `draft` issue naming them. (The same audit also covers the sibling residual: the machine credential is agent-held and an org owner, so an agent could deliberately edit the protection — same cooperative class, same catch.)
+- **CLAUDE.md is documentation, never enforcement (boss ruling; his rationale verbatim: a python script does not read it, and different machines may carry different copies).** Nothing in this design depends on it. The raw-push residual is *detected*, not prevented: a standing audit at each handoff scrub scans main for commits missing valid trailers and files a `draft` issue naming them. (The same audit also covers the sibling residual: the machine credential is agent-held and an org owner, so an agent could deliberately edit the protection — same cooperative class, same catch.)
 - **The mechanical closure — the dedicated-identity rung (triggers named: the audit ever firing, or the boss admits it early):** move the push credential to a dedicated gatekeeper identity (a GitHub App or CI job); agent sessions then hold no push-capable credential at all, and "agents never push" becomes impossible rather than instructed. This rung also makes the gatekeeper literally an invocable service any agent can call.
 
 ## Deliberately not in version 1
@@ -144,7 +144,7 @@ Everything rests on one property GitHub provides: **a push either wins cleanly o
 
 ## Cross-spec consequence, awaiting the boss
 
-`fast-handoff-design.md` (package-review S2) makes handoff ceremony commits LOCAL-only, riding to origin "with the next push." Under this design nothing "rides": every push is a candidate built from main plus declared files, so local commits on a checkout never reach origin at all. Likely resolution — `handoff.py` invokes `check-in` itself (synchronous, `--issue none`), deleting the S2 special case and the ride-along concept entirely. That changes a boss-ruled decision, so it awaits his word; until then the handoff specification is unmodified.
+RESOLVED 2026-07-24 (boss-approved): `handoff.py` submits its files through `check-in` like any other requester (files written to disk first, so a failed submission never blocks a session boundary; resubmission is safe). The earlier S2 local-commit rule is superseded in `fast-handoff-design.md`.
 
 ## Relationship to the legacy design
 
@@ -159,4 +159,4 @@ T1 every form error refuses with its named error and no side effects · T2 happy
 ## Open
 
 - Which artifact classes, if any, are gated on review evidence from day one — the Gate-evidence growth point stays dormant until the boss designates a class.
-- The fast-handoff S2 interaction (§ Cross-spec consequence, awaiting the boss).
+- (resolved) The fast-handoff S2 interaction — see § Cross-spec consequence.
