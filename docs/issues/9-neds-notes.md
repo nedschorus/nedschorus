@@ -369,9 +369,28 @@ Outer walk, 17 items:
     carry different copies); mechanical enforcement = the dedicated
     gatekeeper-identity rung; (d) trivial head movement must not block or
     invalidate a pending check-in — revalidation scoped to what actually
-    changed (boss's head-churn concern). Sub-walk ledger: the item list in
-    this mark once presented; anchor = sub-item 1. Items 16–17 unchanged
-    behind it.
+    changed (boss's head-churn concern); (e) callers choose synchronous or
+    asynchronous invocation — form errors always refuse synchronously at
+    submit; (f) the program is the ONLY gate — every agent invokes it
+    directly; choirmaster has no relay/doorman role (boss: "we came up with
+    the gatekeeper concept but did not remove the old concept" — the
+    single-writer-AGENT concept is retired; the single writer is the
+    program + its credential); (g) request identity is a content digest
+    (base + file list + content digests) computed by the program — no
+    caller-generated ids; submit is idempotent and retry-safe;
+    (h) the commit trailer is the SINGLE import record — the
+    entry-manifest.md append-a-row rule is retired (a shared append file
+    would also make any two parallel imports always conflict); the
+    browsable view becomes a derived query; (i) simplicity cuts,
+    boss-approved: no review-evidence field or check until a class is
+    actually gated; no naming-hygiene check until a real subsystem set
+    exists; no separate audit log (session transcripts + git history are
+    the records — the invocation is an ordinary tool call; status = a
+    history lookup on the request digest; refusals re-derive on resubmit);
+    v1 parallelism = simple full-recheck retry, footprint-scoped
+    revalidation deferred until checks are slow. Walk RESTARTED 2026-07-24
+    with the simplified design, 6 items; anchor = sub-item 1.
+    Items 16–17 unchanged behind it.
 16. Agent organization / lifecycle roles (capture-only) — open.
 17. Operational backlogs (capture-only) — open.
 
