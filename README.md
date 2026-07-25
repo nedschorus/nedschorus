@@ -14,15 +14,15 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 2. **Complexity is earned, step by step:** manual → script the human runs → automation. Each step admitted on evidence, by the human.
 3. **Behavior belongs in code wherever it can be expressed there** — testable, versionable, inert until called. Prose is for judgment only. When it is a choice between python and a prompt, python; between bash and python, python — bash only for one-liners not worth a file.
 4. **Durable artifacts are written for a zero-context reader** — an agent with repository access, the project instructions, and the document itself, but no conversation history — and tested by handing them to exactly such an agent.
-5. **One writer to main.** choirmaster is the only identity that ever pushes. Every check-in — its own work or another agent's draft — lands through a single scripted gate (the git-gatekeeper), where every mechanical check runs from day one. All other agents draft in their own clones and never push; their work arrives via promotion through the git-gatekeeper.
+5. **One writer to main.** choirmaster is the only identity that ever pushes. Every check-in — its own work or another agent's draft — goes through a single scripted gate (the git-gatekeeper), where every mechanical check runs from day one. All other agents draft in their own clones and never push; their work arrives via promotion through the git-gatekeeper.
 6. **The old system is legacy:** read-only reference, freely read. Content that enters this repository from it is an import, and every import records one line in `entry-manifest.md`, in the same commit; the line's schema is defined once, in the git-gatekeeper specification ([fast-pr-to-prod-design.md](docs/cross-project/fast-pr-to-prod-design.md)).
 7. **Present-tense truth.** Documents state what is; git history holds what was. The built system is the source of truth — a design page carries the date on which it described that truth, and newer code and open issues may have advanced past it.
 
 ## The actors
 
-- **The boss** — the human. Reads every document that lands, admits every rung of automation, owns every judgment only a human can make.
+- **The boss** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
 - **choirmaster** — the primary agent (Claude runtime). The single writer to main; operates the git-gatekeeper.
-- **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; never pushes; its work lands via promotion through the git-gatekeeper.
+- **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; never pushes; its work is checked in via promotion through the git-gatekeeper.
 
 ## The agent model
 

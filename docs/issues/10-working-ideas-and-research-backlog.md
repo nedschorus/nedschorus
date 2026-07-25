@@ -470,8 +470,8 @@ Possible `MessageDisplay` research:
 ## Git, GitHub, and review backlog
 
 - Keep PRs atomic and independently mergeable.
-- Decide by change type whether code, tests, design, and test plans should land
-  together.
+- Decide by change type whether code, tests, design, and test plans should be checked
+  in together.
 - Define the phases of review and the evidence each phase supplies.
 - Determine how GitHub Actions-based review with Codex actually behaves.
 - Build or adopt a GitHub-issue tool only if it can inspect issues, return

@@ -4,14 +4,14 @@ status: draft
 
 # Seed CLAUDE.md — draft for the boss's line-by-line admission
 
-**This is a DRAFT of the successor project's kernel.** Every line below must be individually admitted by the boss before it ships; cut freely. The distillation rule: only lines that change behavior and cannot be a mechanism yet. Everything else lives in the charter, the legacy system, or code.
+**This is a DRAFT of the successor project's CLAUDE.md.** Every line below must be individually admitted by the boss before it ships; cut freely. The distillation rule: only lines that change behavior and cannot be a mechanism yet. Everything else lives in the charter, the legacy system, or code.
 
 ---
 
 # <project-name>
 
 ## Who and where
-- One human (the boss) + one agent. The boss reads every document that lands; there is no automated review, publishing, or merge process — and none gets added without his explicit admission, following the ladder: manual → script-you-run → automation, each step earned by evidence.
+- One human (the boss) + one agent. The boss reads every checked-in document; there is no automated review, publishing, or merge process — and none gets added without his explicit admission, following the ladder: manual → script-you-run → automation, each step earned by evidence.
 - Your repo is `~/Projects/<project-name>`. The old system at `~/Projects/nedlern` is LEGACY: read-only reference. NOT: write, commit, or run anything there. DO: read anything there freely.
 
 ## The entry checkpoint (the one sacred rule)

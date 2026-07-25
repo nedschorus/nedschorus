@@ -10,7 +10,7 @@ status: draft
 
 | # | Artifact | Purpose | Size target | Status |
 |---|----------|---------|-------------|--------|
-| 1 | Seed CLAUDE.md | The new project kernel: operating doctrine only, every line boss-admitted. Mission-state deliberately excluded (that is #2/#3's job) — conflating them is how the old kernel bloated. | ~20 lines | DRAFT — [seed-claude-md-draft.md](seed-claude-md-draft.md) |
+| 1 | Seed CLAUDE.md | The new project CLAUDE.md: operating doctrine only, every line boss-admitted. Mission-state deliberately excluded (that is #2/#3's job) — conflating them is how the old CLAUDE.md bloated. | ~20 lines | DRAFT — [seed-claude-md-draft.md](seed-claude-md-draft.md) |
 | 2 | Charter | The mission: the flip, the legacy system relationship, the quiesce plan for the old project, the re-automation ladder (manual → script-you-run → automation, each step earned). | 1 page | WRITTEN 2026-07-21 as the repo README (the one place humans and agents both look first) |
 | 3 | Founding handoff | The life-file: current state, decisions made, next steps — written LAST, at cutover, so it captures true state. | 1-2 pages | to write at cutover |
 | 4 | Three skills, dependency-trimmed | d-review (design review), walk-me-through (one-item-at-a-time presentation), handoff-lite (streamlined: write file, commit, done — no fleet machinery). Each current version references fleet doctrine that will not exist in the new home; import = trim or inline those references, not copy-paste. | 3 files | to port |
