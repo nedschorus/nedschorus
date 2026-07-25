@@ -125,8 +125,12 @@ Sources worth adapting:
 ### 2. `plan-rewrite-slice`
 
 This is probably the most NedsChorus-specific candidate. Start with one bounded
-end-to-end slice, not "rewrite Nedlern." Classify relevant old behavior as
-`MUST PRESERVE`, `INTENTIONAL CHANGE`, `OLD BUG`, or `UNRESOLVED`.
+end-to-end slice, not "rewrite Nedlern." Classify the legacy features the slice
+touches per the rewrite policy's four classes — `preserve-feature`,
+`update-feature`, `remove-feature`, `consider-feature` (boss-ruled 2026-07-24,
+walk item 13, superseding the earlier MUST PRESERVE / INTENTIONAL CHANGE /
+OLD BUG / UNRESOLVED set; policy of record: founding plan § Standing
+decisions).
 
 Source worth adapting:
 
@@ -234,8 +238,12 @@ Sources worth adapting or investigating:
   commit fa54e52): the five founding skills only; candidates join one at a
   time when a real task exposes the missing decision (first expected pull:
   write-test-plan, nedschorus#18).
-- The rewrite policy: which Nedlern behaviors are genuine compatibility
-  requirements and which should be abandoned, corrected, or re-decided.
+- Rewrite policy — RESOLVED 2026-07-24 (walk item 13; founding-plan open
+  question 9; policy of record: founding plan § Standing decisions):
+  per-cherry-pick four-class feature classification (preserve-feature /
+  update-feature / remove-feature / consider-feature), records in the slice
+  plan or entry-manifest line, undecided features to `legacy-feature-queue/`,
+  unexamined never preserved.
 - Whether this note remains an internal working document or becomes public. If
   public, the leaked-source archive should probably be omitted entirely.
 
@@ -316,18 +324,24 @@ Outer walk, 17 items:
     landing-class residual stays in fast-pr-to-prod-design § Open. Drain
     procedure stays tracked on nedschorus#24 (scrub reporting runs as
     discipline until the NC handoff skill builds it). ANCHOR = item 13.
-13. Rewrite policy (ruling) — IN PROGRESS 2026-07-24 (session 23789ca5).
-    Ruled so far: (a) terminology — git-gatekeeper (component class:
-    gatekeeper), legacy (never "quarry"), NC is not-a-rebuild (cherry-pick
-    framing) — executed repo-wide at 2997cc0; (b) classification vocabulary
-    boss-simplified and APPROVED: preserve-feature (feature contract, probably
-    not implementation; named + test-pinned) / update-feature / remove-feature
-    (reason recorded; absorbs old-bug) / consider-feature (blocks nothing,
-    re-decided when work depends on it) — replaces the four-way
-    MUST PRESERVE/INTENTIONAL CHANGE/OLD BUG/UNRESOLVED set; nothing
-    transfers silently. Remaining: classification timing (per-slice vs
-    inventory) + record home, then the policy records (founding-plan open
-    question 9, pair question 2, nedschorus#16 fold).
+13. Rewrite policy (ruling) — processed 2026-07-24 → POLICY APPROVED
+    (session 23789ca5); text of record: founding plan § Standing decisions;
+    open question 9 RESOLVED. The pieces, in ruling order: (a) terminology —
+    git-gatekeeper (component class: gatekeeper), legacy (never "quarry"),
+    NC is not-a-rebuild (cherry-pick framing) — executed repo-wide at
+    2997cc0; (b) boss-simplified classification vocabulary: preserve-feature
+    (feature contract, probably not implementation; named + test-pinned) /
+    update-feature (divergence recorded) / remove-feature (reason recorded;
+    absorbs old-bug) / consider-feature (blocks nothing; re-decided when
+    work depends on it); (c) classification is per cherry-pick, never a
+    global inventory; records live in the slice plan's classification table
+    or the entry-manifest line; (d) consider-features outliving their slice
+    go to legacy-feature-queue/ (boss catch reversing my GHI proposal: GHIs
+    are for things WANTED; queues hold the not-yet-decided) — one file per
+    feature, date-in-filename, standard four-outcome drain where deciding IS
+    the drain, no TTL; (e) default: unexamined is never preserved.
+    nedschorus#16 re-worded to the new vocabulary; shortlist §2 and
+    Still-under-review updated in this doc. ANCHOR = item 14.
 14. Public-links ruling (live specimen: the pair-#9 leak-link finding) — open.
 15. First bounded test task (ruling) — open.
 16. Agent organization / lifecycle roles (capture-only) — open.

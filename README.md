@@ -42,6 +42,7 @@ Three agent lifetimes, used deliberately:
 | `handoff/` | Numbered session handoffs and their transcripts. |
 | `nc-queue/` | Boss-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
 | `docs/wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and pair-bound documents awaiting the boss's drain (promote / edit / demote / drop). |
+| `legacy-feature-queue/` | Undecided legacy features (consider-feature class, rewrite policy) awaiting decision; deciding is the drain. |
 | `entry-manifest.md` | The ledger of everything imported from the legacy system. |
 | Issues labeled `draft` | Draft issues awaiting the boss's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the boss's admission takes effect without it. |
 
