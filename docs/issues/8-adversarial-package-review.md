@@ -17,7 +17,7 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 - `README.md` — the charter.
 - `docs/cross-project/nedschorus-founding-plan.md` — the boot-up plan and rulings register.
 - `docs/cross-project/fast-handoff-design.md` — the session-handoff specification.
-- `docs/cross-project/fast-pr-to-prod-design.md` — the single-writer check-in specification.
+- `docs/cross-project/git-gatekeeper-design.md` — the check-in gate specification (renamed from fast-pr-to-prod-design 2026-07-24).
 - `docs/cross-project/comms-bridge-spec.md` — the two-log coordination channel.
 - `docs/issues/4-open-source-publishing-community-strategy.md` — the publishing strategy.
 - `entry-manifest.md` — the import ledger (empty is its correct current state).

@@ -1,6 +1,6 @@
-# Entry manifest
+# Entry manifest — founding-era historical record
 
-Every component imported from the legacy system (`~/Projects/nedlern`, read-only reference) gets one line here, in the same commit as the import. The line schema is the git-gatekeeper specification's field list — one normative schema (boss-ruled 2026-07-21, package-review S6): source revision and paths, content digest, destination paths, admission date, purpose, why existing successor code was insufficient, transformations applied.
+**No longer appended (boss-walked gatekeeper ruling, 2026-07-24).** Imports are now recorded in the importing commit's `Gatekeeper-import` trailer — one source of truth, same commit by construction — and browsed via `git-gatekeeper.py imports` (see [git-gatekeeper-design.md](docs/cross-project/git-gatekeeper-design.md)). A shared append-file would also make any two parallel imports conflict. The six founding-migration lines below remain the permanent record of the boot-pack migration (line schema as originally ruled 2026-07-21, package-review S6: source revision and paths, content digest, destination paths, admission date, purpose, why existing successor code was insufficient, transformations applied).
 
 | Source revision | Source paths | Content digest | Destination paths | Date | Purpose | Why insufficient | Transformations |
 |---|---|---|---|---|---|---|---|

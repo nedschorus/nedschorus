@@ -323,7 +323,7 @@ Outer walk, 17 items:
     label created on GitHub; three-state rule superseded by the
     artifact-lifecycle rule (founding plan § Project organization + #13);
     founding-plan open question 5 (gated classes) substantially resolved —
-    landing-class residual stays in fast-pr-to-prod-design § Open. Drain
+    landing-class residual stays in git-gatekeeper-design § Open. Drain
     procedure stays tracked on nedschorus#24 (scrub reporting runs as
     discipline until the NC handoff skill builds it). ANCHOR = item 13.
 13. Rewrite policy (ruling) — processed 2026-07-24 → POLICY APPROVED
@@ -389,7 +389,30 @@ Outer walk, 17 items:
     history lookup on the request digest; refusals re-derive on resubmit);
     v1 parallelism = simple full-recheck retry, footprint-scoped
     revalidation deferred until checks are slow. Walk RESTARTED 2026-07-24
-    with the simplified design, 6 items; anchor = sub-item 1.
+    with the simplified design, 6 items — walked to completion. Later
+    rulings: (j) refusals are MCP-style teaching replies — named error +
+    facts + exact next action, always; (k) the request digest is the
+    duplicate-detection key, not provenance — trailer carries exactly
+    origin / digest / import / issue; (l) walk-caught gap: --message is a
+    required request field (intent cannot be auto-filled); (m) issue
+    trailer written as #<n> so GitHub's timeline auto-collects every
+    check-in on its issue (derived offline via git log --grep); responses
+    are never auto-posted to issues — blockers get judgment-written
+    comments; an issue is never mandated per invocation (issues hold
+    wanted things, not logs); (n) cancel <digest> is IN v1 (need certain,
+    machinery settled, three branches), any agent, no permission machinery
+    (cooperative; workflow just doesn't teach it), outcomes cancelled /
+    too-late-already-checked-in / unknown-request; revert (an ordinary
+    check-in undoing a prior one) is the post-push remedy; (o) the spec's
+    scope ends at MAIN — deploying to production is a separate DevOps/CI
+    concern (boss); file renamed fast-pr-to-prod-design.md →
+    git-gatekeeper-design.md (component-named; NC has no pull requests).
+    SPEC FOLDED: full rewrite of git-gatekeeper-design.md + README
+    principles 5/6 + actors + entry-manifest retired-to-historical +
+    comms-bridge promotion-transport retired + founding-plan pointers.
+    Remaining to close item 15: boss reads the folded spec; the flagged
+    fast-handoff S2 cross-spec consequence needs his word; then confirm
+    the first bounded test task = the git-gatekeeper build slice.
     Items 16–17 unchanged behind it.
 16. Agent organization / lifecycle roles (capture-only) — open.
 17. Operational backlogs (capture-only) — open.
