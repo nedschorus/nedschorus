@@ -707,9 +707,11 @@ conclusions are:
 - Public-vs-internal links — RESOLVED 2026-07-24 (walk item 14, the
   public-links policy): links are judged on usefulness and reliability only;
   nothing is omitted from public artifacts on provenance grounds.
-- What is the first bounded NedsChorus task that can test the chosen skills and
-  workflow without importing an entire predecessor subsystem? (open — walk
-  item 15)
+- First bounded task — RESOLVED 2026-07-25 (walk item 15): the
+  git-gatekeeper build slice (git-gatekeeper-design.md § Build slice), boot
+  test first. Bounded, code-heavy, tests the founding skills and workflow end
+  to end, imports no predecessor subsystem (the gatekeeper is authored
+  natively; legacy contact is read-only reference under the rewrite policy).
 
 These questions should be resolved through bounded work, evidence, and Ned's
 review—not by expanding this capture document into a master implementation

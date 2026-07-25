@@ -355,9 +355,13 @@ Outer walk, 17 items:
     copyright-concern framing retired); Still-under-review and pair question
     3 resolved: the note is public as committed, nothing omitted.
     ANCHOR = item 15.
-15. First bounded test task (ruling) — IN PROGRESS 2026-07-24 (session
-    23789ca5): boss expanded this item into a careful full-process design
-    walk of the git-gatekeeper before confirming it as the first build task
+15. First bounded test task (ruling) — processed 2026-07-25 → CONFIRMED
+    (boss word "approved", session 23789ca5): first bounded test task =
+    the git-gatekeeper build slice (git-gatekeeper-design.md § Build
+    slice: check-in / status / cancel / imports + tests T1–T12 + the
+    CLAUDE.md workflow lines), boot test first per founding-plan step 7;
+    resolves pair-#10 question 4. The item expanded mid-walk into the
+    boss-directed full-process design walk recorded below
     ("we need to specify what this python program does, its inputs and
     outputs, its state machine, errors"; mission-critical: near-perfect
     autonomous operation). Rulings already banked mid-item, to fold into
@@ -426,10 +430,8 @@ Outer walk, 17 items:
     vocabulary (AI jargon) — plain "writing a handoff" / "the write
     procedure" swept through fast-handoff-design, comms-bridge-spec,
     founding plan, gatekeeper spec, nc-queue README, package-review doc.
-    Remaining to close item 15: boss reads the folded spec
-    (docs/cross-project/git-gatekeeper-design.md), then confirms the
-    first bounded test task = the git-gatekeeper build slice.
-    Items 16–17 unchanged behind it.
+    CLOSED 2026-07-25: spec read and first task confirmed.
+    ANCHOR = item 16.
 16. Agent organization / lifecycle roles (capture-only) — open.
 17. Operational backlogs (capture-only) — open.
 
