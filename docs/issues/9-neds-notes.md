@@ -445,7 +445,18 @@ Outer walk, 17 items:
     with phase-boundary reconciliation on hard tasks; spy-triaged
     filtered-intent-stream oversight with spot-check. Two research legs
     commissioned (cvp 1696104:39 + independent Claude deep-research);
-    pair #26 amends on their arrival. ANCHOR = item 17.
+    pair #26 amends on their arrival. CIRCLE-BACK COMPLETE 2026-07-25:
+    both legs landed (nc-queue notes), independently converging on the
+    skeptical core; three reconciliation amendments boss-approved (pilot
+    discipline with mandatory baselines/stop rules; intent stream =
+    sensor never gate, escalated experts get artifacts + provenance;
+    first sparring pilot scoped to bounded verifiable artifacts);
+    observer stance ruled protective-never-antagonistic (cover the
+    driver's back); NAVIGATOR renamed GUARDIAN; roster ruled complete:
+    agents/subagents, guardians, spies, sparring-partners,
+    domain-experts, project managers — grows only on exposed need.
+    Item 16 CLOSED. ANCHOR = item 17 (expanded to a six-cluster
+    sub-walk per the boss; anchor = cluster 1, communications).
 17. Operational backlogs (capture-only) — open.
 
 ## Related working note
