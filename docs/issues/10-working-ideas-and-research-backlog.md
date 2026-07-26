@@ -376,37 +376,21 @@ GHIs:
 
 ## Status, monitoring, and introspection backlog
 
-Investigate supported session/runtime state before building a monitoring system.
-The old notes specifically mention `~/.claude/sessions/<pid>.json` and possible
-values such as `idle`, `busy`, `shell`, and `waiting`; these are hypotheses to
-verify against the current runtime, not a stable contract.
+DISPERSED 2026-07-25 (walk item 17 cluster 2, boss-ruled; doc-only capture
+retired — docs are not attention surfaces, task-shaped items get GHIs):
 
-Possible work:
-
-- Determine whether recaps are customizable.
-- Evaluate small agent-introspection tools.
-- Document the required JSONL subset and its instability.
-- Prefer supported session APIs or a versioned adapter over raw JSONL when
-  practical.
-- Decide whether a denoised introspection artifact is easier to back up and use
-  than raw logs.
-- Answer the smallest operational question first: **Which agent needs
-  attention, and why?**
-- Potentially show:
-  - Busy or idle
-  - Current task
-  - Time on task
-  - Waiting or interrupted state
-  - Cost and duration of the last turn
-  - Current walkthrough position
-- Investigate why agents sometimes announce an action, become idle, and need a
-  second wake.
-- Use a controlled test project to tune monitoring behavior.
-- Treat idle time as a possible opportunity for safe repository catch-up, not
-  an unconditional instruction to mutate git state.
-
-Do not begin with a large dashboard. Add data only when it supports a real
-operator decision.
+- The spy's design inputs (versioned-adapter session reading; the operator
+  question "which agent needs attention, and why"; candidate status fields;
+  the no-large-dashboard principle) and the idle-time-as-safe-catch-up
+  direction → recorded on
+  [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26).
+- The announce-then-idle second-wake investigation and the
+  verify-supported-session-state-first step → recorded on
+  [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27).
+- The research bundle (recaps customizable; small introspection tools;
+  denoised artifact vs raw logs; controlled-test-project tuning method;
+  task-list visibility for the boss) →
+  [nedschorus#28](https://github.com/nedschorus/nedschorus/issues/28) (new).
 
 ## Claude and Codex runtime research
 

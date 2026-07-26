@@ -466,9 +466,18 @@ Outer walk, 17 items:
     API-vs-MCP + addressing levels → sentence on nedschorus#1 + bridge
     spec § Open; console-insertion + stuck/waiting detection → NEW
     nedschorus#27. Pair-#10 § Communications rewritten as the dispersal
-    record. ANCHOR = cluster 2 (status and monitoring); clusters 3–6
-    open (runtime research; git/GitHub/review; wiki and memory;
-    execution models).
+    record. Cluster 2 (status and monitoring) processed
+    2026-07-25 → boss META-RULING captured to the artifact-lifecycle rule:
+    a committed doc is NOT an attention surface; task-shaped items get
+    GHIs even when small (lean bundles fine); agent task lists are
+    boss-invisible until a review method exists. Dispositions: spy design
+    inputs + idle-catch-up direction → #26 sentence; second-wake
+    investigation + session-state verification → #27 sentence; research
+    bundle (recaps, introspection tools, denoised artifacts, test-project
+    method, task-list visibility) → NEW nedschorus#28. Pair-#10 § monitoring
+    rewritten as dispersal record. ANCHOR = cluster 3 (runtime research);
+    clusters 4–6 open (git/GitHub/review; wiki and memory; execution
+    models).
 
 ## Related working note
 
