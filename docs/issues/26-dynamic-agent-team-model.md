@@ -35,6 +35,7 @@ A cross-runtime pair (Claude + Codex) that alternates between cooperation and co
 - **The spot-check refinement:** confident narration can be false, so observers have the *ability* to pull a specific file or tool result on demand when a claim is load-bearing. Default: the filtered river. On suspicion: ground truth.
 - The spy's two tunables — miss rate and spam rate — get the same trigger/anti-trigger eval discipline as skills ([nedschorus#23](https://github.com/nedschorus/nedschorus/issues/23)).
 - Spies could run as long-lived subagents of the primary to ease communication between primary and helpers — a mechanics option, undecided.
+- **The observer's stance (boss-ruled 2026-07-25) — the injection/poisoning mitigation:** the observer (spy or domain expert) is primed in its own CLAUDE.md that the watched agent is **untrustworthy, blind to its own faults, and holds only rudimentary knowledge of the observer's domain**. Domain experts are guardians of their domain — not adversarial, but hyper-aware, taught to be bullshit detectors: a generalist does not get away with confident nonsense inside the expert's field. And the pair's contexts stay **loosely entangled** — do not intertwine observer and observed for long stretches before flushing contexts, so the observer never marinates in the watched agent's narrative long enough to be captured by it. (Humans fall to exactly this — dazzle-by-confident-BS is not an LLM-specific failure.)
 
 ## Naming (ruled and candidate)
 
@@ -46,7 +47,7 @@ A cross-runtime pair (Claude + Codex) that alternates between cooperation and co
 
 Two deliberately independent legs, commissioned 2026-07-25, on multi-agent LLM team architectures that measurably beat a single agent (named patterns, numbers-bearing evidence, correlated-error data, oversight architectures, honest framework evals; the umbrella concept's term of art — likely "collective intelligence"):
 
-- CDX leg: cvp work order, postal `1696104:39`.
+- CDX leg: cvp work order, postal `1696104:39` — LANDED 2026-07-25 as [`nc-queue/2026-07-25-multi-agent-team-research-cdx-leg.md`](../../nc-queue/2026-07-25-multi-agent-team-research-cdx-leg.md) (cvp reply 1649465:2).
 - Claude leg: an independent deep-research run — LANDED 2026-07-25 as [`nc-queue/2026-07-25-multi-agent-team-research-claude-leg.md`](../../nc-queue/2026-07-25-multi-agent-team-research-claude-leg.md); comparison and model amendment wait for the CDX leg.
 
 Reports land as `nc-queue/` notes; comparing them is itself a live trial of the sparring-pair pattern. The boss's prior: published evidence is demo-heavy and thin — the legs confirm or refute.
