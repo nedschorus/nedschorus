@@ -432,7 +432,20 @@ Outer walk, 17 items:
     founding plan, gatekeeper spec, nc-queue README, package-review doc.
     CLOSED 2026-07-25: spec read and first task confirmed.
     ANCHOR = item 16.
-16. Agent organization / lifecycle roles (capture-only) — open.
+16. Agent organization / lifecycle roles — processed 2026-07-25 → the boss
+    REPLACED the captured org-chart possibility with the dynamic
+    agent-team model, designed live in-walk; captured as the MD-GHI pair
+    nedschorus#26 (docs/issues/26-dynamic-agent-team-model.md); pair-#10
+    § org structure superseded to a pointer. Core: context engineering as
+    the goal; every agent overseen all the time by differently-contexted
+    observers; three tiers (task-scoped workers / on-tap domain experts
+    with active-idle-exited lifecycle / skills + one-shot subagents);
+    lifecycle roles are SKILLS not agents; sparring pairs (ruled name) —
+    cross-runtime driver/navigator cooperation + N-version competition
+    with phase-boundary reconciliation on hard tasks; spy-triaged
+    filtered-intent-stream oversight with spot-check. Two research legs
+    commissioned (cvp 1696104:39 + independent Claude deep-research);
+    pair #26 amends on their arrival. ANCHOR = item 17.
 17. Operational backlogs (capture-only) — open.
 
 ## Related working note

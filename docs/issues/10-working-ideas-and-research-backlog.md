@@ -318,15 +318,12 @@ These roles describe kinds of work, not necessarily permanent agents:
 
 ### Possible organizational structure
 
-- Boss or consigliere
-- Head of product reporting to the boss
-- Leads for project management, engineering, QA, documentation, UX,
-  operations, and sustainability/maintenance
-- Cross-cutting masters or specialists for wiki/documentation, DevOps,
-  git/GitHub, communications, Claude, Codex, operating systems, research, and
-  general systems
-
-This model is a captured possibility, not an endorsed hierarchy.
+SUPERSEDED 2026-07-25 (walk item 16): the boss replaced the org-chart
+possibility formerly listed here with the dynamic agent-team model —
+task-scoped workers, on-tap domain-knowledge agents, sparring pairs,
+spy-triaged oversight, PM agents as the boss's interface. Substance and
+state: [pair #26](26-dynamic-agent-team-model.md)
+(https://github.com/nedschorus/nedschorus/issues/26).
 
 ### Questions to resolve only when needed
 
