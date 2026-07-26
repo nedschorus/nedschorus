@@ -350,24 +350,29 @@ responsibility for disposition and admission.
 
 ## Communications backlog
 
-- Minimize unnecessary console communication without removing required
-  context.
-- Determine which communications should use a supported API rather than MCP.
-- Preserve both agent-level and task-level addressing where both are useful.
-- Maintain a concise, current communications-fix plan.
-- Decide how Ned should be notified about genuinely important events:
-  - Popup
-  - Temporary Markdown artifact
-  - Direct message
-  - Another mechanism
-- Evaluate a safe function for inserting text into the correct console.
-- Detect interruptions and waiting states that require intervention.
-- Make walkthrough decisions durable as they occur.
-- Make end-of-turn messages self-contained.
-- Avoid bare issue numbers, bare filenames, and unexplained references.
-- Give recommendations enough context to remain understandable later.
-- Avoid fake choices when only one option is credible.
-- When reviewing designs, explain material subtleties completely.
+DISPERSED 2026-07-25 (walk item 17 cluster 1, boss-ruled). Five entries were
+already landed doctrine and are recorded as such: durable walkthrough
+decisions (the walk-ledger rule), self-contained end-of-turn messages and
+contextful recommendations (the zero-context-reader rule), no bare
+issue-numbers/filenames/references (clickable handles), no fake choices
+(the menu-ban), and explain-material-subtleties-completely in design
+reviews. One entry cut as superseded: "maintain a concise, current
+communications-fix plan" (a standing fix-plan document is the stateless-pile
+class the artifact-lifecycle rule retired). The four open decisions moved to
+GHIs:
+
+- Boss-notification mechanism (popup / markdown artifact / direct message /
+  other) → rides the spy design on
+  [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26).
+- API-vs-MCP per communication type, and agent-level vs task-level
+  addressing → bridge-design inputs on
+  [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1) +
+  comms-bridge-spec § Open.
+- Safe console text-insertion + stuck/waiting-state detection →
+  [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27) (new).
+- "Minimize unnecessary console communication without removing required
+  context" stays here as standing direction (it is a writing discipline, not
+  a decision).
 
 ## Status, monitoring, and introspection backlog
 

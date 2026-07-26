@@ -457,7 +457,18 @@ Outer walk, 17 items:
     domain-experts, project managers — grows only on exposed need.
     Item 16 CLOSED. ANCHOR = item 17 (expanded to a six-cluster
     sub-walk per the boss; anchor = cluster 1, communications).
-17. Operational backlogs (capture-only) — open.
+17. Operational backlogs — expanded 2026-07-25 into a six-cluster sub-walk
+    (boss: the condensed form said too little). Cluster 1 (communications)
+    processed 2026-07-25 → five entries recognized as already-landed
+    doctrine; the communications-fix-plan entry CUT as superseded
+    (stateless-pile class); boss ruled the four open decisions ALL capture
+    to GHIs: notification mechanism → sentence on nedschorus#26;
+    API-vs-MCP + addressing levels → sentence on nedschorus#1 + bridge
+    spec § Open; console-insertion + stuck/waiting detection → NEW
+    nedschorus#27. Pair-#10 § Communications rewritten as the dispersal
+    record. ANCHOR = cluster 2 (status and monitoring); clusters 3–6
+    open (runtime research; git/GitHub/review; wiki and memory;
+    execution models).
 
 ## Related working note
 

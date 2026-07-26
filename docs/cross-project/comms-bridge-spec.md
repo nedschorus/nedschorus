@@ -33,3 +33,4 @@ The old system's postal stack (server, dispatcher, delivery lifecycle, wake mech
 
 1. Handoff-time snapshots: whether writing a handoff copies the live logs into the committed record (active logs stay out of git regardless; the boss raised capture-at-handoff-creation as the candidate). Archival value only after the S4 ruling — durability no longer needs it.
 2. The Monitor-armed idle-wake rider (each side arming a filesystem watch to shorten pull latency) — unruled; it is automation the ladder has not admitted.
+3. Comms-backlog inputs (pair #10 dispersal, walk item 17 cluster 1, boss-ruled 2026-07-25): decide per communication type whether a supported API or MCP carries it; preserve both agent-level and task-level addressing where each is useful (tracked on [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1)).
