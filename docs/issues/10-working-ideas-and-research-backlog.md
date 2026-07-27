@@ -424,6 +424,11 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   presupposes a review system and defers to the gate-a-class trigger.
   Nothing filed.
 - Investigate repeated postal injection when the sender is not reply-capable.
+  — processed 2026-07-27 → sentence on
+  [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1): the
+  bridge design must give every message a recipient-reachable terminal
+  state even when the sender is reply-incapable; the legacy repeated
+  injection is the motivating defect.
 - Prefer an existing supported communications API where the work is already
   tracked.
 
