@@ -391,6 +391,10 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   within one phase the one-coherent-change-set rule governs, and a code
   change's coherent set includes the tests that pin it. No new capture.
 - Define the phases of review and the evidence each phase supplies.
+  — processed 2026-07-27 → already ruled (item 15 simplicity cut): no
+  review-evidence machinery until the boss gates an artifact class; the
+  gatekeeper spec's cut table carries the row and its grow-back trigger.
+  Nothing filed.
 - Determine how GitHub Actions-based review with Codex actually behaves.
 - Build or adopt a GitHub-issue tool only if it can inspect issues, return
   structured data, and fit the admitting-agent model.
