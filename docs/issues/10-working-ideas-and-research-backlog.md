@@ -396,6 +396,11 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   gatekeeper spec's cut table carries the row and its grow-back trigger.
   Nothing filed.
 - Determine how GitHub Actions-based review with Codex actually behaves.
+  — processed 2026-07-27 → CUT: its only consumer is a review system, which
+  NC defers until the boss gates an artifact class (the item-15 grow-back
+  trigger). The question re-arises with that trigger; the legacy mechanism's
+  behavior stays recoverable from its workflow files and wiki in git
+  history. Nothing filed.
 - Build or adopt a GitHub-issue tool only if it can inspect issues, return
   structured data, and fit the admitting-agent model.
 - Remember that review trailers may not appear in `gh pr view --json reviews`.
