@@ -384,6 +384,12 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   check-in (NC has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked
   in together.
+  — processed 2026-07-27 → answered by boss ruling: the premise is
+  unrealistic — a lifecycle's artifacts arrive at different phases and are
+  never bundled. Artifacts check in when produced
+  ([nedschorus#25](https://github.com/nedschorus/nedschorus/issues/25));
+  within one phase the one-coherent-change-set rule governs, and a code
+  change's coherent set includes the tests that pin it. No new capture.
 - Define the phases of review and the evidence each phase supplies.
 - Determine how GitHub Actions-based review with Codex actually behaves.
 - Build or adopt a GitHub-issue tool only if it can inspect issues, return
