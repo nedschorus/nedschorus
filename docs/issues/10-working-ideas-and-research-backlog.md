@@ -394,31 +394,26 @@ retired — docs are not attention surfaces, task-shaped items get GHIs):
 
 ## Claude and Codex runtime research
 
-These items require sharper definitions before research begins:
+DISPERSED 2026-07-26 (walk item 17 cluster 3, boss-ruled):
 
-- **Claude demotion and "why 10":** identify what demotion means, what value is
-  10, where the claim originated, and which decision depends on it.
-- **Bad-words list:** separately trace the production source and test whether a
-  harmless fixture change is observed without restart.
-- **Instruction compression:** experiment with smaller `CLAUDE.md`, `AGENTS.md`,
-  and wiki files while measuring whether fresh-agent behavior loses essential
-  rules. Fewer words alone is not success.
-- Review runtime instruction files for conflict with system-level instructions
-  and actual precedence.
-- Grep broadly before inventing names; use a more explicit name when collisions
-  or ambiguity exist.
-- Consider a small reviewer for conflicting or ambiguous names and context.
-- Investigate output styles:
-  - Whether they can be assigned per agent
-  - Whether they materially change action-taking
-  - Which visible and hidden instructions they add
-- Investigate clearing context and resuming from earlier turns.
-- If backward resumption can lose already-consumed messages, determine how to
-  recover the relevant evidence from transcript or durable handoff.
-- Scrub instruction files deliberately rather than repeatedly squeezing them.
-- Evaluate a dedicated memory maintenance program or API.
-- Let durable memory entries point to exact wiki pages when that improves
-  retrieval.
+- Nine research entries — instruction-compression experiments (fresh-agent
+  behavior is the measure; feeds the step-2 `CLAUDE.md` rewrite), the
+  deliberate-scrub-not-repeated-squeeze method, instruction-file precedence
+  conflicts, the output-styles investigation (a worker-customization lever for
+  [pair #26](26-dynamic-agent-team-model.md)), context clearing and backward
+  resumption, recovery of messages lost to backward resumption, the small
+  conflicting-names reviewer candidate, memory-maintenance tooling, and
+  memory-entries-pointing-at-exact-wiki-pages — moved to the runtime-behavior
+  research bundle, [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29).
+- The bad-words entry's two unknowns (production source; fixture change
+  observed without restart) → appended to
+  [nedschorus#14](https://github.com/nedschorus/nedschorus/issues/14).
+- The grep-before-naming line rides the bundle to the step-2 `CLAUDE.md`
+  rewrite as a one-line write-time discipline (its explicit-name half is
+  already legacy doctrine; the grep-first half was written nowhere).
+- CUT (boss-ruled 2026-07-26): the "Claude demotion / why 10" entry — nobody,
+  the boss included, could say what it refers to. It returns only if it
+  resurfaces with a real trigger.
 
 ## Ways to run prompts in code
 
