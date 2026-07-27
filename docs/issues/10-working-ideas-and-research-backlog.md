@@ -403,6 +403,10 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   history. Nothing filed.
 - Build or adopt a GitHub-issue tool only if it can inspect issues, return
   structured data, and fit the admitting-agent model.
+  — processed 2026-07-27 → CUT: the admitting-agent model is retired
+  (item-15 gatekeeper ruling), no such tool is proposed, `gh` already
+  returns structured JSON, and adopt-on-demonstrated-need is standing
+  simplicity doctrine. Nothing filed.
 - Remember that review trailers may not appear in `gh pr view --json reviews`.
 - Use the repository's real review-status mechanism or inspect pinned review
   comments.
