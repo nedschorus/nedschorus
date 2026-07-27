@@ -377,6 +377,16 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 ## Git, GitHub, and review backlog
 
+DISPERSED 2026-07-27 (walk item 17 cluster 4, boss-ruled per entry; marks in
+place below). Net result: two sentences captured (the one-coherent-change-set
+workflow rule on [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3);
+the reply-incapable-sender terminal-state requirement on
+[nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1)); one entry
+answered directly by ruling (check-in composition — lifecycle bundling is
+unrealistic); three recognized as already ruled or landed; four cut. The
+recurring deferral trigger across this cluster: review machinery questions
+wake when the boss gates an artifact class (the item-15 grow-back trigger).
+
 - Keep PRs atomic and independently mergeable.
   — processed 2026-07-27 → sentence on
   [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3): the
@@ -431,6 +441,8 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   injection is the motivating defect.
 - Prefer an existing supported communications API where the work is already
   tracked.
+  — processed 2026-07-27 → CUT (boss-ruled): a truism — all it says is "if
+  it ain't broke don't fix it"; not a useful design input. Nothing filed.
 
 ## Wiki and memory backlog
 

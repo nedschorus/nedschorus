@@ -498,7 +498,26 @@ Outer walk, 17 items:
     (shrinks cluster 6); § Durable Markdown updated to the ruled
     artifact-lifecycle state (draft label, queue directories, provenance =
     commit history / issue footer, gatekeeper-not-admitting-agent).
-    ANCHOR = cluster 4 (git/GitHub/review); cluster 5 open (wiki and
+    Cluster 4 (git/GitHub/review) processed 2026-07-27, walked per-entry
+    at the boss's direction (ten entries, each ruled individually): two
+    sentences captured (one-coherent-change-set-per-check-in →
+    [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3);
+    reply-incapable-sender terminal-state requirement →
+    [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1));
+    check-in composition ANSWERED by boss ruling (lifecycle bundling is
+    unrealistic — artifacts land when produced per nedschorus#25, a
+    coherent change set carries its tests); three entries recognized as
+    already ruled or landed (review phases = item-15 cut; trailer
+    invisibility; real-review-status mechanism); four CUT (GitHub-Actions
+    Codex-review research — re-arises at gate-a-class; the
+    GitHub-issue-tool guard — admitting-agent model retired; mutual-review
+    routing — legacy defect already captured; the supported-API preference
+    — boss: a truism). MID-CLUSTER, boss-directed: nedlern#1972 moved to
+    [nedschorus#30](https://github.com/nedschorus/nedschorus/issues/30)
+    (close-onto-pointer; design + scan carried; scan later marked PENDING
+    boss review under his nothing-enters-NC-without-my-review ruling —
+    it crossed on agent judgment beyond his named scope, escalated by
+    wiki, provenance header corrected). ANCHOR = cluster 5 (wiki and
     memory); cluster 6 open, reduced (execution models).
 
 ## Related working note
