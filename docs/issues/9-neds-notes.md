@@ -533,10 +533,16 @@ Outer walk, 17 items:
     did); two landed (artifact-lifecycle promote path; no-junk-drawer
     machinery); one already dispersed ([nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
     item 9); two cut (wiki-to-skill linking → step-3 wiki walk;
-    org-vs-artifact distinction → structural). ANCHOR = cluster 6
-    (execution models, reduced: its two bad-summary sections were removed
-    by the 2026-07-26 boss scrub, so what remains for the cluster is
-    confirming closure and closing item 17 with it).
+    org-vs-artifact distinction → structural). Cluster 6 (execution models) processed 2026-07-27 → both source
+    sections ("Ways to run prompts in code"; "Turn and hook order to
+    verify") were already removed by the boss's 2026-07-26 scrub as bad
+    summaries; closure confirmed with nothing left to walk. **ITEM 17
+    CLOSED. THE OUTER WALK IS COMPLETE — all 17 items carry processed
+    marks.** What pair #10 retains after the walk, deliberately: the four
+    draft sections plus the reusable-specification pattern (draft status,
+    awaiting review under the boss's nothing-enters-NC-without-my-review
+    ruling) and the graded research/source notes; every backlog section
+    is a dispersal record.
 
 ## Related working note
 
