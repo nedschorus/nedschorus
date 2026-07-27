@@ -453,6 +453,19 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
 
 ## Wiki and memory backlog
 
+DISPERSED 2026-07-27 (walk item 17 cluster 5, boss-ruled per entry; marks in
+place below). Net result: the boss's two-concern frame (placement rules +
+the many-parts overview rule) written into § Draft document and directory
+structure with four duplicate bullets folded there; the steward ideal to
+[nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26) as a
+candidate domain-expert duty; the scrub-duty enumeration to
+[nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2); two
+entries recognized as landed (the artifact-lifecycle promote path; the
+no-junk-drawer disposal machinery); one already dispersed (memory-to-page
+pointing, [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
+item 9); two cut (wiki-to-skill linking — re-arises at the step-3 wiki
+walk; the org-vs-artifact-rules distinction — enforced structurally).
+
 - Move durable, current design material into the wiki at the proper lifecycle
   transition.
   — processed 2026-07-27 → landed: the artifact-lifecycle rule's promote
@@ -499,6 +512,10 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   specs that name the scrub, so the set is explicit in the built skill.
 - Decide whether a memory should point to one general page or a specific system
   page based on retrieval usefulness.
+  — processed 2026-07-27 → already dispersed: subsumed by
+  [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
+  item 9 (memory-entries-point-at-exact-wiki-pages research), which
+  measures exactly this general-vs-specific question. Nothing filed.
 
 ## Research and source notes
 

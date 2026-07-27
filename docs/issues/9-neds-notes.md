@@ -517,8 +517,26 @@ Outer walk, 17 items:
     (close-onto-pointer; design + scan carried; scan later marked PENDING
     boss review under his nothing-enters-NC-without-my-review ruling —
     it crossed on agent judgment beyond his named scope, escalated by
-    wiki, provenance header corrected). ANCHOR = cluster 5 (wiki and
-    memory); cluster 6 open, reduced (execution models).
+    wiki, provenance header corrected). Cluster 5 (wiki and memory) processed 2026-07-27, walked per-entry
+    (ten entries as seven items): the boss's two-concern frame ruled and
+    written into pair #10 § Draft document and directory structure —
+    placement rules + the many-parts overview rule, his sentence
+    verbatim: "A system with many parts needs one current overview that
+    links them together — its code, its MDs (design, test plan), its
+    GHIs, and its tests" — with four duplicate overview bullets folded
+    there; steward ideal → [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26)
+    (candidate domain-expert duty: overview currency, never exclusive
+    control); scrub-duty enumeration → [nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2)
+    (the build enumerates task/memory disposal, queue-depth reporting,
+    nc-queue expiry, trailer-absence audit — surfaced by the boss's
+    question whether any one artifact collects maintenance duties; none
+    did); two landed (artifact-lifecycle promote path; no-junk-drawer
+    machinery); one already dispersed ([nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
+    item 9); two cut (wiki-to-skill linking → step-3 wiki walk;
+    org-vs-artifact distinction → structural). ANCHOR = cluster 6
+    (execution models, reduced: its two bad-summary sections were removed
+    by the 2026-07-26 boss scrub, so what remains for the cluster is
+    confirming closure and closing item 17 with it).
 
 ## Related working note
 
