@@ -454,6 +454,10 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   review ruling and the step-3 wiki walk. Nothing filed.
 - Link wiki pages to associated skill definitions when that relationship is
   useful.
+  — processed 2026-07-27 → CUT: a page-linking standard for a wiki that
+  barely exists; re-arises at the step-3 wiki walk where NC page standards
+  get set under the boss's review (legacy precedent: implementation-
+  reference tables). Nothing filed.
 - Maintain an architecture overview.
 - Give every major system a useful overview, including any agent-organization
   system that actually exists.
