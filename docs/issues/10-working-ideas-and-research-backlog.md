@@ -492,6 +492,11 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   their artifact class). Nothing filed.
 - Review and dispose of accumulated tasks and memories instead of allowing a
   permanent junk drawer.
+  — processed 2026-07-27 → landed (artifact-lifecycle no-stateless-piles +
+  the handoff scrub step), PLUS a sentence on
+  [nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2): the
+  scrub-step build enumerates its standing maintenance duties from the
+  specs that name the scrub, so the set is explicit in the built skill.
 - Decide whether a memory should point to one general page or a specific system
   page based on retrieval usefulness.
 
