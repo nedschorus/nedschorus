@@ -448,6 +448,10 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
 
 - Move durable, current design material into the wiki at the proper lifecycle
   transition.
+  — processed 2026-07-27 → landed: the artifact-lifecycle rule's promote
+  path (wiki-bound doctrine queues in docs/wiki/queue/; the drain's
+  git-mv promote IS the transition), with entry gated by the boss's
+  review ruling and the step-3 wiki walk. Nothing filed.
 - Link wiki pages to associated skill definitions when that relationship is
   useful.
 - Maintain an architecture overview.
