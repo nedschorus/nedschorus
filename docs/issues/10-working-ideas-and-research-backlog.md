@@ -486,6 +486,10 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   — processed 2026-07-27 → folded (see the mark on the first overview
   bullet above).
 - Distinguish organizational rules from artifact-specific rules.
+  — processed 2026-07-27 → CUT: a classification instruction with no
+  consumer; the distinction is enforced structurally by where rules live
+  (org design in pair #26 and the founding plan; artifact rules with
+  their artifact class). Nothing filed.
 - Review and dispose of accumulated tasks and memories instead of allowing a
   permanent junk drawer.
 - Decide whether a memory should point to one general page or a specific system
