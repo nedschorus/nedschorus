@@ -1,8 +1,11 @@
 > **Carried from nedlern 2026-07-27** (boss-directed, part of the nedlern
 > decommissioning): original path `docs/working/trigger-first-instruction-delivery-design.md`
 > at nedlern main. Pair: [nedschorus#30](https://github.com/nedschorus/nedschorus/issues/30).
-> The companion 348-line CLAUDE.md scan is carried alongside as
-> [30-trigger-first-claude-md-scan-first-pass.md](30-trigger-first-claude-md-scan-first-pass.md).
+> The companion 348-line CLAUDE.md scan was carried alongside and then
+> STRUCK by boss ruling 2026-07-27 (it crossed on agent judgment beyond his
+> named scope; its per-row verdicts judge nedlern content under nedlern
+> enforcement and do not port — only the method may, at step 2). It remains
+> at nedlern main: `docs/working/trigger-first-instruction-delivery-scan-first-pass.md`.
 > The other sibling files this document links (thoughts, cold-review,
 > hook-spam-audit, restructure-synthesis) were NOT carried — the boss ruled
 > them notes and speculative design for a pruned mechanism; those relative
