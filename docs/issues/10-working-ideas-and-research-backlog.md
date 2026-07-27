@@ -408,6 +408,10 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   returns structured JSON, and adopt-on-demonstrated-need is standing
   simplicity doctrine. Nothing filed.
 - Remember that review trailers may not appear in `gh pr view --json reviews`.
+  — processed 2026-07-27 → landed legacy doctrine (trailer mechanics + the
+  review-status tooling exist because of it); moot for NC until the
+  gate-a-class trigger, where the lesson rides the legacy documentation.
+  Nothing filed.
 - Use the repository's real review-status mechanism or inspect pinned review
   comments.
 - Review the design and behavior of automatic mutual-review routing.
