@@ -1,10 +1,21 @@
-> **Carried from nedlern 2026-07-27** (boss-directed, part of the nedlern
-> decommissioning): original path `docs/working/trigger-first-instruction-delivery-scan-first-pass.md`
+> **Carried from nedlern 2026-07-27; PENDING THE BOSS'S REVIEW — not landed
+> content.** Original path `docs/working/trigger-first-instruction-delivery-scan-first-pass.md`
 > at nedlern main. Pair: [nedschorus#30](https://github.com/nedschorus/nedschorus/issues/30).
-> This is the empirical artifact of the set: every legacy CLAUDE.md line
-> classified against actual enforcement (39 trigger-candidate / 21 kernel /
-> 7 borderline). The 21 kernel rows are the "what must be always-loaded"
-> analysis that NC's step-2 CLAUDE.md design consumes.
+> Provenance, corrected 2026-07-27 (same session): this file crossed on
+> AGENT JUDGMENT (wiki recommended, new-vp executed), beyond the boss's
+> named scope — he directed moving "1972 and its MD file," which is the
+> design document, and never named this scan. An earlier version of this
+> note said "boss-directed," which was false for this file. Under his
+> nothing-enters-nedschorus-without-my-review ruling it awaits his review;
+> he may strike it.
+> Porting caveat (wiki, 2026-07-27): every row below is classified against
+> NEDLERN's enforcement inventory (its 73-line CLAUDE.md, its hooks, its
+> rules files), so the per-row verdicts (39 trigger-candidate / 21 kernel /
+> 7 borderline) do NOT port to NC, whose content and enforcement differ.
+> What may port is the METHOD, plus reasoning on individual rows whose
+> underlying rule survives — using it is a re-derivation, not a skim.
+> Links to sibling files that were not carried (e.g. the thoughts file
+> named as "prompt of record") are dead here by design.
 
 # CLAUDE.md trigger-point scan
 
