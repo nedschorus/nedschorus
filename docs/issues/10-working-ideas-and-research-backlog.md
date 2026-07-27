@@ -414,6 +414,9 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   Nothing filed.
 - Use the repository's real review-status mechanism or inspect pinned review
   comments.
+  — processed 2026-07-27 → landed legacy doctrine (the interim control:
+  measure with the merge gate, never a proxy); moot for NC until the
+  gate-a-class trigger. Nothing filed.
 - Review the design and behavior of automatic mutual-review routing.
 - Investigate repeated postal injection when the sender is not reply-capable.
 - Prefer an existing supported communications API where the work is already
