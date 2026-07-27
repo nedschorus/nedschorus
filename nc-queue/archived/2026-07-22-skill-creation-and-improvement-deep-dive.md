@@ -1,3 +1,10 @@
+---
+processed: 2026-07-24
+walk-item: outer item 11 (skill-creator review)
+dispositions: [docs/wiki/queue/skill-authoring-checklist.md (distillation), founding-plan step-1 pointer, pointers on nedschorus#15-#23]
+dropped-by: new-vp (archived 2026-07-27 by the queue audit; outputs verified before the move)
+---
+
 # Skill creation and improvement for NC — extraction proposal from the skill-creator read
 
 Queued for the walk (slots into the outer backlog walk as its own item, after the nine candidate skills). Sources: the full read of Anthropic's `skill-creator` plugin (21 files, 5,464 lines, fetched 2026-07-22; local copies in the session scratchpad), pair #9's shortlist and principles, pair #10's candidate rules, and today's boss rulings (boss-facing vs agent-facing split; iterate-in-use for supervised behavior).

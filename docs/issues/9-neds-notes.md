@@ -102,7 +102,7 @@ rule (a ruling that changes later items revises the remaining walk and reports
 the changed count or sequence) — legacy PR link to be edited in here when it
 opens. The six scenario tests above are deferred to the NC step-1 walk-me
 build, judged per the agent-facing test doctrine in
-`nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
+`nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
 Recorded by edit per the same-day revision convention (revise the artifact,
 never stack additive records); nedschorus#12 was opened for this deferral and
 closed as consolidated here.

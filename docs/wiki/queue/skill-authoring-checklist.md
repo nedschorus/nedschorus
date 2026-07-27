@@ -1,6 +1,6 @@
 # Skill authoring checklist
 
-Consult this whenever a NedsChorus skill is created or revised. Distilled 2026-07-24 (outer walk item 11, boss-approved) from the read-for-ideas-only extraction of Anthropic's skill-creator; full evidence in `nc-queue/2026-07-22-skill-creation-and-improvement-deep-dive.md` and the cops delta packet §11. Every skill-build GHI points here; the founding plan's step 1 builds against this list.
+Consult this whenever a NedsChorus skill is created or revised. Distilled 2026-07-24 (outer walk item 11, boss-approved) from the read-for-ideas-only extraction of Anthropic's skill-creator; full evidence in `nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` and the cops delta packet §11. Every skill-build GHI points here; the founding plan's step 1 builds against this list.
 
 ## Four questions before writing anything
 

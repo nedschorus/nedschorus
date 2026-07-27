@@ -1,3 +1,10 @@
+---
+processed: 2026-07-25
+walk-item: outer item 16 circle-back (agent-team model reconciliation)
+dispositions: [pair #26 amendments (same reconciliation), nedschorus#26]
+dropped-by: new-vp (archived 2026-07-27 by the queue audit; outputs verified before the move)
+---
+
 # Multi-Agent LLM Team Architectures That Measurably Beat a Single Strong Agent — Evidence Review
 
 **Author:** Claude deep-research leg

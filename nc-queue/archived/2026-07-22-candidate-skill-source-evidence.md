@@ -1,3 +1,10 @@
+---
+processed: 2026-07-24
+walk-item: outer items 2-10 (candidate-skills walk)
+dispositions: [nedschorus#15-#23 (one GHI per candidate skill, each citing this note's section)]
+dropped-by: new-vp (archived 2026-07-27 by the queue audit; outputs verified before the move)
+---
+
 # Candidate-skill source evidence — walk input for outer items 2–10
 
 Produced during the boss's AFK window (2026-07-22 evening) by six parallel research agents commissioned by new-vp; every source named in pair #9's shortlist was read in full. Evidence caveats are stated per candidate: most sources were fetched raw/curl-verbatim; the two anthropic.com engineering articles were readable only through a fetch summarizer (quotes from them are high-confidence but not curl-confirmed). Raw agent reports live in the commissioning session only; this note is the durable extract and the walk input. Recommendations are new-vp positions, un-ruled.

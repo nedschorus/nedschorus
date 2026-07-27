@@ -54,8 +54,8 @@ Mapping notes: the **git-gatekeeper is deliberately a program, not a team member
 
 Two deliberately independent legs, commissioned 2026-07-25, on multi-agent LLM team architectures that measurably beat a single agent (named patterns, numbers-bearing evidence, correlated-error data, oversight architectures, honest framework evals; the umbrella concept's term of art — likely "collective intelligence"):
 
-- CDX leg: cvp work order, postal `1696104:39` — LANDED 2026-07-25 as [`nc-queue/2026-07-25-multi-agent-team-research-cdx-leg.md`](../../nc-queue/2026-07-25-multi-agent-team-research-cdx-leg.md) (cvp reply 1649465:2).
-- Claude leg: an independent deep-research run — LANDED 2026-07-25 as [`nc-queue/2026-07-25-multi-agent-team-research-claude-leg.md`](../../nc-queue/2026-07-25-multi-agent-team-research-claude-leg.md); comparison and model amendment wait for the CDX leg.
+- CDX leg: cvp work order, postal `1696104:39` — LANDED 2026-07-25 as [`nc-queue/archived/2026-07-25-multi-agent-team-research-cdx-leg.md`](../../nc-queue/archived/2026-07-25-multi-agent-team-research-cdx-leg.md) (cvp reply 1649465:2).
+- Claude leg: an independent deep-research run — LANDED 2026-07-25 as [`nc-queue/archived/2026-07-25-multi-agent-team-research-claude-leg.md`](../../nc-queue/archived/2026-07-25-multi-agent-team-research-claude-leg.md); comparison and model amendment wait for the CDX leg.
 
 Reports land as `nc-queue/` notes; comparing them is itself a live trial of the sparring-pair pattern. The boss's prior: published evidence is demo-heavy and thin — the legs confirm or refute.
 

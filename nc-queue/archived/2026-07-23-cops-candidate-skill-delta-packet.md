@@ -1,3 +1,10 @@
+---
+processed: 2026-07-24
+walk-item: outer items 2-11 (walk input alongside the source-evidence note)
+dispositions: [nedschorus#15-#23, skill-authoring-checklist description refinements (its four)]
+dropped-by: new-vp (archived 2026-07-27 by the queue audit; outputs verified before the move)
+---
+
 # Cops Candidate-Skill Delta Packet
 
 **Source of record:** `/Users/el/Projects/nedlern-sonnet/cops/tasks/sessions/cops-nedschorus-reproducible-engineering-skills-research-2026-07-22.md`,
