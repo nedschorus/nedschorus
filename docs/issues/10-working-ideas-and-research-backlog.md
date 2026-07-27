@@ -378,6 +378,10 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
 ## Git, GitHub, and review backlog
 
 - Keep PRs atomic and independently mergeable.
+  — processed 2026-07-27 → sentence on
+  [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3): the
+  gatekeeper's CLAUDE.md workflow lines teach one coherent change set per
+  check-in (NC has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked
   in together.
 - Define the phases of review and the evidence each phase supplies.
