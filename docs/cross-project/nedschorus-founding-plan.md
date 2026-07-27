@@ -79,7 +79,18 @@ Five committed homes plus the shared place — no `docs/working/` ever exists:
 3. Step 5's dissolution into CLAUDE.md + the founding handoff.
 4. RESOLVED 2026-07-22 (number kept for reference stability): the bridge spec's re-derivation completed 2026-07-21 and the package review walked it end to end (item 8, all six hardenings adopted and folded); its two open questions (handoff-time log snapshots; the Monitor idle-wake rider) live in the spec's own Open section.
 5. SUBSTANTIALLY RESOLVED 2026-07-24 (number kept for reference stability) by the artifact-lifecycle rule (§ Project organization): doctrine-bound artifacts are gated by queue membership — wiki-bound doctrine, pair-bound MDs, and `draft`-labeled issues promote only through the boss's drain. The residual half stays open in [git-gatekeeper-design.md](git-gatekeeper-design.md) § Open: whether any artifact class is gated on review evidence at check-in from day one (the gatekeeper's Gate-evidence growth point stays dormant until the boss designates one).
-6. The global `~/.claude/CLAUDE.md` edit before first boot (it currently points every session at the OLD system's CLAUDE.md — measured).
+6. RESOLVED 2026-07-27 (number kept for reference stability): the global
+   `~/.claude/CLAUDE.md` is now EMPTY (boss-directed, executed by new-vp the
+   same day). The unconditional pointer at the old system's CLAUDE.md — which
+   injected old-system doctrine into every project, nedschorus included — is
+   gone; the pointer was also redundant for the old system itself, whose
+   sessions load their checkout's own CLAUDE.md mechanically. Verified before
+   emptying: both old-system copies (canonical + the VP worktree) identical
+   to origin/main, so nothing was displaced into the global file. Residual,
+   step-2-owned: nedschorus has no CLAUDE.md of its own yet; a session
+   launched in the nedschorus directory today loads no project instructions.
+   Running sessions keep whatever they loaded until their next start or
+   clear — instruction files reload at those boundaries only.
 7. Wiki-walk scheduling (step 3) and first boot-test timing.
 8. RESOLVED 2026-07-24 (number kept for reference stability): boot set = the five founding skills only (step 1); none of the nine candidate skills ([nedschorus#15](https://github.com/nedschorus/nedschorus/issues/15)–[#23](https://github.com/nedschorus/nedschorus/issues/23)) joins at boot. Candidates join one at a time, when a real task exposes the missing decision the candidate encodes; first expected pull: `write-test-plan` ([nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18)) at the step-7 git-gatekeeper task.
 9. RESOLVED 2026-07-24 (number kept for reference stability): the rewrite policy is ruled — see § Standing decisions. Per-cherry-pick four-class feature classification (preserve-feature / update-feature / remove-feature / consider-feature), records in the slice plan or entry-manifest line, undecided features to `legacy-feature-queue/`, and unexamined is never preserved.
