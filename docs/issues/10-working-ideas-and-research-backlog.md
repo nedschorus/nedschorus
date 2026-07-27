@@ -20,7 +20,10 @@ original cleaned version remained in chat instead of being saved as a file.
 
 - **Decided** means Ned or the NedsChorus founding process has explicitly
   accepted the direction.
-- **Candidate** means the idea deserves evaluation but is not doctrine.
+- **Draft** means captured wording awaiting review and adoption; it is not
+  doctrine. (Relabeled from "candidate" by boss ruling 2026-07-26 — a
+  candidate is not a draft, and draft is the status word the artifact
+  lifecycle actually uses.)
 - **Research** means a bounded question still needs evidence.
 - **Reference** means the link may help answer a specific question; inclusion
   is not endorsement.
@@ -53,79 +56,62 @@ The governing approach is:
 
 ### Open source and publishing
 
-- Open-source NedsChorus.
-- Publish regularly, ideally daily when there is real material.
-- Use one strong canonical article and adapt it for multiple channels with
-  agent assistance.
-- Do not reduce publishing frequency merely because manual adaptation would be
-  expensive; improve the adaptation and review workflow instead.
-- The intended surfaces include:
-  - `nedschorus.com`
-  - Substack
-  - LinkedIn
-  - The project's own subreddit
-  - Appropriate programmer communities and social channels
-- The broad workflow is:
-  1. Write one canonical article.
-  2. Produce channel-appropriate versions.
-  3. Review each adaptation for accuracy, tone, and platform fit.
-  4. Publish broadly.
-  5. Record where each version appeared and what happened.
-- Possible future article or series title: **Toddlers with Machine Guns**.
+- Open-source NedsChorus (decided).
+- Publishing strategy, channels, and mechanics live in
+  [pair #4](4-open-source-publishing-community-strategy.md); this backlog no
+  longer duplicates them.
 
-The precise channel roles and proposed publishing mechanics are in the linked
-publishing strategy. This backlog preserves the underlying direction without
-making every channel or cadence an immediate implementation commitment.
+Scrubbed 2026-07-26 (boss-ruled): the marketing and self-promotion material
+formerly here — channel lists, adaptation workflow, article titles — removed
+as too speculative. Recoverable from git history.
 
 ### Durable Markdown and GitHub issues
 
-The founding work has resolved the original artifact-placement questions:
+The founding work has resolved the original artifact-placement questions. The
+authority is the founding plan § Project organization (the artifact-lifecycle
+rule); this is the summary, updated 2026-07-26 to the ruled state:
 
 - A request for a durable Markdown document creates an MD-GitHub-issue pair.
 - Working documents live at `docs/issues/<number>-<slug>.md`.
 - Permanent truth graduates to `docs/wiki/`.
 - Session continuity lives under `handoff/`.
 - Cross-project founding material lives under `docs/cross-project/`.
-- Markdown provenance belongs in git commit history.
-- GitHub-issue provenance belongs in the issue body or revision comments.
-- NedsChorus has one admitting agent controlling changes to the new repository.
+- Every artifact is either FINAL at its home or sitting in a NAMED QUEUE that
+  states its destination, and every queue drains by one four-outcome process
+  (promote / edit / demote / drop): `docs/wiki/queue/` for wiki-bound
+  doctrine, `docs/issues/queue/` for pair-bound documents, `nc-queue/` for
+  boss-requested notes awaiting their first walk, `legacy-feature-queue/` for
+  consider-features outliving their slice
+  ([nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24) tracks
+  the drain procedure).
+- Draft GitHub issues carry the **`draft` label** — the issue-world's queue
+  membership (renamed from `boss-review`, 2026-07-24).
+- Provenance: Markdown provenance lives in git commit history; GitHub-issue
+  provenance is a footer line in the body or a revision comment; frontmatter
+  fields exist only where a named consumer uses them.
+- Repository control is the git-gatekeeper program holding the one push
+  credential — every agent invokes it directly. The single-admitting-AGENT
+  concept is retired (walk item 15 ruling; the earlier line here saying "one
+  admitting agent" predated it).
 
 The original open questions about whether an artifact should be a GitHub issue,
 a Markdown document, or both should not be reopened without new evidence.
 
 ### Walkthroughs and comprehensibility
 
-- A walkthrough presents one independently reactable item or subitem per turn.
-- The user controls advancement.
-- Three hundred words is a maximum comprehensible packet, not a brevity target.
-- Shorter is not better when it removes necessary context, evidence, reasoning,
-  examples, distinctions, or qualifications.
-- Material needing more than 300 words is divided into additional items or
-  subitems instead of compressed.
-- Decisions are captured as the walkthrough proceeds.
-- A decision may revise, remove, or reorder later items.
-- Claude and Codex should share one behavioral contract with thin
-  runtime-specific wrappers and common scenario tests.
+Retired as a section 2026-07-26 (boss-ruled): the walk behavior is specified
+by the walk-me-through skill itself — its frontmatter and code are the
+documentation, and a separate prose description would only drift. Cross-runtime
+scenario tests are deferred to NC step-1 (inner-walk item 2 ruling, pair #9
+ledger). The bullets formerly here are recoverable from git history.
 
 ## Candidate publishing modules
 
-These are possible independent skills, not a commitment to build a publishing
-framework all at once:
+Removed 2026-07-26 (boss-ruled useless): the module sketches formerly here
+added nothing beyond pair #4's publishing strategy. Recoverable from git
+history.
 
-- Draft a canonical article from project evidence.
-- Edit the canonical article for clarity and factual support.
-- Adapt it to each selected channel without flattening every channel into the
-  same generic post.
-- Review adaptations against the canonical source.
-- Publish to a named channel.
-- Record canonical URL, derivative URLs, dates, and observable outcomes.
-- Produce and validate social-preview metadata and imagery.
-
-Each module should have one responsibility, explicit inputs, an observable
-output, and a clear failure result. The workflow should be exercised manually
-before automating consequential external publication.
-
-## Candidate document and directory structure
+## Draft document and directory structure
 
 - Give each subsystem one greppable identity across code, tests,
   documentation, designs, and test plans.
@@ -180,7 +166,7 @@ After the draft, give a fresh reviewer the artifact and governing contract:
 > implementation could satisfy the written criteria while still violating the
 > intent.
 
-Candidate review mechanics:
+Draft review mechanics:
 
 - Pin the exact revision being reviewed.
 - Keep the first pass analysis-only and independent.
@@ -194,10 +180,11 @@ The separate engineering note records that no external `write-test-plan` or
 general plan-attack skill met the desired quality bar. Those remain candidates
 for small NedsChorus-native skills, not reasons to import a large framework.
 
-## Candidate engineering rules
+## Draft engineering rules
 
-These statements preserve the original ideas, with overbroad wording narrowed
-where the later discussion identified a problem.
+These are draft rules — captured wording awaiting review and adoption, with
+overbroad wording narrowed where the later discussion identified a problem.
+(Relabeled from "candidate" by boss ruling 2026-07-26.)
 
 ### Evidence and change discipline
 
@@ -244,7 +231,7 @@ where the later discussion identified a problem.
 
 ## Testing, QA, and root-cause research
 
-### Candidate testing practices
+### Draft testing practices
 
 - Translate specifications and suspected faults into concrete test plans.
 - Give unreliable or unproven systems a bounded end-to-end check.
@@ -279,7 +266,7 @@ Ask:
 - Is the change correcting the cause, mitigating impact, or masking the
   symptom?
 
-## Candidate design-document standard
+## Draft design-document standard
 
 Important designs may need completeness rather than aggressive compression.
 Use only the elements needed for the system's risk and complexity:
@@ -304,49 +291,11 @@ state machines, migrations, and other high-risk behavior.
 
 ## Agent organization questions
 
-### Possible lifecycle roles
-
-These roles describe kinds of work, not necessarily permanent agents:
-
-- **Prototyper:** generates and tests many ideas.
-- **Builder:** converts a promising prototype into a reliable system.
-- **Sweeper:** simplifies code and UI, removes unnecessary behavior, and
-  improves performance.
-- **Grower:** iterates on an existing product to improve usefulness and fit.
-- **Maintainer:** keeps a mature system secure, reliable, efficient, and
-  understandable.
-
-### Possible organizational structure
-
-SUPERSEDED 2026-07-25 (walk item 16): the boss replaced the org-chart
-possibility formerly listed here with the dynamic agent-team model —
-task-scoped workers, on-tap domain-knowledge agents, sparring pairs,
-spy-triaged oversight, PM agents as the boss's interface. Substance and
-state: [pair #26](26-dynamic-agent-team-model.md)
-(https://github.com/nedschorus/nedschorus/issues/26).
-
-### Questions to resolve only when needed
-
-- Should each subsystem have one accountable steward, a pair, or another
-  arrangement?
-- How do we avoid confusing stewardship with exclusive control?
-- Which tasks need long-lived current context?
-- Which tasks benefit from zero-context or deliberately minimal-context
-  execution?
-- What exact context does each task type require?
-- When is a fresh reviewer preferable to a persistent specialist?
-- How long should temporary agents live, and how are they retired cleanly?
-- Could a wiki agent answer bounded questions about documented project truth?
-- Could a fast monitor connect working agents with the appropriate specialist?
-- When transferring work, should Codex receive selected Claude evidence,
-  denoised transcripts, or raw turns?
-- Can explicit mentions request independent opinions, or should routing remain
-  mechanical?
-
-Current caution: one admitting writer is useful for repository control; one
-exclusive intellectual controller per subsystem would create bottlenecks and a
-bus factor. Any agent should be able to investigate and criticize, with clear
-responsibility for disposition and admission.
+Removed 2026-07-26 (boss-ruled obsolete): the lifecycle-role sketches and
+organization questions formerly here are superseded by the dynamic agent-team
+model — substance and state at [pair #26](26-dynamic-agent-team-model.md)
+([nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26)).
+Recoverable from git history.
 
 ## Communications backlog
 
@@ -370,9 +319,10 @@ GHIs:
   comms-bridge-spec § Open.
 - Safe console text-insertion + stuck/waiting-state detection →
   [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27) (new).
-- "Minimize unnecessary console communication without removing required
-  context" stays here as standing direction (it is a writing discipline, not
-  a decision).
+- The former "minimize unnecessary console communication without removing
+  required context" standing direction is RETIRED (boss-ruled 2026-07-26):
+  minimize is the wrong verb. The standard is consistent CLEAR AND COMPLETE
+  console communication — completeness is never traded for word count.
 
 ## Status, monitoring, and introspection backlog
 
@@ -417,36 +367,13 @@ DISPERSED 2026-07-26 (walk item 17 cluster 3, boss-ruled):
 
 ## Ways to run prompts in code
 
-Captured execution models:
-
-1. Call a prompt synchronously without tool access.
-2. Call an agent with tool access.
-3. Build a custom provider/API integration.
-
-For asynchronous work, compare detached workers with a simpler queued,
-synchronous loop. Detached processes add concurrency, ownership, cancellation,
-and recovery problems; use them only when the benefit is demonstrated.
+Removed 2026-07-26 (boss-ruled: a bad summary, useless). Recoverable from git
+history.
 
 ## Turn and hook order to verify
 
-The original hypothesis was:
-
-1. Post-tool hook
-2. Assistant text generation using system and style instructions
-3. `MessageDisplay` hook
-4. Message display
-5. Stop hook
-
-Do not treat this sequence as current truth without a runtime probe or official
-source.
-
-Possible `MessageDisplay` research:
-
-- Validate references against a schema.
-- Check PR, GitHub-issue, and file references for clickability and context.
-- Determine where structured outputs help.
-- Anthropic structured outputs:
-  <https://platform.claude.com/docs/en/build-with-claude/structured-outputs>
+Removed 2026-07-26 (boss-ruled: another bad summary of documentation).
+Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 ## Git, GitHub, and review backlog
 
