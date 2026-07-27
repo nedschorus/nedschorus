@@ -475,6 +475,10 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   — processed 2026-07-27 → folded (see the mark above).
 - A possible organizing ideal is one system, one accountable steward, and one
   current overview; do not turn that ideal into exclusive control.
+  — processed 2026-07-27 → sentence on
+  [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26): a
+  candidate duty of the domain-expert tier (overview currency; never
+  exclusive control), considered when that tier is designed.
 - Link system overviews to design, test plan, implementation, and evidence.
   — processed 2026-07-27 → folded (see the mark on the first overview
   bullet above).
