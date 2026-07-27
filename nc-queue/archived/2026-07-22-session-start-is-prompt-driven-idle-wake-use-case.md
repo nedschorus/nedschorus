@@ -1,3 +1,10 @@
+---
+processed: 2026-07-27
+walk-item: standing-items walk item 2 (boss-ruled, with his mechanism correction folded)
+dispositions: [nedschorus#27 comment 5094171212 (corrected mechanism, /go-clear proposal, speed/token measurement hypothesis, verified documentation map)]
+dropped-by: new-vp (archived 2026-07-27; output verified posted before the move)
+---
+
 # Session start is prompt-driven — a new use case for an idle-wake function
 
 Boss observation (2026-07-22, at the day-3 successor wake): "I had to type stuff to wake up this agent. That may be the design, that agents always start in an ideal state. If that is true we have yet another use for an idle-wake function."
