@@ -113,6 +113,13 @@ history.
 
 ## Draft document and directory structure
 
+Two concerns, framed by boss ruling 2026-07-27 (walk item 17 cluster 5):
+**where things go** (the placement rules below), and **the many-parts
+overview** — "A system with many parts needs one current overview that
+links them together — its code, its MDs (design, test plan), its GHIs,
+and its tests." A one-file system owes no overview; a stale overview is
+worse than none.
+
 - Give each subsystem one greppable identity across code, tests,
   documentation, designs, and test plans.
 - Create a subsystem subdirectory within a root when multiple related files
@@ -459,12 +466,21 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   get set under the boss's review (legacy precedent: implementation-
   reference tables). Nothing filed.
 - Maintain an architecture overview.
+  — processed 2026-07-27 → folded into § Draft document and directory
+  structure (boss's two-concern frame: placement rules + the many-parts
+  overview rule). Duplicate; nothing filed. Same mark applies to the
+  three sibling overview bullets below.
 - Give every major system a useful overview, including any agent-organization
   system that actually exists.
+  — processed 2026-07-27 → folded (see the mark above).
 - A possible organizing ideal is one system, one accountable steward, and one
   current overview; do not turn that ideal into exclusive control.
 - Link system overviews to design, test plan, implementation, and evidence.
+  — processed 2026-07-27 → folded (see the mark on the first overview
+  bullet above).
 - Record project-specific technical concepts in the appropriate overview.
+  — processed 2026-07-27 → folded (see the mark on the first overview
+  bullet above).
 - Distinguish organizational rules from artifact-specific rules.
 - Review and dispose of accumulated tasks and memories instead of allowing a
   permanent junk drawer.
