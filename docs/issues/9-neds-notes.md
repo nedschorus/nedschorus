@@ -475,9 +475,31 @@ Outer walk, 17 items:
     investigation + session-state verification → #27 sentence; research
     bundle (recaps, introspection tools, denoised artifacts, test-project
     method, task-list visibility) → NEW nedschorus#28. Pair-#10 § monitoring
-    rewritten as dispersal record. ANCHOR = cluster 3 (runtime research);
-    clusters 4–6 open (git/GitHub/review; wiki and memory; execution
-    models).
+    rewritten as dispersal record. Cluster 3 (runtime research) processed
+    2026-07-26 → nine research entries to the new runtime-behavior bundle
+    [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
+    (instruction compression + deliberate scrub, instruction precedence,
+    output styles, context clearing / backward resumption + message-loss
+    recovery, conflicting-names reviewer, memory maintenance,
+    memory-entries-point-at-wiki-pages); the bad-words entry's two unknowns
+    appended to [nedschorus#14](https://github.com/nedschorus/nedschorus/issues/14);
+    grep-before-naming rides the bundle to the step-2 CLAUDE.md rewrite;
+    the "Claude demotion / why 10" entry CUT (boss: undefinable — "no idea
+    what this is about"). SAME-TURN boss scrub of pair #10 beyond the
+    cluster structure, executed (commit 7e5d9f8): candidate→draft relabel
+    (a candidate is not a draft; draft is the ruled status word) across
+    legend and headings; publishing marketing removed (strategy stays in
+    pair #4); publishing-modules section removed (useless); agent-org
+    section removed (obsolete, superseded by pair #26); walkthrough section
+    retired (the skill's frontmatter and code ARE its documentation);
+    "minimize unnecessary console communication" RETIRED — the standard is
+    consistent clear-and-complete, never minimize; "Ways to run prompts in
+    code" and "Turn and hook order to verify" removed as bad summaries
+    (shrinks cluster 6); § Durable Markdown updated to the ruled
+    artifact-lifecycle state (draft label, queue directories, provenance =
+    commit history / issue footer, gatekeeper-not-admitting-agent).
+    ANCHOR = cluster 4 (git/GitHub/review); cluster 5 open (wiki and
+    memory); cluster 6 open, reduced (execution models).
 
 ## Related working note
 
