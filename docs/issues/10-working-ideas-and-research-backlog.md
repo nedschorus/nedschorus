@@ -418,6 +418,11 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
   measure with the merge gate, never a proxy); moot for NC until the
   gate-a-class trigger. Nothing filed.
 - Review the design and behavior of automatic mutual-review routing.
+  — processed 2026-07-27 → CUT: the legacy routers' real defect (author
+  exclusion keyed on laundered worktree identity) is already recorded in
+  the legacy repair queue, and nedlern is decommissioning; NC routing
+  presupposes a review system and defers to the gate-a-class trigger.
+  Nothing filed.
 - Investigate repeated postal injection when the sender is not reply-capable.
 - Prefer an existing supported communications API where the work is already
   tracked.
