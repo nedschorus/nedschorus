@@ -1,0 +1,37 @@
+# SDLC skill-set coverage check, and the app-skill pile question
+
+Boss-requested (2026-07-28, shared-conversation-discussion session). Sources: the cops research record `nedlern-sonnet/cops/tasks/sessions/cops-nedschorus-reproducible-engineering-skills-research-2026-07-22.md` (read in full); the boss's 2026-07-05 claude.ai conversation proposing ten test-infrastructure skills from CockroachDB/LLVM/Hypothesis; the live repo state (boot-set rule of 2026-07-24, candidate GHIs #15–#23, founding plan step 7).
+
+## 1. What is already settled (no action; recorded so the gaps below are read against it)
+
+The "full set of SDLC skills, when and how" mostly exists and is ratified:
+
+- **The list**: five founding skills (d-review, walk-me-through, handoff, ghi-write, md-write) + nine candidates, one GHI each ([#15](https://github.com/nedschorus/nedschorus/issues/15)–[#23](https://github.com/nedschorus/nedschorus/issues/23)): define-work, plan-rewrite-slice, design-change, write-test-plan, attack-artifact (packaging vs d-review unresolved), implement-with-evidence, diagnose-failure, review-change, eval-agent-change.
+- **The when**: the routing table in the cops record ("missing decision → candidate") — a skill is pulled when a real task exposes the decision it encodes, never built ahead (boot-set rule, resolved 2026-07-24). First expected pull: write-test-plan ([#18](https://github.com/nedschorus/nedschorus/issues/18)) at the step-7 git-gatekeeper task.
+- **The how**: one SKILL.md per decision, manual evaluation per the frozen protocol in the cops record (two positives on different branches, one near-miss negative, one clean control, one withheld case; no-skill baseline first; no framework).
+
+## 2. Gap — nothing owns removal/retirement
+
+The cops record's own objective names "obsolete guards, compatibility paths, and incident fixes accumulating until further development becomes difficult" as a NedLern failure class; its survey question 11 asks every project how mechanisms are retired; its cross-project finding 6 says mature processes have explicit ways to undo work. **No candidate skill owns deletion/retirement.** The nine candidates are all forward-motion decisions. Proposed disposition: add a named-deferred candidate (working name `retire-mechanism`) to the candidate set — same status as release-transition and learn-from-failure: on the map, gated on a real task (the first time an obsolete guard, compat path, or dead skill needs removing). Costs one GHI now; prevents the map from silently claiming coverage it lacks.
+
+## 3. Gap — test-suite operations have no named-deferred class
+
+The nine candidates are decision skills. The boss's 2026-07-05 ten (property-harness, stateful-model-tester, datadriven-migrator, golden-check-writer, repro-reducer, deflaker, skip-warden, suite-tiering, test-diff-reviewer, test-ghostwriter) are mostly **suite operations** — what to do when a real suite rots, flakes, or slows. Overlaps: test-diff-reviewer ≈ review-change's test half; test-ghostwriter is subsumed by write-test-plan + implement-with-evidence. The rest (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness writers) have no owner and no deferred entry. Proposed disposition: record one named-deferred class (working name `suite-health`) rather than seven skills; trigger: the first sustained suite whose signal degrades. Skip-warden's expiry-on-skips idea also feeds §2's retirement candidate.
+
+## 4. Note — the anti-tautology device already exists in the write-test-plan contract
+
+The boss's standing complaint: agent-written tests are ~95% useless because agents write tests from the implementation, producing tautologies. The write-test-plan contract's mechanical check — **every planned check states its expected red witness** (the exact reason it fails before the fix or against a deliberately bad implementation) — is the structural counter: a tautological test cannot state one. Two riders for the walk:
+
+- Enforcement idea: hand test-writing (the implement-with-evidence half) to a zero-context one-shot agent given the contract/design and error catalog but **not** the implementation. An agent that never saw the implementation cannot mirror it. This uses the existing kleenex instrument; no new machinery.
+- The cops dogfood run of the contract against the git-gatekeeper spec returned `needs-design-clarification` with nine concrete missing interface bindings rather than inventing tests — evidence the contract refuses correctly. Those nine bindings are on the critical path of the step-7 task.
+
+## 5. Question for the boss — the app-skill pile and routing dilution
+
+The Claude Code app sessions currently carry ~60+ skills from installed marketplace plugins (engineering, design, productivity, anthropic-skills, cowork-plugin-management bundles from claude-plugins-official) plus app built-ins. None are NC skills; the NC repo has zero built skills yet. The skill-creation deep-dive (§5, archived 2026-07-22) established that every added skill dilutes every other skill's claim on routing attention, and the description budget shortens under pressure. When NC's own five founding skills boot, they will compete with that pile for triggering. Proposed ruling candidate: NC project sessions run lean — disable or not-install non-essential plugins in the NC project scope (keep what is actually used: e.g. code-review, skill-creator as reference), so NC skill routing is measured against a quiet field, not a noisy one. Needs a boss decision on which app skills, if any, earn a place in NC sessions.
+
+## 6. Proposed dispositions (for the walk)
+
+1. §2 retire-mechanism: one new candidate GHI, named-deferred.
+2. §3 suite-health: one line in the candidate set or founding plan naming the deferred class; no GHI until triggered.
+3. §4 riders: attach to [#18](https://github.com/nedschorus/nedschorus/issues/18) (red-witness enforcement note, kleenex test-writer idea) and to the step-7 task record (nine missing bindings).
+4. §5: boss ruling on app-skill policy for NC sessions; if ruled, it lands as a line in the founding plan's environment step (step 6).
