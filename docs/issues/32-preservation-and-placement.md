@@ -40,9 +40,22 @@ global instruction files (global CLAUDE.md — now deliberately empty — global
 skills, settings, keybindings, the harness's own state file `~/.claude.json`);
 per-worktree identity and local settings (`.mcp.json` — who each agent is —
 and `settings.local.json` with its accumulated permission grants); deployed
-runtime state (installed scheduled jobs and daemons). Today's blanket answer
-is Time Machine; the legacy record shows how thin that is (a designed fleet
-backup was ratified, merged, and never wired). The design direction is that
+runtime state (installed scheduled jobs and daemons). The machine-level
+answer is per-machine (updated 2026-07-28, boss-supplied facts + verification):
+on the Mac, Time Machine; on the NC Ubuntu box, Timeshift to an external
+3.7 TB drive — VERIFIED WORKING as of 2026-07-28 after repair (it had one
+snapshot from setup day, every schedule off, and home excluded; now hourly +
+daily schedules run by cron and /home including the Claude state is captured,
+confirmed by artifact in snapshot 2026-07-28_13-03-17). Two lessons from the
+repair ride here: Timeshift's exclude array is a GENERATED artifact — edits
+to it are overwritten from the per-user model each run; the include-pattern
+form is the stable control (anti-drift discipline 2, met in the wild); and
+live DATABASE files need their own online-dump job before a file-copier can
+preserve them reliably — a copier reading a live database mid-write can
+capture a torn copy (no databases on the box yet; the pattern applies when
+the first one lands). The legacy record separately shows how thin
+machine-backup discipline runs (a designed fleet backup was ratified, merged,
+and never wired). The design direction is that
 this class SHRINKS by placement (part 2) rather than growing a backup system.
 The settings/permissions members are mostly regenerable-by-use (re-login,
 re-grant) — loss is friction, not lost work.
