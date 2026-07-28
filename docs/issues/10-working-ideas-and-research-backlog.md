@@ -227,6 +227,16 @@ overbroad wording narrowed where the later discussion identified a problem.
   2026-07-28, boss-approved, from the legacy extraction: a pattern typo in
   a live injection-map row would make that rule silently never fire, with
   no other point where the loss becomes visible.)
+- An alert that fires on an expected, harmless condition erodes the whole
+  alert class: readers learn to dismiss it, and a real failure then hides
+  among the false ones. Severity follows the actual condition — a
+  known-benign state gets its own low severity or its own counter at the
+  detector, so a threshold crossing points at a real failure. When a benign
+  condition is found firing an alert, the fix belongs at the detector, not
+  in the reader's habit of ignoring it. (Added 2026-07-28, boss-approved,
+  from the legacy extraction: sessions opened in the identity-less shared
+  checkout paged at the highest severity through the same counter that
+  exists to catch a real registration failure.)
 
 ### Review discipline
 
