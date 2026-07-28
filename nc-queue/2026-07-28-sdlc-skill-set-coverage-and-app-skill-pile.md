@@ -35,3 +35,18 @@ The Claude Code app sessions currently carry ~60+ skills from installed marketpl
 2. §3 suite-health: one line in the candidate set or founding plan naming the deferred class; no GHI until triggered.
 3. §4 riders: attach to [#18](https://github.com/nedschorus/nedschorus/issues/18) (red-witness enforcement note, kleenex test-writer idea) and to the step-7 task record (nine missing bindings).
 4. §5: boss ruling on app-skill policy for NC sessions; if ruled, it lands as a line in the founding plan's environment step (step 6).
+
+---
+
+## Walk order (ledger, opened 2026-07-28, new-vp session b6241858)
+
+This walk also covers pair [nedschorus#32](https://github.com/nedschorus/nedschorus/issues/32)'s three open questions; those resolutions are additionally marked in `docs/issues/32-preservation-and-placement.md` as they land. Recovery anchor after any interruption: the first unmarked item below.
+
+1. Purpose and map of the walk
+2. §2 — retire-mechanism candidate (note §6.1)
+3. §3 — suite-health named-deferred class (note §6.2)
+4. §4 — riders to #18 and the step-7 record (note §6.3)
+5. §5 — app-skill policy for NC sessions (note §6.4)
+6. Pair #32 Q1 — memory placement
+7. Pair #32 Q2 — log extracts at boundaries (owned by the bridge specification; only the placement-consumer stance is decidable here)
+8. Pair #32 Q3 — shared-store writes by temporary workers
