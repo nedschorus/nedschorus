@@ -13,8 +13,8 @@ form, boss-set: this graduates into a wiki page with subpages when matured.
 
 Files on main; check-ins (commits, whose provenance trailers are the single
 import record); pair documents; wiki pages; queued MDs; handoffs and their
-task exports. Git keeps every version of every tracked file, so deletion
-inside this class is never loss — a struck file remains one command away in
+task exports. Git keeps the versions of tracked files, so deleting
+committed content here is recoverable rather than lost — a struck file remains one command away in
 history. This class is the reference standard: the further a class sits from
 "preserved as a side effect of normal work," the more deliberate machinery it
 needs.
@@ -53,7 +53,7 @@ Dropped by design: scratchpads, intermediate outputs, rendered reports
 (regenerable from source data), the gatekeeper's transient workspaces (a
 refused check-in deliberately leaves nothing), working files that never enter
 a queue or home. Regenerable by design: credentials (boss-ruled — recovery is
-minting a new one, never restoring a copy; forced regeneration is rotation, a
+minting a new one rather than restoring a copy; forced regeneration is rotation, a
 safety gain; the real dependency is the boss's account access, which only he
 holds), external tools and platforms (reinstallable; compatibility is not the
 code writer's job — record an environment detail only where a specific
@@ -69,13 +69,13 @@ Aggressive dropping is maintenance, not negligence.
 ## Part 2 — what goes where
 
 One rule: **state whose value outlives a session belongs in the repository,
-moved there at a natural boundary; machine-local is for live state only; the
-global scope holds nothing.** Per member: tasks — already placed by the
+moved there at a natural boundary; machine-local holds live working state;
+the global scope stays empty.** Per member: tasks — already placed by the
 approved handoff design (export to files, check in at each handoff); memories
 — OPEN QUESTION (below); transcripts — full logs stay local (size), boundary
 extracts are the bridge specification's open question, not re-decided here;
 databases — live data stays live, the accepted Time-Machine residue;
-instruction files — in-repo, full stop (NC's CLAUDE.md is a step-2 repository
+instruction files — in-repo (NC's CLAUDE.md is a step-2 repository
 file; the global file stays empty — the 2026-07-27 cross-project
 contamination incident is this rule's founding specimen, recorded on
 [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)); agent
@@ -86,7 +86,7 @@ already governed by the artifact-lifecycle rule (founding plan § Project
 organization) and the naming rules; this part cites them and adds nothing —
 one concept, one home.
 
-## Part 3 — codification: every duty lands in a build already planned
+## Part 3 — codification: the duties land in builds already planned
 
 - **The git-gatekeeper** ([nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3))
   owns the git-preserved class's entrance; its commit trailers are the
@@ -110,8 +110,9 @@ codifying builds, and reality on disk — and the legacy record shows every
 pairwise drift, each caught by accident, none by machinery. The design:
 
 **Three disciplines (prevention):**
-1. One home per fact, pointers everywhere else — most drift is impossible
-   when a fact exists once.
+1. One home per fact, pointers everywhere else — copy-drift disappears
+   when a fact exists once; record-versus-reality drift remains, which is
+   the sweep's territory.
 2. Any list that mirrors what a mechanism enforces is generated from the
    mechanism or checked against it (extraction-walk rule; the legacy
    approval-required-list drift is its specimen).
@@ -122,8 +123,8 @@ pairwise drift, each caught by accident, none by machinery. The design:
 
 **Detection is the guarantee (boss-directed design):** autonomy is
 deliberate — agents create tasks, memories, GHIs, MDs, and files we do not
-fully control — so contracts alone cannot hold. Every artifact class lives in
-an enumerable store with timestamps, so a **watermarked sweep** answers
+fully control — so contracts alone are not reliable. Each class in this
+inventory lives in an enumerable store with timestamps, so a **watermarked sweep** answers
 "what is new since last time" completely and cheaply per store: git for repo
 files, one API call for issues, directory listings for tasks, memories, and
 stray state.
@@ -131,13 +132,14 @@ stray state.
 **The sweep is a scheduled PROGRAM, not an agent session** (boss-ruled): the
 detection half is purely mechanical — zero token cost, deterministic,
 testable, and cron-schedulable with no idle-wake dependency. It classifies
-each find against the placement rules; its safe action is **archive, never
-delete** — move or mark processed things out of the processing queue
-(reversible, so automation-safe under the undoable-is-safe calculus) — and
-**archives expire on a 30-day TTL**, so deletion is only time passing on
-something already reviewed-or-archived, with a 30-day recovery window. Only
+each find against the placement rules; its safe action is **archiving** —
+moving or marking processed things out of the processing queue (reversible,
+so automation-safe under the undoable-is-safe calculus). Version 1 deletes
+nothing itself: **archives expire on a 30-day TTL**, and that expiry is the
+deletion path — time passing on something already reviewed-or-archived, with
+a 30-day recovery window. Only
 the unclassifiable residue goes to an agent (or the boss) for judgment:
-tokens are spent on judgment, never on enumeration. Sensors are programs;
+tokens go to judgment rather than enumeration. Sensors are programs;
 judgment is agents.
 
 **The handoff scrub remains** the persistent agents' own moment (its duties

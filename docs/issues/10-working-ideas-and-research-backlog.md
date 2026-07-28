@@ -210,13 +210,23 @@ overbroad wording narrowed where the later discussion identified a problem.
 - If the same file, subsystem, or complexity area is repeatedly patched, stop
   and reassess the design. "After two patches" remains a candidate warning,
   not a universal numeric rule.
-- A configuration value's default is defined in exactly one place. Any other
-  location that needs the value reads it or passes it through — it never
-  restates the default, because a restated default either silently overrides
-  the real one or silently drifts from it. (Added 2026-07-28, boss-approved,
-  from the legacy extraction: a launcher restated a communications timeout
-  default, so a correctness fix to the real default silently reached one
-  runtime's agents and missed the other's for six days.)
+- A configuration value's default is defined in one place. A location that
+  needs the value reads it or passes it through rather than restating it — a
+  restated default can silently override the real one or drift from it.
+  (Added 2026-07-28, boss-approved, from the legacy extraction: a launcher
+  restated a communications timeout default, so a correctness fix to the
+  real default silently reached one runtime's agents and missed the other's
+  for six days.)
+- When a program tolerates a malformed configuration entry by logging and
+  skipping it, add a test that loads each shipped entry and fails when one
+  would be skipped — usually cheap, since the loading code already exists.
+  A good test demonstrates both directions: red on an entry malformed in a
+  known way, green once it is fixed. It catches malformations similar to
+  ones already seen, not every possible way an entry can be wrong. Two
+  attempts is the budget; after two, record the gap and move on. (Added
+  2026-07-28, boss-approved, from the legacy extraction: a pattern typo in
+  a live injection-map row would make that rule silently never fire, with
+  no other point where the loss becomes visible.)
 
 ### Review discipline
 
