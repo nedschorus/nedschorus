@@ -26,6 +26,15 @@ The preparation the boss + new-vp (the old system's VP agent) do to bring choirm
 
 ## Project organization
 
+The full preservation-and-placement design — what NC preserves (four
+classes), where each class goes, how the rules become code and skills, and
+the drift-prevention sweep — is the pair
+[nedschorus#32](https://github.com/nedschorus/nedschorus/issues/32)
+([docs/issues/32-preservation-and-placement.md](../issues/32-preservation-and-placement.md)),
+boss-walked 2026-07-27/28; it graduates to a wiki page with subpages when
+matured. This section holds the directory homes and the artifact-lifecycle
+rule the pair builds on.
+
 Five committed homes plus the shared place — no `docs/working/` ever exists:
 
 1. **`docs/wiki/`** — permanent truth (Obsidian vault; `.obsidian/` gitignored, matching the legacy system's practice — config is per-vault, so the old wiki cannot be affected). Its `queue/` subdirectory holds wiki-bound doctrine awaiting the boss's drain (artifact-lifecycle rule, below).
