@@ -210,6 +210,13 @@ overbroad wording narrowed where the later discussion identified a problem.
 - If the same file, subsystem, or complexity area is repeatedly patched, stop
   and reassess the design. "After two patches" remains a candidate warning,
   not a universal numeric rule.
+- A configuration value's default is defined in exactly one place. Any other
+  location that needs the value reads it or passes it through — it never
+  restates the default, because a restated default either silently overrides
+  the real one or silently drifts from it. (Added 2026-07-28, boss-approved,
+  from the legacy extraction: a launcher restated a communications timeout
+  default, so a correctness fix to the real default silently reached one
+  runtime's agents and missed the other's for six days.)
 
 ### Review discipline
 
