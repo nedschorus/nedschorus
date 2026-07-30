@@ -47,6 +47,8 @@ The cops record's own objective names "obsolete guards, compatibility paths, and
 
 The nine candidates are decision skills. The boss's 2026-07-05 ten (property-harness, stateful-model-tester, datadriven-migrator, golden-check-writer, repro-reducer, deflaker, skip-warden, suite-tiering, test-diff-reviewer, test-ghostwriter) are mostly **suite operations** — what to do when a real suite rots, flakes, or slows. Overlaps: test-diff-reviewer ≈ review-change's test half; test-ghostwriter is subsumed by write-test-plan + implement-with-evidence. The rest (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness writers) have no owner and no deferred entry. Proposed disposition: record one named-deferred class (working name `suite-health`) rather than seven skills; trigger: the first sustained suite whose signal degrades. Skip-warden's expiry-on-skips idea also feeds §2's retirement candidate.
 
+> **processed 2026-07-29 → ACCEPTED as one named-deferred class** (walk item 3, new-vp session b6241858; ruled by boss option-pick in the parallel Mac-app thread, recorded there on the worktree branch as `56fa4b3`). `suite-health` joins the named-deferred map beside release-transition and learn-from-failure — one line in the founding plan (§ open question 8's resolution is the map's home on main), NO GHI until the trigger occurs: the first sustained test suite whose signal degrades, necessarily well after code and tests exist. The seven unowned July-5 suite-operation skills fold into it (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness-writers); test-diff-reviewer stays covered by review-change's test half, test-ghostwriter by write-test-plan + implement-with-evidence. Skip-warden's expiry-on-skips convention rides the first test-writing skill; its skipped-test-as-declared-dead-code observation also feeds [nedschorus#35](https://github.com/nedschorus/nedschorus/issues/35)'s expectation-tag classes.
+
 ## 4. Note — the anti-tautology device already exists in the write-test-plan contract
 
 The boss's standing complaint: agent-written tests are ~95% useless because agents write tests from the implementation, producing tautologies. The write-test-plan contract's mechanical check — **every planned check states its expected red witness** (the exact reason it fails before the fix or against a deliberately bad implementation) — is the structural counter: a tautological test cannot state one. Two riders for the walk:
@@ -63,6 +65,7 @@ The Claude Code app sessions currently carry ~60+ skills from installed marketpl
 1. §2 retire-mechanism: one new candidate GHI, named-deferred.
    *processed 2026-07-29 → rejected as proposed; revised into three potential improvements — see the §2 processed mark.*
 2. §3 suite-health: one line in the candidate set or founding plan naming the deferred class; no GHI until triggered.
+   *processed 2026-07-29 → accepted; landed in the founding plan's open-question-8 resolution — see the §3 processed mark.*
 3. §4 riders: attach to [#18](https://github.com/nedschorus/nedschorus/issues/18) (red-witness enforcement note, kleenex test-writer idea) and to the step-7 task record (nine missing bindings).
 4. §5: boss ruling on app-skill policy for NC sessions; if ruled, it lands as a line in the founding plan's environment step (step 6).
 
