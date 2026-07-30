@@ -22,7 +22,7 @@ The cops record's own objective names "obsolete guards, compatibility paths, and
 >
 > **Potential improvement 3 — patch-cycle tripwire at three, escalating to design AND goal.** Three review-fail-patch cycles on one change → stop patching; mandatory reconsideration of the design or of the goal itself (edge-case explosion; intractable or NP-complete as specified). The threshold exists twice in the ratified record (decision 23; diagnose-failure's three-failed-fixes rule); the additions are the goal-level escalation and making the cycle count visible in the attempt record so the tripwire can trip. Landing: rider on the diagnose-failure candidate GHI.
 >
-> Status: potential improvements — direction ruled, not yet a plan. Boss's standing design hope, recorded: with better modularity and more careful design, almost everything should be testable; hard-to-test is itself a design smell, feeding improvement 3.
+> Status: potential improvements — direction ruled, not yet a plan. **Durable home: [nedschorus#35](https://github.com/nedschorus/nedschorus/issues/35)** (boss-approved 2026-07-29) — the full record including the complete-capture addendum lives there; these marks remain as the walk ledger. Boss's standing design hope, recorded: with better modularity and more careful design, almost everything should be testable; hard-to-test is itself a design smell, feeding improvement 3.
 
 > **Complete capture — the discussion's full yield beyond the three improvements** (added 2026-07-29 after a boss completeness audit of the first mark):
 >
