@@ -1,0 +1,21 @@
+{
+  "enabledPlugins": {
+    "design@claude-plugins-official": false,
+    "cowork-plugin-management@claude-plugins-official": false,
+    "productivity@claude-plugins-official": false
+  },
+  "skillOverrides": {
+    "engineering:code-review": "off",
+    "engineering:testing-strategy": "off",
+    "engineering:architecture": "off",
+    "engineering:system-design": "off",
+    "engineering:tech-debt": "off",
+    "engineering:documentation": "off",
+    "engineering:deploy-checklist": "off",
+    "engineering:incident-response": "off",
+    "engineering:standup": "off",
+    "anthropic-skills:morning": "off",
+    "anthropic-skills:setup-cowork": "off",
+    "anthropic-skills:schedule": "off"
+  }
+}
