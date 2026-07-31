@@ -20,8 +20,17 @@ Boss-commissioned full read of the 14-skill repo (clone in session scratchpad; t
 
 - **Q1 — the ladder is uncapped after the trip.** Superpowers bounds the whole loop (5 rounds total → adjudicate/park/BLOCK). NC's ladder trips at 3 into the fresh-pair reset — and nothing bounds the reset's own rounds. Proposed: the post-trip pair gets a bounded budget (2 rounds), then the change goes to the boss with the attempt history; and the reset runs on a more capable model or higher effort than the looping agent (superpowers' R≥4 rung — escalate the model along with the eyes). Awaiting ruling before the ladder text changes.
 
+## Flank additions (new-vp blind-side read @ 44c9b2d6, 2026-07-31) — triage-list homes, judged this session
+
+- **BASE-recording rule (never HEAD~1 for multi-commit work): declined as subsumed** — the gatekeeper design already requires an explicit full-40-hex `--base` per request; the HEAD~1 failure mode is inexpressible in NC's check-in path.
+- **Reviewer-dispatch independence** (a dispatch prompt containing "do not flag X" / "at most Minor" is pre-judging the review): **taken** — extends the ruled isolation invariant (reviewer sees artifact + criteria, never the author's reasoning) with: *nor the dispatcher's expectations*. Rider candidate for d-review/#22's shared finding contract.
+- **Minors bypass the fix loop to the ledger; adjudication only at the cap, every adjudication a ledger entry: taken into the ladder amendment** (see Q1 resolution in the walk) — keeps low-stakes findings from burning breaker rounds.
+- **Final-fix wave = ONE fixer with the complete findings list + ONE scoped re-review** (donor cost specimen: per-finding fixers cost more than all tasks combined): **taken** as the dispatch-side complement of reception rule 5 (all findings understood before any implemented → all findings *dispatched* as one batch too).
+- **Plan-conflict pre-flight as one batched which-governs question: declined for now** — NC has no plan-execution machinery yet; noted for the future executing-plans sibling if one ever exists.
+
 ## Declined, with reasons
 
+- **Baseline-fail-first amendment: DROPPED at boss walk (2026-07-31)** — the verbatim failure record already exists automatically in the baseline run's transcript jsonl; skills history lives in git; and NC has no scenarios yet — the amendment was make-work. Checklist amendment reverted (delta to land).
 - `brainstorming` / `writing-plans` / `executing-plans` — covered by define-work/design-change plans; the plans-for-a-junior-engineer framing conflicts with NC's zero-context-reader rule only in register, not substance; nothing new to take.
 - `using-git-worktrees`, `dispatching-parallel-agents`, `finishing-a-development-branch`, `using-superpowers` — harness mechanics NC re-derives; dispatch hygiene is already superseded by the ruled one-shot/interrogation protocol.
 - The verification skill's Iron-Law register and rationalization tables — kernels taken above; the enforcement-by-shouting model is the documented anti-pattern.
