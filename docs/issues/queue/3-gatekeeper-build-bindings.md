@@ -19,3 +19,12 @@ New instant-screening form error `unsafe-path`: refuses any path in `--files` or
 ## B4 — Worker and workspace model
 
 (a) Workspace root: `$XDG_STATE_HOME/nedschorus-gatekeeper/<digest>/` (default `~/.local/state/nedschorus-gatekeeper/<digest>/`) — outside every repository, discoverable from the digest alone by any later process, per-digest, local; contents: the candidate clone, `worker.pid`, and (d)'s refusal record when applicable. (b) One worker code path: `--wait` runs the pipeline inline (the caller is the worker; its pid recorded); `--no-wait` re-executes the program as a detached child (`worker <digest>`, own session), records the child pid, prints the receipt. (c) **Resolve-once rule (boss)**: every environment-derived field — origin foremost — is resolved at screening into a full request record written to the workspace; the worker only reads that record, never re-derives from its own environment. T7 gains the assertion: a `--no-wait` check-in's origin trailer equals the *submitting* session, not the worker's. (d) **Spec amendment**: a refused `--no-wait` request keeps its workspace holding just the JSON refusal record; `status` returns it once and sweeps. Named residual (accepted, stated): a caller crashing between sweep and read loses the reason — rare, recoverable by resubmit. (e) Detached-worker observability is its effects only (history, workspace); an `abandoned` workspace is the debugging surface — consistent with the no-separate-logs rule.
+
+## B5 — Refusal-copy heuristics (extracted from `design:ux-copy` before its curation-walk drop, 2026-07-30)
+
+The skill was thin (boss verdict: extract useful bits, drop the skill); four bits survive, for whoever writes the error catalog's actual text:
+
+1. Its error structure — *what happened + why + how to fix* — is the spec's three-part refusal independently arrived at; convergence noted, nothing to change.
+2. **Next-action phrasing is verb-first and specific**: "resubmit with `--base <current-main-id>`", never "fix the problem" — the CTA rule applied to `next_action`.
+3. **Consistency is a catalog property**: one term per concept across every refusal (a path is always "path", never alternately "file"/"entry") — matters because agents pattern-match error text.
+4. **Confirmation shape** (for any future destructive prompt, e.g. `cancel`): name the action and consequence ("kill worker for `<digest>`? its workspace is swept"), label choices with actions, never OK/Cancel.
