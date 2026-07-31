@@ -79,6 +79,34 @@ Subject: the boss's thesis that agents are not humans and testing need not be li
 
 > *Section merged from the Mac-app session's branch copy (final at f7cc0ef) by new-vp session b6241858; that branch's §2/§3 body rewrites are superseded by this file's marks and nedschorus#35.*
 
+## 6b. Gatekeeper-bindings walk (outer item 3c, restructured 2026-07-30) — ledger
+
+**Stale-spec catch (fleet flank, confirmed):** the nine dogfood gaps were derived 2026-07-23 against `fast-pr-to-prod-design.md` (2026-07-22, superseded). Re-validated against main's canonical `docs/cross-project/git-gatekeeper-design.md` (2026-07-24). Casualties and survivors — all nine rows:
+
+| # | Gap | Fate |
+|---|---|---|
+| 1 | Command grammar / refusal schema / exits | Mostly resolved by spec; residual = reply serialization + exit mapping → step 1 |
+| 2 | Trailer grammar | Resolved; sliver = import-trailer path escaping → step 2 |
+| 3 | Atomic import / crash model | Dead — two durable effects, resubmit recovery |
+| 4 | Lock lifecycle | Dead — no lock; atomic push arbitrates; pid names abandonment |
+| 5 | Reconciliation boundary | Dead — clean re-application vs `conflict`; program never guesses |
+| 6 | External side effects | Dead for v1 — gatekeeper posts nothing but the push |
+| 7 | Supported test environment | **Survives** → step 3 |
+| 8 | Dormant gate representation | Dead — cut table; field grows at designation |
+| 9 | Check ordering / side-effect boundary | Dead — refusals side-effect-free by construction |
+
+Plus two bindings the dogfood never saw (it read the old design): the `--no-wait` background-worker process model and the `<workspace-root>` location → step 4. Walk re-planned: 4 steps.
+
+**Step 1 — reply serialization + exit codes: processed 2026-07-30 → accepted with two fleet amendments (boss-relayed).** One JSON object on stdout per invocation: `{outcome, error?, facts?, next_action?, commit?, digest?, summary}`. `outcome` carries the **full per-command enum**, not a trichotomy — check-in: `checked-in | already-checked-in | accepted | refused`; status: `checked-in | in-progress | abandoned | unknown`; cancel: `cancelled | too-late | unknown-request` (status-`unknown` and cancel-`unknown-request` stay distinct strings). Exit codes: 0 = success and answers; 1 = catalog refusal; 2 = program defect (uncaught exception) — distinct so loop counters and the audit never read a gatekeeper bug as a correct refusal. `next_action` is **mandatory for `accepted`** ("collect with `status <digest>`") so a non-waiting caller's record never reads as landed.
+
+**Restart 2026-07-30:** walk re-presented at 12-step grain for low-context reading (steps 1–5 ground; 6–12 decisions). Step 6 = step-1 ruling reconfirmed unchanged.
+
+**Steps 7–8 — import-trailer integrity: processed 2026-07-30 → accepted with two boss amendments.** (a) `unsafe-path` named form error refuses, at instant screening, any path in `--files` or the import triple containing whitespace, `->`, non-printable, **or non-ASCII** bytes — asymmetry decides the tightness: relaxing later is forward-compatible, tightening later strands history under the stricter parser; verified receipt: `git ls-files` in both repos grepped for whitespace/`->`/non-ASCII — zero matches across all six checks, so the rule costs nothing today and closes the `core.quotePath` encoding class. (b) Growth path named, not built: a real space/non-ASCII import triggers git-style quoting then; the refusal's `next_action` says so. (c) Parser stance on repeated `Gatekeeper-import:` lines (writable only by the T12 bypass class): **each line derives one row** in the `imports` table. Test bindings: trailer round-trip via `git interpret-trailers` + repeated-line assertion join T10; per-position unsafe-path cases join T11.
+
+**Steps 9–10 — test-environment bindings: processed 2026-07-30 → accepted with two boss amendments.** (a) Tests push to throwaway local **bare repositories** (fresh per test, seeded small history) — atomic ref update and non-fast-forward rejection are git-generic, so T4/T6/T7/T12 run faithfully with production untouchable. (b) Boss amendment: a **second fixture — a stand-in legacy repository** (same throwaway pattern) for T10/T11 import tests, so they never read the real nedlern tree. (c) Branch protection verified by **read-only API audit** at scrub cadence (never in the test suite, nothing pushes as a forbidden identity), asserting the four live facts; boss amendment: **three named outcomes** — `protection-ok` / `protection-wrong` (differing settings named) / `audit-failed` (gh missing, unauthenticated, API error) — the check fails loudly as its own outcome and can never silently skip into green. (d) Version floors: Python ≥3.12; git ≥ the floor of the two real machines (exact versions recorded at build); macOS + the Ubuntu box; one smoke assertion checks floors; no compatibility matrix (taxonomy: trigger-reserved).
+
+**Steps 11–12 — worker/workspace model: processed 2026-07-30 → accepted with one boss amendment and one named residual. Walk complete.** (a) Workspace root `$XDG_STATE_HOME/nedschorus-gatekeeper/<digest>/` (default `~/.local/state/...`): outside every repo, digest-discoverable by any later process, per-digest, local; contents = candidate clone + `worker.pid` (+ refusal record, below). (b) One worker code path: `--wait` runs it inline (caller is the worker, own pid recorded); `--no-wait` re-executes the program as a detached child (`worker <digest>`, own session), records child pid, prints receipt. (c) **Boss amendment — resolve-once**: env-derived fields (origin foremost) are captured at screening into the workspace's full resolved request record; the worker only reads, never re-derives — otherwise a no-wait check-in silently records the worker's session instead of the submitter's, a mode-divergence in the permanent trailer. T7 gains: no-wait origin trailer equals the submitting session. (d) Spec amendment accepted: a refused no-wait request keeps its workspace holding just the JSON refusal record; `status` returns it once and sweeps. **Named residual (boss)**: caller crashing between sweep and read loses the reason — rare, recoverable via resubmit, accepted stated. (e) Detached-worker observability = its effects only (history, workspace); abandoned workspace is the debugging surface — consistent with no-separate-logs.
+
 ## 6. Proposed dispositions (for the walk)
 
 1. §2 retire-mechanism: one new candidate GHI, named-deferred.
