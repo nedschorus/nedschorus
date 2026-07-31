@@ -17,6 +17,7 @@ The ~100-word description is the only part of a skill the model sees when decidi
 - Front-load a concise positive AND negative scope: use for X; not for Y.
 - "Pushy" descriptions are a Claude-specific hypothesis, not doctrine — adopt only with false-trigger tests showing they help. Word-count targets are not portable across runtimes (fields get capped and truncated differently); measure, don't copy.
 - Descriptions compete for a capped listing budget. Many skills are fine; many *vague* skills degrade every skill's routing, because each dilutes the others' claim on attention.
+- The description states *when* to invoke, never *how* the skill works. A description that summarizes the workflow becomes a competing summary the agent follows instead of the body — the description is always in context while the body loads only on invocation (observed once, human-authored, in the source's tests: a workflow-summarizing description caused one review pass where the body required two). If the description alone is enough to act on, move the how into the body. (Superpowers extract, 2026-07-31.)
 
 ## Structure: progressive disclosure
 
