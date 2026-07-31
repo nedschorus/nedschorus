@@ -1,6 +1,6 @@
 # NC tool-power plan — Python quality toolchain and the judgment layer (plan of record)
 
-Walked and ratified at the boss walk, 2026-07-31. Sources: the toolchain phasing effort (ChatGPT source discussion → distilled brief → two independent agent decision runs → three adversarial review rounds across two model families, ~60 findings → two boss rulings) and the spec-kit read-for-ideas walk (10 items, marks in place). Companion reference: [nc-python-toolchain-target-architecture.md](nc-python-toolchain-target-architecture.md) — the fully designed, review-hardened mechanism specs that the phase triggers pull from (the survey, not the road). Session archive (brief, reviews, phasing checks, transcript): `~/Downloads/nc-*.md`, 2026-07-30/31 — machine-local; committed homes arrive with the still-open dispersal landings to `nc-queue/`, after which this pointer updates.
+Walked and ratified at the boss walk, 2026-07-31; finalization review applied the same day. Sources: the toolchain phasing effort (ChatGPT source discussion → distilled brief → two independent agent decision runs → three adversarial review rounds across two model families, ~60 findings → two boss rulings) and the spec-kit read-for-ideas walk (10 items). Companion reference: [nc-python-toolchain-target-architecture.md](nc-python-toolchain-target-architecture.md) — the fully designed, review-hardened mechanism specs that the phase triggers pull from (the survey, not the road). The working notes behind this plan are machine-local and deliberately unmemorialized (an artifact needs a clear forward reason to be committed); this document and the reference are the record.
 
 **Governing rulings (boss):**
 - **Simplicity over completeness; practical over perfect.** Build the easy, certain layer first; learn from its run history; pull deferred mechanism when a real need appears.
@@ -72,7 +72,7 @@ All in [nc-python-toolchain-target-architecture.md](nc-python-toolchain-target-a
 
 ## The judgment layer — spec-kit walk yield (2026-07-31, marks in the extraction note)
 
-The gate governs code mechanically; these govern how agents use *judgment* tools — skill contracts, not gate machinery. Accepted yield from the spec-kit read-for-ideas walk (source: [github/spec-kit](https://github.com/github/spec-kit) @ `642fa56`; full extraction with per-item boss rulings in the walked extraction note):
+The gate governs code mechanically; these govern how agents use *judgment* tools — skill contracts, not gate machinery. Accepted yield from the spec-kit read-for-ideas walk (source: [github/spec-kit](https://github.com/github/spec-kit) @ `642fa56`):
 
 - **Rider on define-work ([#15](https://github.com/nedschorus/nedschorus/issues/15)) — clarification as a walk.** (1) *Scan first, then ask*: before asking anything, scan the whole artifact against a fixed category list (scope/success criteria; data/entities; interaction flows; non-functional attributes; integrations; edge cases; constraints; terminology; completion signals; unresolved placeholders and unquantified adjectives), grade each Clear/Partial/Missing; questions come from this coverage map ranked by impact — never from the first confusion encountered. (2) *Deliver as a walk, not a questionnaire*: one question per turn, each leading with the recommended answer and a one-line reason; the boss stopping is the budget; on stop, remaining Partial/Missing categories are listed as deferred, never silently dropped. (3) *Answers land in the artifact immediately*: dated clarification entry plus an edit to the clarified section, deleting now-contradicted text.
 - **Rider on write-test-plan ([#18](https://github.com/nedschorus/nedschorus/issues/18)) — requirements-quality pass.** Run as the skill's first step, by the reader never the designer (legibility is measured at the point of consumption): checklist items test *what is written*, never the implementation ("is 'prominent display' quantified?"). Unresolved items are the `needs-design-clarification` refusal payload. Plus the traceability sentence: *the test plan lists, per requirement, its covering checks, and per check, its requirement; orphans in either direction are stated explicitly.*
@@ -81,9 +81,9 @@ The gate governs code mechanically; these govern how agents use *judgment* tools
 - **Named reopening trigger** (E4, otherwise rejected): the first agent-cut plan containing a slice whose "Demonstrated by:" line couldn't be written reopens independent-test slicing as a [#16](https://github.com/nedschorus/nedschorus/issues/16) rider.
 - **Build-time reference pointers** (no rider text): spec-kit's `tasks-template.md` conventions for [#16](https://github.com/nedschorus/nedschorus/issues/16)/[#20](https://github.com/nedschorus/nedschorus/issues/20); re-read at build time.
 
-Rejected spec-kit imports (boss reasoning in the extraction note's marks): spec-as-single-source-of-truth (map/territory error — code is the truth past the initial phase), prompt-checklists where code/walk/artifact mechanisms exist, reviewer-carried doctrine, template severity tables, the fixed question cap.
+Rejected spec-kit imports (reasons as ruled): spec-as-single-source-of-truth (map/territory error — code is the truth past the initial phase), prompt-checklists where code/walk/artifact mechanisms exist, reviewer-carried doctrine, template severity tables, the fixed question cap.
 
-## Multi-agent operating rules (from the 2026-07-30 experiment; evidence in session archive)
+## Multi-agent operating rules (from the 2026-07-30 five-agent experiment)
 
 Rule-shaped findings from running five agents (two model families, three effort tiers) on this plan's production — they govern how NC uses agents as tools:
 
