@@ -114,6 +114,7 @@ Plus two bindings the dogfood never saw (it read the old design): the `--no-wait
 2. §3 suite-health: one line in the candidate set or founding plan naming the deferred class; no GHI until triggered.
    *processed 2026-07-29 → accepted; landed in the founding plan's open-question-8 resolution — see the §3 processed mark.*
 3. §4 riders: attach to [#18](https://github.com/nedschorus/nedschorus/issues/18) (red-witness enforcement note, kleenex test-writer idea) and to the step-7 task record (nine missing bindings).
+<<<<<<< ours
 4. §5: boss ruling on app-skill policy for NC sessions; if ruled, it lands as a line in the founding plan's environment step (step 6).
 
 ---
@@ -130,3 +131,6 @@ This walk also covers pair [nedschorus#32](https://github.com/nedschorus/nedscho
 6. Pair #32 Q1 — memory placement
 7. Pair #32 Q2 — log extracts at boundaries (owned by the bridge specification; only the placement-consumer stance is decidable here)
 8. Pair #32 Q3 — shared-store writes by temporary workers
+=======
+4. §5: **walked 2026-07-30, ruled** — neither blanket pruning nor measure-first (no significant project runs yet, so usage data cannot exist; measurement resumes "in due time" once one does). Instead: a **curation walk of the app-skill pile** — inventory the ~60 marketplace/built-in skills, walk them (grouped), boss rules keep / drop / maybe per skill by judgment; the useful-sounding survivors become the field NC's own skills boot into. Boss direction: this walk — and the skills phase generally (founding plan step 1's five skills) — comes **first** in NC's remaining plan, likely as NC's first action. OUTER WALK COMPLETE: all items processed (1 rewalked→three improvements; 2 suite-health; 3a oracle/red rule + taxonomy commissioned; 3b folded; 3c → §6b bindings walk complete + pair #3 packet; 4 this ruling). Note ready for landing and drain.
+>>>>>>> theirs
