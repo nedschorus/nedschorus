@@ -44,7 +44,7 @@ Engineering bundle — each useful *today*, each colliding with a planned NC sib
 
 ## Pinned field inventory (for future routing tests)
 
-47 skills; sorted-name digest `sha256:e6c477cc3a7e43c6…` (first 16 hex; full list below is the digest's input, one name per line, sorted). A future routing test records this digest; a mismatch means the pile changed out from under the test and the test's verdict is stale.
+47 skills; sorted-name digest `sha256:e6c477cc3a7e43c6…` (first 16 hex; full list below is the digest's input, one name per line, sorted). Description-set digest `sha256:326676fa40d0cbae…` — input: one line per skill, `<name>: <description>` exactly as the session skill listing renders it, sorted by name, LF-joined, UTF-8, computed over the 47 descriptions as loaded 2026-07-30. A future routing test records both digests; a name mismatch means the pile was renamed or resized, a description mismatch with matching names means the pile was re-described — either stales the test's verdict.
 
 ```
 anthropic-skills:consolidate-memory  anthropic-skills:docx  anthropic-skills:morning
