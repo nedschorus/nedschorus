@@ -18,7 +18,7 @@ Boss-commissioned full read of the 14-skill repo (clone in session scratchpad; t
 
 ## Open questions for the boss (asked in-session)
 
-- **Q1 — the ladder is uncapped after the trip.** Superpowers bounds the whole loop (5 rounds total → adjudicate/park/BLOCK). NC's ladder trips at 3 into the fresh-pair reset — and nothing bounds the reset's own rounds. Proposed: the post-trip pair gets a bounded budget (2 rounds), then the change goes to the boss with the attempt history; and the reset runs on a more capable model or higher effort than the looping agent (superpowers' R≥4 rung — escalate the model along with the eyes). Awaiting ruling before the ladder text changes.
+- **Q1 — RESOLVED at boss walk (2026-07-31), substantially recast:** the ladder is now four one-shot fixers (3 solo + 1 team-directed), always-revert between attempts (failed diffs ride in notes, deliberately re-appliable), model-tier escalation via the new writer-identity trailer (B6), and the real-vs-cosmetic change classification (rule 6) replacing the unsound "minor" bypass. Original question: Superpowers bounds the whole loop (5 rounds total → adjudicate/park/BLOCK). NC's ladder trips at 3 into the fresh-pair reset — and nothing bounds the reset's own rounds. Proposed: the post-trip pair gets a bounded budget (2 rounds), then the change goes to the boss with the attempt history; and the reset runs on a more capable model or higher effort than the looping agent (superpowers' R≥4 rung — escalate the model along with the eyes). Awaiting ruling before the ladder text changes.
 
 ## Flank additions (new-vp blind-side read @ 44c9b2d6, 2026-07-31) — triage-list homes, judged this session
 

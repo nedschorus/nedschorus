@@ -28,3 +28,7 @@ The skill was thin (boss verdict: extract useful bits, drop the skill); four bit
 2. **Next-action phrasing is verb-first and specific**: "resubmit with `--base <current-main-id>`", never "fix the problem" — the CTA rule applied to `next_action`.
 3. **Consistency is a catalog property**: one term per concept across every refusal (a path is always "path", never alternately "file"/"entry") — matters because agents pattern-match error text.
 4. **Confirmation shape** (for any future destructive prompt, e.g. `cancel`): name the action and consequence ("kill worker for `<digest>`? its workspace is swept"), label choices with actions, never OK/Cancel.
+
+## B6 — Writer-identity trailer (boss-ruled 2026-07-31)
+
+The trailer schema grows one line: `Gatekeeper-agent: <runtime/model>` — the runtime and model of the agent that produced the change. Purpose: the fix ladder's escalation needs to know what tier produced an artifact to know whether stronger models remain ("who last wrote this" becomes one `git log` away, no transcript lookup). Same style as the other trailers: literal value, never omitted. This grows the landed 2026-07-24 schema — flagged as an amendment, not a supplement.
