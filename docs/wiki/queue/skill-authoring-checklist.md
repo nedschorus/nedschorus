@@ -46,6 +46,7 @@ These rules govern any skill (or skill half) whose failures are silent. Boss-sup
 - Burden of proof is on the expectation; no partial credit; evidence must show genuine task completion, not surface compliance.
 - Checkable assertions are checked by script, not eyeballed.
 - Scenario taxonomy (pair #9, principle 6): false trigger, missing context, conflicting instructions, partial failure, criteria-pass-while-intent-violated.
+- Micro-testing a load-bearing wording (referenced by the Register section): run the task with no guidance first — no failure means the guidance isn't needed; then each candidate wording as fresh-context single calls embedded in its realistic surrounding text (the full skill, not the wording alone), on a task that tempts the failure, 5+ repetitions; read every flagged output manually (template echoes fake as compliance); treat variance as a metric — five interpretations across five reps means the wording does not bind. (Superpowers extract, 2026-07-31.)
 
 ## Deliberately excluded, with its reopening trigger
 
