@@ -61,6 +61,16 @@ The gate governs code mechanically; these govern how agents use *judgment* tools
 
 Rejected spec-kit imports (boss reasoning in the extraction note's marks): spec-as-single-source-of-truth (map/territory error — code is the truth past the initial phase), prompt-checklists where code/walk/artifact mechanisms exist, reviewer-carried doctrine, template severity tables, the fixed question cap.
 
+## Multi-agent operating rules (from the 2026-07-30 experiment; evidence in session archive)
+
+Rule-shaped findings from running five agents (two model families, three effort tiers) on this plan's production — they govern how NC uses agents as tools:
+
+1. **Peer-awareness is a missing prior, installed by disclosure.** Agents sharing an environment never spontaneously hypothesize a concurrent writer — faced with impossible file state, every agent blamed itself or the disk; all coordinated flawlessly once told. Therefore: any prompt for an agent in a shared environment states that other agents are active and that unexplained state changes are probably peers (report, never rewrite on anomaly); output paths derive from agent identity; shared mutable files get exactly one owner (the ledger's union-merge and machine-owned files are this rule already applied). Evidence: the three-way output-file collision, 2026-07-30.
+2. **Vary model family before reasoning effort in review panels.** Cross-family reviewers found different *categories* of defect; extra effort within one family found depth inside the same categories. Same-model agreement — which reached sentence-level similarity on identical prompts — counts as one opinion, not two.
+3. **Force convergence with scenario discipline and commitment lines.** Requiring a concrete failure scenario per finding ("no scenario, no finding") and an explicit SAFE / NOT-SAFE commitment eliminated hedge-findings and converged an adversarial panel in three rounds.
+4. **Non-converging reviews are a goal-level signal.** When finding counts do not shrink across fix cycles, stop patching: the goal is mis-scoped — the patch-cycle tripwire, observed firing at design level (the threat-model ruling collapsed ~30 "unfixable" findings at a stroke).
+5. **Judgment tasks converge where adversarial tasks don't.** Blind cross-model phasing/prioritization agreed almost entirely; use panels for adversarial review, and a single agent plus spot-check for prioritization.
+
 ## What Phase 1 is designed to teach
 
 Which checks fire and what they cost (`quality/runs.jsonl`); whether reason-required suppressions change agent behavior; NEEDS-WALK volume (calibrates the test-integrity pull); whether posit comments feel natural or like noise (decides the posit program's future); real flake and duration data. Phase transitions are needs noticed at work and ratified at the walk — the run log informs, never gates.
