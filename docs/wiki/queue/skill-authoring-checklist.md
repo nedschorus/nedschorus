@@ -39,6 +39,8 @@ These rules govern any skill (or skill half) whose failures are silent. Boss-sup
 - Checkable assertions are checked by script, not eyeballed.
 - Scenario taxonomy (pair #9, principle 6): false trigger, missing context, conflicting instructions, partial failure, criteria-pass-while-intent-violated.
 
+**Proposed addition (superpowers extract, 2026-07-31, awaiting drain):** baseline-fail-first with a rationalization catalog. Before writing the skill body, run the pressure scenarios against a no-skill agent and record the exact failure modes and rationalizations it produces; write the skill against those observed failures, not imagined ones; on each revision re-run and close the new loopholes. If the no-skill agent does not fail the scenario, the skill has no demonstrated need — the removal-witness idea at authoring time. (Source: obra/superpowers `writing-skills`; consistent with the frozen eval protocol's no-skill baseline, which this makes generative rather than merely comparative.)
+
 ## Deliberately excluded, with its reopening trigger
 
 skill-creator's iteration machinery — review UIs, benchmark loops, the description optimizer — is not adopted; it is complexity the earned-complexity ladder has not admitted, and its trigger measurement is a proxy. Revisit only if an NC skill's failures prove silent and frequent enough that live iteration demonstrably misses them, and only after false-trigger tests exist for the trigger claims involved.
