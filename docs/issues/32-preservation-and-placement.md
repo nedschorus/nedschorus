@@ -85,7 +85,8 @@ One rule: **state whose value outlives a session belongs in the repository,
 moved there at a natural boundary; machine-local holds live working state;
 the global scope stays empty.** Per member: tasks — already placed by the
 approved handoff design (export to files, check in at each handoff); memories
-— OPEN QUESTION (below); transcripts — full logs stay local (size), boundary
+— machine-local decision-queue store, drained by the boss (resolved below,
+2026-07-31); transcripts — full logs stay local (size), boundary
 extracts are the bridge specification's open question, not re-decided here;
 databases — live data stays live, the accepted Time-Machine residue;
 instruction files — in-repo (NC's CLAUDE.md is a step-2 repository
@@ -165,11 +166,42 @@ incidents earn it, per the enforcement ladder.
 
 ## Open questions (state carried on the issue)
 
-1. **Memory placement:** do memories become a tracked repository directory
-   (moving the class into the free git tier, greppable beside doctrine,
-   feeding the memory-pointing research on
-   [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)) — at
-   the cost of memories becoming visible, versioned content?
+1. **Memory placement — RESOLVED (boss-walked 2026-07-31, fleet-side walk
+   item 6):** the memory store is **machine-local working state, not
+   repository content** — a decision queue under the artifact-lifecycle
+   rule, one store per project shared across all worktrees (per-worktree
+   stores would fragment one fact into drifting copies).
+   - **Working tier:** agents write memories freely to the local store;
+     nothing is committed at write time. Real-time visibility comes from
+     instrumentation, not git: every memory read and write is echoed to the
+     console, remind-tier
+     ([nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39));
+     the boss intervenes by prompting the acting agent.
+   - **Content rule — memories are memories, not soft skills.** Two admitted
+     classes: (a) durable human-context facts (the boss's name, role,
+     preferences, plans); (b) staged lessons whose structural home does not
+     exist yet, drained into that skill, hook, or doctrine line at its build
+     (the founding plan's step-1 drain). Instruction-shaped content whose
+     home already exists never persists as a memory — a surprising ruling
+     ("always X," "never Y") goes to its doctrine line, hook, skill, or
+     code, not into the store.
+   - **Preservation is the drain, not the write.** The boss walks the store
+     at his cadence; per entry: reject-delete (expected majority), redirect
+     to its structural home (lands via a normal check-in), keep as memory,
+     or leave queued. Kept survivors are committed in **one batched check-in
+     per drain** — main receives one curated commit per drain, never
+     per-write churn, and nothing reaches the public repository before the
+     boss's review. The handoff scrub reports the store's depth and
+     oldest-entry age alongside the other queues, so the queue rots
+     visibly, never silently.
+   - **Accepted residual (boss-ruled 2026-07-31):** undrained entries are
+     unbacked between drains — machine loss loses them; cheap by the
+     drain's own economics (most entries are headed for deletion or
+     relocation anyway); the outside-git backup question stays at
+     [nedschorus#7](https://github.com/nedschorus/nedschorus/issues/7).
+     Reopening trigger: an undrained memory loss that costs real work.
+   - Feeds the memory-pointing research on
+     [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29).
 2. **Log extracts at boundaries:** already open in the bridge specification;
    owned there, tracked here only as a placement consumer.
 3. **Shared-store writes by temporary workers:** ban them (workers return

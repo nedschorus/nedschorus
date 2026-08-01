@@ -128,5 +128,6 @@ This walk also covers pair [nedschorus#32](https://github.com/nedschorus/nedscho
 4. §4 — riders to #18 and the step-7 record (note §6.3)
 5. §5 — app-skill policy for NC sessions (note §6.4)
 6. Pair #32 Q1 — memory placement
+   *processed 2026-07-31 → resolved: machine-local decision-queue store, drained by the boss (batched check-in of kept survivors per drain); instrumentation per [nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39); full ruling in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142).*
 7. Pair #32 Q2 — log extracts at boundaries (owned by the bridge specification; only the placement-consumer stance is decidable here)
 8. Pair #32 Q3 — shared-store writes by temporary workers
