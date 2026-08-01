@@ -31,6 +31,6 @@ The old system's postal stack (server, dispatcher, delivery lifecycle, wake mech
 
 ## Open — awaiting the boss
 
-1. Handoff-time snapshots: whether writing a handoff copies the live logs into the committed record (active logs stay out of git regardless; the boss raised capture-at-handoff-creation as the candidate). Archival value only after the S4 ruling — durability no longer needs it.
+1. RESOLVED 2026-07-31 (number kept for reference stability): no handoff-time snapshot of the bridge logs is collected. Collection begins only if a data-driven consumer for boundary log data ever exists — that named consumer is the reopening trigger. If ever collected, snapshots are handoff artifacts riding the handoff check-in into `handoff/`, aging out of the tree under the handoff retention rule ([fast-handoff-design.md](fast-handoff-design.md) § The artifacts; placement stance recorded on [nedschorus#32](https://github.com/nedschorus/nedschorus/issues/32) Q2). Active logs stay out of git regardless, as before.
 2. The Monitor-armed idle-wake rider (each side arming a filesystem watch to shorten pull latency) — unruled; it is automation the ladder has not admitted.
 3. Comms-backlog inputs (pair #10 dispersal, walk item 17 cluster 1, boss-ruled 2026-07-25): decide per communication type whether a supported API or MCP carries it; preserve both agent-level and task-level addressing where each is useful (tracked on [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1)).

@@ -130,4 +130,5 @@ This walk also covers pair [nedschorus#32](https://github.com/nedschorus/nedscho
 6. Pair #32 Q1 — memory placement
    *processed 2026-07-31 → resolved: machine-local decision-queue store, drained by the boss (batched check-in of kept survivors per drain); instrumentation per [nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39); full ruling in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142).*
 7. Pair #32 Q2 — log extracts at boundaries (owned by the bridge specification; only the placement-consumer stance is decidable here)
+   *processed 2026-07-31 → resolved: no bridge-log extracts collected until a data-driven consumer exists (bridge spec open item 1 marked resolved); if ever, handoff-riders in `handoff/` under the new handoff retention rule (tree holds newest two triples, boss-ruled same walk, landed in `fast-handoff-design.md`); full text in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142).*
 8. Pair #32 Q3 — shared-store writes by temporary workers

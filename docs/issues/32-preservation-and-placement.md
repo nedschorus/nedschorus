@@ -202,8 +202,21 @@ incidents earn it, per the enforcement ladder.
      Reopening trigger: an undrained memory loss that costs real work.
    - Feeds the memory-pointing research on
      [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29).
-2. **Log extracts at boundaries:** already open in the bridge specification;
-   owned there, tracked here only as a placement consumer.
+2. **Log extracts at boundaries — RESOLVED as placement stance (boss-walked
+   2026-07-31, fleet-side walk item 7):** no bridge-log extracts are
+   collected until a data-driven consumer for boundary log data exists —
+   this also resolves the bridge specification's open item 1 (marked there;
+   the named consumer is the reopening trigger). If ever ruled in, extracts
+   are handoff artifacts: they ride the handoff check-in into `handoff/`
+   and age out of the working tree with their handoff under the retention
+   rule ([fast-handoff-design.md](../cross-project/fast-handoff-design.md)).
+   Term note, so the two usages stop conflating: "boundary extract" has
+   meant both a handoff-time copy of the bridge message logs (the bridge
+   specification's usage — the artifact this resolution declines to
+   collect) and a transcript-tier boundary snapshot; the latter already
+   exists as the handoff design's committed per-handoff transcript
+   (`handoff/<NNNN>-transcript.md`), a distinct, already-ruled artifact
+   this resolution does not touch.
 3. **Shared-store writes by temporary workers:** ban them (workers return
    content; only persistent agents write shared stores) or allow them and
    sweep entries whose originating session is dead. The first is simpler;
