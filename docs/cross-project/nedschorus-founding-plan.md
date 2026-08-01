@@ -78,7 +78,6 @@ Five committed homes plus the shared place — no `docs/working/` ever exists:
 | [comms-bridge-spec.md](comms-bridge-spec.md) | Specification, re-derived 2026-07-21 (both channels, six ruled inputs honored); package-reviewed 2026-07-21, all rulings folded. |
 | [boot-pack-manifest.md](boot-pack-manifest.md) | Artifact list; rows superseded by the specs are historical. |
 | [seed-claude-md-draft.md](seed-claude-md-draft.md) | Pre-calibration input to step 2, not the base. |
-| [handoff-lite-skill-draft.md](handoff-lite-skill-draft.md) | Superseded by fast-handoff-design.md; kept as record. |
 | git-clean-slate-plan.md (legacy: `~/Projects/nedlern/docs/working/proposed/`) | Read-only reference for step 7's slice. |
 
 ## Open — awaiting the boss
