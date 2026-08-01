@@ -217,10 +217,27 @@ incidents earn it, per the enforcement ladder.
    exists as the handoff design's committed per-handoff transcript
    (`handoff/<NNNN>-transcript.md`), a distinct, already-ruled artifact
    this resolution does not touch.
-3. **Shared-store writes by temporary workers:** ban them (workers return
-   content; only persistent agents write shared stores) or allow them and
-   sweep entries whose originating session is dead. The first is simpler;
-   the second matches how scheduled routine runs would need to work anyway.
+3. **Shared-store writes by temporary workers — RESOLVED: no rule
+   (boss-walked 2026-07-31, fleet-side walk item 8).** The walk found the
+   ban-vs-allow framing doubly moot. First, "temporary" does not
+   discriminate in this system: every session dies, roles persist through
+   continuity chains (handoffs, briefings, successors), and the ruled
+   writer/fixer model deliberately makes doing-agents short-lived — a
+   lifespan-keyed ban would misfire on the agents doing the work. Second
+   and decisive: the feared problem is unobserved, and every durable
+   artifact class already lands on a review surface by construction —
+   repository artifacts through check-ins (producer stamped via the B6
+   `Gatekeeper-agent` trailer), GHIs visible and walkable, memory writes
+   echoed ([nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39))
+   and drain-reviewed (Q1 above), tasks carried by handoffs and counted at
+   the scrub. The unreviewed residue is machine-local working state, which
+   dies with its session or drains. Part 4's ownership discipline (a
+   worker returns its deliverable to its dispatcher) stands as a
+   description of practice, not a mandate; memories arising from direct
+   boss interaction is likewise recorded as observation, not rule. No ban,
+   no sweep machinery, no new rule. Reopening triggers: an actual orphaned
+   shared-store entry observed in the wild, or scheduled routine runs
+   arriving with a real need to write shared stores.
 
 ## Relations
 
