@@ -1,6 +1,6 @@
 ---
 status: specification
-design-as-of: 2026-07-22
+design-as-of: 2026-07-31
 ---
 
 # fast-handoff — the session handoff system (specification)
@@ -17,7 +17,9 @@ Each handoff is a numbered triple in `handoff/`, counter ascending, zero-padded 
 - `handoff/<NNNN>-transcript.md` — the denoised dialog tail of the writing session: extracted from the last `line-count` JSONL lines (default 1000), both voices kept, noise dropped. The file IS the extracted window; reading it and "tail-only input" refer to the same content. The only other transcript surface is dead-session recovery (below); raw JSONLs are never read directly otherwise.
 - `handoff/<NNNN>-tasks.json` — the surviving tasks exported when the handoff is written, committed with the pair. `read` imports it PYTHON-DIRECT (boss-ruled 2026-07-21, package-review item 7): it writes the task files straight into the harness's session-keyed store directory (`~/.claude/tasks/<session-id>/`) and prints `imported N tasks`; the pickup line has the successor confirm N against its live task list. Accepted residual (boss-ruled 2026-07-21): the import couples to the harness's internal task-file format, which can change without notice — not a concern while the printed-count verification bounds any drift to a visible mismatch at the very next pickup; reopening trigger: a count mismatch.
 - `scripts/handoff.py` — subcommands `write`, `read`, `transcript` (contracts below).
-- Two CLAUDE.md lines, verbatim: the pickup line — *"At session start run `python3 scripts/handoff.py read`; follow the handoff only on a fresh successful read; on anything else stop and tell the boss."* — and the archive pointer — *"`handoff/<NNNN>-transcript.md` holds each past session's extracted dialog; read it when the handoff is not enough."*
+- Two CLAUDE.md lines, verbatim: the pickup line — *"At session start run `python3 scripts/handoff.py read`; follow the handoff only on a fresh successful read; on anything else stop and tell the boss."* — and the archive pointer — *"`handoff/<NNNN>-transcript.md` holds each recent session's extracted dialog; read it when the handoff is not enough; for sessions older than the tree holds, recover from git history (`git log -- handoff/`, then `git show <sha>:<path>`)."*
+
+**Retention (boss-ruled 2026-07-31): the working tree holds only the newest two handoffs.** Each `write`'s check-in also removes from `handoff/` every triple older than the new handoff's immediate predecessor, so the directory lists at most two numbered triples (plus, transiently, a fresh reservation). Git history is the archive — every removed triple remains recoverable — so glob, grep, and file listings stay at working-set size while the full numbered series survives as history. Rationale: a handoff is consumed once by its successor; old-plus-new covers the observed re-read case (the immediate predecessor); deeper archaeology is rare and history serves it. Retention removals create gaps in the visible series, which the numbering rules already declare legal. Test: T11 — after a `write`, the directory holds exactly the new and predecessor triples; `read` resolves the latest correctly; a removed triple is recoverable via `git show`.
 
 ## What a handoff body contains
 
