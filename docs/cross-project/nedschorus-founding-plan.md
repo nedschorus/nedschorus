@@ -81,7 +81,7 @@ Five committed homes plus the shared place — no `docs/working/` ever exists:
 
 ## Open — awaiting the boss
 
-1. Entry-checkpoint-as-git-gatekeeper-check: the full statement awaits his approve (no import can be checked in unmanifested; the manifest cannot lag the system). The checkpoint's mechanical shape is already ruled (2026-07-21): imports run through the executable import command, which writes the manifest line itself.
+1. RESOLVED 2026-07-31 (number kept for reference stability): the entry-checkpoint statement is approved in its trailer-based form — no import can be checked in unrecorded, and the record cannot lag the system: `check-in` validates the declared `--import` triple at instant screening (each defect a named refusal) and writes the `Gatekeeper-import` trailer itself, same commit, with `imports` deriving the table from history ([git-gatekeeper-design.md](git-gatekeeper-design.md) § Constructive guarantees). Named residual (accepted): the guarantee binds declared imports; undeclared copying of legacy content is the cooperative-discipline class — governed by the rewrite policy (unexamined is never preserved) and caught at the walk.
 2. Commit this founding conversation's denoised transcripts (this session + predecessor) to `docs/cross-project/` — the founding decisions currently live only in unbacked `~/.claude` JSONLs.
 3. Step 5's dissolution into CLAUDE.md + the founding handoff.
 4. RESOLVED 2026-07-22 (number kept for reference stability): the bridge spec's re-derivation completed 2026-07-21 and the package review walked it end to end (item 8, all six hardenings adopted and folded); its two open questions (handoff-time log snapshots; the Monitor idle-wake rider) live in the spec's own Open section.
