@@ -3,3 +3,6 @@ bridge/*.log.md
 
 # Obsidian per-vault state (UI panes, workspace, plugin caches) — quarry-proven pattern
 .obsidian/
+
+# walk-me-through tier-3 anchors: machine-local tmp ledgers, deleted at walk close (skill: .claude/skills/walk-me-through)
+walk-ledgers/
