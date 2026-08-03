@@ -32,7 +32,7 @@ A cross-runtime pair (Claude + Codex) that alternates between cooperation and co
 ## Oversight mechanics: the spy and the filtered stream
 
 - A cheap, fast **spy** agent (naming candidates: spy — boss-leaning; lookout) watches working agents and notifies the relevant domain expert when its attention is warranted. The expert wakes, reviews the situation, and decides *for itself* whether to intervene. Cheap context absorbs the volume; expensive context spends only on signal.
-- **The watching surface is the session file** — literally what the agent saw and did, in order — read through a small adapter (one parser to fix when the format shifts).
+- **The watching surface is the session file** — literally what the agent saw and did, in order — read through a small adapter (one parser to fix when the format shifts). Boss-proposed name for this arrangement (2026-08-03): **shadowing**, the observer being a **shadow agent** — proven live in the legacy fleet, where a transcript-follow pipeline watched a working session for weeks across context resets, simply and reliably. Shadowing is also how near-identical observer context is achieved (superseding spawn-time context copying — see the [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41) context dial).
 - **The filter is the design's core:** observers read the **intent stream** — the agent's thinking, the user messages, the display messages — and *not* the tool traffic. Failures live in the intent stream (wrong beliefs, unjustified claims, drifting intent); volume lives in the tool traffic. The observer's judgment survives *because* it knows less — context asymmetry as a designed artifact.
 - **The spot-check refinement, sharpened by the research (boss-approved):** the intent stream is a *sensor, never a load-bearing gate*. Confident narration can be false, so observers can pull ground truth on demand — and an *escalated* domain expert receives action results, artifact diffs, and provenance alongside the narrative, never the narrative alone.
 - The spy's two tunables — miss rate and spam rate — get the same trigger/anti-trigger eval discipline as skills ([nedschorus#23](https://github.com/nedschorus/nedschorus/issues/23)).
@@ -43,7 +43,7 @@ A cross-runtime pair (Claude + Codex) that alternates between cooperation and co
 
 The complete role-class set, growing only when a real task exposes a gap (same one-at-a-time rule as skills):
 
-- **agents** (generic, task-scoped workers — the drivers; every guardian implies one) and **subagents** (one-shot skill executors).
+- **agents** (generic, task-scoped workers — the drivers; every guardian implies one) and **subagents** (one-shot skill executors; boss-leaning name for the one-job-one-prompt class, 2026-08-03: **focused agents** — pairs with the question-instead-of-answer retry contract on [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41): a focused agent that cannot do its one job returns the question and exits; the invoker re-aims a fresh one).
 - **guardians** — the paired second (renamed from navigator): covers the driver's back, protective stance.
 - **spies** — cheap watchers triaging the filtered intent-stream to experts.
 - **sparring-partners** — the cross-runtime competing-and-reconciling mode of a pair.
@@ -67,3 +67,4 @@ Reports land as `nc-queue/` notes; comparing them is itself a live trial of the 
 2. First pilot: one sparring pair on one real task — scoped to bounded verifiable artifacts, the regime the pairing evidence supports (PairCoder-class results); candidate: the step-7 git-gatekeeper build. **Pilot discipline for every team pattern (CDX leg, boss-approved):** mandatory baselines — same-budget single agent and best-of-N; preregistered correlation and unique-catch metrics; explicit stop rules; rollback when coordination cost exceeds verified marginal value.
 3. Spy stream-filter composition (exact message types in/out) — decided at pilot, not before.
 4. Whether spies run as subagents of the primary or free-standing — decided at pilot.
+5. Step granularity for planned work (boss-opened 2026-08-03, explicitly not yet figured out): a five-step plan as one agent, five focused agents under one supervising or shadowing thread, or something between. Candidate discriminator: context coupling between steps — steps sharing one working set split badly (each fresh agent re-pays the briefing and loses the model), loosely-coupled steps split well, favoring a sequence of focused agents under a continuous supervisor. Decided at pilot, not before.
