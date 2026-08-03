@@ -1,92 +1,82 @@
 ---
 status: specification
-design-as-of: 2026-07-31
+design-as-of: 2026-08-02
 ---
 
-# fast-handoff — the session handoff system (specification)
+# Session recycling — the handoff system (specification)
 
-**Implementation status:** `scripts/handoff.py` is DESIGNED, NOT YET BUILT — the build order below starts it in the legacy system. Behavior described in present tense is the contract for that build, not running behavior; the manual rehearsals to date follow the procedure by hand (markers boss-ruled 2026-07-21, package-review item 9).
+**Implementation status:** DESIGNED, NOT YET BUILT. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
 
-Continuity between sessions in this repo. Actors: the boss (human), the session agent (ending its session), a fresh drafting subagent, the successor session. The skill and script are named `handoff` (`handoff.py`); the skill carries the working alias `fast-handoff` only while it is prototyped inside the legacy system — the predecessor repo at `~/Projects/nedlern`, read-only reference (see README).
+## The problem
 
-## The artifacts
+A fleet of interactive agents running with little attention. Recycle a session before its context gets heavy — the work is mostly sequential, so old turns are disposable — without the human typing into each pane. **Compaction is rejected** for this: it summarizes uniformly when value is non-uniform, and it is slow. **`--continue`/`--resume` are rejected**: they restore the context being shed. Every relaunch is a fresh session — new id, empty window, CLAUDE.md and hooks reloaded from disk.
 
-Each handoff is a numbered triple in `handoff/`, counter ascending, zero-padded width 4 (numeric ordering — `read` parses numbers, never sorts lexically; gaps in the series are legal):
+## Governing principles
 
-- `handoff/<NNNN>.md` — the handoff. Fixed frame: a `written by session <id> at <UTC>` stamp at top; a fixed provenance block below it — scrub mode (`auto`/`vet`), correction count, correction classes — whose presence and shape `write` validates (boss-ruled 2026-07-21, package-review item 7; this block is the permanent home of nedschorus#6's interim correction-summary tripwire); a `read by session <id> at <UTC>` stamp appended when consumed; the If-already-read TEMPLATE at bottom (script-injected, placeholder intact in the file; `read` substitutes the actual reader id only when it prints the warning). `read` on the normal path prints the BODY only — the frame is machinery, never shown as content.
-- `handoff/<NNNN>-transcript.md` — the denoised dialog tail of the writing session: extracted from the last `line-count` JSONL lines (default 1000), both voices kept, noise dropped. The file IS the extracted window; reading it and "tail-only input" refer to the same content. The only other transcript surface is dead-session recovery (below); raw JSONLs are never read directly otherwise.
-- `handoff/<NNNN>-tasks.json` — the surviving tasks exported when the handoff is written, committed with the pair. `read` imports it PYTHON-DIRECT (boss-ruled 2026-07-21, package-review item 7): it writes the task files straight into the harness's session-keyed store directory (`~/.claude/tasks/<session-id>/`) and prints `imported N tasks`; the pickup line has the successor confirm N against its live task list. Accepted residual (boss-ruled 2026-07-21): the import couples to the harness's internal task-file format, which can change without notice — not a concern while the printed-count verification bounds any drift to a visible mismatch at the very next pickup; reopening trigger: a count mismatch.
-- `scripts/handoff.py` — subcommands `write`, `read`, `transcript` (contracts below).
-- Two CLAUDE.md lines, verbatim: the pickup line — *"At session start run `python3 scripts/handoff.py read`; follow the handoff only on a fresh successful read; on anything else stop and tell the boss."* — and the archive pointer — *"`handoff/<NNNN>-transcript.md` holds each recent session's extracted dialog; read it when the handoff is not enough; for sessions older than the tree holds, recover from git history (`git log -- handoff/`, then `git show <sha>:<path>`)."*
+- **The conversation is the key context.** File and repo state live in the worktree and on main, fed continuously by commit-as-you-go and the queues — **git is the long-term record and the restore-after-problem source (boss-ruled 2026-08-02)**. Handoffs are operational, machine-local, disposable.
+- **The successor is not dumber than the predecessor.** Carry information, not interpretation: dialog goes verbatim; there is no distillation, so no drafting or correction ceremony.
+- **Gaps cost more than over-capture.** Dialog is small next to what a session reads and writes; over-capture is nearly free, which is what makes frequent recycling safe.
+- **Multi-machine flexibility is deliberately out of scope (boss-ruled 2026-08-02).** A machine migration is a project, not a handoff. Reopening trigger: multi-machine operation becoming an actual goal (the server-role precondition is tracked at [nedschorus#40](https://github.com/nedschorus/nedschorus/issues/40)).
 
-**Retention (boss-ruled 2026-07-31): the working tree holds only the newest two handoffs.** Each `write`'s check-in also removes from `handoff/` every triple older than the new handoff's immediate predecessor, so the directory lists at most two numbered triples (plus, transiently, a fresh reservation). Git history is the archive — every removed triple remains recoverable — so glob, grep, and file listings stay at working-set size while the full numbered series survives as history. Rationale: a handoff is consumed once by its successor; old-plus-new covers the observed re-read case (the immediate predecessor); deeper archaeology is rare and history serves it. Retention removals create gaps in the visible series, which the numbering rules already declare legal. Test: T11 — after a `write`, the directory holds exactly the new and predecessor triples; `read` resolves the latest correctly; a removed triple is recoverable via `git show`.
+## The recycle cycle
 
-## What a handoff body contains
+The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes the handoff file:
 
-The drafting subagent's distillation of the session dialog, plus only what (a) the extracted transcript misses AND (b) no durable store holds. Content routes by audience: successor → the handoff; everyone → durable stores (tasks in the task list, memories in the memory store, permanent knowledge in the wiki, tracked work in issues, behavior in skills and code — the handoff points at store content, never restates it; a pointer to MUTABLE content carries a version pin — a commit SHA with the path, an issue-comment id, the exported tasks file — so the successor resolves what the writer meant, not whatever the artifact says by read time (boss-ruled 2026-07-21, package-review item 7); the boss → an issue labeled `draft` (full-context body, walkable; no work ever waits on one). The highest-value body content: correction notes — "you will likely misread X as Y; actually Z."
+- `written-at:` — UTC timestamp (boss-ruled 2026-08-02; consumed by the ignition prompt's elapsed-time line).
+- `read-starting-here:` — the quoted first line of the user prompt ~5 topics back (a topic = a series of related turns), or the session's first prompt, whichever is nearer. Over-capture is cheap; err long.
+- `next-step:` — the first action the successor takes. Governed by the preserved content rule: never restate what a durable store holds — point at it; and **any pointer to mutable content carries a pin** (a commit SHA with the path, an issue number, a quoted line), so the successor resolves what the writer meant, not whatever the artifact says by read time. Correction-note style where misreading is predictable ("you will likely misread X as Y; actually Z").
+- optional `dont-restart:` — the supervisor prompts `restart? y/n` instead of auto-relaunching (`y` launches, `n` exits the supervisor).
+- `restart-counter:` — the predecessor's counter + 1: the semaphore the supervisor watches. Init 0 when no predecessor file exists; the supervisor records the last-consumed value in its own state file so it never refires on the same value (the consumed-marker).
 
-## Writing a handoff (session end, boss present)
+The **supervisor** (one per agent, a python program running in a console) then:
 
-1. Run `handoff.py transcript` (no arguments = the current session, from the environment). It computes `NNNN = max+1` and writes `handoff/<NNNN>-transcript.md` — this file both carries the dialog and RESERVES the number; `write` later derives `NNNN` from it, never recomputes. Reservation is locked and explicit (boss-ruled 2026-07-21, package-review item 7): `transcript` holds an exclusive lock while computing and creating the reservation, so two simultaneous handoff writes cannot take the same number, and a reservation whose `write` never completed is a named INCOMPLETE state that `read` refuses on (see the state table) — an interrupted handoff write is visible, never silently newest.
-2. Spawn a fresh subagent whose only inputs are that transcript file and the drafting instructions in the skill. It writes the draft to a scratch path and returns the path.
-3. **The correction pass** (the session agent): fix the draft's misunderstandings (they predict the successor's), add facts the transcript misses that no store holds, prune anything a durable store already holds, route suggestion-class material to `draft` issues. Never added: accomplishment summaries, discovery reprises.
-4. **The scrub**, in the mode the boss names — `handoff auto` (default: the agent scrubs on its own judgment) or `handoff vet` (the boss walks both the corrections and the scrub before finalizing); the mode words are the boss's spoken command, not a script invocation. Tasks: close the dead, rewrite the stale, carry the live. Memories: prune the stale. The agent states each queue's depth and oldest-item age — `draft` issues plus the directory queues (`docs/wiki/queue/`, `docs/issues/queue/`, `nc-queue/`, `legacy-feature-queue/`) — one line per queue (artifact-lifecycle rule, founding plan § Project organization).
-5. `handoff.py write <draft-path>`: validates, injects the If-already-read template, stamps, writes `handoff/<NNNN>.md` (the number from step 1's reservation; refuses on collision), exports surviving tasks to `handoff/<NNNN>-tasks.json`, then submits the three files through `git-gatekeeper.py check-in` like any other change (waiting mode; message auto-generated; `--issue none`) — boss-ruled 2026-07-24, superseding the 2026-07-21 S2 local-commit rule. The files are written to disk FIRST, so a failed submission — network down, GitHub unreachable — never blocks ending the session: the next session reads the local files regardless, and the submission is repeated later (resubmission is always safe, a gatekeeper guarantee).
+1. Notices the counter change (or file mtime).
+2. **Kills the session.** Agents cannot exit themselves — `/clear` and `/exit` are unavailable to the agent, and self-SIGTERM trips the safety classifier (verified) — so the supervisor owns termination.
+3. **Extracts the dialog** (files-first: written to disk before anything else proceeds). The extractor derives the JSONL path from the session id the supervisor launched with — **ID-keyed lookup only**: the supervisor-known path is primary, a UUID search across the project directories is the recovery fallback, and latest-by-mtime is rejected (a second session in the same worktree makes it a race). It copies verbatim the user prompts and display messages from the boundary to EOF and appends the full-JSONL path as the need-more pointer.
+4. **Migrates tasks by pre-seed**: generates the successor UUID, copies `~/.claude/tasks/<old-uuid>/*.json` into `~/.claude/tasks/<new-uuid>/`, then launches `claude --session-id <new-uuid> "<ignition prompt>"`. Canaried 2026-08-02, v2.1.220: seeded tasks are read; new task ids allocate above the seeded max; no clobber. This rides undocumented harness internals — **re-run both canaries after every Claude Code upgrade**; the backstop if an upgrade breaks it is the queues (task-shaped work belongs in GHIs by the artifact rules).
+5. **Prints one automated queue-status line** — each queue's depth and oldest item, computed by script: the artifact-lifecycle rot-visibility duty riding every recycle at zero agent cost (full manual scrubs died with the committed tier; memory maintenance is the boss's drain per the #32 Q1 ruling).
+6. **Launches the successor with the ignition prompt**: the exact handoff path to read; the elapsed-time line ("this handoff was written N minutes/days ago — the longer the gap, the more will have changed since"); confirm N tasks visible (the pre-seed drift tripwire); then take the next step.
+7. **Local retention**: keeps the current and predecessor handoff + extract; deletes older.
 
-A refused `write` changes no numbered handoff; the reserved transcript stays in place and the retry reuses it (no re-extraction).
+## Auto-trigger
 
-**Privacy scan (boss-ruled 2026-07-21, package-review finding S1):** `write` runs a privacy-scan stage over the transcript before commit, ruled to the lightest form — initially minimal, even a no-op placeholder. The boss judges the risk low for this project: credentials are keychain-held and never appear in chat, and the residual — non-credential private conversation content committed to a public repository — is explicitly accepted. The stage exists as a named slot so teeth can be added later without redesigning the write procedure; strengthening it is a ladder rung admitted on evidence.
+The statusline script receives `.context_window.remaining_percentage` on stdin at every refresh; one added line writes it to a side file. The Stop hook reads that file — Stop-hook stdin does not carry `context_window` (verified) — and triggers the `handoff` skill at the threshold (config, ~50% used).
 
-## Reading a handoff (session start)
+## The founding boot — the one committed handoff
 
-`read` behaves per this table — the prose in the pickup line defers to it:
+Choirmaster's first boot has no predecessor session and no supervisor. The founding handoff is written by the founding pair, committed as an ordinary file, and launched with the ruled prompt pattern (`claude "$(cat <path>)"` — the launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). After that boot, recycling owns everything. No standing committed-handoff machinery exists; a boss-called durable snapshot is an ordinary commit on request.
 
-| Latest handoff's state | `read` behavior |
-|---|---|
-| WRITTEN (written-by stamp, no read-by), written by a DIFFERENT session | Validates everything first, imports `<NNNN>-tasks.json`, appends the read stamp and checks it in, prints the body LAST — validate → import → stamp → print (order boss-ruled 2026-07-21, package-review item 7: the successor sees the body only after the handoff is fully consumed, so a failed import or stamp can never strand a half-read handoff behind a working successor). The normal case — a fresh successful read. |
-| Written by the CURRENT session (no read-by) | Prints only `you wrote this handoff — resume`. A session never consumes its own handoff. |
-| READ by the current session | Prints only `already read by this session — resume`. Covers compaction re-entry, and `claude --continue` re-entry: `--continue` keeps the prior session id (boss-measured 2026-07-21), so a continued session falls in the same-session rows by construction — no separate resume row is needed, and the launcher keeps `--continue` from day one. |
-| ALREADY-READ by a different session | Prints the staleness warning + the If-already-read text with `<reader-id>` filled from the read stamp; stamps nothing; exits nonzero. The boss decides. Note: a mid-session context CLEAR mints a new session id, so a cleared-and-relaunched terminal arrives here by design — the boss's "continue" is the expected exit, not an error. |
-| No handoff series | Refuses: "no handoff series — ask the boss." |
-| Head file with no written-by stamp, or any malformed/unparseable stamp | Refuses as corrupt state; never prints it as a handoff. |
-| Newest number is a reservation without its handoff (an INCOMPLETE handoff write — transcript written, `write` never completed) | Refuses, naming the orphaned reservation. The boss decides: complete the write (`write` reuses the reservation) or remove it. |
+## Components (the build)
 
-The If-already-read template (stored with the placeholder; `read` fills it when printing): *"This handoff was already consumed by session `<reader-id>` — your picture is likely behind reality. Tell the boss. To recover what that session did: `python3 scripts/handoff.py transcript <reader-id>` and read the output. Do not start work before the boss says continue."*
+1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
+2. **The `handoff` skill** — picks the boundary, writes `next-step` per the content rule, writes the file, waits for the supervisor.
+3. **The statusline relay + Stop hook** — the auto-trigger.
+4. **The supervisor** — watch, kill, extract, pre-seed, queue-status line, launch; consumed-marker state; the `dont-restart` y/n gate.
+5. **The ignition prompt template** — path, elapsed-time line, task count, next step.
 
-## `scripts/handoff.py` contracts
+## Verified facts (2026-07-21 – 2026-08-02, Claude Code v2.1.220)
 
-| Subcommand | Does | Refuses (structured, named, never silent) |
-|---|---|---|
-| `write <draft-path>` | Frame validation of the draft (body non-empty; provenance block present and well-formed — mode, correction count, correction classes; after injection: stamp block well-formed, template present; reserved number uncollided — structure, not meaning), privacy scan (minimal per S1), inject, stamp, atomic write, task export, then submission of the triple via `git-gatekeeper.py check-in`. | Missing/unreadable draft path; validation failure (names the defect, writes no numbered handoff); missing/empty session-id environment (distinct exit code, never stamps empty); number collision; check-in refusal (surfaced verbatim; the files remain on disk and resubmission is safe). |
-| `read` | Per the state table, in the ruled order — validate → import → stamp → print-last; task import only on the normal case. | Per the state table (including the newest-reservation-incomplete state); missing/empty session-id environment; stamp-write failure surfaced. |
-| `transcript [session-id] [line-count]` | Defaults: current session, 1000. Extracts the two-voice dialog from the LAST `line-count` lines of the session's JSONL; drops tool dumps, thinking fragments, scheduled-prompt turns, subagent turns. Parser tolerance (boss-ruled 2026-07-21, package-review item 7): a live file's partial last record is tolerated (skipped, not fatal); a malformed line is skipped and counted, with the count named in the output, never a silent or fatal result; per-line size is bounded so one oversized record cannot defeat the window. Locates the JSONL by searching all project directories under `~/.claude/projects/` for `<session-id>.jsonl` (session ids are unique; the writing session's repo path may differ from the current one). Handoff-write use writes the reserving file; recovery use (a dead session's dialog) prints to stdout. | No JSONL found for the id (names the paths searched); empty or unparseable JSONL (names which). |
-
-Push timing (boss-ruled 2026-07-24): handoff files and read stamps are infrequently-updated files — checked in immediately when written, through the git-gatekeeper like everything else. A boot-time or session-end submission failure never blocks anything: the local files carry continuity, and the submission repeats later. The earlier local-only S2 rule and its next-push catch-up are superseded — under the gatekeeper design, local commits never reach GitHub by any other route.
-
-## Assumptions
-
-- MEASURED: JSONL extraction of a closed session yields readable dialog; the session id is in the environment; a context clear mints a new session id; `claude --continue` keeps the prior session id (boss-measured 2026-07-21 — a continued session is the same session to the read table); a fresh subagent's context is CLAUDE.md + prompt, no parent conversation.
-- INFERRED, verified at dogfood: CLAUDE.md reloads at session start and after clears; the session id is stable across compaction (a false ALREADY-READ after routine compaction would cry wolf).
-- UNMEASURED, gated: draft quality from transcript-only input (gate: T6a); `transcript` against the session's own still-open JSONL (gate: probed in build step 1).
+| Fact | Source |
+|------|--------|
+| `claude "<prompt>"` fires the prompt as the first interactive turn, in-band (dialog-safe) | canary |
+| `--allowedTools` on the launch silently prevents the positional prompt from firing — never combine them in a launcher | canary (2×2) |
+| An agent cannot `/clear` or `/exit` itself; self-SIGTERM trips the safety classifier (exit 143) | canary |
+| Statusline stdin carries `.context_window.remaining_percentage`; Stop-hook stdin does not | probe |
+| Tasks are `<N>.json` under `~/.claude/tasks/<session-id>/`; the dir is created lazily; `--session-id <uuid>` forces the id; pre-seed canaries 1 and 2 passed | probe/canary |
+| `--continue` keeps the prior session id | boss-measured 2026-07-21 |
+| A context clear mints a new session id; the session id is in the environment | measured |
+| A fresh subagent's context floor is CLAUDE.md + prompt | measured |
+| JSONL extraction of a closed session yields readable dialog | measured |
 
 ## Tests
 
-T1 `write` refuses each defect class; no numbered handoff changes on refusal · T2 stamps exactly once; same-session re-read prints only the resume line · T3 foreign read stamp → warning with filled reader id + nonzero + no stamp; strip-the-gate: neuter the comparison → T3 red · T4 empty series, stampless head, malformed stamp → three distinct refusals · T5 `transcript`: two voices, zero noise lines, closed AND live session, tail-window verified (content from the END of a long session), cross-directory id search, empty/unparseable refusal, plus the four adversarial parser fixtures (item 7): partial tail (live file ends mid-record), malformed line (skipped + counted, named in output), oversized line (bounded, cannot defeat the window), subagent-output classification (subagent turns dropped as noise, verified deliberate) · T6 own-handoff guard: the writing session's `read` prints the resume line, never consumes · T8 missing session-id env → loud refusals · T9 git failures surfaced; series unchanged after refused write; reserved transcript reused on retry · T10 numbering: reservation at step 1, `write` derives, collision refused, numeric (not lexical) max · T6a dogfood the full write procedure (steps 1–5) in the legacy system via its sanctioned push path; correction count recorded; compaction-stability verified · T6b pickup-line test at first nedschorus boot (not testable in the legacy system — its own startup machinery already loads context) · T7 one-time trial of a SECOND d-review-style pass on the T6a handoff — an optional extra vetting phase, NOT the core draft-then-correct procedure; if it catches nothing material it is out permanently.
-
-## Build order
-
-1. `handoff.py` in the legacy system — `transcript` first, then `write`/`read`; T1–T6, T8–T10 green.
-2. The skill file (the write procedure's steps + drafting instructions), then a d-review clarity pass.
-3. Cross-runtime review (Codex side) of the near-final spec.
-4. Dogfood T6a + T7 on the current role's next real handoff.
-5. Enter nedschorus at populate (the boot-up plan's repository-population step), through the entry checkpoint; T6b at first boot declares it live.
+- **Extractor**: the four tolerance fixtures (partial tail; malformed line skipped and counted; oversized line bounded; subagent turns dropped as deliberate classification), boundary-quote start, line-count mode, cross-directory ID search, empty/unparseable refusal.
+- **Supervisor**: semaphore init and consumed-marker (no refire after relaunch), `dont-restart` y/n paths, kill → extract → launch ordering (files-first verified), local retention old+new, task pre-seed as executable canaries (re-run per upgrade), ignition prompt contains path + elapsed-time line + task count.
+- **Trigger**: threshold crossing fires the skill exactly once.
 
 ## Known holes
 
-- Draft quality is unmeasured until T6a; the design bets on it.
-- Corrections and the scrub are done by the ending agent at low context; the boss's presence is the backstop; reopens as a mechanism candidate if dogfood shows scrubs skipped.
-- Very-long-session material can predate the extracted window and every store; bounded by commit-as-you-go and the boss at the walk.
-- Staleness detection is single-clone (read stamps unpushed); revisit at companion admission.
-- A counter past 9999 breaks the width-4 padding; accepted (numeric parsing tolerates wider numbers; the pad is cosmetic).
-- Transcripts commit to a public repository behind only the minimal (possibly no-op) privacy scan; accepted by boss ruling 2026-07-21 (package-review S1). The residual class is non-credential private conversation content.
-- The old system's handoff machinery is untouched; the current role keeps its old skill until T6a.
+- Pre-seed rides undocumented harness state; bounded by the ignition count-check and the per-upgrade canaries; the queues are the backstop.
+- Very-long-session material can predate the boundary window and every durable store; bounded by commit-as-you-go and the full-JSONL pointer.
+- The 5-topics boundary is the retiring agent's judgment; over-capture is cheap, so the instructed error is long.
+- The supervisor is a per-agent console process; if it dies, recycling stops until relaunched — visible in its console, and the agent keeps working meanwhile.

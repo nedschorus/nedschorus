@@ -144,7 +144,7 @@ Everything rests on one property GitHub provides: **a push either wins cleanly o
 
 ## Cross-spec consequence, awaiting the boss
 
-RESOLVED 2026-07-24 (boss-approved): `handoff.py` submits its files through `check-in` like any other requester (files written to disk first, so a failed submission never blocks a session boundary; resubmission is safe). The earlier S2 local-commit rule is superseded in `fast-handoff-design.md`.
+RESOLVED 2026-07-24, then SUPERSEDED 2026-08-02 by the session-recycling revision of [fast-handoff-design.md](fast-handoff-design.md): recycling handoffs are machine-local and never checked in; the one committed handoff (the founding one) lands as an ordinary file. The files-written-to-disk-first principle survives inside the supervisor's cycle.
 
 ## Relationship to the legacy design
 
