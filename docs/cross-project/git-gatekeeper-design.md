@@ -158,5 +158,5 @@ T1 every form error refuses with its named error and no side effects · T2 happy
 
 ## Open
 
-- Which artifact classes, if any, are gated on review evidence from day one — the Gate-evidence growth point stays dormant until the boss designates a class.
+- Which artifact classes, if any, are gated on review evidence from day one — the first class is now designated (boss-ruled 2026-08-04): instruction-bearing text (CLAUDE.md files, skills with their prompt templates, injected system prompts, the wiki), whose check-ins require walked-approval evidence; class definition, procedure, and guards on [nedschorus#31](https://github.com/nedschorus/nedschorus/issues/31). The check itself is built with the gatekeeper.
 - (resolved) The fast-handoff S2 interaction — see § Cross-spec consequence.
