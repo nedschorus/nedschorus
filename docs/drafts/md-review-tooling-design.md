@@ -34,4 +34,4 @@ Status: design for everything md-review encodes as code; feeds the build; itself
 
 ## Walk state for the skill draft
 
-Items 1–3 of the draft walk processed (When-to-use boss-authored; What-to-do boss-revised; How-to-do-it deleted — encoded duties moved to script header comments and the records README). Item 4 presents the assembled bare skill file. Detailed marks: the dispositions file.
+WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). The draft is the landing text; it lands at `.claude/skills/md-review/SKILL.md` when this design's builds are done and the text's references are true. Next: build order step 1 (the Claude cell launcher).
