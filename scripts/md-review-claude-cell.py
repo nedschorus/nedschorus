@@ -2,10 +2,10 @@
 """Run one Claude cell of an md-review grid against a document.
 
 One invocation = one cell — the twin of the Codex cell launcher
-(scripts/d-review-codex-cell.py, renamed to md-review-codex-cell.py at the
-rename sweep). The prompt templates in .claude/skills/d-review/prompts/ are
-the single prompt source for BOTH runtimes' cells: both launchers read the
-same template files, so the two legs cannot drift apart.
+(scripts/md-review-codex-cell.py). The prompt templates in
+.claude/skills/md-review/prompts/ are the single prompt source for BOTH
+runtimes' cells: both launchers read the same template files, so the two
+legs cannot drift apart.
 
 Usage:
   scripts/md-review-claude-cell.py --cell restate --tier floor --target docs/drafts/foo.md
@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "d-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
 
 # Tier -> Claude model id. One place to update as models change. Boss-picked
 # (good = Opus-class, floor = Sonnet-class, 2026-08-04); exact ids verified

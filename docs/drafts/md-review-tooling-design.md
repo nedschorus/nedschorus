@@ -1,6 +1,6 @@
 # md-review tooling design — the encode plan (draft, under active work)
 
-Status: design for everything md-review encodes as code; feeds the build; itself a draft in progress (not yet ready for md-review). Every requirement here traces to a boss ruling in [the self-review dispositions](../../d-review-records/2026-08-04-d-review-skill-self-review/dispositions.md). The skill text this tooling serves lives separately at [md-review-skill-v2-draft.md](md-review-skill-v2-draft.md) — that file is the exact words of the skill, nothing else; this file is the plan.
+Status: design for everything md-review encodes as code; feeds the build; itself a draft in progress (not yet ready for md-review). Every requirement here traces to a boss ruling in [the self-review dispositions](../../d-review-records/2026-08-04-d-review-skill-self-review/dispositions.md). The skill text this tooling serves is live at `.claude/skills/md-review/SKILL.md` (landed 2026-08-05; the draft file was deleted at landing, recoverable from git); this file is the plan that built it.
 
 ## Components
 
@@ -40,4 +40,4 @@ Approved set-three text the grid script must print — at launch: "Launched eigh
 
 ## Walk state for the skill draft
 
-WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). The draft is the landing text; it lands at `.claude/skills/md-review/SKILL.md` when this design's builds are done and the text's references are true. Next: build order step 1 (the Claude cell launcher).
+WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). LANDED 2026-08-05, boss-ordered ("make it so"): both cell launchers and the grid orchestrator built; rename sweep executed (records directory, Codex launcher, skill directory); the approved text is live at `.claude/skills/md-review/SKILL.md`. Remaining from this design: the records README (awaiting boss approval) and class (h)'s deferred micro-test (needs the CLAUDE.md consolidation).

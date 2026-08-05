@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Run one Codex cell of a d-review clarity matrix against a document.
+"""Run one Codex cell of a md-review clarity matrix against a document.
 
 One invocation = one cell. The prompt templates in
-.claude/skills/d-review/prompts/ are the single prompt source for BOTH
+.claude/skills/md-review/prompts/ are the single prompt source for BOTH
 runtimes' cells: Claude subagent cells are prompted with the same template
 text, so the two legs cannot drift apart.
 
 Usage:
-  scripts/d-review-codex-cell.py --cell restate --tier floor --target docs/cross-project/foo.md
-  scripts/d-review-codex-cell.py --cell defect-hunt --tier good --target .claude/skills/x/SKILL.md
+  scripts/md-review-codex-cell.py --cell restate --tier floor --target docs/cross-project/foo.md
+  scripts/md-review-codex-cell.py --cell defect-hunt --tier good --target .claude/skills/x/SKILL.md
 
 The cell's final message prints to stdout; codex progress output stays on
 stderr. Exit codes: 0 cell ran, 2 bad invocation, else codex exec's code.
@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "d-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
 
 # Tier -> Codex model id. One place to update as models change. Both ids
 # boss-picked and live-verified 2026-08-03 (the bare names "sol"/"terra" are
@@ -56,17 +56,17 @@ def main() -> int:
     if not target.is_absolute():
         target = REPO_ROOT / target
     if not target.is_file():
-        print(f"d-review-codex-cell: target not found: {target}", file=sys.stderr)
+        print(f"md-review-codex-cell: target not found: {target}", file=sys.stderr)
         return 2
 
     template_path = PROMPTS_DIR / f"{args.cell}.md"
     if not template_path.is_file():
-        print(f"d-review-codex-cell: prompt template missing: {template_path}", file=sys.stderr)
+        print(f"md-review-codex-cell: prompt template missing: {template_path}", file=sys.stderr)
         return 2
     prompt = template_path.read_text(encoding="utf-8").replace("{TARGET_PATH}", str(target))
 
     model = args.model or TIER_TO_CODEX_MODEL[args.tier]
-    last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="d-review-cell-")[1])
+    last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="md-review-cell-")[1])
     command = [
         "codex", "exec",
         "--sandbox", "read-only",
@@ -92,7 +92,7 @@ def main() -> int:
     )
     if completed.returncode != 0:
         print(
-            f"d-review-codex-cell: codex exec failed (exit {completed.returncode})",
+            f"md-review-codex-cell: codex exec failed (exit {completed.returncode})",
             file=sys.stderr,
         )
         return completed.returncode

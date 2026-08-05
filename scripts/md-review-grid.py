@@ -22,11 +22,10 @@ import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIR = REPO_ROOT / "md-review-records"
-# Cell launchers, one per runtime. The Codex launcher keeps its pre-rename
-# name until the rename sweep; update this constant at the sweep.
+# Cell launchers, one per runtime.
 CELL_LAUNCHERS = {
     "claude": REPO_ROOT / "scripts" / "md-review-claude-cell.py",
-    "codex": REPO_ROOT / "scripts" / "d-review-codex-cell.py",
+    "codex": REPO_ROOT / "scripts" / "md-review-codex-cell.py",
 }
 PASSES = ["restate", "defect-hunt"]
 TIERS = ["good", "floor"]
