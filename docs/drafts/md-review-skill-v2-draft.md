@@ -7,7 +7,7 @@ description: Review an MD file of lasting value before it lands on main — a sk
 
 ## When Used
 
-Run md-review on MD files so that future agents can clearly understand them (wiki files), use them properly (skills), encode them (designs), or otherwise incorporate them (CLAUDE.md, AGENTS.md). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed.
+When MD files are finalized so future agents can clearly understand them (wiki files), use them properly (skills), encode them (designs), or otherwise incorporate them (CLAUDE.md, AGENTS.md). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed.
 
 ## What to do
 
