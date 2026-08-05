@@ -32,6 +32,12 @@ Status: design for everything md-review encodes as code; feeds the build; itself
 5. Records README (walked).
 6. Skill v2 landing (the bare file, walked — instruction class).
 
+## Prompts walk (complete 2026-08-05)
+
+All three prompt sets boss-ruled and landed: set one (restate) — two cuts plus the frontmatter rule (prose fields restated, data fields skipped), micro-tested twice; set two (defect-hunt) — boss-redrafted stem and classes (a)–(e), evidence-restored (f)–(i) with the trigger-on-presence guard, no-severities and document-order output kept, both micro-tests passed (planted defects all caught; benign file drew zero demanded-section findings); set three (primary-agent instructions) — approved verbatim, lives in this design until the grid script encodes it (the script is its home; class (h)'s micro-test deferred to the CLAUDE.md consolidation landing).
+
+Approved set-three text the grid script must print — at launch: "Launched eight reviewers against <target>. Reports appear in <record-directory> as each completes — read each as it arrives." Per report: "saved: <record-directory>/<runtime>-<pass>-<tier>.md". At completion: "All eight reviews are complete, in <record-directory>, one file per reviewer. / Read every report in full. The restate reports show what a reader took each sentence to mean — compare them against what you intended; a confident misreading is a defect in the file, not in the reader. The defect-hunt reports flag defects with each reviewer's own confidence; expect heavy overlap — the same defect found independently by several reviewers is one defect. / Keep your judgments provisional until you have read all eight, as later reports may offer more insight than earlier ones. Then formulate your draft response: which problems are real, and what you propose to do about each. Walk that with the boss using the walk-me-through skill, ordered from most important to least. The walk's anchor is <record-directory>/dispositions.md."
+
 ## Walk state for the skill draft
 
 WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). The draft is the landing text; it lands at `.claude/skills/md-review/SKILL.md` when this design's builds are done and the text's references are true. Next: build order step 1 (the Claude cell launcher).
