@@ -1,0 +1,58 @@
+<!-- provenance: author=new-vp session=4cf7d488 role=authoring-agent (author-proxy for the skill; boss rules each disposition in the walk) date=2026-08-04 status=WALK-IN-PROGRESS -->
+
+# Triage dispositions — d-review skill self-review, eight-cell run 2026-08-04
+
+Target: `.claude/skills/d-review/SKILL.md` (landed version, nedschorus bad42b6). Grid: {restate, defect-hunt} × {good, floor} × {Claude, Codex} — raw counts 61/20/55/49 hunts = 185 raw, 132 distinct after merge, plus 29 restatement-divergence notes (see `merged-findings.md`, cell-attributed). Author triage folded the 132 into eleven decision clusters; the boss rules each in the walk. This file is being appended as the walk proceeds.
+
+## Process redesigns ruled by the boss during this walk (before/apart from per-cluster dispositions)
+
+1. **The merge agent is dissolved (boss-designed this session).** New flow: one **authoring agent** launches the eight cells, ingests each cell's report as it arrives (no barrier, no merge stage), triages incrementally, and keeps editing until the final review is processed. Dispositions stay provisional until all eight cells are in; final severities assigned once, at the end. The record keeps every raw cell output (unchanged mandate) and the dispositions carry per-cell attribution, so the which-cells-earn-their-keep analysis loses nothing. Rationale measured this run: cells landed minutes 7–12, the monolithic opus merge added ~18 minutes after; ingest-as-ready roughly halves end-to-end. The prior merge-agent rationale (report order pollutes the author) is handled upstream: templates ban cell severities, and each hunt report is internally document-ordered.
+2. **Merge-model pin and one-vs-two-merge-files questions: mooted** by the same redesign (asked and answered mid-session before the dissolve superseded them).
+3. **One review approach: the full eight-cell grid runs on EVERY review, including re-reviews of light revisions (boss-ruled this walk).** The light-revision/heavy-revision sliding scale is demoted to a data-earned future possibility, consistent with the standing pruning-is-a-data-question ruling. Uniform full grids keep the records corpus comparable.
+4. **Code-over-prompts principle (boss, this session): things that can be code should be code; prompts are slower and less reliable; not everything can be code.** Recorded doctrine home: the what-can-code-check issue, nedschorus#42.
+
+## Per-cluster dispositions (boss-ruled in the walk)
+
+- **Cluster 1 — Claude-leg under-specification (severity HIGH; confirmed live this run): ACCEPTED, structural remedy.** Build `scripts/d-review-claude-cell.py` as the Codex cell script's twin: headless `claude -p` invocation; Claude tier-to-model pins held authoritatively beside the Codex pins; per-run model AND effort set explicitly (boss confirmed headless supports both); the shared `prompts/` templates read and substituted mechanically; read-only tool restriction; provenance self-stamped with the exact invoked model id; working directory set to the NC checkout so both runtimes' cells see the identical instruction floor (fixes the floor-mismatch this run measured: in-band Claude subagents inherited the nedlern floor while Codex cells saw the NC floor). Build after the walk, with the Synthesize rewrite.
+- **Cluster 2 — missing instruction-floor definitions (severity HIGH): ACCEPTED; remedy = define-in-file now (boss-chosen), not wait for the CLAUDE.md consolidation.** The undefined terms the cells confirmed ("the boss", the instruction-floor concept, lens 6's input corpus, the artifact-lifecycle citation) get definitions written into the skill text in the rewrite batch. Plus a new hunt-template defect class (boss-designed): a term defined in the reviewed file that duplicates or conflicts with a definition in the checkout's CLAUDE.md/AGENTS.md is reported — every future clarity review doubles as a floor-drift detector. Deliberate interim duplication; the guard drains it upward at the step-2 CLAUDE.md consolidation. Template change to be micro-tested (planted conflicting definition must be reported).
+- **Cluster 3 — role-vocabulary collision (invoker/author/context-holder; self-review paradox; author-unavailable case): SUBSUMED by the flow redesign.** The new Synthesize text defines the one authoring-agent seat plus the cells; findings become acceptance criteria for that rewrite: it must state the self-review case (the authoring agent triages everything, generates no findings) and the author-unavailable case, one line each.
+- **Cluster (merge contract) — zero-judgment vs. dedupe, "nothing dropped" vs. "deduped", verbatim uncertainty in merged entries, provenance stamps on merged/aggregate files: MOOTED** — no merge agent, no merge contract.
+- **Cluster (severity scoping) — step 3 "never a severity" vs. step 6 "assigns severity": RESOLVED by the role definition** — cells observe and never rate; the authoring agent rates, once, at the end. Stated once in the rewrite.
+- **Cluster (grid sizing) — "full grid every time" vs. "light revision earns one pass": RULED as process redesign #3 above.** Rewrite states the present rule (full grid, every review) and marks the sliding scale as data-earned future.
+
+## d-review v2 architecture (boss-ruled during this walk; memorialized before the walk continued)
+
+- **Modes abolished.** No genre classifier (design vs. doctrine dissolved — all targets are MDs; the classifier caused defects and did no work). One review approach for every MD.
+- **Check taxonomy: clarity / coherence / grounding / design judgment**, plus fitness. Slight overlap between categories is acceptable (boss). Clarity = words carry one meaning (restate + hunt, unchanged). Coherence = concepts complete and non-contradictory (new template). Grounding = document matches the world. Design judgment = is it a good idea. Fitness = does the document do its commissioned job — stays with the authoring agent, who alone knows the purpose.
+- **Design judgment is NOT a cell pass.** The old lenses 5 (over-complexity), 8 (build-order), 10 (test-plan adequacy) come out of delegated checks. Basis, boss-stated and matched by this run's data: AI reviewers check whether things are logical, not whether they are right or best, and have little sense of complexity — this run's decline pile was almost exactly the cells' judgment attempts. Judgment stays with the boss; the authoring agent brings evidence.
+- **Lens 9's survivor:** a mechanism the document itself defines that accumulates data with no stated bound is a coherence incompleteness — checkable by reading, trigger-on-presence.
+- **Trigger-on-presence discipline (boss-flagged risk):** every coherence check fires only where the document contains the thing (a build order present → check its consistency); no check may imply an MD needs a section it lacks — that would manufacture findings against innocent files.
+- **Template micro-tests required before landing:** a benign MD (no plans, no mechanisms) must yield zero demanded-section findings; a planted-defect MD must yield catches.
+- **Grounding split:** cells keep the standing step-4 ruling (spot-check the cheap, label the rest unverified); the mechanizable slice (links resolve, cited paths exist, quoted lines match) migrates to code — the reference-integrity checker of nedschorus#42 — which the grid script can run as a free pre-pass.
+- **Structure:** one authoring agent; `d-review-grid.py` dispatch; per-runtime cell launcher scripts (Codex existing, Claude twin ruled); clarity + coherence templates as the delegated passes.
+
+## Self-application cluster (boss-ruled in the walk)
+
+- **The skill's name: RULED — renamed to `md-review`.** First name `md-review`, second and third hyphenated names as necessary — the whole family re-tokens: `md-review-records/`, `scripts/md-review-codex-cell.py`, the planned `md-review-claude-cell.py` and `md-review-grid.py`. Matches v2 semantics (it reviews MDs, not only designs) and the naming rule's greppability requirement. Renames land with the v2 batch.
+- **The records store: RULED — deliberate accumulation, no bound now.** The store exists precisely to accumulate review records for the future which-cells-earn-their-keep analysis (standing agreement, boss-reconfirmed); Python-driven record writing makes its maintenance trivial. The v2 text states this purpose explicitly instead of a bound.
+- **Bare sequence labels ("lens 7", "step 5", "Mode 2"): DECLINED as local labels;** v2's structure removes most of the numbering anyway.
+
+## Process norm formed this walk (queued for the walk-me-through skill)
+
+When a mid-walk discussion forms a memorializable conclusion, capture it in the record BEFORE the walk advances — an important question is never left hanging mid-walk (boss, this session). Amending the walk-me-through skill text is an instruction-class change: own verbatim draft, own walk, queued with the rewrite batch.
+
+## Still to walk
+
+Dangling-jargon cluster, split into four separately-ruled items (boss-directed split 2026-08-04; walked one at a time).
+
+### Walk order — dangling-jargon items
+1. "arrives at companion admission" — processed 2026-08-05 → ACCEPTED, freshen: rewrite in plain words stating current reality (Codex cells are live now; only the orchestrating seat — a Codex agent running a whole md-review — is deferred, to the companion-admission milestone), with an explicit path to the founding plan. Lands with the v2 batch.
+2. "the review-change candidate owns it when built" — processed 2026-08-05 → ACCEPTED: plain words, no fake handle ("a future code-review skill's lane — not yet built or filed"); the sentence gains a real pointer only when that skill is actually filed or built. No tracking issue filed now (boss approved; filing unscheduled work is capture-instead-of-doing). Lands with the v2 batch.
+3. "run a deliberate consistency sweep instead" — processed 2026-08-05 → REVISED then ACCEPTED: the whole archive-re-review exclusion is DELETED from the v2 text, not reworded. The skill's trigger (reviews run when an MD is about to land, or on the boss's ask) already excludes archive sweeps by construction; the sentence defended against an unobserved population. The parked archive-staleness problem keeps its existing home (nedschorus#31), no breadcrumb in the skill.
+4. Unlocated evidence citations (17-vs-2 measurement, backup-script specimen, uncommitted-work sentence) — open 2026-08-05 — DEFERRED to the v2 draft walk: the boss rules on whole sections shown verbatim, before and after. Drafting direction recorded: too many examples, their usefulness itself in question — draft leans toward trimming or cutting them; the forward rule (any measured claim cites its `md-review-records/` path) remains proposed alongside.
+
+(Superseded by rulings above: mode-choice gaps — MOOTED by v2 no-classifier; lens-internal wording defects — became drafting inputs for the coherence template; self-application catches — RULED; judgment-call-conditional flags — DECLINED per the standing false-precision ruling, reconfirmed by the v2 design-judgment removal.)
+
+## Landing plan (after the walk)
+
+All accepted text changes land through the instruction-class path: verbatim before/after drafts, boss walks each, then landing. One rewrite batch covering: Synthesize flow (authoring agent, no merge), role definition, grid-sizing rule, in-file definitions, instruction-floor/tier-"floor" naming collision, hunt-template drift-guard clause (micro-tested). Plus the build: `scripts/d-review-claude-cell.py`.
