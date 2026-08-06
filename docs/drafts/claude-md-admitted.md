@@ -1,6 +1,6 @@
 # nedschorus
 
-- This repository is `~/Projects/nedschorus` (NC). The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: write, commit, or run anything there.
+- The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: write, commit, or run anything there.
 - Use standard SDLC terms.
 - Write durable artifacts for a reader with zero context: the subject identifiable, the why stated, actionable without the conversation that produced it.
 - Absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously.
