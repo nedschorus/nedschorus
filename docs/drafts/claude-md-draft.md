@@ -38,9 +38,13 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 ## Writing
 
 11. Write durable artifacts for a reader with zero context: the subject identifiable, the why stated, actionable without the conversation that produced it.
-12. Using absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions.
+    *admission 2026-08-06 → ADMITTED.*
+12. Absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously.
+    *admission 2026-08-06 → REVISED and admitted in the boss's rewording (adds the positive instruction; supersedes the morning's input-1 text — noted in the #43 pair).*
 13. When creating or inventing names, for directories, file names, globals, functions, etc., use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
-14. A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear; justifying data lives in the records and git history.
+    *admission 2026-08-06 → ADMITTED verbatim.*
+14. ~~A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear; justifying data lives in the records and git history.~~
+    *admission 2026-08-06 → CUT from the floor, RE-HOMED by boss ruling: this belongs in the skill-making governor, not CLAUDE.md — landed verbatim in docs/wiki/queue/skill-authoring-checklist.md (the current skill-build rulebook; a future skill-writing skill inherits it from there).*
 15. Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; the shared concepts skills rely on are defined here, once.
 
 ## Sessions

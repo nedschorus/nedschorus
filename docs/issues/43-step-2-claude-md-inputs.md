@@ -10,6 +10,7 @@ Inputs are numbered in accumulation order — the order the handoff chain record
 
 **1. The absolutes warning** (boss-drafted 2026-08-06, superseding the 2026-07-28 shorthand).
 Instruction text, boss verbatim: "Using absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions."
+Superseded at the step-2 admission (boss-reworded 2026-08-06): "Absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously." — the admitted floor wording.
 Why this form (boss-ruled 2026-08-06): the earlier shorthand — "absolutes are deadly to agents", applied as a no-bare-always/never rule with a rulings-and-mechanisms exemption — was itself an absolute ban and talked around the instruction. Agents already read imperatives literally and near-unconditionally, so no ban is needed; a plain warning aimed at the writer carries the point, and with no ban the exemption clause has nothing to exempt from.
 Provenance: original directive in session 3b576242 (machine-local transcript), committed echo in the legacy worktree at `tasks/sessions/new-vp-walk-ledger-standing-items-2026-07-27.md` (item 3); instruction text drafted by the boss in session 9a618380.
 *processed 2026-08-06 → revised: boss redrafted the instruction; this entry carries the ruled text.*
