@@ -1,6 +1,8 @@
 # Step-2 CLAUDE.md inputs — the consolidated list
 
-**Consumer:** founding plan step 2 ("Revise CLAUDE.md for them" — [nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § The steps). Until this file, the inputs list lived scattered across the new-vp handoff chain and machine-local session transcripts; no committed consolidation existed. This draft is the item-8 artifact of the outstanding-items walk (ledger in the legacy worktree, `tasks/sessions/new-vp-walk-ledger-outstanding-items-2026-07-31.md`); its final committed home is the boss's to rule at that walk.
+Issue: [nedschorus#43](https://github.com/nedschorus/nedschorus/issues/43)
+
+**Consumer:** founding plan step 2 ("Revise CLAUDE.md for them" — [nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § The steps). Until this file, the inputs list lived scattered across the new-vp handoff chain and machine-local session transcripts; no committed consolidation existed.
 
 Inputs are numbered in accumulation order — the order the handoff chain recorded them. Verbatim quotes were re-verified against their sources on 2026-08-06 before this file was written.
 
