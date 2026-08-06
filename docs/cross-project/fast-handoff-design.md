@@ -46,6 +46,20 @@ The statusline script receives `.context_window.remaining_percentage` on stdin a
 
 Choirmaster's first boot has no predecessor session and no supervisor. The founding handoff is written by the founding pair, committed as an ordinary file, and launched with the ruled prompt pattern (`claude "$(cat <path>)"` — the launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). After that boot, recycling owns everything. No standing committed-handoff machinery exists; a boss-called durable snapshot is an ordinary commit on request.
 
+## Build status (2026-08-06)
+
+Four of the five components are built, tested, and on main; the fifth is the skill text, which is instruction-class and lands after its walk.
+
+| Component | State |
+|---|---|
+| Extractor | BUILT — `scripts/handoff-extract-conversation.py`, 23-case suite (`…-test.py`), live-validated against a real transcript |
+| Supervisor | BUILT — `scripts/handoff-supervisor.py`, 24 offline cases plus both live pre-seed canaries green |
+| Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
+| Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
+| `handoff` skill | DRAFTED — `docs/drafts/handoff-skill-draft.md`, awaiting the user's walk |
+
+Not yet done: wiring the status line and Stop hook into a settings file, and the first live recycle. Both belong to the user's walk-and-trial sitting, not to the code build.
+
 ## Components (the build)
 
 1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
