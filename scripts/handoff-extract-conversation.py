@@ -32,6 +32,7 @@ found, 4 transcript unusable (empty, unparseable, or boundary not found).
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
@@ -40,6 +41,14 @@ PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 # dialog. Skipping it by size keeps a single oversized line from defeating
 # the whole extraction.
 MAXIMUM_RECORD_BYTES = 4 * 1024 * 1024
+
+# A boundary that selects less dialog than this is widened backwards until it
+# clears. The agent picks where a topic starts; this floor makes a too-tight
+# pick harmless, so the boundary rule needs no "err long" hedging. Sized
+# against measured sessions: 2500 words is roughly eighteen exchanges. The
+# extract names how many earlier turns it left behind, so a successor whose
+# work reaches further back knows there is more and where to find it.
+MINIMUM_DIALOG_WORDS = 2500
 
 
 class TranscriptProblem(Exception):
@@ -162,29 +171,75 @@ def first_line_of(text: str) -> str:
     return text.splitlines()[0].strip() if text.splitlines() else ""
 
 
-def select_turns_from_boundary(turns, boundary_quote: str):
-    """Return the turns from the boundary-quoted user prompt to the end."""
+def word_count(turns) -> int:
+    return sum(len(turn["text"].split()) for turn in turns)
+
+
+def widen_to_minimum_words(turns, boundary_index: int, minimum_words: int) -> int:
+    """Walk a boundary backwards to earlier user prompts until it clears the floor.
+
+    Returns the widened index. A boundary already clearing the floor, or one
+    with no earlier user prompt to reach, is returned unchanged.
+    """
+    index = boundary_index
+    while word_count(turns[index:]) < minimum_words:
+        earlier = [
+            candidate
+            for candidate in range(index - 1, -1, -1)
+            if turns[candidate]["voice"] == "user"
+        ]
+        if not earlier:
+            return 0 if index > 0 else index
+        index = earlier[0]
+    return index
+
+
+def select_turns_from_boundary(turns, boundary_quote: str, minimum_words: int = MINIMUM_DIALOG_WORDS):
+    """Return the turns from the boundary-quoted user prompt to the end.
+
+    The selection is widened backwards when it falls under the word floor, so
+    a too-tight boundary cannot strand the successor.
+    """
     wanted = boundary_quote.strip()
     for index, turn in enumerate(turns):
         if turn["voice"] != "user":
             continue
         if first_line_of(turn["text"]) == wanted or turn["text"].strip().startswith(wanted):
-            return turns[index:], index
+            widened = widen_to_minimum_words(turns, index, minimum_words)
+            return turns[widened:], widened, index
     raise TranscriptProblem(
         f"boundary quote not found among {sum(1 for t in turns if t['voice'] == 'user')} "
         f"user prompts: {wanted!r}"
     )
 
 
-def render_extraction(turns, transcript_path: Path, session_id: str, skip_counts, boundary_note: str) -> str:
+@dataclass
+class ExtractionReport:
+    """What the extraction did, for the successor's header."""
+
+    session_id: str
+    transcript_path: Path
+    boundary_note: str
+    turns_left_behind: int
+    skip_counts: dict
+
+
+def render_extraction(turns, report: ExtractionReport) -> str:
     lines = [
-        f"# Session dialog — {session_id}",
+        f"# Session dialog — {report.session_id}",
         "",
-        f"Boundary: {boundary_note}",
-        f"Turns carried: {len(turns)}",
+        f"Boundary: {report.boundary_note}",
+        f"Turns carried: {len(turns)} of {len(turns) + report.turns_left_behind} "
+        f"({word_count(turns)} words).",
     ]
 
-    skipped = ", ".join(f"{count} {name}" for name, count in skip_counts.items() if count)
+    if report.turns_left_behind:
+        lines.append(
+            f"Earlier in this session, and NOT below: {report.turns_left_behind} turns. "
+            f"Read them from the transcript when your work reaches back that far."
+        )
+
+    skipped = ", ".join(f"{count} {name}" for name, count in report.skip_counts.items() if count)
     if skipped:
         lines.append(f"Records skipped while reading: {skipped}.")
 
@@ -197,10 +252,23 @@ def render_extraction(turns, transcript_path: Path, session_id: str, skip_counts
     lines += [
         "---",
         "",
-        f"Need more than this? The full transcript, including tool calls and results, is at {transcript_path}.",
+        "Need more than this? The full transcript, including tool calls and "
+        f"results, is at {report.transcript_path}.",
         "",
     ]
     return "\n".join(lines)
+
+
+def resolve_transcript_path(arguments) -> Path:
+    """Return the transcript to read: an explicit path, or an id-keyed lookup."""
+    if arguments.transcript_path:
+        transcript_path = Path(arguments.transcript_path).expanduser()
+        if not transcript_path.is_file():
+            raise TranscriptProblem(f"no transcript at {transcript_path}")
+        return transcript_path
+    return find_transcript_path(
+        arguments.session_id, Path(arguments.cd).expanduser().resolve()
+    )
 
 
 def main(argv=None) -> int:
@@ -224,14 +292,7 @@ def main(argv=None) -> int:
         parser.error("--last-turns must be at least 1")
 
     try:
-        if arguments.transcript_path:
-            transcript_path = Path(arguments.transcript_path).expanduser()
-            if not transcript_path.is_file():
-                raise TranscriptProblem(f"no transcript at {transcript_path}")
-        else:
-            transcript_path = find_transcript_path(
-                arguments.session_id, Path(arguments.cd).expanduser().resolve()
-            )
+        transcript_path = resolve_transcript_path(arguments)
     except TranscriptProblem as problem:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 3
@@ -247,19 +308,36 @@ def main(argv=None) -> int:
             )
 
         if arguments.boundary_quote:
-            selected, boundary_index = select_turns_from_boundary(turns, arguments.boundary_quote)
-            boundary_note = (
-                f"user prompt {boundary_index + 1} of {len(turns)}, "
-                f"quoted as {arguments.boundary_quote.strip()!r}"
+            selected, start_index, quoted_index = select_turns_from_boundary(
+                turns, arguments.boundary_quote
             )
+            boundary_note = (
+                f"the prompt quoted as {arguments.boundary_quote.strip()!r} "
+                f"(turn {quoted_index + 1})"
+            )
+            if start_index < quoted_index:
+                boundary_note += (
+                    f", widened back to turn {start_index + 1} to clear the "
+                    f"{MINIMUM_DIALOG_WORDS}-word floor"
+                )
         else:
-            selected = turns[-arguments.last_turns:]
+            start_index = max(0, len(turns) - arguments.last_turns)
+            selected = turns[start_index:]
             boundary_note = f"final {len(selected)} turns (recovery mode)"
     except TranscriptProblem as problem:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
-    extraction = render_extraction(selected, transcript_path, session_id, skip_counts, boundary_note)
+    extraction = render_extraction(
+        selected,
+        ExtractionReport(
+            session_id=session_id,
+            transcript_path=transcript_path,
+            boundary_note=boundary_note,
+            turns_left_behind=start_index,
+            skip_counts=skip_counts,
+        ),
+    )
 
     if arguments.output:
         output_path = Path(arguments.output).expanduser()

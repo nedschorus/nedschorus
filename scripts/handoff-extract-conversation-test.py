@@ -74,16 +74,39 @@ with tempfile.TemporaryDirectory() as workspace:
     check("reads every dialog turn", len(turns) == 6, f"got {len(turns)}")
     check("no skips on a clean transcript", not any(skips.values()), str(skips))
 
-    selected, index = extractor.select_turns_from_boundary(turns, "the boundary prompt")
+    # minimum_words=0 isolates boundary selection from the word floor.
+    selected, start, quoted = extractor.select_turns_from_boundary(turns, "the boundary prompt", 0)
     check("boundary starts at the quoted prompt", selected[0]["text"].startswith("the boundary prompt"))
     check("boundary carries to the end", len(selected) == 4, f"got {len(selected)}")
-    check("boundary reports its index", index == 2, f"got {index}")
+    check("boundary reports its index", start == 2 and quoted == 2, f"got {start},{quoted}")
 
     try:
         extractor.select_turns_from_boundary(turns, "a prompt nobody typed")
         check("missing boundary refuses", False, "no exception raised")
     except extractor.TranscriptProblem:
         check("missing boundary refuses", True)
+
+    # --- The word floor widens a too-tight boundary ------------------------
+    # Ten topics of ~600 words each: comfortably above a 2500-word floor in
+    # total, comfortably below it for any single topic.
+    wordy = []
+    for topic in range(10):
+        wordy.append(user_record(f"topic {topic} opens"))
+        wordy.append(assistant_record(" ".join(["word"] * 600)))
+    path = write_transcript(workspace, "wordy.jsonl", wordy)
+    turns, _ = extractor.read_dialog_turns(path)
+
+    selected, start, quoted = extractor.select_turns_from_boundary(turns, "topic 9 opens", 2500)
+    check("floor widens a too-tight boundary", start < quoted, f"start {start}, quoted {quoted}")
+    check("widened selection clears the floor", extractor.word_count(selected) >= 2500,
+          extractor.word_count(selected))
+    check("widened boundary lands on a user prompt", selected[0]["voice"] == "user", selected[0]["voice"])
+
+    selected, start, quoted = extractor.select_turns_from_boundary(turns, "topic 1 opens", 2500)
+    check("a boundary already clearing the floor is untouched", start == quoted, f"{start} vs {quoted}")
+
+    selected, start, _ = extractor.select_turns_from_boundary(turns, "topic 0 opens", 999999)
+    check("an unreachable floor carries the whole session", start == 0, f"got {start}")
 
     # --- Noise classes are dropped ---------------------------------------
     noisy = [

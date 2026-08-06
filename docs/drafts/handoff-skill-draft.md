@@ -20,7 +20,7 @@ When this session should end and a fresh one continue its work: context is runni
 
 ## What to do
 
-1. Pick the boundary: the first line of the user prompt about five topics back, where a topic is a run of turns on one subject. Use the session's first prompt if that is nearer. Err long — carrying extra dialog costs little, and carrying too little loses the thread.
+1. Pick the boundary: the first line of the user prompt that opened the current topic, where a topic is a run of turns on one subject. Use the session's first prompt if that is nearer. Picking too tight is safe — the extractor widens a short selection backwards until it carries enough dialog.
 2. Write the next step: the first action the successor takes. Name what a durable store already holds rather than restating it, and pin every pointer to something that will not move — a commit SHA with its path, an issue number, a quoted line. Where the successor is likely to misread something, say so plainly and give the correct reading.
 3. Write the handoff file at the path your supervisor watches, with these fields, one per line:
    - `written-at:` the current UTC time, ISO 8601
