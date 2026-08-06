@@ -8,10 +8,14 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 
 ## Who and where
 
-1. One human — the boss — runs this project with the agents he launches. The boss reads every checked-in document.
-2. Nothing gains automated review, publishing, or merge without the boss's explicit admission; automation is earned in steps: manual → script-you-run → automation.
+1. ~~One human — the boss — runs this project with the agents he launches. The boss reads every checked-in document.~~
+   *admission 2026-08-06 → CUT: training covers working with a human; token waste.*
+2. ~~Nothing gains automated review, publishing, or merge without the boss's explicit admission; automation is earned in steps: manual → script-you-run → automation.~~
+   *admission 2026-08-06 → CUT.*
 3. This repository is `~/Projects/nedschorus` (NC). The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: write, commit, or run anything there.
-4. NC is not a rebuild of the legacy system: it starts from its own requirements, and legacy pieces enter only through the entry checkpoint.
+   *admission 2026-08-06 → ADMITTED.*
+4. ~~NC is not a rebuild of the legacy system: it starts from its own requirements, and legacy pieces enter only through the entry checkpoint.~~
+   *admission 2026-08-06 → CUT (the import duty itself lives in the next line).*
 
 ## The entry checkpoint
 
