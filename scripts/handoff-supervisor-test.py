@@ -65,6 +65,51 @@ def run_offline_cases(workspace: Path):
     state_path.write_text("{ not json", encoding="utf-8")
     check("unreadable state starts fresh", supervisor.read_supervisor_state(state_path)["generation"] == 0)
 
+    # --- Heartbeat and liveness ------------------------------------------
+    heartbeat_state_path = workspace / "heartbeat-supervisor-state.json"
+    alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
+    check(
+        "no state file reads as no supervisor",
+        not alive and "no supervisor state" in explanation,
+        explanation,
+    )
+
+    supervisor.write_supervisor_state(heartbeat_state_path, {"session_id": "s"})
+    alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
+    check("state without a heartbeat reads as dead", not alive and "no heartbeat" in explanation, explanation)
+
+    supervisor.stamp_heartbeat(heartbeat_state_path, {"session_id": "s"})
+    alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
+    check("a fresh stamp reads as alive", alive, explanation)
+
+    supervisor.write_supervisor_state(
+        heartbeat_state_path,
+        {"last_poll_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
+    )
+    alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
+    check("a stale stamp reads as dead", not alive and "no supervisor is watching" in explanation, explanation)
+
+    supervisor.write_supervisor_state(heartbeat_state_path, {"last_poll_at": "not a timestamp"})
+    alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
+    check("an unreadable stamp reads as dead", not alive and "unreadable" in explanation, explanation)
+
+    check_result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--check", "--agent", "heartbeat",
+         "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False,
+    )
+    check("--check exits non-zero for a dead supervisor", check_result.returncode == 1,
+          f"code {check_result.returncode}: {check_result.stdout.strip()}")
+
+    supervisor.stamp_heartbeat(heartbeat_state_path, {"session_id": "s"})
+    check_result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--check", "--agent", "heartbeat",
+         "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False,
+    )
+    check("--check exits zero for a live supervisor", check_result.returncode == 0,
+          f"code {check_result.returncode}: {check_result.stdout.strip()}")
+
     # --- Elapsed-time phrasing -------------------------------------------
     recent = (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat()
     old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()

@@ -48,6 +48,15 @@ EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
+# The supervisor stamps its state file while polling so anyone can ask whether
+# a supervisor is still watching. Without this an agent can write a handoff,
+# stop working, and wait forever on a supervisor that died — a hang that looks
+# like obedience. Stamped on an interval rather than every poll to keep the
+# write rate low; treated as dead at several times that interval, so a slow
+# machine does not read as a corpse.
+HEARTBEAT_INTERVAL_SECONDS = 10.0
+HEARTBEAT_STALE_SECONDS = 60.0
+
 
 def parse_handoff_file(handoff_path: Path) -> dict:
     """Read the agent-written handoff into a dict of its `key: value` lines."""
@@ -76,6 +85,33 @@ def read_supervisor_state(state_path: Path) -> dict:
 def write_supervisor_state(state_path: Path, state: dict) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def stamp_heartbeat(state_path: Path, state: dict) -> None:
+    """Record that a supervisor is alive and watching, right now."""
+    state["last_poll_at"] = datetime.now(timezone.utc).isoformat()
+    write_supervisor_state(state_path, state)
+
+
+def supervisor_liveness(state_path: Path):
+    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    if not state_path.is_file():
+        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
+
+    state = read_supervisor_state(state_path)
+    stamped = state.get("last_poll_at")
+    if not stamped:
+        return False, "supervisor state carries no heartbeat — it is from an older build or never polled"
+
+    try:
+        last_poll = datetime.fromisoformat(stamped)
+    except ValueError:
+        return False, f"unreadable heartbeat: {stamped!r}"
+
+    age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
+    if age_seconds > HEARTBEAT_STALE_SECONDS:
+        return False, f"last heartbeat was {age_seconds:.0f}s ago — no supervisor is watching"
+    return True, f"supervisor alive, last heartbeat {age_seconds:.0f}s ago"
 
 
 def counter_from(fields: dict):
@@ -195,15 +231,22 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     )
 
 
-def wait_for_handoff(process, handoff_path: Path, consumed_counter):
+def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
     """Block until the agent writes a new handoff, or the session exits.
 
     Returns the handoff fields when a counter above `consumed_counter`
-    appears, or None if the session ended on its own.
+    appears, or None if the session ended on its own. Stamps the heartbeat
+    while it waits, so the watched agent can tell a live supervisor from a
+    dead one.
     """
+    last_stamp = 0.0
     while True:
         if process.poll() is not None:
             return None
+
+        if time.monotonic() - last_stamp >= HEARTBEAT_INTERVAL_SECONDS:
+            stamp_heartbeat(state_path, state)
+            last_stamp = time.monotonic()
 
         if handoff_path.is_file():
             fields = parse_handoff_file(handoff_path)
@@ -300,7 +343,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             settings.agent_command, session_id, settings.working_directory, prompt
         )
 
-        handoff_fields = wait_for_handoff(process, settings.handoff_path, state.get("consumed_counter"))
+        handoff_fields = wait_for_handoff(
+            process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
+        )
         if handoff_fields is None:
             print("handoff-supervisor: session ended without a handoff; supervisor stopping")
             return 0
@@ -333,11 +378,23 @@ def main(argv=None) -> int:
         epilog=__doc__,
     )
     parser.add_argument("--agent", required=True, help="agent name; names the handoff and state files")
-    parser.add_argument("--cd", required=True, help="the agent's worktree")
+    parser.add_argument("--cd", default=".", help="the agent's worktree")
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="machine-local handoff directory")
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
     parser.add_argument("--first-prompt", default="", help="prompt for the first session (no handoff yet)")
+    parser.add_argument(
+        "--check", action="store_true",
+        help="report whether a supervisor is watching this agent, then exit (0 alive, 1 not)",
+    )
     arguments = parser.parse_args(argv)
+
+    if arguments.check:
+        state_path = (
+            Path(arguments.handoff_dir).expanduser() / f"{arguments.agent}-supervisor-state.json"
+        )
+        alive, explanation = supervisor_liveness(state_path)
+        print(explanation)
+        return 0 if alive else 1
 
     working_directory = Path(arguments.cd).expanduser().resolve()
     if not working_directory.is_dir():

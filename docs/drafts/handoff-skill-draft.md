@@ -26,7 +26,7 @@ When this session should end and a fresh one continue its work: context is runni
    - `next-step:` the next step from step 1
    - `restart-counter:` the previous handoff's counter plus one, or 1 if there is no previous handoff
    - `dont-restart:` include this only when the user asks not to be relaunched automatically
-3. Stop working and wait. The supervisor takes over within seconds.
+3. Check that a supervisor is watching: run `scripts/handoff-supervisor.py --check --agent <your name>`. If it reports one alive, stop working and wait — the supervisor takes over within seconds. If it reports none, do not stop: tell the user that the handoff is written but nothing is watching for it, and keep working until they start a supervisor or tell you otherwise.
 
 ## How to do it
 

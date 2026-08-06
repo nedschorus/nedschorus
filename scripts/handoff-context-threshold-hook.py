@@ -19,11 +19,18 @@ Threshold: --threshold-used-percentage, default 50.
 """
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
 
 RELAY_DIRECTORY = Path.home() / ".claude" / "handoffs"
+
+_supervisor_spec = importlib.util.spec_from_file_location(
+    "handoff_supervisor", Path(__file__).with_name("handoff-supervisor.py")
+)
+supervisor = importlib.util.module_from_spec(_supervisor_spec)
+_supervisor_spec.loader.exec_module(supervisor)
 
 HANDOFF_INSTRUCTION = (
     "Context is {used:.0f}% used, at or past the {threshold:.0f}% recycle threshold. "
@@ -50,26 +57,38 @@ def session_id_from_stdin() -> str:
     return payload.get("session_id", "") if isinstance(payload, dict) else ""
 
 
+def context_used_percentage(session_id: str):
+    """Return the session's used-context share, or None if unreported."""
+    relay = read_json_file(RELAY_DIRECTORY / f"{session_id}-context.json")
+    if not relay:
+        return None
+    remaining = relay.get("remaining_percentage")
+    if not isinstance(remaining, (int, float)):
+        return None
+    return 100.0 - remaining
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
     parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
+    parser.add_argument(
+        "--agent", default="",
+        help="agent name; when given, the hook stays silent unless that agent's supervisor is alive",
+    )
     arguments = parser.parse_args(argv)
 
     session_id = session_id_from_stdin()
     if not session_id:
         return 0  # no session to reason about; stay silent
 
-    relay = read_json_file(RELAY_DIRECTORY / f"{session_id}-context.json")
-    if not relay:
-        return 0  # the status line has not reported yet
+    used = context_used_percentage(session_id)
+    if used is None or used < arguments.threshold_used_percentage:
+        return 0  # no report yet, or still plenty of room
 
-    remaining = relay.get("remaining_percentage")
-    if not isinstance(remaining, (int, float)):
-        return 0
-
-    used = 100.0 - remaining
-    if used < arguments.threshold_used_percentage:
-        return 0
+    if arguments.agent and not supervisor.supervisor_liveness(
+        RELAY_DIRECTORY / f"{arguments.agent}-supervisor-state.json"
+    )[0]:
+        return 0  # nobody is watching; asking for a handoff would hang the session
 
     fired_marker = RELAY_DIRECTORY / f"{session_id}-handoff-asked"
     if fired_marker.exists():
