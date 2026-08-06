@@ -38,6 +38,10 @@ All three prompt sets boss-ruled and landed: set one (restate) — two cuts plus
 
 Approved set-three text the grid script must print — at launch: "Launched eight reviewers against <target>. Reports appear in <record-directory> as each completes — read each as it arrives." Per report: "saved: <record-directory>/<runtime>-<pass>-<tier>.md". At completion: "All eight reviews are complete, in <record-directory>, one file per reviewer. / Read every report in full. The restate reports show what a reader took each sentence to mean — compare them against what you intended; a confident misreading is a defect in the file, not in the reader. The defect-hunt reports flag defects with each reviewer's own confidence; expect heavy overlap — the same defect found independently by several reviewers is one defect. / Keep your judgments provisional until you have read all eight, as later reports may offer more insight than earlier ones. Then formulate your draft response: which problems are real, and what you propose to do about each. Walk that with the boss using the walk-me-through skill, ordered from most important to least. The walk's anchor is <record-directory>/dispositions.md."
 
+## Future-checks direction (boss, 2026-08-06)
+
+Writing rules the project adopts for agent instruction files (the step-2 CLAUDE.md inputs among them) are candidate hunt checks: when we do not want agents instructed in a certain way, md-review looks for those instructions in the MD files it reviews. Recorded as direction for the records-driven template evolution; no template change commissioned now.
+
 ## Walk state for the skill draft
 
 WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). LANDED 2026-08-05, boss-ordered ("make it so"): both cell launchers and the grid orchestrator built; rename sweep executed (records directory, Codex launcher, skill directory); the approved text is live at `.claude/skills/md-review/SKILL.md`. Remaining from this design: class (h)'s deferred micro-test only (needs the CLAUDE.md consolidation); the records README was CUT at the boss's challenge — no reader needs it.
