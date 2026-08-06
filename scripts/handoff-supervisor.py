@@ -17,11 +17,14 @@ The cycle, per recycle:
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
-  written-at:        UTC timestamp, ISO 8601
-  read-starting-here: first line of the user prompt to extract from
-  next-step:         the first action the successor takes
-  restart-counter:   predecessor's counter plus one
-  dont-restart:      optional; any value makes the supervisor ask before relaunching
+  written-at:      UTC timestamp, ISO 8601
+  next-step:       the first action the successor takes
+  restart-counter: predecessor's counter plus one
+  dont-restart:    optional; any value makes the supervisor ask before relaunching
+
+How much dialog to carry is not among them: the extractor takes the tail that
+clears its word floor, so the retiring agent exercises no judgment over what
+its successor receives.
 
 Never pass --allowedTools on the launch: it silently swallows the positional
 prompt, so the successor would boot with no instructions at all.
@@ -145,37 +148,22 @@ def queue_status_line(working_directory: Path) -> str:
     return "queues — " + ("; ".join(reports) if reports else "none found")
 
 
-def extract_dialog(session_id: str, working_directory: Path, boundary_quote: str, output_path: Path) -> bool:
-    """Write the retiring session's dialog to disk. Returns True on success."""
-    command = [
-        sys.executable, str(EXTRACTOR_PATH),
-        "--session-id", session_id,
-        "--cd", str(working_directory),
-        "--output", str(output_path),
-    ]
-    command += ["--boundary-quote", boundary_quote] if boundary_quote else ["--last-turns", "40"]
+def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
+    """Write the retiring session's dialog to disk. Returns True on success.
 
-    result = subprocess.run(command, check=False)
-    if result.returncode == 0:
-        return True
-
-    if boundary_quote:
-        print(
-            "handoff-supervisor: boundary extraction failed; retrying in recovery mode",
-            file=sys.stderr,
-        )
-        recovery = subprocess.run(
-            [
-                sys.executable, str(EXTRACTOR_PATH),
-                "--session-id", session_id,
-                "--cd", str(working_directory),
-                "--last-turns", "40",
-                "--output", str(output_path),
-            ],
-            check=False,
-        )
-        return recovery.returncode == 0
-    return False
+    No boundary is passed: the extractor carries the tail that clears its word
+    floor, so nothing here depends on a judgment the retiring agent made.
+    """
+    result = subprocess.run(
+        [
+            sys.executable, str(EXTRACTOR_PATH),
+            "--session-id", session_id,
+            "--cd", str(working_directory),
+            "--output", str(output_path),
+        ],
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int) -> str:
@@ -263,12 +251,7 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     extraction failed and relaunching would lose the dialog.
     """
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
-    extracted = extract_dialog(
-        retiring_session_id,
-        settings.working_directory,
-        handoff_fields.get("read-starting-here", ""),
-        extract_path,
-    )
+    extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
     if not extracted:
         print(
             "handoff-supervisor: extraction failed; not relaunching "

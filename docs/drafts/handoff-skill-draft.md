@@ -20,19 +20,17 @@ When this session should end and a fresh one continue its work: context is runni
 
 ## What to do
 
-1. Pick the boundary: the first line of the user prompt that opened the current topic, where a topic is a run of turns on one subject. Use the session's first prompt if that is nearer. Picking too tight is safe — the extractor widens a short selection backwards until it carries enough dialog.
-2. Write the next step: the first action the successor takes. Name what a durable store already holds rather than restating it, and pin every pointer to something that will not move — a commit SHA with its path, an issue number, a quoted line. Where the successor is likely to misread something, say so plainly and give the correct reading.
-3. Write the handoff file at the path your supervisor watches, with these fields, one per line:
+1. Write the next step: the first action the successor takes. Name what a durable store already holds rather than restating it, and pin every pointer to something that will not move — a commit SHA with its path, an issue number, a quoted line. Where the successor is likely to misread something, say so plainly and give the correct reading.
+2. Write the handoff file at the path your supervisor watches, with these fields, one per line:
    - `written-at:` the current UTC time, ISO 8601
-   - `read-starting-here:` the boundary line from step 1
-   - `next-step:` the next step from step 2
+   - `next-step:` the next step from step 1
    - `restart-counter:` the previous handoff's counter plus one, or 1 if there is no previous handoff
    - `dont-restart:` include this only when the user asks not to be relaunched automatically
-4. Stop working and wait. The supervisor takes over within seconds.
+3. Stop working and wait. The supervisor takes over within seconds.
 
 ## How to do it
 
 The handoff file is `~/.claude/handoffs/<agent>-handoff.md` unless your supervisor was started with a different directory. Read the existing file first to get the counter to increment.
 
-The dialog itself is carried for you — never paste conversation into the handoff file. Anything the successor needs that is not in the dialog and not in a durable store goes in the next step.
+The dialog is carried for you, and how much of it is not yours to decide — never paste conversation into the handoff file, and never try to summarize the session. Anything the successor needs that is not in the recent dialog and not in a durable store goes in the next step.
 ```

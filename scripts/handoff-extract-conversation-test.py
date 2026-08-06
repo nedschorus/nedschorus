@@ -108,6 +108,27 @@ with tempfile.TemporaryDirectory() as workspace:
     selected, start, _ = extractor.select_turns_from_boundary(turns, "topic 0 opens", 999999)
     check("an unreachable floor carries the whole session", start == 0, f"got {start}")
 
+    # --- The default: a floor-sized tail, no boundary named ---------------
+    selected, start = extractor.select_tail_clearing_floor(turns, 2500)
+    check("default tail clears the floor", extractor.word_count(selected) >= 2500,
+          extractor.word_count(selected))
+    check("default tail opens on a user prompt", selected[0]["voice"] == "user", selected[0]["voice"])
+    check("default tail leaves earlier turns behind", start > 0, f"got {start}")
+    check(
+        "default tail carries no more than it needs",
+        extractor.word_count(selected) < 2500 + 1300,
+        extractor.word_count(selected),
+    )
+
+    selected, start = extractor.select_tail_clearing_floor(turns, 999999)
+    check("an unreachable floor carries everything", start == 0 and len(selected) == len(turns))
+
+    exit_code = extractor.main(["--transcript-path", str(path), "--output", str(Path(workspace) / "default.md")])
+    check("extraction runs with no boundary argument at all", exit_code == 0, f"got {exit_code}")
+    default_text = (Path(workspace) / "default.md").read_text(encoding="utf-8")
+    check("default extraction names the floor in its header", "clearing 2500 words" in default_text,
+          default_text[:200])
+
     # --- Noise classes are dropped ---------------------------------------
     noisy = [
         user_record("kept prompt"),

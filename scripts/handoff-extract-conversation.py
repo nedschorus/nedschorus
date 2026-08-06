@@ -6,13 +6,18 @@ docs/cross-project/fast-handoff-design.md). A retiring session names a
 boundary; the supervisor runs this after killing that session, and the
 extracted markdown becomes the successor's context.
 
-Two modes:
+By default it carries the tail of the conversation: enough turns to clear a
+word floor, extended back to the nearest user prompt so the extract opens on
+a clean turn. Nobody chooses a boundary — the retiring agent has no judgment
+to exercise here, and the header states how many earlier turns were left in
+the transcript, so a successor whose work reaches further back knows to go
+read them.
+
+Two overrides exist for manual use:
   --boundary-quote "<first line of a user prompt>"
-      Recycling mode. Copies every dialog turn from the matching user
-      prompt to the end of the transcript.
+      Start at a named prompt instead of the floor-sized tail.
   --last-turns N
-      Recovery mode for a session that died without writing a handoff.
-      Copies the final N dialog turns.
+      Carry exactly N final turns, ignoring the floor.
 
 Locating the transcript, in order: --transcript-path when given; otherwise
 the session id keyed against the project directory derived from --cd (or
@@ -42,12 +47,10 @@ PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 # the whole extraction.
 MAXIMUM_RECORD_BYTES = 4 * 1024 * 1024
 
-# A boundary that selects less dialog than this is widened backwards until it
-# clears. The agent picks where a topic starts; this floor makes a too-tight
-# pick harmless, so the boundary rule needs no "err long" hedging. Sized
-# against measured sessions: 2500 words is roughly eighteen exchanges. The
-# extract names how many earlier turns it left behind, so a successor whose
-# work reaches further back knows there is more and where to find it.
+# How much dialog the successor receives. Sized against measured sessions:
+# 2500 words is roughly eighteen exchanges. This number, plus the transcript
+# pointer and the left-behind count in the header, is what replaced asking
+# the retiring agent to judge a boundary.
 MINIMUM_DIALOG_WORDS = 2500
 
 
@@ -175,6 +178,23 @@ def word_count(turns) -> int:
     return sum(len(turn["text"].split()) for turn in turns)
 
 
+def select_tail_clearing_floor(turns, minimum_words: int = MINIMUM_DIALOG_WORDS):
+    """Return the tail of the conversation that clears the word floor.
+
+    Walks back from the end until the selection clears the floor, then keeps
+    walking to the nearest earlier user prompt so the extract opens on a
+    prompt rather than mid-exchange. Returns (selected_turns, start_index).
+    """
+    index = len(turns)
+    while index > 0 and word_count(turns[index:]) < minimum_words:
+        index -= 1
+
+    while index > 0 and turns[index]["voice"] != "user":
+        index -= 1
+
+    return turns[index:], index
+
+
 def widen_to_minimum_words(turns, boundary_index: int, minimum_words: int) -> int:
     """Walk a boundary backwards to earlier user prompts until it clears the floor.
 
@@ -280,9 +300,13 @@ def main(argv=None) -> int:
     parser.add_argument("--session-id", help="session whose transcript to extract")
     parser.add_argument("--transcript-path", help="explicit JSONL path, bypassing lookup")
     parser.add_argument("--cd", default=".", help="worktree whose project directory holds the session (default: cwd)")
-    boundary_group = parser.add_mutually_exclusive_group(required=True)
-    boundary_group.add_argument("--boundary-quote", help="first line of the user prompt to start from")
-    boundary_group.add_argument("--last-turns", type=int, help="carry only the final N dialog turns")
+    boundary_group = parser.add_mutually_exclusive_group()
+    boundary_group.add_argument("--boundary-quote", help="override: start at this user prompt")
+    boundary_group.add_argument("--last-turns", type=int, help="override: carry exactly N final turns")
+    parser.add_argument(
+        "--minimum-words", type=int, default=MINIMUM_DIALOG_WORDS,
+        help=f"dialog the default tail must clear (default {MINIMUM_DIALOG_WORDS})",
+    )
     parser.add_argument("--output", help="write here instead of stdout")
     arguments = parser.parse_args(argv)
 
@@ -309,7 +333,7 @@ def main(argv=None) -> int:
 
         if arguments.boundary_quote:
             selected, start_index, quoted_index = select_turns_from_boundary(
-                turns, arguments.boundary_quote
+                turns, arguments.boundary_quote, arguments.minimum_words
             )
             boundary_note = (
                 f"the prompt quoted as {arguments.boundary_quote.strip()!r} "
@@ -318,12 +342,18 @@ def main(argv=None) -> int:
             if start_index < quoted_index:
                 boundary_note += (
                     f", widened back to turn {start_index + 1} to clear the "
-                    f"{MINIMUM_DIALOG_WORDS}-word floor"
+                    f"{arguments.minimum_words}-word floor"
                 )
-        else:
+        elif arguments.last_turns:
             start_index = max(0, len(turns) - arguments.last_turns)
             selected = turns[start_index:]
-            boundary_note = f"final {len(selected)} turns (recovery mode)"
+            boundary_note = f"final {len(selected)} turns (explicit turn count)"
+        else:
+            selected, start_index = select_tail_clearing_floor(turns, arguments.minimum_words)
+            boundary_note = (
+                f"the tail of the conversation clearing {arguments.minimum_words} words, "
+                f"opening at the user prompt on turn {start_index + 1}"
+            )
     except TranscriptProblem as problem:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
