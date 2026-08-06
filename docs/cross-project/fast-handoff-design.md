@@ -63,6 +63,7 @@ Choirmaster's first boot has no predecessor session and no supervisor. The found
 | An agent cannot `/clear` or `/exit` itself; self-SIGTERM trips the safety classifier (exit 143) | canary |
 | Statusline stdin carries `.context_window.remaining_percentage`; Stop-hook stdin does not | probe |
 | Tasks are `<N>.json` under `~/.claude/tasks/<session-id>/`; the dir is created lazily; `--session-id <uuid>` forces the id; pre-seed canaries 1 and 2 passed | probe/canary |
+| A task record's `id` is a STRING, and `blocks`/`blockedBy` arrays are present; a record with an integer id is dropped by TaskList while still counting toward the next allocated id — so a schema-wrong pre-seed looks half-successful | canary 2026-08-06 |
 | `--continue` keeps the prior session id | boss-measured 2026-07-21 |
 | A context clear mints a new session id; the session id is in the environment | measured |
 | A fresh subagent's context floor is CLAUDE.md + prompt | measured |
