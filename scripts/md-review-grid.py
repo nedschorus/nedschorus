@@ -43,7 +43,7 @@ defect.
 Keep your judgments provisional until you have read all eight, as later
 reports may offer more insight than earlier ones. Then formulate your draft
 response: which problems are real, and what you propose to do about each.
-Walk that with the boss using the walk-me-through skill, ordered from most
+Walk that with the user using the walk-me-through skill, ordered from most
 important to least. The walk's anchor is {record_dir}/dispositions.md."""
 
 
@@ -122,7 +122,7 @@ def wait_for_cells(running: dict) -> list:
             hint = ""
             stderr_tail = stderr_path.read_text(encoding="utf-8")[-2000:]
             if "401" in stderr_tail or "Not logged in" in stderr_tail:
-                hint = " — the runtime is logged out; ask the boss to log in, then rerun this cell"
+                hint = " — the runtime is logged out; ask the user to log in, then rerun this cell"
             print(f"FAILED (exit {code}): {report_path.name}{hint} "
                   f"(stderr kept: {stderr_path})", flush=True)
     return failures

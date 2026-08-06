@@ -24,7 +24,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
 
 # Tier -> Codex model id. One place to update as models change. Both ids
-# boss-picked and live-verified 2026-08-03 (the bare names "sol"/"terra" are
+# user-picked and live-verified 2026-08-03 (the bare names "sol"/"terra" are
 # rejected by the CLI; the version-prefixed ids are the accepted form).
 TIER_TO_CODEX_MODEL = {
     "good": "gpt-5.6-sol",
@@ -33,7 +33,7 @@ TIER_TO_CODEX_MODEL = {
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
 # depends on the machine-local ~/.codex/config.toml default. xhigh for both
-# tiers by boss calibration 2026-08-03 ("xhigh is OK for codex").
+# tiers by user calibration 2026-08-03 ("xhigh is OK for codex").
 TIER_TO_REASONING_EFFORT = {
     "good": "xhigh",
     "floor": "xhigh",
@@ -99,7 +99,7 @@ def main() -> int:
 
     # Provenance header for the review record: the which-cells-earn-their-keep
     # analysis needs every cell output pinned to its exact model and effort
-    # (tier names drift across model eras; pins do not). Boss-required 2026-08-04.
+    # (tier names drift across model eras; pins do not). User-required 2026-08-04.
     print(
         f"<!-- provenance: runtime=codex model={model or 'config-default'} "
         f"effort={TIER_TO_REASONING_EFFORT[args.tier]} cell={args.cell} "

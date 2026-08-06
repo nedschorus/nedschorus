@@ -27,7 +27,7 @@ import sys
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
 
-# Tier -> Claude model id. One place to update as models change. Boss-picked
+# Tier -> Claude model id. One place to update as models change. User-picked
 # (good = Opus-class, floor = Sonnet-class, 2026-08-04); exact ids verified
 # against live subagent transcripts 2026-08-04.
 TIER_TO_CLAUDE_MODEL = {
@@ -38,7 +38,7 @@ TIER_TO_CLAUDE_MODEL = {
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
 # depends on the machine-local default. Accepted levels today:
 # low, medium, high, xhigh, max. "high" for both tiers per the skill's
-# good-at-high-effort ruling; recalibrating is the boss's call, here.
+# good-at-high-effort ruling; recalibrating is the user's call, here.
 TIER_TO_REASONING_EFFORT = {
     "good": "high",
     "floor": "high",
@@ -104,7 +104,7 @@ def main() -> int:
             print(completed.stdout, file=sys.stderr)
         print(
             f"md-review-claude-cell: claude -p failed (exit {completed.returncode})"
-            + (" — if the error above says the CLI is not logged in, ask the boss to run: claude login"
+            + (" — if the error above says the CLI is not logged in, ask the user to run: claude login"
                if "auth" in (completed.stdout or "").lower() or "login" in (completed.stdout or "").lower()
                else ""),
             file=sys.stderr,
