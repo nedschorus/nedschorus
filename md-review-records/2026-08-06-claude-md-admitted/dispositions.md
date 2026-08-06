@@ -13,7 +13,9 @@ Eight cells ran clean (first complete grid run; no cell failures; Codex auth hel
 *Re-plan 2026-08-06 (user: "just because naive agents are naive doesn't mean we should ignore them" — the decline-as-a-class proposal REJECTED; each remaining finding walks individually). Walk is now 11 items; 1–3 ruled above; remaining order:*
 
 4. "Use standard SDLC terms" — no glossary or authority cited (all four hunts). User's stated lean: agents can produce a good SDLC term list with certainty; the vocabulary is in training.
+   *ruled 2026-08-06 → DECLINED: the rule binds against training-supplied vocabulary — the glossary the cells demand exists in every reader; no text change.*
 5. "Durable artifact" — no boundary (which outputs count: commit messages, scratch files, docs?). User's stated lean: the artifact classes can be enumerated by us.
+   *ruled 2026-08-06 → approved: enumeration inline — "committed files, issue bodies, commit messages"; each class observable at write time.*
 6. "Actionable without the conversation" — impossible for record-type artifacts (logs, glossaries, decision records); forces invented next steps (both good-tier hunts).
 7. Naming — "parts" has no counting rule (camelCase, hyphens, extensions).
 8. Naming — multi-part baseline vs the 3-or-4-parts escalation: is a 2-part name ever acceptable?
