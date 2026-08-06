@@ -20,7 +20,7 @@ Status: design for everything md-review encodes as code; feeds the build; itself
 4. **Templates** (`prompts/`): `restate.md` unchanged. `defect-hunt.md` gains the coherence checks: gaps in a mechanism the file itself defines; an accumulating store the file defines with no stated bound; a term the file defines that duplicates or conflicts with the checkout's CLAUDE.md/AGENTS.md (the floor-drift guard). Every added check triggers on presence, never demands presence.
    - OPEN: coherence folded into the hunt template (grid stays eight cells — recommended) versus a separate coherence template (twelve cells); the records data decides a split later.
    - Micro-tests before any template lands: a planted-conflict file must be reported; a benign MD with no plans or mechanisms must produce zero demanded-section findings.
-5. **`md-review-records/README.md`** — one paragraph: the store holds every review's record and is the dataset for deciding, from evidence, which reviews earn their keep; deliberate accumulation.
+5. CUT (boss-ruled 2026-08-05): no records README — no reader needs it; the store is self-describing.
 6. **Renames, one commit:** `.claude/skills/d-review/` → `.claude/skills/md-review/` (text replaced by v2 at landing); `d-review-records/` → `md-review-records/`.
 
 ## Build order
