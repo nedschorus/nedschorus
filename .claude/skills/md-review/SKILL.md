@@ -1,13 +1,13 @@
 ---
 name: md-review
-description: Review an MD file of lasting value before it lands on main — a skill, CLAUDE.md, AGENTS.md, a wiki page, a completed design — so future agents can clearly understand, use, and build on it. Typically the final step before pushing; drafts still in progress are not ready for it.
+description: Review an MD file of lasting value before it lands on main — a skill, a wiki page, a completed design — so future agents can clearly understand, use, and build on it. Typically the final step before pushing. Not for drafts still in progress, and not for CLAUDE.md or AGENTS.md — those are validated behaviorally, not by review.
 ---
 
 # md-review
 
 ## When Used
 
-When MD files are finalized so future agents can clearly understand them (wiki files), use them properly (skills), encode them (designs), or otherwise incorporate them (CLAUDE.md, AGENTS.md). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed.
+When MD files are finalized so future agents can clearly understand them (wiki files), use them properly (skills), or encode them (designs). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed. CLAUDE.md and AGENTS.md are never md-review targets: they are extensions of the system prompts, validated behaviorally (canaries, boot tests), not by review.
 
 ## What to do
 
