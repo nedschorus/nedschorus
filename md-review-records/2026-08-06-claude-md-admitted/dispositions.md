@@ -17,11 +17,17 @@ Eight cells ran clean (first complete grid run; no cell failures; Codex auth hel
 5. "Durable artifact" — no boundary (which outputs count: commit messages, scratch files, docs?). User's stated lean: the artifact classes can be enumerated by us.
    *ruled 2026-08-06 → approved: enumeration inline — "committed files, issue bodies, commit messages"; each class observable at write time.*
 6. "Actionable without the conversation" — impossible for record-type artifacts (logs, glossaries, decision records); forces invented next steps (both good-tier hunts).
+   *ruled 2026-08-06 → approved: "actionable" → "usable" — covers records (reader can rely on it) and requests (reader can act on it) alike.*
 7. Naming — "parts" has no counting rule (camelCase, hyphens, extensions).
+   *ruled 2026-08-06 → DECLINED: training-level word segmentation; a counting rule gets written when two agents actually disagree, per the rules-on-repeated-problems approach.*
 8. Naming — multi-part baseline vs the 3-or-4-parts escalation: is a 2-part name ever acceptable?
+   *ruled 2026-08-06 → DECLINED: the rule is tiered by its sentence order — multi-part baseline, 3-or-4-part escalation inside the collision if-clause; clarify only on an observed misreading.*
 9. Naming — the check's mechanics: search scope (NC only? nedlern? ignored files?), no ambiguity test, no termination when the replacement also collides.
+   *ruled 2026-08-06 → DECLINED, all three: scope is the project being worked in ("the project" the rule's last sentence names); ambiguity is the trusted judgment call; the double-collision corner waits for a real occurrence.*
 10. The existing-name rule taken literally forbids rename/migration tasks.
+    *ruled 2026-08-06 → DECLINED: the rule's opening scopes it to creating names for new things; a rename task's premise overrides the reuse default by construction.*
 11. Scope over-breadth — "globals, functions, etc." read as covering local variables and loop indices.
+    *ruled 2026-08-06 → REVISED by user redraft: "etc." replaced with "classes, scripts, section headings, and other names likely to be grepped" — the class is now defined by its own test (grep-likelihood), which excludes statement-local temporaries by construction. WALK COMPLETE: 11 items — 6 text changes landed, 5 findings declined with reasons.*
 
 ## Dispositions
 
