@@ -1,11 +1,11 @@
 ---
 name: walk-me-through
-description: Present complex, multi-part material to the boss one item at a time, pausing for his go-ahead between items. Use when a large multi-part result has just been produced or requested — findings, a design or plan to review, a triage list, a queue to drain — and the boss will react or rule per item; when he says "walk me through X", "one at a time", or "slower"; or, unprompted, whenever your own reply would run past about four paragraphs of substantive explanation — walk it, whether it decomposes into decisions or is one explanation delivered in comprehension-sized steps. Not for material he asked to receive whole, or a reply short enough to land in one message. With no argument, walk the most recent large result in this conversation; if none exists, say so and ask for the subject. If the subject was requested but not yet produced, produce it first, then walk it.
+description: Present complex, multi-part material to the boss one item at a time, pausing for his go-ahead between items. Use when a large multi-part result has just been produced or requested — findings, a design or plan to review, a triage list, a queue to drain — and the boss will react or rule per item; when he says "walk me through X", "one at a time", or "slower"; or, unprompted, whenever your own reply would run past about four paragraphs of substantive explanation, or would ask a single approval covering several separately-decidable parts — walk it, whether it decomposes into decisions or is one explanation delivered in comprehension-sized steps. Not for material he asked to receive whole, or a reply short enough to land in one message. With no argument, walk the most recent large result in this conversation; if none exists, say so and ask for the subject. If the subject was requested but not yet produced, produce it first, then walk it.
 ---
 
 # Walk me through
 
-Deliver complex material as a sequence of items, each sized to one decision or one comprehension step, one item per presenting turn, advancing only on the word of the boss — the human operator running the project. A bulk dump serializes nothing: the boss handles one thing at a time, and anything delivered faster than that is lost or skimmed. A deciding walk's product is the decisions captured in their durable homes as they land; a teaching walk's product is comprehension, and its items legitimately capture nothing.
+Deliver complex material as a sequence of items, each sized to one decision or one comprehension step, one item per presenting turn, advancing only on the word of the boss — the human operator running the project. A deciding walk's product is the decisions captured in their durable homes as they land; a teaching walk's product is comprehension, and its items legitimately capture nothing.
 
 ## Opening a walk
 
@@ -19,7 +19,7 @@ Every walk needs an anchor for its marks, resolved in priority order:
 
 Whenever the walk's order is not inherent in the anchor itself, also record the ordered item list in the anchor as a walk-order block (a numbered list under a `## Walk order` heading) — in-place marks alone cannot say which unresolved item is next.
 
-When the walk decides things — the boss will rule per item — open with a purpose item before any mechanism item: one item establishing what the decisions are for and the bar they will be judged by. Rulings on mechanism made before the purpose is shared tend to be re-litigated once it surfaces. A walk where the boss only needs to understand is a teaching walk and needs no purpose item.
+When the walk decides things — the boss will rule per item — open with a purpose item before any mechanism item: one item establishing what the decisions are for and the bar they will be judged by. A walk where the boss only needs to understand is a teaching walk and needs no purpose item.
 
 ## Ordering
 
@@ -27,7 +27,7 @@ Follow the material's innate order when items depend on earlier ones to make sen
 
 ## Each item
 
-One item is one thing the boss can react to on its own — one issue, one file, one decision. Before bundling parts into an item, test: could they get different answers? If yes, split. A consequential or high-stakes part earns its own turn even when its likely answer matches its neighbors'.
+One item is one thing the boss can react to on its own — one issue, one file, one decision. Before bundling parts into an item, test: could they get different answers? If yes, split. Also split: unrelated requests for approval; a complex issue, into the steps that explain it; an item that refers to a file, PR, or GHI that is not summarized, so a summary can be included. More but simpler items is better than fewer but more complex or cryptic items.
 
 Head every item with the running count — "Item N of M: <the point>" (or "Step N of M" on an innate-order walk) — and lead with the point. M is the current plan's count, purpose item included; a re-plan or size-split restates it. For a finding or recommendation, include the proposed action, not just the problem. End every non-final presenting turn with exactly "Ready for the next item?" (or "Ready for the next step?" on an innate-order walk, or "Ready for the next part?" between sub-steps) — the visible pause is a required slot, not a flourish. A turn that answers a question and stays on the current item does not repeat the pause line — re-asking after the boss withheld approval reads as pressure; end with the answer.
 
@@ -49,7 +49,7 @@ Only the boss advances the walk. A clear approval word — "y", "next", "go", "a
 - A near-duplicate of a recent boss message is usually an amendment typed while your reply rendered: treat the pair as one message and respond to the delta. When the delta is empty it is a re-send — respond once, and never read repetition as a second approval.
 - An instruction that changes the walk itself — stop, pause, hand over the rest whole, switch subjects — is followed, not treated as a stay-on-item reply: the boss controls the walk's existence, not just its pace.
 
-NOT: advance because progress feels owed — a completed side task, a long silence, an unrelated notice. DO: advance on the boss's approval word alone. (Completion bias makes forward motion feel like the helpful default; on a walk it silently takes the boss's control.)
+NOT: advance because progress feels owed — a completed side task, a long silence, an unrelated notice. DO: advance on the boss's approval word alone.
 
 ## Capturing — the walk is a working review
 
@@ -58,6 +58,8 @@ After each boss response, classify the item: accepted, rejected, revised, or ope
 1. Mark the disposition at the anchor — the subject document, pair document, or ledger. Accepted, rejected, and revised items get a dated `processed <date> → <outcome>` line at the item's place. An open item gets an `open <date> — <what is pending>` note instead of a processed mark, so the resume rule returns to it. Marking never deletes the item's body.
 2. Record any decision or commitment in its durable home — the issue body (edited in place per the revision convention: revise the body itself; comments only for genuinely new events), the governing document, the code, or the commit that lands the change. When rulings accumulate, update the governing plan document alongside the specific artifacts it points to.
 3. State where the capture landed, or that the item yielded none. A blanket "nothing to capture" at walk end is how decisions get lost in conversation. On a teaching walk, per-item "nothing to capture" is the expected, legitimate state.
+
+The same duties cover conclusions the discussion itself produces — a side ruling, a direction the boss sets, a question the exchange settles — even when they are not the item's own decision: capture each in its durable home before the walk advances. Never advance past an important question the discussion raised but left unanswered — resolve it or record it as open first.
 
 Capture the decision, never the meeting: the durable record carries the ruling's substance, date, and reasoning, and reads correctly to someone who does not know a walk happened. Walk framing ("item 6", "the boss said") stays out of decision records — issue bodies, commits, governing documents. The anchor is the sanctioned exception: its disposition marks and walk-order block are walk records by design.
 
@@ -71,7 +73,7 @@ The anchor is the recovery contract: after any interruption on this machine — 
 
 ## Closing
 
-After the last item: confirm the final item's capture landed (or that it yielded none), then one closing sentence whose job is to state that the walk is complete and where its captures landed. NOT: produce an unsolicited recap, summary, or summary file of the walk — a recap the boss asks for is his to have. DO: end with that single sentence — the captures in their homes are the walk's record. (The end-of-task summary is a strong training default; here it would re-dump exactly what the walk existed to avoid dumping.)
+After the last item: confirm the final item's capture landed (or that it yielded none), then one closing sentence whose job is to state that the walk is complete and where its captures landed. NOT: produce an unsolicited recap, summary, or summary file of the walk — a recap the boss asks for is his to have. DO: end with that single sentence — the captures in their homes are the walk's record.
 
 ## Runtime parity
 
