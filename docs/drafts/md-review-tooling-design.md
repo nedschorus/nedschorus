@@ -1,6 +1,6 @@
 # md-review tooling design — the encode plan (draft, under active work)
 
-Status: design for everything md-review encodes as code; feeds the build; itself a draft in progress (not yet ready for md-review). Every requirement here traces to a boss ruling in [the self-review dispositions](../../d-review-records/2026-08-04-d-review-skill-self-review/dispositions.md). The skill text this tooling serves is live at `.claude/skills/md-review/SKILL.md` (landed 2026-08-05; the draft file was deleted at landing, recoverable from git); this file is the plan that built it.
+Status: design for everything md-review encodes as code; feeds the build; itself a draft in progress (not yet ready for md-review). Every requirement here traces to a boss ruling in [the self-review dispositions](../../md-review-records/2026-08-04-d-review-skill-self-review/dispositions.md). The skill text this tooling serves is live at `.claude/skills/md-review/SKILL.md` (landed 2026-08-05; the draft file was deleted at landing, recoverable from git); this file is the plan that built it.
 
 ## Components
 
@@ -29,7 +29,7 @@ Status: design for everything md-review encodes as code; feeds the build; itself
 2. `md-review-grid.py`.
 3. Rename sweep.
 4. Template edits + micro-tests (template wording walked with the boss — instruction class).
-5. Records README (walked).
+5. ~~Records README~~ (CUT — no reader needs it).
 6. Skill v2 landing (the bare file, walked — instruction class).
 
 ## Prompts walk (complete 2026-08-05)
@@ -40,4 +40,4 @@ Approved set-three text the grid script must print — at launch: "Launched eigh
 
 ## Walk state for the skill draft
 
-WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). LANDED 2026-08-05, boss-ordered ("make it so"): both cell launchers and the grid orchestrator built; rename sweep executed (records directory, Codex launcher, skill directory); the approved text is live at `.claude/skills/md-review/SKILL.md`. Remaining from this design: the records README (awaiting boss approval) and class (h)'s deferred micro-test (needs the CLAUDE.md consolidation).
+WALK COMPLETE 2026-08-05: all four items processed; the bare skill file APPROVED verbatim by the boss (nedschorus 74ad5b9). LANDED 2026-08-05, boss-ordered ("make it so"): both cell launchers and the grid orchestrator built; rename sweep executed (records directory, Codex launcher, skill directory); the approved text is live at `.claude/skills/md-review/SKILL.md`. Remaining from this design: class (h)'s deferred micro-test only (needs the CLAUDE.md consolidation); the records README was CUT at the boss's challenge — no reader needs it.
