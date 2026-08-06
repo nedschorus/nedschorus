@@ -157,6 +157,39 @@ with tempfile.TemporaryDirectory() as workspace:
         check("hook fires from the transcript with no relay file at all",
               result.returncode == 2, f"code {result.returncode}: {result.stderr[:120]}")
         (hook_relay_directory / "no-relay-session-handoff-asked").unlink(missing_ok=True)
+
+        # --- Tail read: the newest record must be found regardless of size --
+        newest = {"type": "assistant", "message": {
+            "model": "claude-fable-5",
+            "usage": {"input_tokens": 400_000, "cache_read_input_tokens": 0,
+                      "cache_creation_input_tokens": 0},
+        }}
+        # A run of oversized tool-result records after the last usage-bearing
+        # turn pushes it beyond the first read window — the doubling must reach it.
+        buried = Path(workspace) / "buried-transcript.jsonl"
+        filler = json.dumps({"type": "user", "message": {"content": [
+            {"type": "tool_result", "content": "x" * 200_000}]}})
+        buried.write_text(
+            "\n".join([json.dumps(newest)] + [filler] * 6) + "\n", encoding="utf-8"
+        )
+        check(
+            "tail read doubles past oversized records to reach the newest turn",
+            abs(hook.context_used_percentage_from_transcript(str(buried)) - 40.0) < 0.01,
+            str(hook.context_used_percentage_from_transcript(str(buried))),
+        )
+
+        # A transcript smaller than the first window is read whole in one pass.
+        tiny = Path(workspace) / "tiny-transcript.jsonl"
+        tiny.write_text(json.dumps(newest) + "\n", encoding="utf-8")
+        check("tail read handles a transcript smaller than one window",
+              abs(hook.context_used_percentage_from_transcript(str(tiny)) - 40.0) < 0.01)
+
+        # The last line may be a partial write while the session is running.
+        partial = Path(workspace) / "partial-tail-transcript.jsonl"
+        partial.write_text(json.dumps(newest) + '\n{"type": "assistant", "mess',
+                           encoding="utf-8")
+        check("tail read skips a partially-written final record",
+              abs(hook.context_used_percentage_from_transcript(str(partial)) - 40.0) < 0.01)
     finally:
         relay_file.unlink(missing_ok=True)
         marker_file.unlink(missing_ok=True)

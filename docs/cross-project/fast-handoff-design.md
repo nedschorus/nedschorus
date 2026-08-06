@@ -38,6 +38,10 @@ The **supervisor** (one per agent, a python program running in a console) then:
 6. **Launches the successor with the ignition prompt**: the exact handoff path to read; the elapsed-time line ("this handoff was written N minutes/days ago — the longer the gap, the more will have changed since"); confirm N tasks visible (the pre-seed drift tripwire); then take the next step.
 7. **Local retention**: keeps the current and predecessor handoff + extract; deletes older.
 
+## Auto-trigger — read cost
+
+The supervisor's poll never touches the transcript: it stats the handoff file and stamps its heartbeat, nothing more. The transcript is read only by the Stop hook, once per turn boundary, and only from the end — the newest assistant record is all that matters, so the hook reads a 256KB tail and doubles the window until it finds that record. Measured on a 5.8MB transcript: 0.3ms, against 23ms for a whole-file parse, and the gap widens as a session grows because the tail read does not scale with file size.
+
 ## Auto-trigger
 
 The statusline script receives `.context_window.remaining_percentage` on stdin at every refresh; one added line writes it to a side file. The Stop hook reads that file — Stop-hook stdin does not carry `context_window` (verified) — and triggers the `handoff` skill at the threshold (config, ~50% used).

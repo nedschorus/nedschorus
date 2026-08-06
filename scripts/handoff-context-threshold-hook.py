@@ -48,6 +48,11 @@ CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
 }
 DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
+# How much of the transcript's tail to read when looking for the newest
+# assistant record. Sized to clear a few large tool-result records; the read
+# doubles from here when that is not enough.
+FIRST_TAIL_READ_BYTES = 256 * 1024
+
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", Path(__file__).with_name("handoff-supervisor.py")
 )
@@ -98,6 +103,46 @@ def context_window_for(model: str) -> int:
     return DEFAULT_CONTEXT_WINDOW_TOKENS
 
 
+def newest_assistant_message(path: Path):
+    """Return the newest assistant record's message, reading from the end.
+
+    Only the last request's usage matters, so the file is read backwards in
+    chunks rather than parsed front to back — a transcript grows all session,
+    and this hook runs at every turn boundary. The window doubles until the
+    record is found or the whole file has been read, so a run of oversized
+    tool-result records cannot hide it.
+    """
+    file_size = path.stat().st_size
+    window = FIRST_TAIL_READ_BYTES
+
+    while True:
+        with path.open("rb") as handle:
+            start = max(0, file_size - window)
+            handle.seek(start)
+            chunk = handle.read()
+
+        lines = chunk.split(b"\n")
+        if start > 0:
+            lines = lines[1:]  # the first line is a fragment of an earlier record
+
+        for raw_line in reversed(lines):
+            if not raw_line.strip():
+                continue
+            try:
+                record = json.loads(raw_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if record.get("type") != "assistant":
+                continue
+            message = record.get("message", {})
+            if message.get("usage"):
+                return message
+
+        if start == 0:
+            return None  # whole file read, no assistant record with usage
+        window *= 2
+
+
 def context_used_percentage_from_transcript(transcript_path: str):
     """Return the session's used-context share, read from its transcript.
 
@@ -113,32 +158,19 @@ def context_used_percentage_from_transcript(transcript_path: str):
     if not path.is_file():
         return None
 
-    newest_usage = None
-    newest_model = ""
     try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    continue
-                if record.get("type") != "assistant":
-                    continue
-                message = record.get("message", {})
-                if message.get("usage"):
-                    newest_usage = message["usage"]
-                    newest_model = message.get("model", "") or newest_model
+        message = newest_assistant_message(path)
     except OSError:
         return None
-
-    if not newest_usage:
+    if message is None:
         return None
 
+    usage = message["usage"]
     used_tokens = sum(
-        newest_usage.get(field, 0) or 0
+        usage.get(field, 0) or 0
         for field in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
     )
-    return 100.0 * used_tokens / context_window_for(newest_model)
+    return 100.0 * used_tokens / context_window_for(message.get("model", ""))
 
 
 def main(argv=None) -> int:
