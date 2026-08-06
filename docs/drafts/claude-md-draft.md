@@ -45,12 +45,15 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
     *admission 2026-08-06 → ADMITTED verbatim.*
 14. ~~A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear; justifying data lives in the records and git history.~~
     *admission 2026-08-06 → CUT from the floor, RE-HOMED by boss ruling: this belongs in the skill-making governor, not CLAUDE.md — landed verbatim in docs/wiki/queue/skill-authoring-checklist.md (the current skill-build rulebook; a future skill-writing skill inherits it from there).*
-15. Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; the shared concepts skills rely on are defined here, once.
+15. ~~Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; the shared concepts skills rely on are defined here, once.~~
+    *admission 2026-08-06 → CUT from the floor, RE-HOMED beside line 14 in the skill-authoring checklist Register section. The Definitions section below (lines 18–21) now stands or falls on its own merits.*
 
 ## Sessions
 
-16. Session start: read the handoff named by your launch prompt and take its next step.
-17. Session end: write the handoff and check it in. Machine-local transcripts under `~/.claude/projects/` hold what handoffs do not; the handoff points there when needed.
+16. ~~Session start: read the handoff named by your launch prompt and take its next step.~~
+    *admission 2026-08-06 → CUT: the pickup duty is the launch prompt's job (the ignition prompt names the handoff path); no floor line needed.*
+17. ~~Session end: write the handoff and check it in. Machine-local transcripts under `~/.claude/projects/` hold what handoffs do not; the handoff points there when needed.~~
+    *admission 2026-08-06 → CUT: this is the handoff skill's content (the fast-handoff design already carries the transcript pointer as the extract's need-more line); lands with that build.*
 
 ## Definitions
 

@@ -27,6 +27,7 @@ The ~100-word description is the only part of a skill the model sees when decidi
 ## Register
 
 - A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear — no statistics, measured anecdotes, incident specimens, or out-of-context examples; if removing such content leaves a rule unclear, rewrite the rule to carry the clarity. Justifying data lives in the records stores and git history. (Boss-ruled 2026-08-05; placed here from the step-2 CLAUDE.md admission 2026-08-06 — this checklist, not the floor, governs skill content.)
+- Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; shared project concepts a skill relies on are defined in CLAUDE.md, once — not restated per skill. (Boss-ruled 2026-08-04; placed here 2026-08-06.)
 - Explain why a rule matters instead of stacking MUSTs; all-caps ALWAYS/NEVER is a yellow flag — reframe with the reasoning.
 - Reserve NOT/DO pairs for instructions that override a training default; that is the case they were invented for, and they earn nothing elsewhere.
 - Match an instruction's form to the failure it fixes — or, for preventive guidance, the failure it most plausibly prevents (superpowers extract, 2026-07-31; source: obra/superpowers `writing-skills`; context and decline records: `nc-queue/2026-07-31-superpowers-extracts.md` (moves to `nc-queue/archived/` at dispersal)):
