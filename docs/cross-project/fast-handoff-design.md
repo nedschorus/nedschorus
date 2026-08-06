@@ -76,6 +76,9 @@ Not yet done: wiring the status line and Stop hook into a settings file, and the
 | `--allowedTools` on the launch silently prevents the positional prompt from firing — never combine them in a launcher | canary (2×2) |
 | An agent cannot `/clear` or `/exit` itself; self-SIGTERM trips the safety classifier (exit 143) | canary |
 | Statusline stdin carries `.context_window.remaining_percentage`; Stop-hook stdin does not | probe |
+| A headless (`claude -p`) session NEVER runs the status line, so the relay file is never written and a statusline-only auto-trigger cannot fire there | probe 2026-08-06 |
+| Every assistant transcript record carries `message.usage` (input + cache-read + cache-creation tokens = that request's prompt size) and `message.model`; context used is therefore computable from the transcript alone, in any session | probe 2026-08-06 |
+| Context windows: Fable 5, Opus 5, Sonnet 5, and the Opus 4.x line are 1M; Haiku 4.5 is 200K (source: the claude-api reference skill, read 2026-08-06 — not inferred) | reference |
 | Tasks are `<N>.json` under `~/.claude/tasks/<session-id>/`; the dir is created lazily; `--session-id <uuid>` forces the id; pre-seed canaries 1 and 2 passed | probe/canary |
 | A task record's `id` is a STRING, and `blocks`/`blockedBy` arrays are present; a record with an integer id is dropped by TaskList while still counting toward the next allocated id — so a schema-wrong pre-seed looks half-successful | canary 2026-08-06 |
 | `--continue` keeps the prior session id | boss-measured 2026-07-21 |

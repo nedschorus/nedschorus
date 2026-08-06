@@ -5,8 +5,13 @@ The handoff system's auto-trigger, half two (specification:
 docs/cross-project/fast-handoff-design.md). Wire it as a Stop hook in
 settings.json; it runs at every turn boundary.
 
-Stop-hook stdin does not carry the context window, so this reads the
-percentage that handoff-statusline-context-relay.py wrote for this session.
+Stop-hook stdin does not carry the context window, so the used share is
+computed from the session's own transcript: every assistant record carries
+the model and the token usage of the request that produced it. That works
+for headless sessions too, which never run a status line. The relay file
+written by handoff-statusline-context-relay.py is the fallback for a session
+whose first turn has not completed yet.
+
 When the used share reaches the threshold, the hook emits a system message
 telling the agent to run the handoff skill; the supervisor takes over from
 there. Below the threshold it stays silent.
@@ -25,6 +30,23 @@ import sys
 from pathlib import Path
 
 RELAY_DIRECTORY = Path.home() / ".claude" / "handoffs"
+
+# Context window per model, so a percentage can be computed from the transcript
+# alone — the status line is an interactive-only surface, and headless sessions
+# never run it. Prefix-matched against the model id each assistant record
+# carries. A model absent from this table falls back to the default; the table
+# is worth re-checking when a new model ships, since a wrong window silently
+# scales the threshold rather than failing.
+CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
+    "claude-fable-5": 1_000_000,
+    "claude-mythos-5": 1_000_000,
+    "claude-opus-5": 1_000_000,
+    "claude-opus-4": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+}
+DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", Path(__file__).with_name("handoff-supervisor.py")
@@ -49,12 +71,12 @@ def read_json_file(path: Path):
         return None
 
 
-def session_id_from_stdin() -> str:
+def hook_payload_from_stdin() -> dict:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return ""
-    return payload.get("session_id", "") if isinstance(payload, dict) else ""
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def context_used_percentage(session_id: str):
@@ -68,6 +90,57 @@ def context_used_percentage(session_id: str):
     return 100.0 - remaining
 
 
+def context_window_for(model: str) -> int:
+    """Return the model's context window in tokens."""
+    for prefix, window in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX.items():
+        if model.startswith(prefix):
+            return window
+    return DEFAULT_CONTEXT_WINDOW_TOKENS
+
+
+def context_used_percentage_from_transcript(transcript_path: str):
+    """Return the session's used-context share, read from its transcript.
+
+    The path for headless sessions, which never run a status line and so never
+    produce a relay file. Every assistant record carries both the model and the
+    usage of the request that produced it; the newest record's input plus
+    cached tokens is what the model last had in front of it, and the model id
+    gives the window to divide by.
+    """
+    if not transcript_path:
+        return None
+    path = Path(transcript_path).expanduser()
+    if not path.is_file():
+        return None
+
+    newest_usage = None
+    newest_model = ""
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                if record.get("type") != "assistant":
+                    continue
+                message = record.get("message", {})
+                if message.get("usage"):
+                    newest_usage = message["usage"]
+                    newest_model = message.get("model", "") or newest_model
+    except OSError:
+        return None
+
+    if not newest_usage:
+        return None
+
+    used_tokens = sum(
+        newest_usage.get(field, 0) or 0
+        for field in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    )
+    return 100.0 * used_tokens / context_window_for(newest_model)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
     parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
@@ -77,13 +150,19 @@ def main(argv=None) -> int:
     )
     arguments = parser.parse_args(argv)
 
-    session_id = session_id_from_stdin()
+    payload = hook_payload_from_stdin()
+    session_id = payload.get("session_id", "")
     if not session_id:
         return 0  # no session to reason about; stay silent
 
-    used = context_used_percentage(session_id)
+    # The transcript is the primary source: every session has one, headless
+    # included. The relay file is the fallback for the case the transcript
+    # cannot answer — a session whose first turn has not completed yet.
+    used = context_used_percentage_from_transcript(payload.get("transcript_path", ""))
+    if used is None:
+        used = context_used_percentage(session_id)
     if used is None or used < arguments.threshold_used_percentage:
-        return 0  # no report yet, or still plenty of room
+        return 0  # nothing measurable yet, or still plenty of room
 
     if arguments.agent and not supervisor.supervisor_liveness(
         RELAY_DIRECTORY / f"{arguments.agent}-supervisor-state.json"

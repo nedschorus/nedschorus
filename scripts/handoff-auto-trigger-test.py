@@ -108,6 +108,55 @@ with tempfile.TemporaryDirectory() as workspace:
 
         result = run_script(HOOK_SCRIPT, {"session_id": "session-that-never-reported"})
         check("hook stays silent before the first status-line report", result.returncode == 0)
+
+        # --- The transcript path: works with no status line at all ---------
+        hook_spec = importlib.util.spec_from_file_location("handoff_threshold_hook", HOOK_SCRIPT)
+        hook = importlib.util.module_from_spec(hook_spec)
+        hook_spec.loader.exec_module(hook)
+
+        check("window lookup knows the million-token models",
+              hook.context_window_for("claude-fable-5") == 1_000_000
+              and hook.context_window_for("claude-opus-5") == 1_000_000
+              and hook.context_window_for("claude-sonnet-5") == 1_000_000)
+        check("window lookup knows the 200k model",
+              hook.context_window_for("claude-haiku-4-5-20251001") == 200_000)
+        check("an unknown model falls back to the default window",
+              hook.context_window_for("claude-something-unreleased") == 200_000)
+
+        transcript = Path(workspace) / "probe-transcript.jsonl"
+        transcript.write_text(
+            "\n".join(
+                json.dumps(record)
+                for record in (
+                    {"type": "user", "message": {"content": "hello"}},
+                    {"type": "assistant", "message": {
+                        "model": "claude-fable-5",
+                        "usage": {"input_tokens": 10, "cache_read_input_tokens": 90,
+                                  "cache_creation_input_tokens": 0},
+                    }},
+                    {"type": "assistant", "message": {
+                        "model": "claude-fable-5",
+                        "usage": {"input_tokens": 100_000, "cache_read_input_tokens": 500_000,
+                                  "cache_creation_input_tokens": 50_000},
+                    }},
+                )
+            ),
+            encoding="utf-8",
+        )
+        used = hook.context_used_percentage_from_transcript(str(transcript))
+        check("transcript reports the newest turn's usage as a percentage",
+              used is not None and abs(used - 65.0) < 0.01, str(used))
+        check("an absent transcript reports nothing",
+              hook.context_used_percentage_from_transcript(str(Path(workspace) / "nope.jsonl")) is None)
+        check("a transcript with no assistant turn reports nothing",
+              hook.context_used_percentage_from_transcript(str(Path(workspace) / "empty.jsonl"))
+              is None)
+
+        result = run_script(HOOK_SCRIPT,
+                            {"session_id": "no-relay-session", "transcript_path": str(transcript)})
+        check("hook fires from the transcript with no relay file at all",
+              result.returncode == 2, f"code {result.returncode}: {result.stderr[:120]}")
+        (hook_relay_directory / "no-relay-session-handoff-asked").unlink(missing_ok=True)
     finally:
         relay_file.unlink(missing_ok=True)
         marker_file.unlink(missing_ok=True)
