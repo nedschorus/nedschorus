@@ -19,15 +19,21 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 
 ## The entry checkpoint
 
-5. Every legacy import records in `entry-manifest.md` — in the same commit — the legacy SHA it came from, a one-line purpose, and the date.
+5. ~~Every legacy import records in `entry-manifest.md` — in the same commit — the legacy SHA it came from, a one-line purpose, and the date.~~
+   *admission 2026-08-06 → CUT from the floor, with a scope direction (boss): NC's goal is building a Claude–Codex–Python team, not learning from or reusing nedlern; beyond manually selected pieces, carefully tracking imports is a distraction. Reconciling the committed import-tracking doctrine (founding plan checkpoint + rewrite policy, gatekeeper import check) with that direction is nedschorus#44.*
 
 ## How to work
 
-6. Optimize for correctness and clarity over speed; work in small increments — one file, one decision at a time — walkable with the boss.
-7. What can be code should be code; prose carries only judgment and meaning.
-8. Commit as you go. Infrequently-updated files check in immediately after update; append-type logs at a logical breakpoint — session end or next session start. Every commit message carries your session id.
-9. Any claim about code or a document names the revision it was verified against — a SHA, an issue, a quoted line. An absence claim carries its query and scope.
-10. Use standard SDLC terms; never invent vocabulary.
+6. ~~Optimize for correctness and clarity over speed; work in small increments — one file, one decision at a time — walkable with the boss.~~
+   *admission 2026-08-06 → CUT.*
+7. ~~What can be code should be code; prose carries only judgment and meaning.~~
+   *admission 2026-08-06 → CUT. Boss's operative bar, stated here: keep only lines clearly unique to this project or to his preferred methods of working — general good practice is training's job, and a ruling recorded in a GHI (#42 for this one) does not need a floor line.*
+8. ~~Commit as you go. Infrequently-updated files check in immediately after update; append-type logs at a logical breakpoint — session end or next session start. Every commit message carries your session id.~~
+   *admission 2026-08-06 → CUT. #25's floor-line destination died with this cut (recorded on the issue); the timing rule and session-id stamping are gatekeeper-automatable when built.*
+9. ~~Any claim about code or a document names the revision it was verified against — a SHA, an issue, a quoted line. An absence claim carries its query and scope.~~
+   *admission 2026-08-06 → CUT.*
+10. Use standard SDLC terms.
+    *admission 2026-08-06 → REVISED and admitted as the four words above; the never-invent clause cut. Boss's governing approach, stated here: simplify and streamline — add rules when problems repeat, never by speculating which rules might be needed.*
 
 ## Writing
 
