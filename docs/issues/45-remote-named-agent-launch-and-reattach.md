@@ -1,6 +1,6 @@
 # Running named agents on the Ubuntu box, reachable from iTerm2 by name
 
-Pair document for the GitHub issue of the same subject. The issue carries state; this document carries the design, the walk's order, and the rulings as they land.
+Pair document for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45). The issue carries state; this document carries the design, the walk's order, and the rulings as they land.
 
 ## What the user asked for (2026-08-07)
 
