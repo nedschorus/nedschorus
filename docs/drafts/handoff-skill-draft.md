@@ -5,7 +5,9 @@ Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill
 ## Walk order (opened 2026-08-06, new-vp session 5b66b6d0)
 
 1. Purpose and the bar the text is judged by
+   *processed 2026-08-06 → accepted (purpose item; no capture)*
 2. The description — the trigger
+   *processed 2026-08-06 → REVISED then approved. Replaced with the user's "everything except one piece" framing; the trigger is now an observable system message rather than a self-assessed context level (an agent cannot see its own context percentage, so the old phrasing was a judgment call dressed as a condition); file mechanics dropped from the description so the always-in-context text cannot compete with the body; the near-miss negative clause declined — both triggers are observable events, so an agent working on the handoff system receives neither, and speculative rules are not added.*
 3. When Used
 4. What to do, step 1 — writing next-step
 5. What to do, step 2 — the handoff file and its fields
@@ -20,7 +22,7 @@ Everything below the line is the proposed skill file, verbatim.
 ```
 ---
 name: handoff
-description: Hand this session over to a fresh one — write the file that tells your successor where the conversation stopped and what to do next. Use when context is running low, when the user asks for a handoff or a restart, or when the auto-trigger asks for one.
+description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
 ---
 
 # handoff
