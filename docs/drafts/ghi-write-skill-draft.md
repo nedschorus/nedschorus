@@ -9,7 +9,8 @@ One tension for the walk: the commission asks for a description "written pushy" 
 1. Purpose and the bar the text is judged by
    *processed 2026-08-07 → accepted (purpose item; no capture)*
 2. The description — the trigger
-   *open 2026-08-07 — pending the GHI-access gate plan. Discussion established that the mechanical half of the trigger (an issue write about to happen) is interceptable by a pre-tool hook in both runtimes, while the routing half (material whose destination is not yet fixed) precedes any tool call and is reachable only by the description. The user declined filing the hook as its own build task, directing instead a single-gate design for GHI access on the git-gatekeeper model; this item is ruled after that plan exists, because a gate that blocks unmediated issue writes removes the undertriggering risk the "pushy" register was meant to cover.*
+   *open 2026-08-07 — the gate premise this item was parked on is gone; see below.*
+   *Parked first against a pre-tool-hook gate on issue writes, on the reasoning that a gate blocking unmediated writes would remove the undertriggering risk the "pushy" register was meant to cover. That direction was then rejected: neither reads nor writes are gated (`ghi-gatekeeper-plan-draft.md`). So no mechanical backstop exists and the description carries the whole trigger alone — the original register question stands unchanged, and the "a hook covers the write path" argument against pushiness is withdrawn. What still bears on this item: the search-first step is being redirected from the agent running its own search to asking a dedicated issue-knowledge agent (`ghi-knowledge-agent-plan-draft.md`), which changes what the skill's step 1 instructs but not what the description must trigger on.*
 3. When Used
 4. What to do, step 1 — search before filing
 5. What to do, step 2 — route by state

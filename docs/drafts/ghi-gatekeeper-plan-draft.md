@@ -1,9 +1,11 @@
 ---
-status: draft for the user's walk
+status: SUPERSEDED at walk item 1
 design-as-of: 2026-08-07
 ---
 
 # ghi-gatekeeper — plan for the user's walk
+
+**SUPERSEDED 2026-08-07, user-ruled at walk item 1: neither reads nor writes are gated.** The problem is not unmediated access — it is that an agent about to file or edit an issue does not know which related issues it should have read, and that issues are written carelessly. A gate answers neither. What replaces it: a dedicated agent holding this project's issues in context, asked "which issues should I read?" and answering on exit ([ghi-knowledge-agent-plan-draft.md](ghi-knowledge-agent-plan-draft.md)); the careful-writing half stays with the `ghi-write` skill. This file is kept as the record of the rejected direction — the verified hook mechanics in § Why this cannot be a credential gate remain accurate and reusable if enforcement is ever wanted.
 
 How agents work with GitHub issues in nedschorus: one program for every issue write, and the `ghi-write` skill for the judgment the program cannot make. Modelled on [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md), which is the specification for the same shape on the git side.
 
@@ -14,6 +16,7 @@ This is a design, not a build commitment. `scripts/git-gatekeeper.py` is itself 
 ## Walk order (opened 2026-08-07, new-vp session 3a11d08f)
 
 1. Purpose and the bar, including the writes-only scope reading
+   *processed 2026-08-07 → REJECTED, and the plan with it (see the SUPERSEDED note above). Items 2–7 were never presented.*
 2. The job — one door and its verbs
 3. Why this cannot be a credential gate: the three enforcement legs
 4. Constructive guarantees and the checks the program runs
