@@ -9,6 +9,7 @@ One tension for the walk: the commission asks for a description "written pushy" 
 1. Purpose and the bar the text is judged by
    *processed 2026-08-07 → accepted (purpose item; no capture)*
 2. The description — the trigger
+   *open 2026-08-07 — pending the GHI-access gate plan. Discussion established that the mechanical half of the trigger (an issue write about to happen) is interceptable by a pre-tool hook in both runtimes, while the routing half (material whose destination is not yet fixed) precedes any tool call and is reachable only by the description. The user declined filing the hook as its own build task, directing instead a single-gate design for GHI access on the git-gatekeeper model; this item is ruled after that plan exists, because a gate that blocks unmediated issue writes removes the undertriggering risk the "pushy" register was meant to cover.*
 3. When Used
 4. What to do, step 1 — search before filing
 5. What to do, step 2 — route by state
