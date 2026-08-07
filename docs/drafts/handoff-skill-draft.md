@@ -11,6 +11,7 @@ Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill
 3. When Used
    *processed 2026-08-06 → DELETED entirely (user): agents are not expected to self-trigger, so a body section restating the trigger has no reader. Its other two facts were already carried where they act — step 3 says stop working and wait for the supervisor, and How to do it says the dialog is carried for you. A proposed fold about tasks carrying over was withdrawn: nothing in this skill asks the agent to touch its tasks, and mentioning them would invite that. The body now opens on What to do.*
 4. What to do, step 1 — writing next-step
+   *processed 2026-08-06 → REVISED then approved (user-authored text). "Clear and complete" replaces the draft's bare instruction, bounded by what the successor already has: it reads the last few thousand words of the conversation before acting. Pinning is now two observable cases — a file reference carries path and commit SHA, a GitHub issue reference carries repository and number. Dropped: the don't-restate-a-durable-store rule (the context bound covers it) and the pre-correct-misreadings rule (general good writing, not project-unique). "GHI" expanded to "GitHub issue" per floor line 4's standard-SDLC-terms rule, though a cold probe confirmed agents understand the shorthand.*
 5. What to do, step 2 — the handoff file and its fields
 6. What to do, step 3 — the supervisor liveness check
 7. How to do it — path, counter, the never-summarize rule
@@ -30,7 +31,7 @@ description: Hand this session over to a fresh one. A program gives your success
 
 ## What to do
 
-1. Write the next step: the first action the successor takes. Name what a durable store already holds rather than restating it, and pin every pointer to something that will not move — a commit SHA with its path, an issue number, a quoted line. Where the successor is likely to misread something, say so plainly and give the correct reading.
+1. Write a clear and complete prompt telling your successor what their first action should be. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
 2. Write the handoff file at the path your supervisor watches, with these fields, one per line:
    - `written-at:` the current UTC time, ISO 8601
    - `next-step:` the next step from step 1
