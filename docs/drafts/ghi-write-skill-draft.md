@@ -7,6 +7,7 @@ One tension for the walk: the commission asks for a description "written pushy" 
 ## Walk order (opened 2026-08-06, new-vp session 3a11d08f)
 
 1. Purpose and the bar the text is judged by
+   *processed 2026-08-07 → accepted (purpose item; no capture)*
 2. The description — the trigger
 3. When Used
 4. What to do, step 1 — search before filing
