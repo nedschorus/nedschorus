@@ -17,6 +17,7 @@ Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill
 6. What to do, step 3 — the supervisor liveness check
    *processed 2026-08-06 → REVISED then approved. The two-command procedure collapsed into one: the script reports, the agent obeys. The user then asked why the script does not simply start a supervisor when none is watching, which closed the bootstrap hole — a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself. The script now starts an adopting supervisor, so step 3's branches are found-or-started (stop and wait) versus could-not-start (keep working and tell the user). Self-registration, not discovery: the session identifies itself from its own environment, so nothing scans for supervisable sessions, and subagents — which never run the skill and raise SubagentStop rather than Stop — are excluded structurally. One input remains unscriptable until NC has an agent-naming convention: the agent's own name.*
 7. How to do it — path, counter, the never-summarize rule
+   *processed 2026-08-06 → DELETED entirely, with one sentence folded into step 1. The path and --handoff-dir paragraph became the script's business once the agent stopped writing the file. The never-paste/never-summarize paragraph carried two absolutes against floor line 6, and its last clause restated approved step 1 more weakly. What survived is the live risk — "clear and complete" licenses a longer prompt, so an agent could write a session summary instead of an instruction — restated positively as what the output IS, per the authoring checklist's finding that a positive recipe beats a prohibition. The skill is now a description and three numbered steps, with no trailing prose.*
 8. Ratification: the threshold-hook instruction deletion landed this session
 
 Everything below the line is the proposed skill file, verbatim.
@@ -33,13 +34,7 @@ description: Hand this session over to a fresh one. A program gives your success
 
 ## What to do
 
-1. Write a clear and complete prompt telling your successor what their first action should be. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
 2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
 3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
-
-## How to do it
-
-The handoff file is `~/.claude/handoffs/<agent>-handoff.md` unless your supervisor was started with a different directory, in which case pass that directory to the writer with `--handoff-dir`.
-
-The dialog is carried for you, and how much of it is not yours to decide — never paste conversation into the handoff file, and never try to summarize the session. Anything the successor needs that is not in the recent dialog and not in a durable store goes in the next step.
 ```
