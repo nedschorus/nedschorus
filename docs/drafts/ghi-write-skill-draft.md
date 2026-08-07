@@ -4,6 +4,19 @@ Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus
 
 One tension for the walk: the commission asks for a description "written pushy" (undertriggering is the known failure direction); the checklist calls pushy descriptions a hypothesis to adopt only with false-trigger tests. The draft's description is firm about the trigger class without exhortation — rule which register wins.
 
+## Walk order (opened 2026-08-06, new-vp session 3a11d08f)
+
+1. Purpose and the bar the text is judged by
+2. The description — the trigger
+3. When Used
+4. What to do, step 1 — search before filing
+5. What to do, step 2 — route by state
+6. What to do, step 3 — revise by editing the body
+7. What to do, step 4 — write for a zero-context reader
+8. What to do, step 5 — openable references and checked claims
+9. How to do it
+10. Close-out: where the skill file lands and what closes the commission
+
 Everything below the line is the proposed skill file, verbatim.
 
 ---
