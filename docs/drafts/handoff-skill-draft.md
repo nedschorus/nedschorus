@@ -13,6 +13,7 @@ Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill
 4. What to do, step 1 — writing next-step
    *processed 2026-08-06 → REVISED then approved (user-authored text). "Clear and complete" replaces the draft's bare instruction, bounded by what the successor already has: it reads the last few thousand words of the conversation before acting. Pinning is now two observable cases — a file reference carries path and commit SHA, a GitHub issue reference carries repository and number. Dropped: the don't-restate-a-durable-store rule (the context bound covers it) and the pre-correct-misreadings rule (general good writing, not project-unique). "GHI" expanded to "GitHub issue" per floor line 4's standard-SDLC-terms rule, though a cold probe confirmed agents understand the shorthand.*
 5. What to do, step 2 — the handoff file and its fields
+   *processed 2026-08-06 → REVISED then approved. The user ruled that the script fills every scriptable field; the design had never said so — it assigned all four fields to the agent and listed no writer among its five components. `scripts/handoff-write-file.py` now stamps the timestamp, derives the counter, and writes the file; the skill's step is one command. This also closed a silent defect: the supervisor parses `key: value` lines, so a next-step containing a newline was truncated at its first line with no error, and the newly approved "clear and complete" wording made that more likely. The writer collapses whitespace to one line (user-ruled), takes the prompt as a file so a shell cannot mangle backticks, and derives the counter from the higher of the previous file's value and the supervisor's consumed value so a stale file cannot produce a counter the supervisor ignores. 23 cases green.*
 6. What to do, step 3 — the supervisor liveness check
 7. How to do it — path, counter, the never-summarize rule
 8. Ratification: the threshold-hook instruction deletion landed this session
@@ -32,16 +33,12 @@ description: Hand this session over to a fresh one. A program gives your success
 ## What to do
 
 1. Write a clear and complete prompt telling your successor what their first action should be. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
-2. Write the handoff file at the path your supervisor watches, with these fields, one per line:
-   - `written-at:` the current UTC time, ISO 8601
-   - `next-step:` the next step from step 1
-   - `restart-counter:` the previous handoff's counter plus one, or 1 if there is no previous handoff
-   - `dont-restart:` include this only when the user asks not to be relaunched automatically
+2. Run `scripts/handoff-write-file.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, and writes the handoff file your supervisor watches. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
 3. Check that a supervisor is watching: run `scripts/handoff-supervisor.py --check --agent <your name>`. If it reports one alive, stop working and wait — the supervisor takes over within seconds. If it reports none, do not stop: tell the user that the handoff is written but nothing is watching for it, and keep working until they start a supervisor or tell you otherwise.
 
 ## How to do it
 
-The handoff file is `~/.claude/handoffs/<agent>-handoff.md` unless your supervisor was started with a different directory. Read the existing file first to get the counter to increment.
+The handoff file is `~/.claude/handoffs/<agent>-handoff.md` unless your supervisor was started with a different directory, in which case pass that directory to the writer with `--handoff-dir`.
 
 The dialog is carried for you, and how much of it is not yours to decide — never paste conversation into the handoff file, and never try to summarize the session. Anything the successor needs that is not in the recent dialog and not in a durable store goes in the next step.
 ```
