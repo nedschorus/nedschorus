@@ -16,6 +16,21 @@ SSH alone cannot reconnect to a running process: a process's terminal belongs to
 
 This also settles the open question recorded against the seat move in `docs/cross-project/fast-handoff-design.md`: inside tmux the supervisor is the pane's own process, so every successor it launches inherits the pane's terminal and is visible on reattach. The detached-supervisor stdio problem does not arise in this topology.
 
+## Agent identity has no CLAUDE.md home (user-ruled 2026-08-07)
+
+An agent's identity — who it is, what it may do, how it reports — is scoped to **one agent**. CLAUDE.md offers only two scopes, and both are wrong for it:
+
+- `~/.claude/CLAUDE.md` is machine-wide, so every agent on the box inherits it.
+- `<repo>/CLAUDE.md` is repository-wide, so every agent working in that repo inherits it.
+
+NC will run many named agents on one box, most of them in the same repository or its worktrees, so neither scope can carry identity: put it in either file and every sibling agent is told it is that agent. This is the defect the box's machine-global file exhibits today — a role definition for the nm bot, in a slot that applies to everything.
+
+**Identity rides with the launch instead.** `claude` accepts `--system-prompt-file` and `--append-system-prompt-file`, and the supervisor already accepts `--first-prompt`; those are the per-agent channels. CLAUDE.md keeps what is genuinely shared: the project floor for everyone in the repo, and nothing machine-wide at all.
+
+Consequence for the roster (walk item 4): a roster entry is a name, a working directory, and an identity file — not a CLAUDE.md.
+
+Consequence for nm, as a recommendation to that project rather than a change made here: its adapter should pass the role text with `--append-system-prompt-file` at the point it already builds the launch command (`adapter/adapter.py:432`), which frees the machine-global slot without changing what the nm agent reads.
+
 ## Walk order (opened 2026-08-07, new-vp session 5b66b6d0)
 
 1. Purpose and the bar these decisions are judged by
