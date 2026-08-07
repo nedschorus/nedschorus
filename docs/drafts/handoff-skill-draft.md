@@ -2,6 +2,17 @@
 
 Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill-authoring checklist's Register rules: three questions answered — when to use it, what to do, how to do it — instructions only, no evidence or examples. The mechanics live in the code (`scripts/handoff-supervisor.py`, `scripts/handoff-extract-conversation.py`), so this text does not restate what the supervisor prints at run time.
 
+## Walk order (opened 2026-08-06, new-vp session 5b66b6d0)
+
+1. Purpose and the bar the text is judged by
+2. The description — the trigger
+3. When Used
+4. What to do, step 1 — writing next-step
+5. What to do, step 2 — the handoff file and its fields
+6. What to do, step 3 — the supervisor liveness check
+7. How to do it — path, counter, the never-summarize rule
+8. Ratification: the threshold-hook instruction deletion landed this session
+
 Everything below the line is the proposed skill file, verbatim.
 
 ---
