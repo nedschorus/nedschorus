@@ -60,9 +60,29 @@ Four of the five components are built, tested, and on main; the fifth is the ski
 | Supervisor | BUILT — `scripts/handoff-supervisor.py`, 24 offline cases plus both live pre-seed canaries green |
 | Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
 | Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
-| `handoff` skill | DRAFTED — `docs/drafts/handoff-skill-draft.md`, awaiting the user's walk |
+| `handoff` skill | DRAFTED — `docs/drafts/handoff-skill-draft.md`, awaiting the user's walk; executed cold by four trial generations 2026-08-06, which handed off correctly from the drafted text |
 
-Not yet done: wiring the status line and Stop hook into a settings file, and the first live recycle. Both belong to the user's walk-and-trial sitting, not to the code build.
+Not yet done: wiring the status line and Stop hook into a settings file. The `handoff` skill text is the only component still awaiting its walk.
+
+## The live recycle trial — PASSED 2026-08-06
+
+A headless Opus agent (`claude -p`, no subagents) seeded with 100 essay topics turned them into 50 tasks and wrote ~1000-word essays one per turn, so context filled from its own output. Four generations ran; three auto-triggered recycles happened with no human input. All four pass criteria met:
+
+| Criterion | Result |
+|---|---|
+| Sessions recycle without the user typing | 3 recycles: generations 0→1→2→3, each an auto-triggered handoff, kill, extract, task carry, relaunch |
+| Each successor reports the expected task count | Generation 1 opened "50 tasks are visible — count confirmed"; every generation confirmed before working |
+| The task list drains across generations | 14 essays written by four sessions sharing one carried task store, tasks marked completed in order |
+| The dialog files hold the real conversation | `essayist-dialog-000N.md` carry the ignition prompt, the count confirmation, the essay summaries, and the threshold-hook moment |
+
+What the trial proved that no unit test could:
+
+- **Exit-as-handoff is the headless norm, and the supervisor now reads it correctly.** Every one of the three recycles arrived as a process exit, not as a file change observed while running. Before the fix (`wait_for_handoff` returning None on exit before checking the file) the trial would have stopped at the first handoff.
+- **A raised threshold mid-run does not disturb the cycle.** The threshold was 5.5% for generations 0–2 and 8% for generation 3; recycling behaved identically, confirming the mechanism is threshold-independent.
+- **The clean-stop branch works.** With no pending tasks left, the final session exited without writing a handoff and the supervisor printed "session ended without a handoff; supervisor stopping" and exited 0 — the terminal branch the exit-handling fix also touches.
+- **A successor challenges inconsistent state rather than proceeding.** To reach the drain condition without writing 36 more essays, task records were closed directly on disk. The generation-3 agent reported the discrepancy unprompted: 50 tasks read completed while `essays/` held 14 files. The carried dialog gave it enough context to notice, which is the behavior the ignition prompt's count-check exists to produce.
+
+Trial-only scaffolding, not part of the system: a driver Stop hook produced one-essay-per-turn boundaries (an agent told to finish everything in one turn never reaches a Stop boundary, so the threshold hook could never fire), and the sandbox ran outside NC so essay churn stayed out of the repository.
 
 ## Components (the build)
 
