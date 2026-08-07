@@ -235,14 +235,18 @@ def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: 
     """Block until the agent writes a new handoff, or the session exits.
 
     Returns the handoff fields when a counter above `consumed_counter`
-    appears, or None if the session ended on its own. Stamps the heartbeat
-    while it waits, so the watched agent can tell a live supervisor from a
-    dead one.
+    appears, or None if the session ended on its own without writing one.
+    Stamps the heartbeat while it waits, so the watched agent can tell a
+    live supervisor from a dead one.
+
+    The exit check must not preempt the file check: a headless session exits
+    when its turn ends, so its handoff arrives AS a process exit — the file
+    was written during the turn, before the exit was observable. Exit with a
+    new counter on disk is a handoff; exit without one is abandonment.
     """
     last_stamp = 0.0
     while True:
-        if process.poll() is not None:
-            return None
+        exited = process.poll() is not None
 
         if time.monotonic() - last_stamp >= HEARTBEAT_INTERVAL_SECONDS:
             stamp_heartbeat(state_path, state)
@@ -253,6 +257,9 @@ def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: 
             counter = counter_from(fields)
             if counter is not None and (consumed_counter is None or counter > consumed_counter):
                 return fields
+
+        if exited:
+            return None
 
         time.sleep(HANDOFF_POLL_SECONDS)
 

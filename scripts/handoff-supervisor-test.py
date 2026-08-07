@@ -18,6 +18,7 @@ import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 SCRIPT_PATH = Path(__file__).with_name("handoff-supervisor.py")
 
@@ -121,6 +122,45 @@ def run_offline_cases(workspace: Path):
     check("old handoff reports days", "days ago" in supervisor.elapsed_phrase(old), supervisor.elapsed_phrase(old))
     check("unparseable timestamp still warns", "stale" in supervisor.elapsed_phrase("whenever"))
     return recent
+
+
+def stub_process(poll_result):
+    """A stand-in for a session process: poll() reports the given exit state."""
+    return SimpleNamespace(poll=lambda: poll_result)
+
+
+def run_exit_handoff_cases(workspace: Path):
+    """A headless session exits when its turn ends, so its handoff arrives AS
+    a process exit. Exit with a new counter on disk must read as a handoff;
+    exit without one is abandonment."""
+    handoff_path = workspace / "exitcase-handoff.md"
+    state_path = workspace / "exitcase-supervisor-state.json"
+
+    handoff_path.write_text(
+        "written-at: 2026-08-06T12:00:00Z\nnext-step: drain the tasks\nrestart-counter: 8\n",
+        encoding="utf-8",
+    )
+    fields = supervisor.wait_for_handoff(stub_process(0), handoff_path, 7, state_path, {})
+    check(
+        "exit with a new counter reads as a handoff",
+        fields is not None and supervisor.counter_from(fields) == 8,
+        str(fields),
+    )
+
+    fields = supervisor.wait_for_handoff(stub_process(0), handoff_path, 8, state_path, {})
+    check("exit with the already-consumed counter reads as abandonment", fields is None, str(fields))
+
+    fields = supervisor.wait_for_handoff(
+        stub_process(0), workspace / "never-written-handoff.md", 7, state_path, {}
+    )
+    check("exit with no handoff file reads as abandonment", fields is None, str(fields))
+
+    fields = supervisor.wait_for_handoff(stub_process(None), handoff_path, 7, state_path, {})
+    check(
+        "a running session's new handoff is seen without an exit",
+        fields is not None and supervisor.counter_from(fields) == 8,
+        str(fields),
+    )
 
 
 def run_launch_and_retention_cases(workspace: Path, recent: str):
@@ -230,6 +270,7 @@ def run_preseed_canaries() -> None:
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
+    run_exit_handoff_cases(Path(temporary_directory))
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:
