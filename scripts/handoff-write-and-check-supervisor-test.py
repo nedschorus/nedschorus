@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for handoff-write-file.py.
+"""Tests for handoff-write-and-check-supervisor.py.
 
-Run: python3 scripts/handoff-write-file-test.py
+Run: python3 scripts/handoff-write-and-check-supervisor-test.py
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -13,9 +13,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).with_name("handoff-write-file.py")
+SCRIPT_PATH = Path(__file__).with_name("handoff-write-and-check-supervisor.py")
 
-_spec = importlib.util.spec_from_file_location("handoff_write_file", SCRIPT_PATH)
+_spec = importlib.util.spec_from_file_location("handoff_write_and_check_supervisor", SCRIPT_PATH)
 writer = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(writer)
 
@@ -87,7 +87,10 @@ def run_counter_cases(workspace: Path):
 def run_invocation_cases(workspace: Path):
     result = run_writer(workspace, "Read the design doc, then continue.\nSecond line here.")
     handoff_path = workspace / "tester-handoff.md"
-    check("the writer exits zero", result.returncode == 0, result.stderr)
+    # Exit 0 and 1 both mean written; they differ on whether a supervisor is
+    # watching, which run_liveness_report_cases covers. Only 2 means nothing
+    # was written.
+    check("the writer accepts a well-formed invocation", result.returncode != 2, result.stderr)
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("the written file parses as the supervisor reads it", set(fields) >= {
         "written-at", "next-step", "restart-counter"}, str(fields))
@@ -127,10 +130,34 @@ def run_invocation_cases(workspace: Path):
           not list(workspace.glob("*.partial")), str(list(workspace.glob("*.partial"))))
 
 
+def run_liveness_report_cases(workspace: Path):
+    """The write and the liveness report are one decision: a handoff nobody is
+    watching must not stop the agent working."""
+    result = run_writer(workspace, "Continue the walk.")
+    check("with no supervisor, the writer exits 1", result.returncode == 1, result.stdout)
+    check("with no supervisor, the agent is told to keep working",
+          "keep working" in result.stderr, result.stderr)
+    check("with no supervisor, the write still happened",
+          (workspace / "tester-handoff.md").is_file(), "handoff missing")
+
+    writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"session_id": "s"})
+    result = run_writer(workspace, "Continue the walk.")
+    check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
+    check("with a live supervisor, the agent is told to stop and wait",
+          "Stop working now and wait" in result.stdout, result.stdout)
+
+    writer.supervisor.write_supervisor_state(
+        workspace / "tester-supervisor-state.json", {"last_poll_at": "not a timestamp"}
+    )
+    result = run_writer(workspace, "Continue the walk.")
+    check("an unreadable heartbeat reads as nobody watching", result.returncode == 1, result.stdout)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
     run_counter_cases(Path(temporary_directory))
     run_invocation_cases(Path(temporary_directory))
+    run_liveness_report_cases(Path(temporary_directory))
 
 print()
 if failures:

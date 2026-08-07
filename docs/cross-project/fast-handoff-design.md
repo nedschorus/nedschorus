@@ -5,7 +5,7 @@ design-as-of: 2026-08-02
 
 # Session recycling — the handoff system (specification)
 
-**Implementation status:** DESIGNED, NOT YET BUILT. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
+**Implementation status:** BUILT and trial-passed 2026-08-06 (see the build-status table and the live recycle trial below); the `handoff` skill text is the only component still in its walk. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
 
 ## The problem
 
@@ -20,7 +20,7 @@ A fleet of interactive agents running with little attention. Recycle a session b
 
 ## The recycle cycle
 
-The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes its successor's opening prompt to a file and runs the writer, `scripts/handoff-write-file.py`, which produces the handoff file. **The agent supplies only `next-step`; the writer fills every field a machine can compute (user-ruled 2026-08-06).** The earlier design had the agent hand-write all four fields, which asked it to find and read the previous handoff purely to do arithmetic, and left a silent failure open: the supervisor parses `key: value` lines, so a `next-step` containing a newline was truncated at its first line with no error. The writer collapses whitespace to one line, so that cannot happen. It also takes the next step as a FILE, not an argument — a shell mangles backticks and quotes inside an inline argument — and derives the counter from the higher of the previous handoff's value and the supervisor's consumed value, so a missing or stale handoff file cannot produce a counter the supervisor ignores.
+The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes its successor's opening prompt to a file and runs the writer, `scripts/handoff-write-and-check-supervisor.py`, which produces the handoff file. **The agent supplies only `next-step`; the writer fills every field a machine can compute (user-ruled 2026-08-06).** The earlier design had the agent hand-write all four fields, which asked it to find and read the previous handoff purely to do arithmetic, and left a silent failure open: the supervisor parses `key: value` lines, so a `next-step` containing a newline was truncated at its first line with no error. The writer collapses whitespace to one line, so that cannot happen. It also takes the next step as a FILE, not an argument — a shell mangles backticks and quotes inside an inline argument — and derives the counter from the higher of the previous handoff's value and the supervisor's consumed value, so a missing or stale handoff file cannot produce a counter the supervisor ignores.
 
 The fields:
 
@@ -62,7 +62,7 @@ Four of the five components are built, tested, and on main; the fifth is the ski
 | Supervisor | BUILT — `scripts/handoff-supervisor.py`, 24 offline cases plus both live pre-seed canaries green |
 | Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
 | Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
-| Writer | BUILT — `scripts/handoff-write-file.py`, 23-case suite (`…-test.py`); added 2026-08-06 when the user ruled that the script fills every scriptable field |
+| Writer | BUILT — `scripts/handoff-write-and-check-supervisor.py`, 27-case suite (`…-test.py`); added 2026-08-06 when the user ruled that the script does everything best done by script |
 | `handoff` skill | DRAFTED — `docs/drafts/handoff-skill-draft.md`, awaiting the user's walk; executed cold by four trial generations 2026-08-06, which handed off correctly from the drafted text |
 
 Not yet done: wiring the status line and Stop hook into a settings file. The `handoff` skill text is the only component still awaiting its walk.
@@ -91,7 +91,7 @@ Trial-only scaffolding, not part of the system: a driver Stop hook produced one-
 
 1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
 2. **The `handoff` skill** — writes `next-step` per the content rule, runs the writer, waits for the supervisor (boundary judgment removed 2026-08-06; the extractor's word-floor tail decides what carries).
-2a. **`handoff-write-file.py`** — the writer: stamps the timestamp, derives the restart counter, collapses the next step to one line, and writes the handoff file atomically. Refuses an empty next step rather than booting a successor with no instruction.
+2a. **`handoff-write-and-check-supervisor.py`** — the writer: stamps the timestamp, derives the restart counter, collapses the next step to one line, writes the handoff file atomically, then reports whether a supervisor is watching and what that means for the agent. Refuses an empty next step rather than booting a successor with no instruction. The liveness report lives here rather than in a second command because the two are one decision — a handoff nobody is watching must not stop the agent working, and an agent that runs only the first half of a two-step procedure would stop anyway (user-ruled 2026-08-06: the skill runs one script that does everything best done by script).
 3. **The statusline relay + Stop hook** — the auto-trigger.
 4. **The supervisor** — watch, kill, extract, pre-seed, queue-status line, launch; consumed-marker state; the `dont-restart` y/n gate.
 5. **The ignition prompt template** — path, elapsed-time line, task count, next step.

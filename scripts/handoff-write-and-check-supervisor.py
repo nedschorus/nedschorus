@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Write the handoff file for a retiring session.
+"""Write the handoff file for a retiring session, and report who is watching.
 
 The handoff system's writer (specification:
 docs/cross-project/fast-handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
-fills in everything a machine can compute: the timestamp, the restart
-counter, and the file's format.
+does everything else a machine can do: it stamps the timestamp, derives the
+restart counter, formats and writes the file, then checks whether a
+supervisor is actually watching and tells the agent what that means for it.
 
 Usage:
-  handoff-write-file.py --agent <name> --next-step-file <path> [--dont-restart]
+  handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
+                                        [--dont-restart]
 
 The next step arrives as a FILE rather than an argument so that backticks,
 quotes, and newlines survive: a shell mangles all three inside an inline
@@ -16,7 +18,13 @@ argument. Newlines are collapsed to single spaces here, because the
 supervisor reads the handoff as `key: value` lines and a value spanning
 several lines would be silently truncated at the first one.
 
-Exit codes: 0 written, 2 bad invocation or an empty next step.
+The liveness report is part of this script rather than a second command
+because the two are one decision: a handoff nobody is watching must not stop
+the agent working, and an agent that runs only the first half of a two-step
+procedure would stop anyway.
+
+Exit codes: 0 written and a supervisor is watching, 1 written but nothing is
+watching, 2 bad invocation or an empty next step.
 """
 
 import argparse
@@ -103,13 +111,13 @@ def main(argv=None) -> int:
 
     next_step_path = Path(arguments.next_step_file).expanduser()
     if not next_step_path.is_file():
-        print(f"handoff-write-file: no such file: {next_step_path}", file=sys.stderr)
+        print(f"handoff-write-and-check-supervisor: no such file: {next_step_path}", file=sys.stderr)
         return 2
 
     next_step = collapse_to_one_line(next_step_path.read_text(encoding="utf-8"))
     if not next_step:
         print(
-            "handoff-write-file: the next-step file is empty — the successor would boot "
+            "handoff-write-and-check-supervisor: the next-step file is empty — the successor would boot "
             "with no instruction, so nothing was written",
             file=sys.stderr,
         )
@@ -121,9 +129,22 @@ def main(argv=None) -> int:
 
     counter = next_restart_counter(handoff_path, state_path)
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart)
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")
 
-    print(f"handoff-write-file: wrote {handoff_path} (restart-counter {counter})")
-    return 0
+    alive, explanation = supervisor.supervisor_liveness(state_path)
+    if alive:
+        print(
+            f"handoff-write-and-check-supervisor: {explanation}. Stop working now and wait — "
+            "it takes over within seconds."
+        )
+        return 0
+
+    print(
+        f"handoff-write-and-check-supervisor: {explanation}. The handoff is written, but nothing "
+        "will act on it: keep working, and tell the user that no supervisor is watching.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":
