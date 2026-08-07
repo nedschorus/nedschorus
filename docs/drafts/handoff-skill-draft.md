@@ -9,6 +9,7 @@ Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill
 2. The description — the trigger
    *processed 2026-08-06 → REVISED then approved. Replaced with the user's "everything except one piece" framing; the trigger is now an observable system message rather than a self-assessed context level (an agent cannot see its own context percentage, so the old phrasing was a judgment call dressed as a condition); file mechanics dropped from the description so the always-in-context text cannot compete with the body; the near-miss negative clause declined — both triggers are observable events, so an agent working on the handoff system receives neither, and speculative rules are not added.*
 3. When Used
+   *processed 2026-08-06 → DELETED entirely (user): agents are not expected to self-trigger, so a body section restating the trigger has no reader. Its other two facts were already carried where they act — step 3 says stop working and wait for the supervisor, and How to do it says the dialog is carried for you. A proposed fold about tasks carrying over was withdrawn: nothing in this skill asks the agent to touch its tasks, and mentioning them would invite that. The body now opens on What to do.*
 4. What to do, step 1 — writing next-step
 5. What to do, step 2 — the handoff file and its fields
 6. What to do, step 3 — the supervisor liveness check
@@ -26,10 +27,6 @@ description: Hand this session over to a fresh one. A program gives your success
 ---
 
 # handoff
-
-## When Used
-
-When this session should end and a fresh one continue its work: context is running low, the user asks for a handoff or a restart, or the context-threshold hook asks for one. The supervisor watching this session does the rest — it stops this session, extracts the dialog, carries the tasks, and launches the successor.
 
 ## What to do
 
