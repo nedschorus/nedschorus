@@ -16,20 +16,19 @@ SSH alone cannot reconnect to a running process: a process's terminal belongs to
 
 This also settles the open question recorded against the seat move in `docs/cross-project/fast-handoff-design.md`: inside tmux the supervisor is the pane's own process, so every successor it launches inherits the pane's terminal and is visible on reattach. The detached-supervisor stdio problem does not arise in this topology.
 
-## Agent identity has no CLAUDE.md home (user-ruled 2026-08-07)
+## Where per-agent identity lives (user-ruled 2026-08-07)
 
-An agent's identity — who it is, what it may do, how it reports — is scoped to **one agent**. CLAUDE.md offers only two scopes, and both are wrong for it:
+An agent's identity — who it is, what it may do, how it reports — is scoped to **one agent**, neither to the machine nor to the repository. Claude Code provides exactly that scope, and the official memory documentation names it: **`CLAUDE.local.md`**, the "Local instructions" scope, personal to one working directory and meant to be gitignored. The documentation states the worktree property directly: *"a gitignored CLAUDE.local.md only exists in the worktree where you created it."* Since each named agent gets its own worktree, each agent gets its own identity file, and no sibling agent sees it.
 
-- `~/.claude/CLAUDE.md` is machine-wide, so every agent on the box inherits it.
-- `<repo>/CLAUDE.md` is repository-wide, so every agent working in that repo inherits it.
+Verified by probe 2026-08-07: a project `CLAUDE.md` and a `CLAUDE.local.md` beside it both load into a cold session, and a deeper `CLAUDE.md` in the working directory loads on top of the project one — so the effective order is managed policy, then user, then project, then local, each concatenated rather than overriding.
 
-NC will run many named agents on one box, most of them in the same repository or its worktrees, so neither scope can carry identity: put it in either file and every sibling agent is told it is that agent. This is the defect the box's machine-global file exhibits today — a role definition for the nm bot, in a slot that applies to everything.
+**A superseded claim, recorded so it is not repeated:** this document briefly asserted that agent identity had no CLAUDE.md home and had to ride the launch as a system prompt. That was wrong — it counted only the machine and project scopes and missed the local one — and the user rejected the system-prompt approach on its own merits before the documentation settled the mechanism.
 
-**Identity rides with the launch instead.** `claude` accepts `--system-prompt-file` and `--append-system-prompt-file`, and the supervisor already accepts `--first-prompt`; those are the per-agent channels. CLAUDE.md keeps what is genuinely shared: the project floor for everyone in the repo, and nothing machine-wide at all.
+**Reviewability, the one thing the local scope costs.** A gitignored file is outside version control and therefore outside the instruction-class review rule. The fix is that the local file carries no content of its own: it is a single `@` import of a tracked identity file in the repository, so the reviewable text stays committed and walked while the gitignored file supplies only per-worktree scoping.
 
-Consequence for the roster (walk item 4): a roster entry is a name, a working directory, and an identity file — not a CLAUDE.md.
+Consequence for the roster (walk item 4): a roster entry is a name, a worktree, and the tracked identity file its `CLAUDE.local.md` imports.
 
-Consequence for nm, as a recommendation to that project rather than a change made here: its adapter should pass the role text with `--append-system-prompt-file` at the point it already builds the launch command (`adapter/adapter.py:432`), which frees the machine-global slot without changing what the nm agent reads.
+Consequence for the box's global file (walk item 6): the nm role content belongs at `~/agent/nedsmessenger/CLAUDE.local.md`, gitignored. The nm adapter already runs with its working directory set to that repository, so the agent reads exactly the same text it reads today, no adapter change is needed, the tracked project `CLAUDE.md` is untouched, and the machine-global slot is freed so NC agents are no longer told they are the nm bot.
 
 ## Walk order (opened 2026-08-07, new-vp session 5b66b6d0)
 
