@@ -1,6 +1,8 @@
-# handoff skill — draft for the user's walk
+# handoff skill — the walk record (LANDED 2026-08-06)
 
-Proposed text for `.claude/skills/handoff/SKILL.md`. Written bare, per the skill-authoring checklist's Register rules: three questions answered — when to use it, what to do, how to do it — instructions only, no evidence or examples. The mechanics live in the code (`scripts/handoff-supervisor.py`, `scripts/handoff-extract-conversation.py`), so this text does not restate what the supervisor prints at run time.
+**Superseded as a proposal.** The walked text is live at `.claude/skills/handoff/SKILL.md`; that file is the text of record, and this one is kept only for the per-item dispositions below, which say what was ruled and why. Edit the skill, not this.
+
+The mechanics live in the code — `scripts/handoff-write-and-check-supervisor.py`, `scripts/handoff-supervisor.py`, `scripts/handoff-extract-conversation.py` — so the skill text does not restate them.
 
 ## Walk order (opened 2026-08-06, new-vp session 5b66b6d0)
 

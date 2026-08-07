@@ -426,7 +426,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     )
 
     adopted = settings.adopted_session
-    session_id = adopted.session_id if adopted else (state.get("session_id") or str(uuid.uuid4()))
+    # A fresh start always mints a new session id. Reusing the one in the state
+    # file would launch `claude --session-id` against a transcript that already
+    # exists — and if the supervisor died while its agent kept running, would put
+    # two processes on one session id. Adoption is how a running session is
+    # picked back up.
+    session_id = adopted.session_id if adopted else str(uuid.uuid4())
 
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
@@ -458,7 +463,16 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         generation += 1
 
         if handoff_fields.get("dont-restart"):
-            answer = input("handoff-supervisor: restart? y/n ").strip().lower()
+            if not sys.stdin.isatty():
+                # Nobody can answer: a supervisor the agent started has no
+                # terminal, and asking would raise EOFError before the consumed
+                # counter is recorded — leaving the next supervisor to re-fire on
+                # a stale handoff. Not relaunching is the answer dont-restart asks
+                # for, so take it.
+                print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+                answer = "n"
+            else:
+                answer = input("handoff-supervisor: restart? y/n ").strip().lower()
             if answer != "y":
                 print("handoff-supervisor: stopping at the agent's request")
                 state["consumed_counter"] = counter_from(handoff_fields)

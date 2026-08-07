@@ -204,6 +204,39 @@ def run_adoption_cases(workspace: Path):
           result.returncode == 2 and "already gone" in result.stderr, result.stderr)
 
 
+def run_dont_restart_without_a_terminal_case(workspace: Path):
+    """A supervisor an agent started has no terminal. Asking `restart? y/n`
+    there raises EOFError before the consumed counter is recorded, so the next
+    supervisor re-fires on the stale handoff — launching a session and killing
+    it immediately."""
+    handoff_directory = workspace / "noterm"
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    (handoff_directory / "noterm-handoff.md").write_text(
+        "written-at: 2026-08-06T12:00:00Z\n"
+        "next-step: should not relaunch\n"
+        "restart-counter: 1\n"
+        "dont-restart: the user asked to be consulted\n",
+        encoding="utf-8",
+    )
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    stub_agent.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "noterm", "--cd", str(workspace),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    check("dont-restart without a terminal exits cleanly, not on EOFError",
+          result.returncode == 0 and "EOFError" not in result.stderr, result.stderr[-300:])
+    check("dont-restart without a terminal says why it stopped",
+          "no terminal to ask on" in result.stdout, result.stdout[-300:])
+
+    state = supervisor.read_supervisor_state(handoff_directory / "noterm-supervisor-state.json")
+    check("the consumed counter is recorded before stopping",
+          state.get("consumed_counter") == 1, str(state))
+
+
 def run_lock_cases(workspace: Path):
     """Two supervisors on one agent would each kill the session and each launch
     a successor, so the second must refuse to start."""
@@ -339,6 +372,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
+    run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
 
