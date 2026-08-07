@@ -67,7 +67,7 @@ Not yet done: wiring the status line and Stop hook into a settings file, and the
 ## Components (the build)
 
 1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
-2. **The `handoff` skill** — picks the boundary, writes `next-step` per the content rule, writes the file, waits for the supervisor.
+2. **The `handoff` skill** — writes `next-step` per the content rule, writes the file, waits for the supervisor (boundary judgment removed 2026-08-06; the extractor's word-floor tail decides what carries).
 3. **The statusline relay + Stop hook** — the auto-trigger.
 4. **The supervisor** — watch, kill, extract, pre-seed, queue-status line, launch; consumed-marker state; the `dont-restart` y/n gate.
 5. **The ignition prompt template** — path, elapsed-time line, task count, next step.
