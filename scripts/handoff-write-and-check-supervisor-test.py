@@ -8,6 +8,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -31,14 +32,24 @@ def check(case_name, condition, detail=""):
 
 
 def run_writer(workspace: Path, next_step_text: str, *extra_arguments):
-    """Invoke the script as the agent would, returning its completed process."""
+    """Invoke the script as the agent would, returning its completed process.
+
+    The session identity is scrubbed from the environment deliberately. These
+    tests run inside a live Claude session, and leaving CLAUDE_PID set would
+    have the writer start a real supervisor that kills the very session
+    running the tests.
+    """
     next_step_path = workspace / "next-step.txt"
     next_step_path.write_text(next_step_text, encoding="utf-8")
+    scrubbed_environment = {
+        key: value for key, value in os.environ.items()
+        if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+    }
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "tester",
          "--next-step-file", str(next_step_path), "--handoff-dir", str(workspace),
          *extra_arguments],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, env=scrubbed_environment,
     )
 
 
@@ -134,11 +145,14 @@ def run_liveness_report_cases(workspace: Path):
     """The write and the liveness report are one decision: a handoff nobody is
     watching must not stop the agent working."""
     result = run_writer(workspace, "Continue the walk.")
-    check("with no supervisor, the writer exits 1", result.returncode == 1, result.stdout)
+    check("with no supervisor and no session identity, the writer exits 1",
+          result.returncode == 1, result.stdout)
     check("with no supervisor, the agent is told to keep working",
           "keep working" in result.stderr, result.stderr)
     check("with no supervisor, the write still happened",
           (workspace / "tester-handoff.md").is_file(), "handoff missing")
+    check("the writer says why it could not start a supervisor",
+          "does not report its id" in result.stderr, result.stderr)
 
     writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"session_id": "s"})
     result = run_writer(workspace, "Continue the walk.")

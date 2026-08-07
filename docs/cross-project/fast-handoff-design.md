@@ -48,6 +48,19 @@ The supervisor's poll never touches the transcript: it stats the handoff file an
 
 The statusline script receives `.context_window.remaining_percentage` on stdin at every refresh; one added line writes it to a side file. The Stop hook reads that file — Stop-hook stdin does not carry `context_window` (verified) — and triggers the `handoff` skill at the threshold (config, ~50% used).
 
+## Who starts the supervisor — self-registration, not discovery
+
+A supervisor watches exactly one agent, and **the agent starts it** when its handoff script finds none watching (user-asked 2026-08-06). Nothing scans the machine for sessions to supervise, and nothing needs to: the running session identifies itself from its own environment — `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`, both verified present 2026-08-06 — and passes those to the supervisor it starts, which adopts that one process. Two questions dissolve rather than being answered:
+
+- **Which sessions can be handed off?** Only ones carrying the `handoff` skill and this script, because only they ever call it. An agent without them never starts a supervisor, so no supervisor exists for it.
+- **What about subagents?** They do not run the skill, and their turn boundaries raise `SubagentStop` rather than `Stop`, so the threshold hook never fires for them.
+
+`AdoptedSession` gives the supervisor the same interface over a process id that `subprocess.Popen` gives over a process it launched — poll, terminate, kill, wait — so everything after the kill is the ordinary cycle, unchanged. A per-agent lock file (`<agent>-supervisor.lock`, holder process id recorded, stale locks reclaimed) refuses a second supervisor: two would each kill the session and each launch a successor.
+
+This also closes the bootstrap hole. Before adoption, a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself — which meant the founding boot below, and any agent a person started in a console, was permanently unrecyclable.
+
+Verified live 2026-08-06: a supervisor adopted a process it had not launched, killed it on the handoff, extracted the dialog, carried 50 task records, launched the successor with the full ignition prompt, and released its lock on exit.
+
 ## The founding boot — the one committed handoff
 
 Choirmaster's first boot has no predecessor session and no supervisor. The founding handoff is written by the founding pair, committed as an ordinary file, and launched with the ruled prompt pattern (`claude "$(cat <path>)"` — the launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). After that boot, recycling owns everything. No standing committed-handoff machinery exists; a boss-called durable snapshot is an ordinary commit on request.

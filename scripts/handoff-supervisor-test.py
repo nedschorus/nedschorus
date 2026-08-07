@@ -12,6 +12,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -163,6 +164,72 @@ def run_exit_handoff_cases(workspace: Path):
     )
 
 
+def run_adoption_cases(workspace: Path):
+    """Adopting a running session is what lets a hand-started agent recycle:
+    a supervisor normally owns only the process it launched itself."""
+    # Not a context manager: the point is a process this test does NOT own a
+    # handle to in the supervisor, which is what adoption exists for.
+    sleeper = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        adopted = supervisor.AdoptedSession("some-session-id", sleeper.pid)
+        check("an adopted live process reads as running", adopted.poll() is None)
+        adopted.terminate()
+        sleeper.wait(timeout=10)
+        check("an adopted process can be terminated", adopted.poll() == 0)
+        check("terminating an already-gone process is not an error",
+              adopted.terminate() is None)
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait()
+
+    gone = supervisor.AdoptedSession("some-session-id", 99999999)
+    check("a process id that does not exist reads as gone", gone.poll() == 0)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter",
+         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id"],
+        capture_output=True, text=True, check=False,
+    )
+    check("adopting without a process id is refused", result.returncode == 2, result.stderr)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter", "--cd", str(workspace),
+         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id",
+         "--adopt-process-id", "99999999"],
+        capture_output=True, text=True, check=False,
+    )
+    check("adopting a process that is already gone is refused",
+          result.returncode == 2 and "already gone" in result.stderr, result.stderr)
+
+
+def run_lock_cases(workspace: Path):
+    """Two supervisors on one agent would each kill the session and each launch
+    a successor, so the second must refuse to start."""
+    lock_path = workspace / "locktest-supervisor.lock"
+    check("the lock is claimable when free", supervisor.claim_supervisor_lock(lock_path))
+    check("the lock records the holder", lock_path.read_text().strip() == str(os.getpid()))
+    check("the same process may re-enter its own lock", supervisor.claim_supervisor_lock(lock_path))
+
+    lock_path.write_text("99999999\n", encoding="utf-8")
+    check("a lock held by a dead process is reclaimed", supervisor.claim_supervisor_lock(lock_path))
+
+    live_holder = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        lock_path.write_text(f"{live_holder.pid}\n", encoding="utf-8")
+        check("a lock held by a live process blocks a second supervisor",
+              not supervisor.claim_supervisor_lock(lock_path))
+    finally:
+        live_holder.kill()
+        live_holder.wait()
+
+    lock_path.write_text("not a number\n", encoding="utf-8")
+    check("an unreadable lock is reclaimed", supervisor.claim_supervisor_lock(lock_path))
+    lock_path.unlink(missing_ok=True)
+
+
 def run_launch_and_retention_cases(workspace: Path, recent: str):
     # --- Ignition prompt --------------------------------------------------
     prompt = supervisor.build_ignition_prompt(
@@ -271,6 +338,8 @@ def run_preseed_canaries() -> None:
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
+    run_adoption_cases(Path(temporary_directory))
+    run_lock_cases(Path(temporary_directory))
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:

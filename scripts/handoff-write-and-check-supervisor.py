@@ -32,6 +32,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,45 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
     os.replace(temporary_path, handoff_path)
 
 
+def start_adopting_supervisor(agent: str, handoff_directory: Path):
+    """Start a supervisor that adopts THIS session. Returns (started, detail).
+
+    A supervisor normally launches the session it watches, so a session
+    started by hand can never recycle — the founding boot included. The
+    running session identifies itself from the environment, which is the only
+    place both facts are available: CLAUDE_CODE_SESSION_ID and CLAUDE_PID.
+
+    The supervisor is detached into its own process group so it survives the
+    kill it is about to perform on this session.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    process_id = os.environ.get("CLAUDE_PID", "")
+    if not session_id or not process_id.isdigit():
+        return False, "this session does not report its id and process id in the environment"
+
+    supervisor_path = Path(__file__).with_name("handoff-supervisor.py")
+    log_path = handoff_directory / f"{agent}-supervisor.log"
+    try:
+        with log_path.open("ab") as log:
+            # Deliberately not waited on: the supervisor outlives this script,
+            # and the session that started it.
+            subprocess.Popen(  # pylint: disable=consider-using-with
+                [
+                    sys.executable, str(supervisor_path),
+                    "--agent", agent,
+                    "--cd", str(Path.cwd()),
+                    "--handoff-dir", str(handoff_directory),
+                    "--adopt-session-id", session_id,
+                    "--adopt-process-id", process_id,
+                ],
+                stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except OSError as error:
+        return False, f"{error}"
+    return True, f"started a supervisor for session {session_id} (its log is {log_path})"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Write the handoff file that retires this session.",
@@ -139,9 +179,18 @@ def main(argv=None) -> int:
         )
         return 0
 
+    print(f"handoff-write-and-check-supervisor: {explanation}; starting one.")
+    started, detail = start_adopting_supervisor(arguments.agent, handoff_directory)
+    if started:
+        print(
+            f"handoff-write-and-check-supervisor: {detail}. Stop working now and wait — "
+            "it takes over within seconds."
+        )
+        return 0
+
     print(
-        f"handoff-write-and-check-supervisor: {explanation}. The handoff is written, but nothing "
-        "will act on it: keep working, and tell the user that no supervisor is watching.",
+        f"handoff-write-and-check-supervisor: could not start a supervisor ({detail}). The handoff "
+        "is written, but nothing will act on it: keep working, and tell the user.",
         file=sys.stderr,
     )
     return 1
