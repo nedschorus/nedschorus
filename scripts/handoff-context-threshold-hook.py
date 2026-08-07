@@ -61,7 +61,7 @@ _supervisor_spec.loader.exec_module(supervisor)
 
 HANDOFF_INSTRUCTION = (
     "Context is {used:.0f}% used, at or past the {threshold:.0f}% recycle threshold. "
-    "Run the handoff skill now: pick the boundary, write next-step, and write the "
+    "Run the handoff skill now: write next-step, and write the "
     "handoff file with restart-counter incremented. Finish the sentence you are on "
     "first — nothing is lost, and the supervisor relaunches you with the dialog."
 )
