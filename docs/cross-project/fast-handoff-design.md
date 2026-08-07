@@ -76,9 +76,9 @@ Four of the five components are built, tested, and on main; the fifth is the ski
 | Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
 | Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
 | Writer | BUILT — `scripts/handoff-write-and-check-supervisor.py`, 27-case suite (`…-test.py`); added 2026-08-06 when the user ruled that the script does everything best done by script |
-| `handoff` skill | DRAFTED — `docs/drafts/handoff-skill-draft.md`, awaiting the user's walk; executed cold by four trial generations 2026-08-06, which handed off correctly from the drafted text |
+| `handoff` skill | BUILT — `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06 (eight items, per-item dispositions in `docs/drafts/handoff-skill-draft.md`); executed cold by four trial generations, which handed off correctly from the drafted text |
 
-Not yet done: wiring the status line and Stop hook into a settings file. The `handoff` skill text is the only component still awaiting its walk.
+Not yet done: wiring the Stop hook into NC's own settings file, which belongs to the seat move rather than the code build. Every component is now built, tested, and walked.
 
 ## The live recycle trial — PASSED 2026-08-06
 
