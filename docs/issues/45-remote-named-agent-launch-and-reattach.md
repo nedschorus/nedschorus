@@ -19,7 +19,10 @@ This also settles the open question recorded against the seat move in `docs/cros
 ## Walk order (opened 2026-08-07, new-vp session 5b66b6d0)
 
 1. Purpose and the bar these decisions are judged by
+   *processed 2026-08-07 → accepted (purpose item; no capture)*
 2. What must exist on the Ubuntu box before any agent runs there
+   *processed 2026-08-07 → accepted. Probed live: the box answers as `ned` (10.0.1.39, user nedlern) on the existing SSH key with 895GB free; `claude` 2.1.220 is installed against the Mac's 2.1.223; `python3` and `git` are present; `tmux` is NOT installed; there is no nedschorus checkout; `~/.claude/tasks` does not exist yet. Blocking on the user: authentication is expired there ("OAuth session expired and could not be refreshed"), which needs an interactive login only he can perform. The version gap means both pre-seed canaries must be re-run on the box — they have only ever run on the Mac, and task carry-over rides undocumented harness state. Item split noted (user): this inventory bundled four facts needing no ruling with one decision, which became item 6.*
 3. Whether SSH from the user's Mac is the server role that fires the hardening precondition ([nedschorus#40](https://github.com/nedschorus/nedschorus/issues/40))
 4. What `launch-claude` must know — the agent roster and its home
 5. How the migration sequences against the seat move
+6. The box's machine-global CLAUDE.md, which defines a different agent's role
