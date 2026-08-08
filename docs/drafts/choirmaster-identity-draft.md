@@ -4,7 +4,7 @@ Proposed content for choirmaster's `CLAUDE.local.md`, the per-agent identity sco
 
 Two step-6 decisions ride with this walk, because landing the file requires both:
 
-1. **What choirmaster's directory is.** `launch-claude choirmaster` creates `~/agents/choirmaster` on the box. Proposal: make that directory a git worktree of the box's `~/Projects/nedschorus` clone, so the agent boots inside the repository with its identity file sitting untracked at the worktree root.
+1. **What choirmaster's directory is.** *Walk item 2 processed 2026-08-07 → REVISED then approved.* `~/agents/choirmaster` is a git worktree of the box's `~/Projects/nedschorus` clone, **on its own branch — never on `main`**. The user's gatekeeper model set the shape: an agent never occupies `main`; each agent works on its own branch in its own worktree (file isolation between agents), and work reaches `main` only through the gate, serially, once it exists. The clone at `~/Projects/nedschorus` keeps `main` checked out, read-only, as the box's current copy of the supervisor scripts. Open step-6 decision, to be brought separately: the box's push credential — `ubuntu-claude` likely has no push rights to NC, and until the git-gatekeeper is built something must still move choirmaster's work to `main`.
 2. **Where `CLAUDE.local.md` gets ignored.** NC's `.gitignore` does not list it yet. Proposal: add it, so no agent's identity file can ever be committed by accident.
 
 One resurrection flagged plainly: the commit-session-id line below was in the pre-walk settled list but is NOT in the walked floor — the admission walk did not carry it. It reappears here because it is operational and per-agent, which is what this file scopes to.
