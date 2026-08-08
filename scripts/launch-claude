@@ -32,7 +32,7 @@ AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
 
 usage() {
-    echo "usage: launch-claude <name> [--no-attach]" >&2
+    echo "usage: launch-claude <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
     exit 2
 }
 
@@ -40,7 +40,14 @@ usage() {
 AGENT_NAME="$1"
 shift
 ATTACH=yes
-[ "${1:-}" = "--no-attach" ] && ATTACH=no
+FIRST_PROMPT_FILE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        (--no-attach) ATTACH=no; shift ;;
+        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a box-side path}"; shift 2 ;;
+        (*) usage ;;
+    esac
+done
 case "$AGENT_NAME" in
     (*[!a-zA-Z0-9_-]*|"") echo "launch-claude: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
@@ -49,6 +56,14 @@ AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
 --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+
+# A first-prompt file (box-side path) seeds only the FIRST session — used for
+# the founding boot, where the committed handoff is the prompt. The supervisor
+# reads the file itself, so its content never rides through shell quoting.
+# After the first recycle the ordinary ignition prompt takes over.
+if [ -n "$FIRST_PROMPT_FILE" ]; then
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+fi
 
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never

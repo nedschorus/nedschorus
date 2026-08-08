@@ -237,6 +237,35 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
           state.get("consumed_counter") == 1, str(state))
 
 
+def run_first_prompt_file_cases(workspace: Path):
+    """The founding boot passes its prompt as a file the supervisor reads
+    itself, so the content never rides through nested shell quoting."""
+    prompt_path = workspace / "founding-prompt.txt"
+    prompt_path.write_text("You are choirmaster.\nRead the plan.\n", encoding="utf-8")
+    stub_agent = workspace / "prompt-stub-agent"
+    stub_agent.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    stub_agent.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
+         "--handoff-dir", str(workspace / "prompt-handoffs"),
+         "--agent-command", str(stub_agent),
+         "--first-prompt-file", str(workspace / "no-such-prompt.txt")],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    check("a missing first-prompt file is refused before launch",
+          result.returncode == 2 and "does not exist" in result.stderr, result.stderr[-200:])
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
+         "--handoff-dir", str(workspace / "prompt-handoffs"),
+         "--agent-command", str(stub_agent),
+         "--first-prompt-file", str(prompt_path)],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    check("a first-prompt file launches cleanly", result.returncode == 0, result.stderr[-200:])
+
+
 def run_lock_cases(workspace: Path):
     """Two supervisors on one agent would each kill the session and each launch
     a successor, so the second must refuse to start."""
@@ -373,6 +402,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
+    run_first_prompt_file_cases(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
 

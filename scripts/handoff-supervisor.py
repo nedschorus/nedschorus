@@ -501,6 +501,11 @@ def main(argv=None) -> int:
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
     parser.add_argument("--first-prompt", default="", help="prompt for the first session (no handoff yet)")
     parser.add_argument(
+        "--first-prompt-file", default="",
+        help="file holding the first session's prompt; read here so no caller "
+             "has to smuggle file content through nested shell quoting",
+    )
+    parser.add_argument(
         "--check", action="store_true",
         help="report whether a supervisor is watching this agent, then exit (0 alive, 1 not)",
     )
@@ -535,6 +540,12 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
             return 2
+
+    if arguments.first_prompt_file:
+        prompt_path = Path(arguments.first_prompt_file).expanduser()
+        if not prompt_path.is_file():
+            parser.error(f"--first-prompt-file does not exist: {prompt_path}")
+        arguments.first_prompt = prompt_path.read_text(encoding="utf-8").strip()
 
     working_directory = Path(arguments.cd).expanduser().resolve()
     if not working_directory.is_dir():
