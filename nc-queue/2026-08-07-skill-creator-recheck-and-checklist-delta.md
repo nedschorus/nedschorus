@@ -51,8 +51,23 @@ Given that a skill-authoring skill already exists, is installed, and is live in 
 
 No recommendation is offered here; the boss asked for research first.
 
+**Why a skill can beat a document, boss-stated 2026-08-07:** a skill is triggered automatically at the moment it applies, where a document is followed only when someone opens it; and a skill can carry programs and actions, not prompt text alone. Both properties count against option (a) — the checklist as a doc has neither. This is the same argument that justified `ghi-write` (nedschorus#13), and it connects to §3e: the machine work a skill can absorb has to be identified before it can be written.
+
 ## 5. Receipts and gaps
 
 Verified this session: both install paths and their file listings; the two copies diffed (two files differ, as described); `SKILL.md` read in full; `skill-creator` absent from every NC issue body under six phrasings (`write-skill`, `skill-write`, `build-skill`, `author-skill`, `skill-author`, `skill.creator`) across all 45 issues; #23's body and its source-evidence section read for existing prior-art citation.
 
 Not done: the source's own change history since 2026-07-22; the three `agents/*.md` files and `references/schemas.md` were listed and sized but not read line-by-line — §3a's description of the harness comes from `SKILL.md`'s account of what those files do.
+
+## Walk order
+
+Walk opened 2026-08-07, restarted at item 1 the same day for clarity (the first opening asked an unanswerable yes/no about a negatively-stated rule). Dispositions are marked against this list.
+
+1. Purpose — what this walk decides: six differences, then the build question. Nothing is built during the walk. — processed 2026-08-07 → accepted; the boss's why-a-skill-beats-a-document reason recorded at §4.
+2. §3a — skill-creator's eval harness as a reference implementation for nedschorus#23. — processed 2026-08-07 → accepted; prior-art bullet added to the eval-agent-change issue body (Evidence of record section), edit visible in that issue's edit history.
+3. §3b — the description optimizer's held-out-test selection; the deep-dive's open sub-question 3.
+4. §3c — the triggering mechanic that makes easy positive trigger cases non-discriminating.
+5. §3d — realism rules for trigger queries.
+6. §3e — the transcript-reading procedure for the checklist's which-steps-are-machine-work question.
+7. §3f — improvement-loop discipline (generalize, keep lean, read transcripts).
+8. §4 — the GHI question: no NC skill / point at skill-creator / build one.
