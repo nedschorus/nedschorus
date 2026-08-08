@@ -2,12 +2,13 @@
 
 Consult this whenever a NedsChorus skill is created or revised. Distilled 2026-07-24 (outer walk item 11, user-approved) from the read-for-ideas-only extraction of Anthropic's skill-creator; full evidence in `nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` and the cops delta packet §11. Every skill-build GHI points here; the founding plan's step 1 builds against this list.
 
-## Four questions before writing anything
+## Five questions before writing anything
 
 1. What should the skill enable?
 2. When should it trigger — the actual user phrases and contexts? And when must it *not*?
 3. What output format is expected?
 4. Are the outputs objectively verifiable? Verifiable outputs get test cases; subjective outputs get human judgment. (This is the user-facing/agent-facing split — Anthropic reached the same rule independently.)
+5. **Which steps are machine work?** Anything with a determinate answer — a timestamp, a computed value, a file's format, a check whose result is yes or no — belongs in a script the skill runs, leaving the agent only what needs judgment. Ask this *before* reviewing any wording: a wording review presupposes the division of labor and structurally cannot find an error in it. (User-ruled 2026-08-06, from the `handoff` skill's walk, where a step-by-step review of the text validated three steps of agent-performed machine work before the user asked why a script was not doing it; the review had even flagged one of those steps and then declined to act on the flag.)
 
 ## The description is the trigger
 

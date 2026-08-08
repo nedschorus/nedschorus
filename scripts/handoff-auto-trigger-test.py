@@ -93,7 +93,10 @@ with tempfile.TemporaryDirectory() as workspace:
         result = run_script(HOOK_SCRIPT, {"session_id": PROBE_SESSION_ID})
         check("hook fires at the threshold", result.returncode == 2, f"code {result.returncode}")
         check("hook names the handoff skill", "handoff skill" in result.stderr, result.stderr[:160])
-        check("hook reports the used percentage", "60% used" in result.stderr, result.stderr[:160])
+        # The message says to run the skill and nothing else: the skill carries the
+        # procedure, and a second copy here went stale twice in one day.
+        check("hook says only to run the skill",
+              result.stderr.strip() == "Run the handoff skill now.", result.stderr[:160])
 
         result = run_script(HOOK_SCRIPT, {"session_id": PROBE_SESSION_ID})
         check("hook fires only once per session", result.returncode == 0, f"code {result.returncode}")

@@ -34,7 +34,9 @@ Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
 
 import argparse
 import json
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -42,6 +44,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
@@ -231,6 +234,84 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     )
 
 
+class AdoptedSession:
+    """A session this supervisor did not launch, identified by process id.
+
+    A supervisor normally owns the process it started and can terminate it
+    through that handle. A session started by hand — the founding boot, or any
+    agent a person launched in a console — has no such owner, so it can never
+    recycle. Adoption closes that: the agent's own handoff script starts a
+    supervisor and tells it which process to watch, and everything after the
+    kill is identical to the ordinary cycle.
+    """
+
+    def __init__(self, session_id: str, process_id: int):
+        self.session_id = session_id
+        self.process_id = process_id
+
+    def poll(self):
+        """Return None while the process is alive, 0 once it is gone."""
+        try:
+            os.kill(self.process_id, 0)
+        except ProcessLookupError:
+            return 0
+        except PermissionError:
+            return None  # alive, owned by someone else
+        return None
+
+    def terminate(self):
+        try:
+            os.kill(self.process_id, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    def kill(self):
+        try:
+            os.kill(self.process_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def wait(self, timeout=None):
+        """Block until the process is gone, or raise once the timeout passes."""
+        deadline = time.monotonic() + (timeout if timeout is not None else 0)
+        while self.poll() is None:
+            if timeout is not None and time.monotonic() > deadline:
+                raise subprocess.TimeoutExpired(f"pid {self.process_id}", timeout)
+            time.sleep(0.2)
+        return 0
+
+
+def claim_supervisor_lock(lock_path: Path) -> bool:
+    """Take the one-supervisor-per-agent lock, or report it already held.
+
+    Two supervisors on one agent would each kill the session and each launch a
+    successor, so the second must not start. A lock left by a supervisor that
+    died is reclaimed: the recorded process id is checked before the lock is
+    believed.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            holder = int(lock_path.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            holder = None
+        if holder is not None and holder != os.getpid():
+            try:
+                os.kill(holder, 0)
+                return False  # a live supervisor already holds this agent
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return False
+        lock_path.unlink(missing_ok=True)  # the holder is gone; reclaim it
+        return claim_supervisor_lock(lock_path)
+    os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))
+    os.close(descriptor)
+    return True
+
+
 def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
     """Block until the agent writes a new handoff, or the session exits.
 
@@ -283,6 +364,9 @@ class SupervisorSettings:
     handoff_directory: Path
     agent_command: str
     first_prompt: str
+    # A real annotation, not a string: this module is loaded by importlib in the
+    # threshold hook and the tests, where a forward reference cannot resolve.
+    adopted_session: Optional[AdoptedSession] = None
 
     @property
     def handoff_path(self) -> Path:
@@ -291,6 +375,10 @@ class SupervisorSettings:
     @property
     def state_path(self) -> Path:
         return self.handoff_directory / f"{self.agent}-supervisor-state.json"
+
+    @property
+    def lock_path(self) -> Path:
+        return self.handoff_directory / f"{self.agent}-supervisor.lock"
 
 
 def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
@@ -332,11 +420,18 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 def supervise_sessions(settings: SupervisorSettings) -> int:
     """Launch, watch, and recycle sessions until one ends without a handoff."""
     state = read_supervisor_state(settings.state_path)
-    session_id = state.get("session_id") or str(uuid.uuid4())
     generation = state.get("generation", 0)
     prompt = settings.first_prompt or (
         f"You are {settings.agent}. No handoff exists yet; ask what to work on."
     )
+
+    adopted = settings.adopted_session
+    # A fresh start always mints a new session id. Reusing the one in the state
+    # file would launch `claude --session-id` against a transcript that already
+    # exists — and if the supervisor died while its agent kept running, would put
+    # two processes on one session id. Adoption is how a running session is
+    # picked back up.
+    session_id = adopted.session_id if adopted else str(uuid.uuid4())
 
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
@@ -345,10 +440,17 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         state.update({"session_id": session_id, "generation": generation})
         write_supervisor_state(settings.state_path, state)
 
-        print(f"handoff-supervisor: launching session {session_id} (generation {generation})")
-        process = launch_agent_session(
-            settings.agent_command, session_id, settings.working_directory, prompt
-        )
+        if adopted is not None:
+            print(
+                f"handoff-supervisor: adopted running session {session_id} "
+                f"(process {adopted.process_id}, generation {generation})"
+            )
+            process, adopted = adopted, None  # adoption applies to this pass only
+        else:
+            print(f"handoff-supervisor: launching session {session_id} (generation {generation})")
+            process = launch_agent_session(
+                settings.agent_command, session_id, settings.working_directory, prompt
+            )
 
         handoff_fields = wait_for_handoff(
             process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
@@ -361,7 +463,16 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         generation += 1
 
         if handoff_fields.get("dont-restart"):
-            answer = input("handoff-supervisor: restart? y/n ").strip().lower()
+            if not sys.stdin.isatty():
+                # Nobody can answer: a supervisor the agent started has no
+                # terminal, and asking would raise EOFError before the consumed
+                # counter is recorded — leaving the next supervisor to re-fire on
+                # a stale handoff. Not relaunching is the answer dont-restart asks
+                # for, so take it.
+                print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+                answer = "n"
+            else:
+                answer = input("handoff-supervisor: restart? y/n ").strip().lower()
             if answer != "y":
                 print("handoff-supervisor: stopping at the agent's request")
                 state["consumed_counter"] = counter_from(handoff_fields)
@@ -390,8 +501,21 @@ def main(argv=None) -> int:
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
     parser.add_argument("--first-prompt", default="", help="prompt for the first session (no handoff yet)")
     parser.add_argument(
+        "--first-prompt-file", default="",
+        help="file holding the first session's prompt; read here so no caller "
+             "has to smuggle file content through nested shell quoting",
+    )
+    parser.add_argument(
         "--check", action="store_true",
         help="report whether a supervisor is watching this agent, then exit (0 alive, 1 not)",
+    )
+    parser.add_argument(
+        "--adopt-session-id", default="",
+        help="watch an already-running session with this id instead of launching one",
+    )
+    parser.add_argument(
+        "--adopt-process-id", type=int, default=0,
+        help="process id of the already-running session to adopt; required with --adopt-session-id",
     )
     arguments = parser.parse_args(argv)
 
@@ -403,6 +527,26 @@ def main(argv=None) -> int:
         print(explanation)
         return 0 if alive else 1
 
+    if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
+        parser.error("--adopt-session-id and --adopt-process-id must be given together")
+
+    adopted = None
+    if arguments.adopt_session_id:
+        adopted = AdoptedSession(arguments.adopt_session_id, arguments.adopt_process_id)
+        if adopted.poll() is not None:
+            print(
+                f"handoff-supervisor: process {arguments.adopt_process_id} is already gone; "
+                "nothing to adopt",
+                file=sys.stderr,
+            )
+            return 2
+
+    if arguments.first_prompt_file:
+        prompt_path = Path(arguments.first_prompt_file).expanduser()
+        if not prompt_path.is_file():
+            parser.error(f"--first-prompt-file does not exist: {prompt_path}")
+        arguments.first_prompt = prompt_path.read_text(encoding="utf-8").strip()
+
     working_directory = Path(arguments.cd).expanduser().resolve()
     if not working_directory.is_dir():
         parser.error(f"--cd is not a directory: {working_directory}")
@@ -413,15 +557,27 @@ def main(argv=None) -> int:
     handoff_directory = Path(arguments.handoff_dir).expanduser()
     handoff_directory.mkdir(parents=True, exist_ok=True)
 
-    return supervise_sessions(
-        SupervisorSettings(
-            agent=arguments.agent,
-            working_directory=working_directory,
-            handoff_directory=handoff_directory,
-            agent_command=arguments.agent_command,
-            first_prompt=arguments.first_prompt,
-        )
+    settings = SupervisorSettings(
+        agent=arguments.agent,
+        working_directory=working_directory,
+        handoff_directory=handoff_directory,
+        agent_command=arguments.agent_command,
+        first_prompt=arguments.first_prompt,
+        adopted_session=adopted,
     )
+
+    if not claim_supervisor_lock(settings.lock_path):
+        print(
+            f"handoff-supervisor: another supervisor already holds {settings.agent} "
+            f"({settings.lock_path}); not starting a second one",
+            file=sys.stderr,
+        )
+        return 4
+
+    try:
+        return supervise_sessions(settings)
+    finally:
+        settings.lock_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

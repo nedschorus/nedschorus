@@ -6,3 +6,9 @@ bridge/*.log.md
 
 # walk-me-through tier-3 anchors: machine-local tmp ledgers, deleted at walk close (skill: .claude/skills/walk-me-through)
 walk-ledgers/
+
+# per-agent identity files: one agent, one worktree, never committed (ruled on nedschorus#45)
+CLAUDE.local.md
+
+# instruction-file-guard override marker: consumed per approved change (.claude/hooks/instruction-file-guard.py)
+.walk-approved

@@ -5,7 +5,7 @@ design-as-of: 2026-08-02
 
 # Session recycling — the handoff system (specification)
 
-**Implementation status:** DESIGNED, NOT YET BUILT. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
+**Implementation status:** BUILT, walked, and trial-passed 2026-08-06 (see the build-status table and the live recycle trial below). Only the Stop-hook wiring into NC's settings remains, and it belongs to the seat move. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
 
 ## The problem
 
@@ -20,13 +20,15 @@ A fleet of interactive agents running with little attention. Recycle a session b
 
 ## The recycle cycle
 
-The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes the handoff file:
+The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes its successor's opening prompt to a file and runs the writer, `scripts/handoff-write-and-check-supervisor.py`, which produces the handoff file. **The agent supplies only `next-step`; the writer fills every field a machine can compute (user-ruled 2026-08-06).** The earlier design had the agent hand-write all four fields, which asked it to find and read the previous handoff purely to do arithmetic, and left a silent failure open: the supervisor parses `key: value` lines, so a `next-step` containing a newline was truncated at its first line with no error. The writer collapses whitespace to one line, so that cannot happen. It also takes the next step as a FILE, not an argument — a shell mangles backticks and quotes inside an inline argument — and derives the counter from the higher of the previous handoff's value and the supervisor's consumed value, so a missing or stale handoff file cannot produce a counter the supervisor ignores.
+
+The fields:
 
 - `written-at:` — UTC timestamp (boss-ruled 2026-08-02; consumed by the ignition prompt's elapsed-time line).
 - ~~`read-starting-here:`~~ — **REMOVED 2026-08-06 (user-ruled): the retiring agent exercises no judgment over what its successor receives.** The extractor carries the tail of the conversation that clears a **2500-word floor** — roughly eighteen exchanges, sized against measured sessions — extended back to the nearest user prompt so the extract opens on a clean turn. The header states how many earlier turns were left behind, which makes reading further from the transcript an informed choice rather than a blind one. The 5-topics boundary rule, the "err long" hedge, and the boundary field all died with this ruling; `--boundary-quote` survives in the extractor as a manual override only.
-- `next-step:` — the first action the successor takes. Governed by the preserved content rule: never restate what a durable store holds — point at it; and **any pointer to mutable content carries a pin** (a commit SHA with the path, an issue number, a quoted line), so the successor resolves what the writer meant, not whatever the artifact says by read time. Correction-note style where misreading is predictable ("you will likely misread X as Y; actually Z").
+- `next-step:` — a clear and complete prompt telling the successor what its first action should be: an instruction to act on, not a summary of the session. Bounded by what the successor already has, since it reads the conversation tail before acting. **Every pointer carries a pin** — a file reference gives its path and commit SHA, a GitHub issue reference gives its repository and number — so the successor resolves what the writer meant rather than whatever the artifact says by read time. Text of record: `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06.
 - optional `dont-restart:` — the supervisor prompts `restart? y/n` instead of auto-relaunching (`y` launches, `n` exits the supervisor).
-- `restart-counter:` — the predecessor's counter + 1: the semaphore the supervisor watches. Init 0 when no predecessor file exists; the supervisor records the last-consumed value in its own state file so it never refires on the same value (the consumed-marker).
+- `restart-counter:` — the semaphore the supervisor watches, written by the writer as one above the highest value either the previous handoff file or the supervisor's state records. The supervisor records the last-consumed value in its own state file so it never refires on the same value (the consumed-marker).
 
 The **supervisor** (one per agent, a python program running in a console) then:
 
@@ -46,6 +48,21 @@ The supervisor's poll never touches the transcript: it stats the handoff file an
 
 The statusline script receives `.context_window.remaining_percentage` on stdin at every refresh; one added line writes it to a side file. The Stop hook reads that file — Stop-hook stdin does not carry `context_window` (verified) — and triggers the `handoff` skill at the threshold (config, ~50% used).
 
+## Who starts the supervisor — self-registration, not discovery
+
+A supervisor watches exactly one agent, and **the agent starts it** when its handoff script finds none watching (user-asked 2026-08-06). Nothing scans the machine for sessions to supervise, and nothing needs to: the running session identifies itself from its own environment — `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`, both verified present 2026-08-06 — and passes those to the supervisor it starts, which adopts that one process. Two questions dissolve rather than being answered:
+
+- **Which sessions can be handed off?** Only ones carrying the `handoff` skill and this script, because only they ever call it. An agent without them never starts a supervisor, so no supervisor exists for it.
+- **What about subagents?** They do not run the skill, and their turn boundaries raise `SubagentStop` rather than `Stop`, so the threshold hook never fires for them.
+
+`AdoptedSession` gives the supervisor the same interface over a process id that `subprocess.Popen` gives over a process it launched — poll, terminate, kill, wait — so everything after the kill is the ordinary cycle, unchanged. A per-agent lock file (`<agent>-supervisor.lock`, holder process id recorded, stale locks reclaimed) refuses a second supervisor: two would each kill the session and each launch a successor.
+
+This also closes the bootstrap hole. Before adoption, a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself — which meant the founding boot below, and any agent a person started in a console, was permanently unrecyclable.
+
+Verified live 2026-08-06: a supervisor adopted a process it had not launched, killed it on the handoff, extracted the dialog, carried 50 task records, launched the successor with the full ignition prompt, and released its lock on exit. That check used a stub agent and verified process mechanics only.
+
+**Open question, attached to the seat move: where the successor's output goes in an interactive pane.** A supervisor the agent starts is detached, with its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching. Correct for a headless session; wrong for a console pane, where the successor would run invisibly. The recommendation is that panes run their supervisor directly — the supervisor is the parent, as the design has always assumed — leaving adoption as the bootstrap and recovery path it was built for. Settle this before the seat move rather than after.
+
 ## The founding boot — the one committed handoff
 
 Choirmaster's first boot has no predecessor session and no supervisor. The founding handoff is written by the founding pair, committed as an ordinary file, and launched with the ruled prompt pattern (`claude "$(cat <path>)"` — the launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). After that boot, recycling owns everything. No standing committed-handoff machinery exists; a boss-called durable snapshot is an ordinary commit on request.
@@ -60,9 +77,10 @@ Four of the five components are built, tested, and on main; the fifth is the ski
 | Supervisor | BUILT — `scripts/handoff-supervisor.py`, 24 offline cases plus both live pre-seed canaries green |
 | Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
 | Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
-| `handoff` skill | DRAFTED — `docs/drafts/handoff-skill-draft.md`, awaiting the user's walk; executed cold by four trial generations 2026-08-06, which handed off correctly from the drafted text |
+| Writer | BUILT — `scripts/handoff-write-and-check-supervisor.py`, 27-case suite (`…-test.py`); added 2026-08-06 when the user ruled that the script does everything best done by script |
+| `handoff` skill | BUILT — `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06 (eight items, per-item dispositions in `docs/drafts/handoff-skill-draft.md`); executed cold by four trial generations, which handed off correctly from the drafted text |
 
-Not yet done: wiring the status line and Stop hook into a settings file. The `handoff` skill text is the only component still awaiting its walk.
+Not yet done: wiring the Stop hook into NC's own settings file, which belongs to the seat move rather than the code build. Every component is now built, tested, and walked.
 
 ## The live recycle trial — PASSED 2026-08-06
 
@@ -87,7 +105,8 @@ Trial-only scaffolding, not part of the system: a driver Stop hook produced one-
 ## Components (the build)
 
 1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
-2. **The `handoff` skill** — writes `next-step` per the content rule, writes the file, waits for the supervisor (boundary judgment removed 2026-08-06; the extractor's word-floor tail decides what carries).
+2. **The `handoff` skill** — writes `next-step` per the content rule, runs the writer, waits for the supervisor (boundary judgment removed 2026-08-06; the extractor's word-floor tail decides what carries).
+2a. **`handoff-write-and-check-supervisor.py`** — the writer: stamps the timestamp, derives the restart counter, collapses the next step to one line, writes the handoff file atomically, then reports whether a supervisor is watching and what that means for the agent. Refuses an empty next step rather than booting a successor with no instruction. The liveness report lives here rather than in a second command because the two are one decision — a handoff nobody is watching must not stop the agent working, and an agent that runs only the first half of a two-step procedure would stop anyway (user-ruled 2026-08-06: the skill runs one script that does everything best done by script).
 3. **The statusline relay + Stop hook** — the auto-trigger.
 4. **The supervisor** — watch, kill, extract, pre-seed, queue-status line, launch; consumed-marker state; the `dont-restart` y/n gate.
 5. **The ignition prompt template** — path, elapsed-time line, task count, next step.
@@ -121,4 +140,6 @@ Trial-only scaffolding, not part of the system: a driver Stop hook produced one-
 - Pre-seed rides undocumented harness state; bounded by the ignition count-check and the per-upgrade canaries; the queues are the backstop.
 - Very-long-session material can predate the boundary window and every durable store; bounded by commit-as-you-go and the full-JSONL pointer.
 - ~~The 5-topics boundary is the retiring agent's judgment~~ — closed 2026-08-06: the boundary is mechanical (a 2500-word tail), so this hole no longer exists. What remains is the floor's size itself: a session whose live thread runs longer than 2500 words hands over a partial thread, bounded by the header's left-behind count and the transcript pointer.
+- A `dont-restart` handoff reaching a supervisor with no terminal cannot be answered. Closed 2026-08-06: the supervisor takes the non-relaunch branch rather than calling `input()`, which would raise EOFError before the consumed counter was recorded and leave the next supervisor re-firing on a stale handoff.
+- A supervisor restarting after a crash used to relaunch the session id in its state file. Closed 2026-08-06: a fresh start always mints a new id, since reusing one would launch against an existing transcript, and — if the supervisor died while its agent kept running — put two processes on one session id. Adoption is how a running session is picked back up.
 - The supervisor is a per-agent console process; if it dies, recycling stops until relaunched. Detectable since 2026-08-06 (user-asked): the supervisor stamps `last_poll_at` into its state file every ten seconds while watching, and `handoff-supervisor.py --check --agent <name>` reports liveness (exit 0 alive, 1 not). Both consumers use it — the skill checks before it stops working, so a dead supervisor yields a plain report to the user rather than a session hung forever waiting to be killed; the threshold hook stays silent when nothing is watching, so it cannot ask for a handoff nobody will act on.

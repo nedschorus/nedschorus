@@ -59,12 +59,11 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
-HANDOFF_INSTRUCTION = (
-    "Context is {used:.0f}% used, at or past the {threshold:.0f}% recycle threshold. "
-    "Run the handoff skill now: write next-step, and write the "
-    "handoff file with restart-counter incremented. Finish the sentence you are on "
-    "first — nothing is lost, and the supervisor relaunches you with the dialog."
-)
+# The skill carries the whole procedure. A hook message that restated any of it
+# would be a second copy going stale on its own schedule, which this one did
+# twice in a day: once when boundary judgment was removed, once when the writer
+# took over the fields.
+HANDOFF_INSTRUCTION = "Run the handoff skill now."
 
 
 def read_json_file(path: Path):
@@ -211,7 +210,7 @@ def main(argv=None) -> int:
         pass
 
     print(
-        HANDOFF_INSTRUCTION.format(used=used, threshold=arguments.threshold_used_percentage),
+        HANDOFF_INSTRUCTION,
         file=sys.stderr,
     )
     return 2  # exit 2 surfaces stderr to the agent as a system message

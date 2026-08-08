@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/instruction-file-guard.py"
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "design@claude-plugins-official": false,
     "cowork-plugin-management@claude-plugins-official": false,

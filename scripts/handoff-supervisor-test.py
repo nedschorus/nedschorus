@@ -12,6 +12,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -163,6 +164,134 @@ def run_exit_handoff_cases(workspace: Path):
     )
 
 
+def run_adoption_cases(workspace: Path):
+    """Adopting a running session is what lets a hand-started agent recycle:
+    a supervisor normally owns only the process it launched itself."""
+    # Not a context manager: the point is a process this test does NOT own a
+    # handle to in the supervisor, which is what adoption exists for.
+    sleeper = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        adopted = supervisor.AdoptedSession("some-session-id", sleeper.pid)
+        check("an adopted live process reads as running", adopted.poll() is None)
+        adopted.terminate()
+        sleeper.wait(timeout=10)
+        check("an adopted process can be terminated", adopted.poll() == 0)
+        check("terminating an already-gone process is not an error",
+              adopted.terminate() is None)
+    finally:
+        if sleeper.poll() is None:
+            sleeper.kill()
+            sleeper.wait()
+
+    gone = supervisor.AdoptedSession("some-session-id", 99999999)
+    check("a process id that does not exist reads as gone", gone.poll() == 0)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter",
+         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id"],
+        capture_output=True, text=True, check=False,
+    )
+    check("adopting without a process id is refused", result.returncode == 2, result.stderr)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "adopter", "--cd", str(workspace),
+         "--handoff-dir", str(workspace), "--adopt-session-id", "an-id",
+         "--adopt-process-id", "99999999"],
+        capture_output=True, text=True, check=False,
+    )
+    check("adopting a process that is already gone is refused",
+          result.returncode == 2 and "already gone" in result.stderr, result.stderr)
+
+
+def run_dont_restart_without_a_terminal_case(workspace: Path):
+    """A supervisor an agent started has no terminal. Asking `restart? y/n`
+    there raises EOFError before the consumed counter is recorded, so the next
+    supervisor re-fires on the stale handoff — launching a session and killing
+    it immediately."""
+    handoff_directory = workspace / "noterm"
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    (handoff_directory / "noterm-handoff.md").write_text(
+        "written-at: 2026-08-06T12:00:00Z\n"
+        "next-step: should not relaunch\n"
+        "restart-counter: 1\n"
+        "dont-restart: the user asked to be consulted\n",
+        encoding="utf-8",
+    )
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    stub_agent.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "noterm", "--cd", str(workspace),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    check("dont-restart without a terminal exits cleanly, not on EOFError",
+          result.returncode == 0 and "EOFError" not in result.stderr, result.stderr[-300:])
+    check("dont-restart without a terminal says why it stopped",
+          "no terminal to ask on" in result.stdout, result.stdout[-300:])
+
+    state = supervisor.read_supervisor_state(handoff_directory / "noterm-supervisor-state.json")
+    check("the consumed counter is recorded before stopping",
+          state.get("consumed_counter") == 1, str(state))
+
+
+def run_first_prompt_file_cases(workspace: Path):
+    """The founding boot passes its prompt as a file the supervisor reads
+    itself, so the content never rides through nested shell quoting."""
+    prompt_path = workspace / "founding-prompt.txt"
+    prompt_path.write_text("You are choirmaster.\nRead the plan.\n", encoding="utf-8")
+    stub_agent = workspace / "prompt-stub-agent"
+    stub_agent.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    stub_agent.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
+         "--handoff-dir", str(workspace / "prompt-handoffs"),
+         "--agent-command", str(stub_agent),
+         "--first-prompt-file", str(workspace / "no-such-prompt.txt")],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    check("a missing first-prompt file is refused before launch",
+          result.returncode == 2 and "does not exist" in result.stderr, result.stderr[-200:])
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
+         "--handoff-dir", str(workspace / "prompt-handoffs"),
+         "--agent-command", str(stub_agent),
+         "--first-prompt-file", str(prompt_path)],
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    check("a first-prompt file launches cleanly", result.returncode == 0, result.stderr[-200:])
+
+
+def run_lock_cases(workspace: Path):
+    """Two supervisors on one agent would each kill the session and each launch
+    a successor, so the second must refuse to start."""
+    lock_path = workspace / "locktest-supervisor.lock"
+    check("the lock is claimable when free", supervisor.claim_supervisor_lock(lock_path))
+    check("the lock records the holder", lock_path.read_text().strip() == str(os.getpid()))
+    check("the same process may re-enter its own lock", supervisor.claim_supervisor_lock(lock_path))
+
+    lock_path.write_text("99999999\n", encoding="utf-8")
+    check("a lock held by a dead process is reclaimed", supervisor.claim_supervisor_lock(lock_path))
+
+    live_holder = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        lock_path.write_text(f"{live_holder.pid}\n", encoding="utf-8")
+        check("a lock held by a live process blocks a second supervisor",
+              not supervisor.claim_supervisor_lock(lock_path))
+    finally:
+        live_holder.kill()
+        live_holder.wait()
+
+    lock_path.write_text("not a number\n", encoding="utf-8")
+    check("an unreadable lock is reclaimed", supervisor.claim_supervisor_lock(lock_path))
+    lock_path.unlink(missing_ok=True)
+
+
 def run_launch_and_retention_cases(workspace: Path, recent: str):
     # --- Ignition prompt --------------------------------------------------
     prompt = supervisor.build_ignition_prompt(
@@ -271,6 +400,10 @@ def run_preseed_canaries() -> None:
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
+    run_adoption_cases(Path(temporary_directory))
+    run_dont_restart_without_a_terminal_case(Path(temporary_directory))
+    run_first_prompt_file_cases(Path(temporary_directory))
+    run_lock_cases(Path(temporary_directory))
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:
