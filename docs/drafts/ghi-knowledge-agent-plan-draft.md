@@ -13,15 +13,15 @@ design-as-of: 2026-08-07
 
 A dedicated agent that holds this project's GitHub issues in context. Another agent, before filing or editing an issue, asks it which issues they should read, and gets an answer. Replaces the gate direction rejected at [ghi-gatekeeper-plan-draft.md](ghi-gatekeeper-plan-draft.md): nothing is gated, because unmediated access was never the problem. The two problems are that an agent about to write does not know what related issues already exist, and that issues get written carelessly. This plan addresses the first; the second stays with the `ghi-write` skill ([ghi-write-skill-draft.md](ghi-write-skill-draft.md)).
 
-## Walk order (opened 2026-08-07, new-vp session 3a11d08f)
+## Walk order (opened 2026-08-07, new-vp session 3a11d08f; re-planned same day after the format/extraction/cross-reference discussion settled parts of the original items 1, 3, 4, and 7 — dispositions in the sections below; still 7 items)
 
-1. The shape — what is asked, what comes back
+1. The answer's form — pointers with reasons, not prose syntheses (the ruling left open from the original item 1; the direction itself — know, don't write; resume per question — is confirmed)
 2. The agent's name and where it lives
-3. Staying current — context growth across resumes, and issues changing underneath it
-4. The invocation and the answer's form
+3. Staying current, the remaining decisions — who builds and maintains the knowledge file, refresh cadence, recycle point (ruled already: MD; the window is spent rather than condensed; two delta feeds — `updated:>` for issues, git log for MDs; no idle state)
+4. The invocation — the NM-pattern wrapper for this agent: script, caller, timeouts
 5. What `ghi-write`'s search-first step becomes
 6. Unavailable, slow, or wrong — what the asking agent does then
-7. What this agent does not cover
+7. What this agent does not cover — scope boundary, with the MD-side candidate positions (link integrity joins maintenance; MD content is flag-not-fix) and the lean-bodies routing rule noted as riding to the `ghi-write` walk
 
 ## The shape, as understood
 
