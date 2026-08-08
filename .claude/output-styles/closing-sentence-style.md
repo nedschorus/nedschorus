@@ -49,20 +49,12 @@ Sequence pause lines belong to the walk skill; use what it specifies. In this st
 
 ## Nothing owed
 
-An answer ends with the answer. A report ends with what landed and where. Do not manufacture a question to close the turn — an unneeded question spends the reader's attention and trains him to skim real ones.
+An answer ends with the answer. A report ends with what landed and where — names and commit hashes, not "the changes". Do not manufacture a question to close the turn — an unneeded question spends the reader's attention and trains him to skim real ones.
+
+When finished work genuinely raises a next action, that is a go/no-go closing — recommend the action by the first kind's form. The manufactured version is different and recognizable: a "Want me to also…?" reaching for something to offer. If the next action would not be worth recommending on its own merits, end with the result.
 
 ---
 
-# Drafting scaffold — delete this section at activation
+# Test phase — remove this section when the style test concludes
 
-## Walk order
-
-Walk opened 2026-08-07, boss-directed, over the five closing kinds plus the frame around them. Dispositions marked here. The skill-creator re-check walk (anchor: nc-queue/2026-08-07-skill-creator-recheck-and-checklist-delta.md) stays parked at its item 2 until this walk closes.
-
-1. The preamble — stand-alone test, names as handles, numbers as links. — processed 2026-08-07 → accepted as drafted.
-2. Kind: proposing one action (go/no-go) — the recommendation-led form. — processed 2026-08-07 → revised then accepted: the full recommendation always occupies the turn's final position (adjacency gives the reply an obvious predecessor; the final position holding the complete statement removes the motive to condense). Amended by item 3's ruling: the "approve, reject, or comment" response-menu tail is dropped — the recommendation alone is the ask; the reader knows his options.
-3. Kind: several outcomes open — named outcomes plus a recommendation. — processed 2026-08-07 → revised then accepted: no response-menu anywhere (ripples to kind 1); alternatives listed only when genuinely open; creative alternatives welcome when real, never manufactured.
-4. Kind: a fact is missing. — processed 2026-08-07 → revised then accepted: why-clause and candidate answers added; blocking facts batched as numbered self-contained questions; decisions stay one per turn.
-5. Kind: advancing a sequence — the walk pause line, left to the skill.
-6. Kind: nothing owed — no manufactured questions.
-7. Activation: file name and location, settings.local.json entry, the memory-file drain, and holding the walk-skill edit during the test.
+At the first turn of a session, state that the Closing sentences output style is active, naming this file — so the reader can tell a style-governed session from an unstyled one while the test runs.

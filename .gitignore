@@ -6,3 +6,6 @@ bridge/*.log.md
 
 # walk-me-through tier-3 anchors: machine-local tmp ledgers, deleted at walk close (skill: .claude/skills/walk-me-through)
 walk-ledgers/
+
+# per-machine Claude Code settings (output-style activation lives here; never landed)
+.claude/settings.local.json
