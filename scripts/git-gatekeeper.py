@@ -6,19 +6,29 @@ Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-git-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
-This is SLICE 1 of five: a synchronous check-in, end to end. For each request
-the program does exactly one of two things — checks the work in, or refuses
-and teaches the fix. On success four things are true: the change is on main,
-the checks ran against exactly the content pushed, the commit's trailers carry
-the whole machine-readable record, and the caller has the commit id.
+Slices 1 and 2 of five are built. For each request the program does exactly
+one of two things — checks the work in, or refuses and teaches the fix. On
+success four things are true: the change is on main, the checks ran against
+exactly the content pushed, the commit's trailers carry the whole
+machine-readable record, and the caller has the commit id.
 
-What slice 1 deliberately does not do, and which slice takes it: --import and
-the imports query (2); automatic integration when main moved, and the conflict
-and main-moving-too-fast endings (3); --no-wait, the detached worker, status
-and cancel (4); the trailer-absence and branch-protection audits (5). Reaching
-one of those is a named refusal, `unbuilt-option`, never an unnamed ending and
-never a crash — exit code 2 is reserved for a defect in this program, so an
-argument parser rejection must not be how a caller learns a slice boundary.
+Built: a synchronous check-in end to end (slice 1), and the entry checkpoint —
+the recorded gate every legacy import crosses, plus the `imports` query that
+derives the whole import table from history (slice 2).
+
+Not yet built, and which slice takes it: automatic integration when main
+moved, and the conflict and main-moving-too-fast endings (3); --no-wait, the
+detached worker, status and cancel (4); the trailer-absence and
+branch-protection audits (5). Reaching one of those is a named refusal,
+`unbuilt-option`, never an unnamed ending and never a crash — exit code 2 is
+reserved for a defect in this program, so an argument parser rejection must
+not be how a caller learns a slice boundary.
+
+The entry checkpoint's guarantee is that the record cannot lag the system: an
+import is declared as a triple, validated against the legacy repository at
+instant screening, and written into the trailer of the very commit that
+carries it. A second import in one request is inexpressible by construction —
+it is a second check-in.
 
 Resubmitting is always safe. The digest identifies the WORK — base, paths and
 their bytes — and not the metadata around it, so identical work resubmitted
@@ -36,9 +46,12 @@ endings, so a refusal leaves the repository and the disk untouched.
 
 Usage:
   git-gatekeeper.py check-in --files <path>... --message <text>
-                    --base <40-hex> --import none --issue none|<n>
-                    --agent <runtime/model> [--wait]
-                    [--repo <dir>] [--remote <url-or-path>]
+                    --base <40-hex> --issue none|<n> --agent <runtime/model>
+                    (--import none | --import-commit <40-hex>
+                     --import-source <path> --import-dest <path>)
+                    [--wait] [--repo <dir>] [--remote <url-or-path>]
+                    [--legacy-repo <dir>]
+  git-gatekeeper.py imports [--repo <dir>] [--remote <url-or-path>]
 """
 
 import argparse
@@ -172,6 +185,128 @@ def screen_paths(raw_paths: list[str]) -> list[str]:
     return sorted(seen)
 
 
+def screen_import(arguments, declared_paths: list[str]) -> dict | None:
+    """The entry checkpoint's declaration: `none`, or all three parts.
+
+    Every import crosses this gate and is recorded in the commit that carries
+    it, so the record can never lag the system. A second import in one request
+    is inexpressible by construction — it is a second check-in.
+    """
+    parts = {
+        "commit": arguments.import_commit,
+        "source": arguments.import_source,
+        "dest": arguments.import_dest,
+    }
+    supplied = {name: value for name, value in parts.items() if value}
+
+    if arguments.import_declaration == "none":
+        if supplied:
+            raise Refusal(
+                "import-incomplete",
+                f"--import none was given alongside {', '.join('--import-' + n for n in sorted(supplied))}",
+                "Resubmit with either --import none, or all three of --import-commit, "
+                "--import-source and --import-dest — never both forms.",
+            )
+        return None
+
+    if arguments.import_declaration is not None:
+        raise Refusal(
+            "malformed-field",
+            f"--import {arguments.import_declaration!r} is not a recognised value",
+            "Resubmit with --import none, or drop --import and give all three of "
+            "--import-commit, --import-source and --import-dest.",
+        )
+
+    if not supplied:
+        raise Refusal(
+            "import-incomplete", "no import was declared",
+            "Resubmit with --import none when this change imports nothing, or with all "
+            "three of --import-commit, --import-source and --import-dest when it does. "
+            "The declaration is never optional: an unrecorded import is the one thing "
+            "the entry checkpoint exists to prevent.",
+        )
+    if len(supplied) < len(parts):
+        missing = sorted(set(parts) - set(supplied))
+        raise Refusal(
+            "import-incomplete",
+            f"the import declaration is missing {', '.join('--import-' + n for n in missing)}",
+            "Resubmit with all three of --import-commit, --import-source and "
+            "--import-dest. A partial triple cannot be recorded, so it cannot be "
+            "allowed through.",
+        )
+
+    if not FULL_COMMIT_ID.match(parts["commit"]):
+        raise Refusal(
+            "malformed-field",
+            f"--import-commit {parts['commit']!r} is not a full 40-character commit id",
+            "Resubmit with the full 40-character id of the legacy commit the content "
+            "is taken from. Abbreviations can turn ambiguous as history grows.",
+        )
+    screen_unsafe_path(parts["source"], "import source")
+    screen_unsafe_path(parts["dest"], "import destination")
+
+    if parts["dest"] not in declared_paths:
+        raise Refusal(
+            "import-dest-undeclared",
+            f"the import destination {parts['dest']!r} is not in --files",
+            "Resubmit with the destination path also named in --files. The import "
+            "writes that path, so the declaration must say so.",
+        )
+    return parts
+
+
+def import_record(import_declaration: dict | None) -> str:
+    """The canonical one-line form, used by both the digest and the trailer."""
+    if import_declaration is None:
+        return "none"
+    return (f"{import_declaration['commit']} {import_declaration['source']}"
+            f" {UNSAFE_PATH_MARKER} {import_declaration['dest']}")
+
+
+def read_legacy_content(legacy_repository: str, import_declaration: dict) -> bytes:
+    """One transaction: the bytes as they stood at the declared legacy commit."""
+    inside = subprocess.run(
+        ["git", "-C", legacy_repository, "rev-parse", "--git-dir"],
+        capture_output=True, text=True, check=False,
+    )
+    if inside.returncode != 0:
+        raise Refusal(
+            "legacy-unreadable",
+            f"{legacy_repository!r} is not a readable git repository: "
+            f"{inside.stderr.strip() or 'no stderr'}",
+            "Resubmit with --legacy-repo naming a readable checkout of the legacy "
+            "repository. Nothing was changed.",
+        )
+
+    known = subprocess.run(
+        ["git", "-C", legacy_repository, "cat-file", "-e",
+         f"{import_declaration['commit']}^{{commit}}"],
+        capture_output=True, text=True, check=False,
+    )
+    if known.returncode != 0:
+        raise Refusal(
+            "import-source-missing",
+            f"no commit {import_declaration['commit']} exists in the legacy repository",
+            "Resubmit with --import-commit set to a commit id that exists in the legacy "
+            "repository.",
+        )
+
+    shown = subprocess.run(
+        ["git", "-C", legacy_repository, "show",
+         f"{import_declaration['commit']}:{import_declaration['source']}"],
+        capture_output=True, check=False,
+    )
+    if shown.returncode != 0:
+        raise Refusal(
+            "import-source-missing",
+            f"the path {import_declaration['source']!r} does not exist in the legacy "
+            f"repository at commit {import_declaration['commit']}",
+            "Resubmit with --import-source set to the path as it stood at that commit; "
+            "read it with: git -C <legacy> ls-tree --name-only <commit>",
+        )
+    return shown.stdout
+
+
 def screen_form(arguments) -> dict:
     """Validate every field that can be judged without touching a repository."""
     if not arguments.message or not arguments.message.strip():
@@ -212,22 +347,16 @@ def screen_form(arguments) -> dict:
             "together in slice 4 of the git-gatekeeper build (nedschorus#3).",
         )
 
-    if arguments.import_declaration != "none":
-        raise Refusal(
-            "unbuilt-option",
-            f"--import {arguments.import_declaration!r} is not built in this version",
-            "Resubmit with --import none. The entry checkpoint — the recorded gate "
-            "every legacy import crosses — arrives in slice 2 of the git-gatekeeper "
-            "build (nedschorus#3).",
-        )
+    paths = screen_paths(arguments.files)
+    import_declaration = screen_import(arguments, paths)
 
     return {
-        "paths": screen_paths(arguments.files),
+        "paths": paths,
         "message": arguments.message.strip(),
         "base": arguments.base,
         "issue": arguments.issue,
         "agent": arguments.agent.strip(),
-        "import": "none",
+        "import": import_declaration,
         # B4c, the resolve-once rule: every environment-derived field is
         # resolved here, at screening, and written into the request record.
         # Nothing downstream re-derives it from its own environment.
@@ -238,13 +367,21 @@ def screen_form(arguments) -> dict:
 # --- Reading the caller's worktree and the declared base -------------------
 
 
-def read_worktree_content(repository: Path, paths: list[str]) -> dict[str, bytes | None]:
+def read_worktree_content(
+    repository: Path, paths: list[str], import_declaration: dict | None = None
+) -> dict[str, bytes | None]:
     """The new content of each declared path; None where the path is absent.
 
     This is the program's only read of the caller's working copy for content.
+    An import destination is the one exception: its bytes come from the legacy
+    repository at the declared commit, so the caller need not — and should not
+    — stage a hand-made copy of it.
     """
+    import_destination = import_declaration["dest"] if import_declaration else None
     content: dict[str, bytes | None] = {}
     for path in paths:
+        if path == import_destination:
+            continue
         candidate = repository / path
         if candidate.is_file():
             content[path] = candidate.read_bytes()
@@ -358,7 +495,7 @@ def trailer_block(request: dict, digest: str) -> str:
         f"Gatekeeper-origin: {request['origin']}",
         f"Gatekeeper-agent: {request['agent']}",
         f"Gatekeeper-digest: {digest}",
-        f"Gatekeeper-import: {request['import']}",
+        f"Gatekeeper-import: {import_record(request['import'])}",
         f"Gatekeeper-issue: {issue}",
     ])
 
@@ -521,7 +658,11 @@ def check_in(arguments) -> int:
     request = screen_form(arguments)
     repository = resolve_repository(arguments.repo)
     remote = resolve_remote(repository, arguments.remote)
-    worktree = read_worktree_content(repository, request["paths"])
+    worktree = read_worktree_content(repository, request["paths"], request["import"])
+    if request["import"] is not None:
+        worktree[request["import"]["dest"]] = read_legacy_content(
+            arguments.legacy_repo, request["import"]
+        )
 
     workspace: Path | None = None
     try:
@@ -534,7 +675,7 @@ def check_in(arguments) -> int:
         base_content = read_base_content(clone, request["base"], request["paths"])
         request["changes"] = classify_changes(worktree, base_content)
 
-        digest = compute_digest(request["base"], worktree, request["import"])
+        digest = compute_digest(request["base"], worktree, import_record(request["import"]))
         already = find_existing_check_in(clone, digest)
         if already:
             return emit({
@@ -573,6 +714,71 @@ def check_in(arguments) -> int:
             shutil.rmtree(workspace, ignore_errors=True)
 
 
+def parse_import_trailers(commit_id: str, when: str, body: str) -> list[dict]:
+    """Every Gatekeeper-import line on one commit becomes one row.
+
+    B2's parser stance: repeated lines are the hand-pushed bypass class — the
+    program itself writes at most one — and each still derives a row, so a
+    bypass shows up in the table rather than being silently collapsed.
+    """
+    rows = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("Gatekeeper-import:"):
+            continue
+        value = stripped.split(":", 1)[1].strip()
+        if value == "none":
+            continue
+        source, separator, destination = value.partition(f" {UNSAFE_PATH_MARKER} ")
+        legacy_commit, _, source_path = source.partition(" ")
+        if not separator or not legacy_commit or not source_path or not destination:
+            rows.append({
+                "commit": commit_id, "when": when, "malformed": value,
+            })
+            continue
+        rows.append({
+            "commit": commit_id, "when": when, "legacy_commit": legacy_commit,
+            "source": source_path, "destination": destination.strip(),
+        })
+    return rows
+
+
+def imports_table(arguments) -> int:
+    """The import table, derived from history — never from a side file.
+
+    This derived view replaces the retired entry-manifest row rule: a shared
+    append-file would make any two parallel imports conflict by construction,
+    and would duplicate what the trailer already says.
+    """
+    repository = resolve_repository(arguments.repo)
+    remote = resolve_remote(repository, arguments.remote)
+
+    scratch = workspace_root() / "imports"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True, exist_ok=True)
+    try:
+        clone = prepare_clone(scratch, remote)
+        separator = "\x1e"
+        log = run_git(
+            ["log", f"origin/{MAIN_BRANCH}", f"--format=%H%x1f%aI%x1f%B{separator}"],
+            cwd=clone,
+        )
+        rows: list[dict] = []
+        for record in log.stdout.split(separator):
+            if not record.strip():
+                continue
+            commit_id, _, rest = record.strip().partition("\x1f")
+            when, _, body = rest.partition("\x1f")
+            rows.extend(parse_import_trailers(commit_id, when, body))
+        rows.reverse()  # oldest first: the order the imports actually happened
+
+        summary = (f"{len(rows)} import(s) recorded on main" if rows
+                   else "no imports recorded on main")
+        return emit({"outcome": "imports", "imports": rows, "summary": summary}, EXIT_SUCCESS)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def unbuilt_command(name: str, slice_number: int) -> int:
     raise Refusal(
         "unbuilt-option", f"the {name} command is not built in this version",
@@ -592,7 +798,13 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--files", nargs="+", required=True, metavar="PATH")
     check.add_argument("--message", required=True)
     check.add_argument("--base", required=True, metavar="COMMIT")
-    check.add_argument("--import", dest="import_declaration", required=True, metavar="none")
+    check.add_argument("--import", dest="import_declaration", default=None, metavar="none",
+                       help="'none', or omit and give the three --import-* parts")
+    check.add_argument("--import-commit", default=None, metavar="COMMIT")
+    check.add_argument("--import-source", default=None, metavar="PATH")
+    check.add_argument("--import-dest", default=None, metavar="PATH")
+    check.add_argument("--legacy-repo", default=str(Path.home() / "Projects" / "nedlern"),
+                       help="the legacy repository an import reads from")
     check.add_argument("--issue", required=True, metavar="none|N")
     check.add_argument("--agent", required=True, metavar="RUNTIME/MODEL")
     check.add_argument("--repo", default=None, help="the repository holding the work")
@@ -604,7 +816,10 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("status", "cancel"):
         later = commands.add_parser(name, help=f"{name} a request (slice 4)")
         later.add_argument("digest", nargs="?", default=None)
-    commands.add_parser("imports", help="print the legacy import table (slice 2)")
+
+    table = commands.add_parser("imports", help="print the legacy import table")
+    table.add_argument("--repo", default=None, help="the repository to read history from")
+    table.add_argument("--remote", default=None, help="where main lives; defaults to origin")
 
     return parser
 
@@ -615,9 +830,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if arguments.command == "check-in":
             return check_in(arguments)
-        if arguments.command in ("status", "cancel"):
-            return unbuilt_command(arguments.command, 4)
-        return unbuilt_command("imports", 2)
+        if arguments.command == "imports":
+            return imports_table(arguments)
+        return unbuilt_command(arguments.command, 4)
     except Refusal as refusal:
         return emit({
             "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
