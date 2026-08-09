@@ -228,9 +228,34 @@ automatic integration (clean re-application, the usual case) and `conflict`
    Building it first would produce this slice's test plan; not building it
    means the test plan above is hand-written, as it currently is.
 
+## How this plan was ruled
+
+Walked with the user 2026-08-08 and closed at the first item by his direction:
+he is not picky about the slice boundaries, he wants progress, and he wants
+more than the first slice delivered. So the decomposition, the slice-1
+boundary, the classification table, and the four design points D1-D4 stand as
+written above — accepted by not being contested — and the build proceeds
+through the slices in order without per-item approval.
+
+Two consequences recorded here because they change what gets built:
+
+- The `write-test-plan` skill (open item 2) is NOT built first. Founding plan
+  open question 8 anticipated pulling it at this task, but building a skill
+  before building the thing it plans is the opposite of progress. The test
+  plans in this document are hand-written. The pull stays available the moment
+  a slice's test design genuinely stalls.
+- The push credential (open item 1) does not block. Slices land tested against
+  local bare repositories and go live when the credential question is settled,
+  which is the user's to settle.
+
 ## Walk order
 
+*The walk closed at item 1; the remaining items were accepted uncontested
+rather than presented. Kept for reference.*
+
 1. Purpose: what this walk decides and the bar for slice 1
+   *processed 2026-08-08 -> ACCEPTED: the bar is that slice 1 must produce a
+   change that actually reaches main through the program*
 2. The five-slice decomposition
 3. Slice 1's boundary — what is in and what is out
 4. The rewrite-policy classification table
