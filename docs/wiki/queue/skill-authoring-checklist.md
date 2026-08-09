@@ -45,7 +45,9 @@ These rules govern any skill (or skill half) whose failures are silent. User-sup
 
 - Assertions are objectively verifiable statements with descriptive names; subjective qualities go to a human, never forced into assertions.
 - An assertion that passes for both a good and a bad output is worse than useless — it manufactures false confidence. Discriminating power is the bar, and critiquing the evals themselves is part of the grader's job.
-- Negative trigger tests must be near-misses: they share the skill's keywords but lack its essence. Easy negatives prove nothing.
+- Trigger tests are written only where triggering is genuinely uncertain — a boundary shared with a sibling skill, an unfamiliar domain. A heavily-trained concept behind a plain description triggers correctly without testing. (User-ruled 2026-08-08.)
+- Positive trigger tests must be substantive: a one-step task the model would just do directly consults no skill however apt the description, so an easy positive proves nothing. (skill-creator's stated triggering mechanic, unmeasured by NC; re-check note 2026-08-07.)
+- Negative trigger tests are rarely needed — only where false-triggering is a live risk, chiefly a sibling skill that could capture the work. When one is written it must be a near-miss: it shares the skill's keywords but lacks its essence. Easy negatives prove nothing. (Rarity user-ruled 2026-08-08; near-miss rule unchanged from the 2026-07-24 distillation.)
 - Burden of proof is on the expectation; no partial credit; evidence must show genuine task completion, not surface compliance.
 - Checkable assertions are checked by script, not eyeballed.
 - Scenario taxonomy (pair #9, principle 6): false trigger, missing context, conflicting instructions, partial failure, criteria-pass-while-intent-violated.
