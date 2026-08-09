@@ -28,6 +28,7 @@ A dedicated agent that holds this project's GitHub issues in context. Another ag
 5. What `ghi-write`'s search-first step becomes
    *processed 2026-08-07 → approved: step 1 is ask-then-read (ask `ghi-info`, read every returned issue) with grep-the-mirror as the free quick check; the EDIT-on-match default survives untouched; the absence-claim search receipt translates to "asked ghi-info at T, answer: none" plus any grep term run; rides to the paused ghi-write walk for the step-1 rewrite.*
 6. Unavailable, slow, or wrong — what the asking agent does then
+   *processed 2026-08-07 → approved: a failed ask never blocks a write; fallback ladder ask → grep mirror → gh search; bad pointers fail visibly at one read's cost, missing pointers mitigated by the grep quick-check and the maintenance sweep with the residual accepted; self-correction flows through ordinary writes — a writer who finds a missed relation adds the cross-link while editing, and the next delta refresh teaches the corpus; nothing new is built.*
 7. What this agent does not cover — scope boundary, with the MD-side candidate positions (link integrity joins maintenance; MD content is flag-not-fix) and the lean-bodies routing rule noted as riding to the `ghi-write` walk
 
 ## The shape, as understood
