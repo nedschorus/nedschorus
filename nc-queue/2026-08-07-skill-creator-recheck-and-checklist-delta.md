@@ -64,8 +64,8 @@ Not done: the source's own change history since 2026-07-22; the three `agents/*.
 Walk opened 2026-08-07, restarted at item 1 the same day for clarity (the first opening asked an unanswerable yes/no about a negatively-stated rule). Dispositions are marked against this list.
 
 1. Purpose — what this walk decides: six differences, then the build question. Nothing is built during the walk. — processed 2026-08-07 → accepted; the boss's why-a-skill-beats-a-document reason recorded at §4.
-2. §3a — skill-creator's eval harness as a reference implementation for nedschorus#23. — processed 2026-08-07 → accepted; prior-art bullet added to the eval-agent-change issue body (Evidence of record section), edit visible in that issue's edit history.
-3. §3b — the description optimizer's held-out-test selection; the deep-dive's open sub-question 3.
+2. §3a — skill-creator's eval harness as a reference implementation for nedschorus#23. — processed 2026-08-08 → accepted; prior-art bullet added to the eval-agent-change issue body (Evidence of record section), edit visible in that issue's edit history. (The anchor-update commit 05cb2b9 misdates this approval 2026-08-07; the walk resumed past midnight.)
+3. §3b — the description optimizer's held-out-test selection; the deep-dive's open sub-question 3. — processed 2026-08-08 → rejected as checklist doctrine, revised from the initial append-a-bullet proposal: description tuning is an activity NC does not do — a heavily-trained concept triggers from a plain description, and for subtle skills the trigger evals are nearly as hard as the skill itself (boss-ruled). Sub-question 3 closes declined-with-condition: any future description-tuning proposal must carry held-out judgment as a precondition, argued fresh on that day's evidence. The checklist is untouched.
 4. §3c — the triggering mechanic that makes easy positive trigger cases non-discriminating.
 5. §3d — realism rules for trigger queries.
 6. §3e — the transcript-reading procedure for the checklist's which-steps-are-machine-work question.
