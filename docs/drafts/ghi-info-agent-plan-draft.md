@@ -26,6 +26,7 @@ A dedicated agent that holds this project's GitHub issues in context. Another ag
 4. The invocation — the NM-pattern wrapper for this agent: script, caller, timeouts
    *processed 2026-08-07 → approved: one ask-wrapper script (working name `ghi-info-ask`, checked at build) — delta-refresh the mirror first; resume by stored session id, or cold-start fresh when none exists or the transcript passes the script's size threshold (recycle = the wrapper choosing not to resume, no handoff machinery); prompt = question plus changed-issue numbers on resume; answer = the bare list off the exit stream, nonzero exit = no answer; one overall timeout, killed runs are a named failure; box token auth, Mac callers over SSH.*
 5. What `ghi-write`'s search-first step becomes
+   *processed 2026-08-07 → approved: step 1 is ask-then-read (ask `ghi-info`, read every returned issue) with grep-the-mirror as the free quick check; the EDIT-on-match default survives untouched; the absence-claim search receipt translates to "asked ghi-info at T, answer: none" plus any grep term run; rides to the paused ghi-write walk for the step-1 rewrite.*
 6. Unavailable, slow, or wrong — what the asking agent does then
 7. What this agent does not cover — scope boundary, with the MD-side candidate positions (link integrity joins maintenance; MD content is flag-not-fix) and the lean-bodies routing rule noted as riding to the `ghi-write` walk
 
