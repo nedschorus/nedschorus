@@ -6,19 +6,29 @@ Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-git-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
-Slices 1 and 2 of five are built. For each request the program does exactly
+Slices 1 to 3 of five are built. For each request the program does exactly
 one of two things — checks the work in, or refuses and teaches the fix. On
 success four things are true: the change is on main, the checks ran against
 exactly the content pushed, the commit's trailers carry the whole
 machine-readable record, and the caller has the commit id.
 
-Built: a synchronous check-in end to end (slice 1), and the entry checkpoint —
-the recorded gate every legacy import crosses, plus the `imports` query that
-derives the whole import table from history (slice 2).
+Built: a synchronous check-in end to end (slice 1); the entry checkpoint — the
+recorded gate every legacy import crosses, plus the `imports` query that
+derives the whole import table from history (slice 2); and concurrent
+check-ins, where a request that loses the race is integrated over the newer
+commits by the program rather than by the calling agent (slice 3).
 
-Not yet built, and which slice takes it: automatic integration when main
-moved, and the conflict and main-moving-too-fast endings (3); --no-wait, the
-detached worker, status and cancel (4); the trailer-absence and
+Check-ins run in parallel with no queue and no lock, because GitHub already
+provides the one property the design rests on: a push either wins cleanly or
+is rejected whole. The winner never learns there was a race. The loser fetches
+the new main and re-applies its declared changes onto it, which is clean
+whenever the two requests touched different paths — the usual case. When they
+touched the same path, re-applying would mean choosing whose version survives,
+so the request is refused as `conflict` instead: the program never guesses at
+an author's intent.
+
+Not yet built, and which slice takes it: --no-wait, the detached worker,
+status and cancel (4); the trailer-absence and
 branch-protection audits (5). Reaching one of those is a named refusal,
 `unbuilt-option`, never an unnamed ending and never a crash — exit code 2 is
 reserved for a defect in this program, so an argument parser rejection must
@@ -62,6 +72,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 WORKSPACE_ROOT_NAME = "nedschorus-gatekeeper"
@@ -75,6 +86,9 @@ ISSUE_NUMBER = re.compile(r"^[1-9][0-9]*$")
 # strands history. Verified 2026-07-30 that both repositories have zero paths
 # matching any of these classes, so the rule costs nothing today.
 UNSAFE_PATH_MARKER = "->"
+
+# The integration loop is bounded rather than open: refusing beats spinning.
+MAX_INTEGRATION_ROUNDS = 5
 
 EXIT_SUCCESS = 0
 EXIT_REFUSED = 1
@@ -95,6 +109,18 @@ class Refusal(Exception):
         self.error = error
         self.facts = facts
         self.next_action = next_action
+
+
+class AlreadyCheckedIn(Exception):
+    """This exact work reached main while the request was in flight.
+
+    Not a refusal: the caller wanted the work on main and it is on main. The
+    race was lost in the only way that costs nothing.
+    """
+
+    def __init__(self, commit: str):
+        super().__init__(commit)
+        self.commit = commit
 
 
 def workspace_root() -> Path:
@@ -576,10 +602,11 @@ def validate_base(clone: Path, base: str) -> None:
         )
 
 
-def find_existing_check_in(clone: Path, digest: str) -> str | None:
+def find_existing_check_in(clone: Path, digest: str, ref: str | None = None) -> str | None:
     """The digest screen: work that already went through is never redone."""
     found = run_git(
-        ["log", f"origin/{MAIN_BRANCH}", "--format=%H", "--grep", f"Gatekeeper-digest: {digest}"],
+        ["log", ref or f"origin/{MAIN_BRANCH}", "--format=%H",
+         "--grep", f"Gatekeeper-digest: {digest}"],
         cwd=clone, check=False,
     )
     if found.returncode != 0:
@@ -589,10 +616,16 @@ def find_existing_check_in(clone: Path, digest: str) -> str | None:
 
 
 def build_candidate(
-    clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str
+    clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str,
+    target: str | None = None,
 ) -> str:
-    """Start from main at the declared base and apply exactly what was declared."""
-    run_git(["checkout", "--quiet", "-B", CANDIDATE_BRANCH, request["base"]], cwd=clone)
+    """Start from main at `target` and apply exactly what was declared.
+
+    `target` is the declared base on the first attempt, and the newer main tip
+    on each integration round. Either way the candidate is built FROM the
+    declaration, so an undeclared edit can never reach it.
+    """
+    run_git(["checkout", "--quiet", "-B", CANDIDATE_BRANCH, target or request["base"]], cwd=clone)
 
     for path in request["paths"]:
         target = clone / path
@@ -618,39 +651,113 @@ def build_candidate(
     return run_git(["rev-parse", "HEAD"], cwd=clone).stdout.strip()
 
 
-def push_candidate(clone: Path, base: str) -> None:
-    """One push. A rejected push means main moved; slice 3 integrates instead."""
+def attempt_push(clone: Path) -> tuple[bool, str]:
+    """One atomic push attempt. Returns (won, stderr).
+
+    Everything rests on the one property GitHub provides: a push either wins
+    cleanly or is rejected whole — never partial, never interleaved. That is
+    the arbiter, which is why no queue and no lock exist here.
+    """
     pushed = subprocess.run(
         ["git", "push", "--quiet", "origin", f"{CANDIDATE_BRANCH}:{MAIN_BRANCH}"],
         cwd=str(clone), capture_output=True, text=True, check=False,
     )
-    if pushed.returncode == 0:
-        return
+    return pushed.returncode == 0, pushed.stderr.strip()
 
-    stderr = pushed.stderr.strip()
-    if "non-fast-forward" in stderr or "fetch first" in stderr or "rejected" in stderr:
-        tip = run_git(["rev-parse", f"origin/{MAIN_BRANCH}"], cwd=clone, check=False)
-        newer = run_git(
-            ["log", "--format=%h %s", f"{base}..origin/{MAIN_BRANCH}"], cwd=clone, check=False
-        )
-        intervening = newer.stdout.strip() or "unavailable"
-        raise Refusal(
-            "main-moved",
-            f"main moved since the declared base {base}; it is now "
-            f"{tip.stdout.strip() or 'unknown'}. Intervening commits:\n{intervening}",
-            "Update your working copy from main, re-apply the change on top of it, "
-            "and resubmit with --base set to the new tip. The adjusted work digests "
-            "fresh and processes as a new request.",
-        )
-    if "authentication" in stderr.lower() or "permission" in stderr.lower() or "denied" in stderr.lower():
-        raise Refusal(
-            "push-auth-failed", f"the push was refused: {stderr or 'no stderr'}",
-            "Resubmit once the pushing credential is available; this failure is safe "
-            "to retry and changed nothing.",
-        )
+
+def classify_push_failure(stderr: str) -> str:
+    """Lost the race, or something else entirely."""
+    lowered = stderr.lower()
+    if "non-fast-forward" in lowered or "fetch first" in lowered or "rejected" in lowered:
+        return "lost-the-race"
+    if "authentication" in lowered or "permission" in lowered or "denied" in lowered:
+        return "push-auth-failed"
+    return "network-down"
+
+
+def fetch_main_tip(clone: Path) -> str:
+    run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=clone)
+    return run_git(["rev-parse", "FETCH_HEAD"], cwd=clone).stdout.strip()
+
+
+def paths_changed_between(clone: Path, older: str, newer: str) -> set[str]:
+    listed = run_git(["diff", "--name-only", f"{older}..{newer}"], cwd=clone, check=False)
+    return {line.strip() for line in listed.stdout.splitlines() if line.strip()}
+
+
+def describe_commits(clone: Path, older: str, newer: str) -> str:
+    described = run_git(["log", "--format=%h %s", f"{older}..{newer}"], cwd=clone, check=False)
+    return described.stdout.strip() or "unavailable"
+
+
+def integrate_and_push(
+    clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str
+) -> tuple[str, int]:
+    """Push, and integrate over anyone who got there first. Returns (commit, N).
+
+    The winner of a race completes unaware of it. The loser is handled here,
+    not by the calling agent: fetch the new main and re-apply the declared
+    changes onto it. Clean re-application is the usual case, because two
+    requests usually touch different paths. A real conflict — the new main
+    changed a path this request also changes — is refused rather than guessed
+    at, because re-applying would mean choosing whose version survives, and
+    the program never chooses that.
+    """
+    base = request["base"]
+    target = base
+
+    for _ in range(MAX_INTEGRATION_ROUNDS):
+        commit = build_candidate(clone, request, worktree, digest, target)
+        # Version 1 re-runs every check against the rebuilt candidate; there
+        # are none beyond construction yet, so this is where a test suite
+        # attaches when one exists.
+        won, stderr = attempt_push(clone)
+        if won:
+            integrated_over = run_git(
+                ["rev-list", "--count", f"{base}..{target}"], cwd=clone, check=False
+            ).stdout.strip()
+            return commit, int(integrated_over or 0)
+
+        failure = classify_push_failure(stderr)
+        if failure == "push-auth-failed":
+            raise Refusal(
+                "push-auth-failed", f"the push was refused: {stderr or 'no stderr'}",
+                "Resubmit once the pushing credential is available; this failure is "
+                "safe to retry and changed nothing.",
+            )
+        if failure == "network-down":
+            raise Refusal(
+                "network-down", f"the push failed: {stderr or 'no stderr'}",
+                "Resubmit; this failure is safe to retry and changed nothing.",
+            )
+
+        target = fetch_main_tip(clone)
+
+        # Someone may have checked in this very work while we were building.
+        already = find_existing_check_in(clone, digest, target)
+        if already:
+            raise AlreadyCheckedIn(already)
+
+        collision = sorted(set(request["paths"]) & paths_changed_between(clone, base, target))
+        if collision:
+            raise Refusal(
+                "conflict",
+                f"main changed the same path(s) this request changes: "
+                f"{', '.join(collision)}. Intervening commits:\n"
+                f"{describe_commits(clone, base, target)}",
+                "Update your working copy from main, re-apply the change on top of "
+                f"the current tip {target}, resolve the overlap by hand, and resubmit "
+                "with --base set to that tip. The adjusted work digests fresh and "
+                "processes as a new request.",
+            )
+
     raise Refusal(
-        "network-down", f"the push failed: {stderr or 'no stderr'}",
-        "Resubmit; this failure is safe to retry and changed nothing.",
+        "main-moving-too-fast",
+        f"main moved {MAX_INTEGRATION_ROUNDS} times while this request was being "
+        f"integrated, so the attempt was stopped rather than left spinning",
+        "Resubmit once main is quieter; nothing was changed. If this repeats, the "
+        "check-in rate has outgrown re-validation and the merge queue named in the "
+        "specification is the next rung.",
     )
 
 
@@ -665,10 +772,15 @@ def check_in(arguments) -> int:
         )
 
     workspace: Path | None = None
+    clone_parent: Path | None = None
     try:
-        clone_parent = workspace_root() / "screening"
-        shutil.rmtree(clone_parent, ignore_errors=True)
-        clone_parent.mkdir(parents=True, exist_ok=True)
+        # Per-process scratch, never a shared fixed path: check-ins run in
+        # parallel by design, and a shared screening directory would have one
+        # request delete another's clone out from under it. The digest is not
+        # known yet — it needs the base content — so the per-digest workspace
+        # cannot be used until screening is done.
+        workspace_root().mkdir(parents=True, exist_ok=True)
+        clone_parent = Path(tempfile.mkdtemp(prefix="screening-", dir=workspace_root()))
         clone = prepare_clone(clone_parent, remote)
 
         validate_base(clone, request["base"])
@@ -695,21 +807,30 @@ def check_in(arguments) -> int:
         shutil.move(str(clone), str(workspace / "candidate"))
         clone = workspace / "candidate"
 
-        commit = build_candidate(clone, request, worktree, digest)
-        push_candidate(clone, request["base"])
+        try:
+            commit, integrated_over = integrate_and_push(clone, request, worktree, digest)
+        except AlreadyCheckedIn as raced:
+            return emit({
+                "outcome": "already-checked-in", "digest": digest, "commit": raced.commit,
+                "summary": f"already-checked-in {raced.commit}",
+            }, EXIT_SUCCESS)
 
         advisory = undeclared_changes(repository, request["paths"])
         payload = {
             "outcome": "checked-in", "commit": commit, "digest": digest,
             "summary": f"checked-in {commit}",
         }
+        if integrated_over:
+            payload["integrated_over"] = integrated_over
+            payload["summary"] += f" (integrated over {integrated_over} newer commit(s))"
         if advisory:
             payload["advisory"] = (
                 f"the working copy also differs at {', '.join(advisory)}; confirm intentional"
             )
         return emit(payload, EXIT_SUCCESS)
     finally:
-        shutil.rmtree(workspace_root() / "screening", ignore_errors=True)
+        if clone_parent is not None:
+            shutil.rmtree(clone_parent, ignore_errors=True)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
 
@@ -753,9 +874,8 @@ def imports_table(arguments) -> int:
     repository = resolve_repository(arguments.repo)
     remote = resolve_remote(repository, arguments.remote)
 
-    scratch = workspace_root() / "imports"
-    shutil.rmtree(scratch, ignore_errors=True)
-    scratch.mkdir(parents=True, exist_ok=True)
+    workspace_root().mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="imports-", dir=workspace_root()))
     try:
         clone = prepare_clone(scratch, remote)
         separator = "\x1e"

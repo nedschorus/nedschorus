@@ -36,7 +36,7 @@ main through the program.** Everything that does not serve that goes later.
 |---|---|---|---|
 | 1 **BUILT 2026-08-08** | Synchronous check-in end to end: screening → candidate → commit → push | T1, T2, T3, T9 | the manual merge lane, on the happy path |
 | 2 **BUILT 2026-08-08** | The entry checkpoint: `--import` and the `imports` query | T10, T11 | hand-recorded legacy imports |
-| 3 | Concurrency: loser integrates over newer commits, real conflict refuses, retry cap | T4, T5, T6 | slice 1's `main-moved` refusal |
+| 3 **BUILT 2026-08-09** | Concurrency: loser integrates over newer commits, real conflict refuses, retry cap | T4, T5, T6 | slice 1's `main-moved` refusal |
 | 4 | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery | T7, T8 | slice 1's `unbuilt-option` refusal |
 | 5 | Enforcement surfaces: trailer-absence audit, branch-protection audit, repo git config, CLAUDE.md workflow lines | T12, B3c | the founding-window "boss watches every landing" guard |
 

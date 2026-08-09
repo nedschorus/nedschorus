@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for git-gatekeeper.py, slices 1 and 2.
+"""Tests for git-gatekeeper.py, slices 1 to 3.
 
 Run: python3 scripts/git-gatekeeper-test.py
 
@@ -17,7 +17,10 @@ Coverage, against the specification's build-slice test list:
   T9  the advisory: undeclared worktree changes are noted, never blocking
   T10 the imports query derives the exact table from the trailers
   T11 every import error class refuses correctly
-  plus slice 1's own `main-moved` refusal, the `unbuilt-option` boundary,
+  T4  concurrent check-ins: the winner is unaware, the loser integrates
+  T5  a real conflict refuses, naming the paths, the commits and the fix
+  T6  sustained head movement ends at the retry cap, never a spin
+  plus the `unbuilt-option` boundary,
   B2's trailer round-trip and repeated-line stance, and B3d's version floors.
 
 The import cases read a stand-in LEGACY repository fixture (B3b), never the
@@ -215,7 +218,141 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("T9 the undeclared path did not reach main",
           git(["show", "main:keep.txt"], remote).stdout == "untouched\n")
 
-    # --- slice 1's main-moved refusal --------------------------------------
+    # --- T4: the loser integrates over the newer commits --------------------
+    # A request whose base is behind main exercises the identical code path as
+    # a lost race: "being behind is just main moved before we started."
+    remote, work, base = make_fixture(workspace, "integrate")
+    ahead = workspace / "integrate-ahead"
+    git(["clone", "--quiet", str(remote), str(ahead)], workspace)
+    git(["config", "user.name", "ahead"], ahead)
+    git(["config", "user.email", "ahead@nedschorus.invalid"], ahead)
+    (ahead / "elsewhere.txt").write_text("a different path entirely\n", encoding="utf-8")
+    git(["add", "-A"], ahead)
+    git(["commit", "--quiet", "-m", "touch a path the pending request does not"], ahead)
+    git(["push", "--quiet", "origin", "main"], ahead)
+
+    (work / "README.md").write_text("seed\nintegrated\n", encoding="utf-8")
+    code, payload = run_gatekeeper(base_request(work, remote, base, ["README.md"]), state_home)
+    check("T4 a request behind main still checks in",
+          payload.get("outcome") == "checked-in", payload)
+    check("T4 the reply says how many commits it integrated over",
+          payload.get("integrated_over") == 1, payload)
+    check("T4 the newer commit survived the integration",
+          git(["show", "main:elsewhere.txt"], remote).stdout == "a different path entirely\n")
+    check("T4 the integrated change is on main",
+          git(["show", "main:README.md"], remote).stdout == "seed\nintegrated\n")
+
+    # T4, the genuine race: two gatekeepers started at the same moment on
+    # different paths. Whoever loses must integrate and succeed anyway, so the
+    # assertion holds no matter which one wins.
+    remote, work, base = make_fixture(workspace, "race")
+    second = workspace / "race-second"
+    git(["clone", "--quiet", str(remote), str(second)], workspace)
+    (work / "README.md").write_text("seed\nracer one\n", encoding="utf-8")
+    (second / "keep.txt").write_text("racer two\n", encoding="utf-8")
+
+    environment = {**os.environ, "XDG_STATE_HOME": str(state_home)}
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    racers = [
+        subprocess.Popen(
+            [sys.executable, str(SCRIPT_PATH),
+             *base_request(one, remote, base, [path], f"racer on {path}")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment,
+        )
+        for one, path in ((work, "README.md"), (second, "keep.txt"))
+    ]
+    outcomes = []
+    for racer in racers:
+        stdout, _ = racer.communicate(timeout=120)
+        try:
+            outcomes.append(json.loads(stdout))
+        except json.JSONDecodeError:
+            outcomes.append({"outcome": "UNPARSEABLE", "stdout": stdout})
+
+    check("T4 both racers checked in",
+          all(one.get("outcome") == "checked-in" for one in outcomes), outcomes)
+    check("T4 exactly one racer had to integrate",
+          sum(1 for one in outcomes if one.get("integrated_over")) == 1, outcomes)
+    check("T4 both changes are on main after the race",
+          git(["show", "main:README.md"], remote).stdout == "seed\nracer one\n"
+          and git(["show", "main:keep.txt"], remote).stdout == "racer two\n")
+
+    # --- T5: a real conflict refuses rather than guessing -------------------
+    remote, work, base = make_fixture(workspace, "conflict")
+    rival = workspace / "conflict-rival"
+    git(["clone", "--quiet", str(remote), str(rival)], workspace)
+    git(["config", "user.name", "rival"], rival)
+    git(["config", "user.email", "rival@nedschorus.invalid"], rival)
+    (rival / "README.md").write_text("seed\nthe rival's version\n", encoding="utf-8")
+    git(["add", "-A"], rival)
+    git(["commit", "--quiet", "-m", "change the very path the pending request changes"], rival)
+    git(["push", "--quiet", "origin", "main"], rival)
+    rival_tip = git(["rev-parse", "main"], remote).stdout.strip()
+
+    (work / "README.md").write_text("seed\nour version\n", encoding="utf-8")
+    code, payload = run_gatekeeper(base_request(work, remote, base, ["README.md"]), state_home)
+    check("T5 a real conflict refuses", payload.get("error") == "conflict", payload)
+    check("T5 conflict exits 1", code == 1, code)
+    check("T5 conflict names the colliding path", "README.md" in payload.get("facts", ""), payload)
+    check("T5 conflict names the intervening commit",
+          "change the very path" in payload.get("facts", ""), payload)
+    check("T5 conflict teaches the next action",
+          "--base" in payload.get("next_action", ""), payload)
+    check("T5 the rival's version is still what main holds",
+          git(["show", "main:README.md"], remote).stdout == "seed\nthe rival's version\n")
+    check("T5 conflict did not move main",
+          git(["rev-parse", "main"], remote).stdout.strip() == rival_tip)
+
+    # --- T6: the retry cap ends the loop rather than spinning ---------------
+    # Sustained head movement is simulated at the seam rather than by racing a
+    # background pusher: a timing-dependent test of a bound is a test that
+    # sometimes does not test the bound.
+    remote, work, base = make_fixture(workspace, "cap")
+    (work / "README.md").write_text("seed\nnever lands\n", encoding="utf-8")
+
+    original_attempt_push = gatekeeper.attempt_push
+    original_fetch_main_tip = gatekeeper.fetch_main_tip
+    original_paths_changed = gatekeeper.paths_changed_between
+    original_build_candidate = gatekeeper.build_candidate
+    rounds = {"count": 0}
+
+    def always_rejected(clone):
+        rounds["count"] += 1
+        return False, "! [rejected] main -> main (non-fast-forward)"
+
+    def always_moving(clone):
+        return f"{rounds['count']:040x}"
+
+    gatekeeper.attempt_push = always_rejected
+    gatekeeper.fetch_main_tip = always_moving
+    gatekeeper.paths_changed_between = lambda clone, older, newer: set()  # never a conflict
+    gatekeeper.build_candidate = lambda clone, request, worktree, digest, target=None: "c" * 40
+    try:
+        capped = None
+        try:
+            gatekeeper.integrate_and_push(
+                work, {"base": base, "paths": ["README.md"], "message": "m", "issue": "none",
+                       "agent": "a", "origin": "none", "import": None},
+                {"README.md": b"seed\nnever lands\n"}, "0" * 64,
+            )
+        except gatekeeper.Refusal as refusal:
+            capped = refusal
+        check("T6 sustained head movement ends in main-moving-too-fast",
+              capped is not None and capped.error == "main-moving-too-fast", capped)
+        check("T6 the loop is bounded at exactly the stated cap",
+              rounds["count"] == gatekeeper.MAX_INTEGRATION_ROUNDS, rounds)
+        check("T6 the cap refusal teaches a next action",
+              bool(capped and capped.next_action), capped)
+    finally:
+        gatekeeper.attempt_push = original_attempt_push
+        gatekeeper.fetch_main_tip = original_fetch_main_tip
+        gatekeeper.paths_changed_between = original_paths_changed
+        gatekeeper.build_candidate = original_build_candidate
+
+    # --- retired by slice 3: main-moved is no longer an ending --------------
+    # Slice 1 refused when main had moved at all. Slice 3 splits that: moved
+    # with no overlap integrates (T4 above), moved with overlap conflicts (T5
+    # above). The retired ending must not resurface as a surprise.
     remote, work, base = make_fixture(workspace, "moved")
     other = workspace / "moved-other"
     git(["clone", "--quiet", str(remote), str(other)], workspace)
@@ -228,15 +365,12 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     (work / "README.md").write_text("seed\nlate\n", encoding="utf-8")
     code, payload = run_gatekeeper(base_request(work, remote, base, ["README.md"]), state_home)
-    check("main-moved refuses rather than guessing",
-          payload.get("error") == "main-moved", payload)
-    check("main-moved exits 1, the refusal code", code == 1, code)
-    check("main-moved names the intervening commit",
-          "move main ahead" in payload.get("facts", ""), payload)
-    check("main-moved teaches the next action",
-          "--base" in payload.get("next_action", ""), payload)
-    check("main-moved left main untouched",
-          len(git(["log", "main", "--format=%H"], remote).stdout.split()) == 2)
+    check("a moved main no longer refuses with main-moved",
+          payload.get("error") != "main-moved", payload)
+    check("a moved main integrates instead", payload.get("outcome") == "checked-in", payload)
+    check("main now holds both the newer commit and the integrated change",
+          git(["show", "main:elsewhere.txt"], remote).stdout == "someone else got there first\n"
+          and git(["show", "main:README.md"], remote).stdout == "seed\nlate\n")
 
     # --- T1: every form refusal, and its lack of side effects --------------
     remote, work, base = make_fixture(workspace, "form")
