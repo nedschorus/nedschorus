@@ -1,4 +1,8 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/handoff-statusline-context-relay.py"
+  },
   "permissions": {
     "defaultMode": "bypassPermissions"
   },

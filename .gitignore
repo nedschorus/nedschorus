@@ -12,3 +12,8 @@ CLAUDE.local.md
 
 # instruction-file-guard override marker: consumed per approved change (.claude/hooks/instruction-file-guard.py)
 .walk-approved
+
+# Python bytecode caches: the test scripts import modules by path, which
+# writes these beside the sources
+__pycache__/
+*.pyc
