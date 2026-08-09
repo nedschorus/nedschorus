@@ -30,6 +30,7 @@ A dedicated agent that holds this project's GitHub issues in context. Another ag
 6. Unavailable, slow, or wrong — what the asking agent does then
    *processed 2026-08-07 → approved: a failed ask never blocks a write; fallback ladder ask → grep mirror → gh search; bad pointers fail visibly at one read's cost, missing pointers mitigated by the grep quick-check and the maintenance sweep with the residual accepted; self-correction flows through ordinary writes — a writer who finds a missed relation adds the cross-link while editing, and the next delta refresh teaches the corpus; nothing new is built.*
 7. What this agent does not cover — scope boundary, with the MD-side candidate positions (link integrity joins maintenance; MD content is flag-not-fix) and the lean-bodies routing rule noted as riding to the `ghi-write` walk
+   *processed 2026-08-07 → approved, closing the walk: scope boundary ratified (no routing, no substance writing, cross-link edits the one write class, lean-split flag-only, other domains declined honestly); link integrity both directions joins maintenance on the two delta feeds; MD content freshness is flag-not-fix. WALK COMPLETE — all 7 items processed; follow-on: rewrite this accumulated draft into the clean plan document, then resume the paused ghi-write walk under these rulings.*
 
 ## The shape, as understood
 
