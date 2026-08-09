@@ -1,3 +1,10 @@
+---
+processed: 2026-08-08
+walk-item: its own walk (opened 2026-08-07, completed 2026-08-08; dispositions in the Walk order block below)
+dispositions: [prior-art bullet on nedschorus#23 (§3a); checklist trigger-test rules and question-5 principle (§3c, §3e; commits be7d5b6, 3507ecf); §3b, §3d, §3f declined; §4 ruled no-GHI-no-skill with checklist pointers added to nedschorus#13 and nedschorus#2]
+dropped-by: new-vp
+---
+
 # Anthropic's `skill-creator` re-check — what it carries that our checklist does not (2026-08-07)
 
 Boss-requested. The thread that produced it: asked whether NC has a GHI for a skill-authoring skill (answer: no — the doctrine lives as `docs/wiki/queue/skill-authoring-checklist.md`, a doc consulted by pointer from nedschorus#15–#23, and no GHI tracks a skill), the boss directed a look at Anthropic's skill-authoring skill before any further move on that question. This note records what the source is, what NC already took from it, and the delta between the source as it stands today and our checklist.
@@ -70,4 +77,4 @@ Walk opened 2026-08-07, restarted at item 1 the same day for clarity (the first 
 5. §3d — realism rules for trigger queries. — processed 2026-08-08 → rejected: too complex for a rarely-performed activity (boss-ruled); the description states simply and directly when to use the skill, plus any clear exceptions — which the checklist's description section already requires (positive AND negative scope) — and item 4's substantive-positive line covers the rare written test; the full realism guidance stays reachable through the prior-art citation on the eval-agent-change issue.
 6. §3e — the transcript-reading procedure for the checklist's which-steps-are-machine-work question. — processed 2026-08-08 → revised then accepted: the indirect repetition-signal wording was replaced by the boss's direct principle — if a tool or program can replace prompt-driven work with a faster and more reliable solution, that replacement should be examined, at build time and again in use — appended to checklist question 5.
 7. §3f — improvement-loop discipline (generalize, keep lean, read transcripts). — processed 2026-08-08 → rejected: skill revision is situational and starts from the obvious prompt ("skill X is doing Y / not doing Z — what do you think?"), not from a methodology section; and the checklist's own first line already routes revision to the existing writing rules ("Consult this whenever a NedsChorus skill is created or revised"), so a separate revision section adds apparatus without adding coverage (boss-ruled).
-8. §4 — the GHI question: no NC skill / point at skill-creator / build one.
+8. §4 — the GHI question: no NC skill / point at skill-creator / build one. — processed 2026-08-08 → accepted: no GHI and no skill without a clear reason to build one (boss-ruled) — skill authoring in NC is scheduled work reached only through commissioned build GHIs, so the pointer, not a trigger, is the delivery mechanism; the two open skill-build issues missing the pointer (nedschorus#13 ghi-write, nedschorus#2 handoff) received it by body edit; reopening evidence would be a real build missing the checklist despite the pointer.
