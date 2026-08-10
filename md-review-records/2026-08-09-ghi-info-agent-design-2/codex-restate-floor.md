@@ -1,0 +1,211 @@
+<!-- provenance: runtime=codex model=gpt-5.6-terra effort=xhigh cell=restate tier=floor target=/Users/el/Projects/nedschorus/.claude/worktrees/shared-conversation-discussion-eb34e2/docs/drafts/ghi-info-agent-design.md -->
+
+## Frontmatter
+
+1. The document is a design that is waiting for the user to walk through it, with an MD review intended to happen before that walk.
+
+## ghi-info — the GHI knowledge agent (design)
+
+1. This document describes a nedschorus arrangement for working with GitHub issues: a durable knowledge agent covers the issue collection; scripts maintain a local copy; hooks send direct write attempts through a dedicated tool; and the `ghi-write` skill supplies the judgment that the scripts and hooks cannot supply.
+
+2. The design choices in this document were decided on 2026-08-07; the linked plan draft is the anchor for a walk-through that records a disposition for each item, while the linked gatekeeper plan retains the alternative single-gate approach that was rejected.
+
+3. The central choice is to use a current-generation agent whose context window can hold the GitHub-issue corpus, instead of constructing either a vector database or a graph database for that corpus.
+
+4. Work that can be done mechanically must not consume the agent’s token budget.
+
+5. Scripts perform fetching, formatting, measuring, and filtering at no agent-token cost, while the agent uses tokens only where judgment is required.
+
+## What ghi-info is
+
+1. `ghi-info` is the first implementation of the domain-knowledge-agent category defined in the linked dynamic-agent-team-model document, whose first listed domain is GitHub issues.
+
+2. It has three responsibilities.
+
+3. Before another agent creates or changes an issue, that agent asks `ghi-info` which material it should read.
+
+4. The response must be only a list of issue numbers to read, such as “read #13, #24, #31,” without explanations for the choices or summaries of the issues.
+
+5. A wrong issue pointer has an obvious, bounded cost: the recipient reads one unhelpful issue.
+
+6. A prose synthesis can be wrong or distort the source without the recipient noticing, and it also makes `ghi-info` act as another author rather than merely a pointer.
+
+7. Explanations of why each issue was selected are unnecessary clutter for an agent that will read the issues it is directed to read.
+
+8. `ghi-info` maintains links among issues and validates links across the issue/Markdown boundary in both directions: every issue-to-Markdown reference must resolve, and every paired Markdown document must link back to its correct issue or issues.
+
+9. Before an issue write reaches GitHub, the write-path tool provides `ghi-info` with the actual draft body and asks it to assess the write.
+
+10. The assessment has three possible outcomes: a draft that is too similar to an existing issue—because it duplicates, overlaps, or conflicts with it—is refused and receives a reconsider-and-read response; a related but compatible draft proceeds and the response names issues the writer should learn; and an unrelated draft proceeds normally.
+
+11. All other work is outside `ghi-info`’s remit: it does not decide whether something belongs in a queue, an issue, a paired document, or a standalone Markdown file; it does not author issue or Markdown substance; and it answers only from the issue corpus, explicitly saying that it lacks the answer when asked about the wiki or code rather than guessing.
+
+12. When a paired Markdown document is stale relative to its issue, or when an issue body has exceeded its length limit even though no one is currently writing it, `ghi-info` identifies the problem but never repairs it; the next agent that has the relevant authoring context must make the repair.
+
+## The mirror
+
+1. The system keeps a local Markdown copy of the issue corpus that scripts maintain completely, so the agent itself never fetches pages of issues or formats their data.
+
+2. GitHub remains authoritative, and the mirror is only derived data.
+
+3. The mirror has two state-separated files: `issues-open.md` contains near-raw data for every open issue—number, title, labels, update time, body, and comments—while `issues-closed.md` contains one tiered line for each closed issue.
+
+4. This file split embeds the normal workflow in the filesystem layout: ordinary relatedness checks search only the open-issues file, while the closed-issues file is added only for an absence claim or an explicit search for precedent.
+
+5. A claim that no issue covers some subject is not valid unless both files were searched, because rejected prior attempts are recorded among closed issues.
+
+6. Closed issues are expected to be useful in only about one search out of fifty; putting them in a separate path, rather than merely telling agents to ignore them, keeps them out of the other searches.
+
+7. The mirror lives at a conventional gitignored location in each checkout and can be regenerated by script on every machine.
+
+8. Changes in the derived mirror therefore do not create churn in Git history.
+
+9. A delta refresh uses one `gh` search for issues updated later than the newest mirror entry, then refetches changed issues and moves entries between the open and closed files when their state changes.
+
+10. A live-repository check on 2026-08-07 found that downloading all 45 issue bodies took 0.82 seconds and about 109 KB, and that the `updated:>` query returned exactly the issues changed since a given timestamp.
+
+11. A separate feed, consisting of Git history since the previous run, detects edits to paired Markdown documents because such edits do not change an issue’s GitHub update timestamp.
+
+12. Because agents cannot otherwise tell what is currently relevant versus what was relevant earlier, the mirror explicitly provides that information.
+
+13. Each entry records both its update time and a freshness measure based on how much the project has changed since the issue last changed; project activity rather than elapsed calendar time is the intended aging measure.
+
+14. An agent that understands a supersession at the time it happens writes an explicit marker naming the successor, and that grep-friendly marker lets scripts flag the defect of two open issues claiming the same territory without either naming the other.
+
+## The session
+
+1. `ghi-info` runs on the Ubuntu box at `~/agents/ghi-info`, following that box’s path convention, and Mac callers reach it through SSH using the route built by the launch-claude work.
+
+2. The agent process exists only while handling a turn and exits otherwise.
+
+3. Its session ID, transcript, and mirror remain available after the process exits, but no process remains running.
+
+4. A headless agent that resumes once per question has no idle state: “idle” would mean a still-running process waiting for work, such as an interactive session or watcher, which this system does not have.
+
+5. The context policy is entirely oriented toward open issues: a cold start loads all of `issues-open.md`, and a closed issue enters context only after an on-demand grep.
+
+6. Context in a resumed session can become inaccurate because the mirror is refreshed every turn, yet an issue loaded while it was open remains in the agent’s context after it closes, without the agent being able to notice that change.
+
+7. The wrapper clears and reloads the session at whichever of three script-visible triggers occurs first: too many issues have closed since the session began, the answer post-check reports too high a stale-match rate, or the transcript is too large.
+
+8. Each of those trigger thresholds is a configuration constant to be tuned through live use.
+
+9. Reloading is fast and inexpensive—a sub-second fetch followed by one load turn—so the system intentionally recycles eagerly: an unnecessary recycle costs one cheap reload, whereas a delayed recycle can silently produce incorrect answers.
+
+## The ask
+
+1. One wrapper script is used by any agent and by step 1 of `ghi-write`.
+
+2. Its ordered behavior is to refresh the mirror by delta first so the agent starts current; resume the stored session or cold-start if none exists or recycling is due; give the agent the question plus, on a resume, issue numbers changed since the prior turn; remove a returned pointer to a closed issue and add a note before the asker sees it, while using that removal rate as the second recycle trigger; and print the bare issue list.
+
+3. The wrapper has one timeout for the entire operation, and a run terminated by that timeout is reported as a specifically named failure.
+
+4. Authentication uses the Ubuntu box’s long-lived token because interactive logins expire and there would be no human present to renew them.
+
+5. This operational pattern is already demonstrated by nedsmessenger’s live `ask_claude` implementation: it runs headless `claude -p --resume` separately for each conversation, reads the answer from the process’s exit stream, and watches for stuck runs.
+
+6. A failed `ghi-info` request must never prevent an issue write.
+
+7. The fallback sequence is to ask `ghi-info`, then grep the mirror, then use `gh` search, and then continue under the normal writing rules.
+
+8. Wrong pointers are visibly discoverable, while the remaining possibility that a needed pointer is absent is accepted because the system assumes cooperative participants.
+
+9. No dedicated feedback channel is needed: if a writer discovers a relationship `ghi-info` missed, the writer adds the cross-link during its edit, and the next delta refresh makes that relationship available to the corpus for later use.
+
+## The write path
+
+1. Agents continue using `gh` to write issues as they were trained to do, while the surrounding machinery causes the intended behavior without requiring them to adopt a different manual procedure.
+
+2. A PreToolUse hook rewrites `gh issue create` and `gh issue edit` commands into calls to the project write tool via `updatedInput`; the rewrite-and-execute mechanism and the configurable 600-second command-hook timeout were verified on 2026-08-07 against the cited Claude hooks documentation.
+
+3. That tool performs mechanical body-length and openable-reference checks, gives the draft body to `ghi-info` for the earlier adjudication, writes internally through `gh`, and returns output that will not mislead an agent into thinking its original `gh` command behaved differently.
+
+4. If `ghi-info` cannot be reached, the system fails open: the issue write proceeds without its check.
+
+5. Agents do not manually count words; the tool measures the body after it has been written.
+
+6. If the body exceeds the limit, the writer is immediately told to retain a good summary in the issue body and move the substantive material into a linked paired Markdown document, creating or updating that document as needed.
+
+7. Because the writer still has the context in which the material was authored, that writer—not `ghi-info`—must perform the split; asking `ghi-info` which issues to link supplies the corpus-wide context needed for the links.
+
+8. Issue bodies therefore remain concise summaries with links, while the substantive material resides in repository Markdown files that can be grepped: one document form used at two levels of depth.
+
+9. Direct `gh issue comment` use is denied with an instructional response because a comment cannot be automatically transformed into the body edit required by the revision convention: only the commenting agent knows where the content should go and what earlier content it supersedes.
+
+10. The denial explains two permitted alternatives: incorporate the material into the issue body through an edit, or, for genuinely new events allowed by the convention, retry using the tool’s comment verb and declare an event kind from the fixed catalog—instance outcome, completion, or ruling challenge—which may grow only through an explicit ruling.
+
+11. Losing one turn when an agent first attempts a disallowed comment is considered an acceptable cost.
+
+12. One catalog question remains for the `ghi-write` walk: whether “completion” should instead be represented by “close with reason,” avoiding two labels for the same type of event.
+
+13. Closing is a reasoned state change—either completed or not planned—rather than a comment; the hook leaves it unchanged, and the delta feed records it.
+
+14. Deleting an issue is categorically denied; the agent must close it instead so the record only moves forward rather than being erased.
+
+15. Every denial route includes an audited override that may be used once, following the instruction-file guard pattern already operating on `main`.
+
+16. A complete hard block would make the tool the sole route for every issue write, so either a tool defect or an unwrapped `gh` capability could stop the workflow precisely when an escape route is necessary.
+
+17. The named condition for hardening the system is an audit showing that overrides are being used to evade the tool rather than to address real failures.
+
+18. The hook only recognizes enumerated `gh issue …` patterns, so `gh api`, MCP tools, and inventive shell quoting can bypass it under the assumed cooperative threat model.
+
+19. The maintenance sweep detects bypassed writes because they still appear in the delta feed.
+
+## The three-layer stack
+
+1. The `ghi-write` skill is the first, proactive layer: when an agent is about to create or edit, it prompts the agent to ask `ghi-info`, route according to state, edit rather than duplicate, and write leanly, so the agent avoids being blocked and forced to retry later.
+
+2. This is the efficient route.
+
+3. The hook and tool form the correctness backstop when `ghi-write` does not activate: a missed skill trigger causes only inefficiency, such as a duplicate being caught late or a comment requiring one retry, rather than a correctness failure.
+
+4. Because this backstop makes missed skill triggers safe, the skill can use firm language instead of an overly coercive “pushy” style, and the system need not incur testing work for that style’s false activations.
+
+5. `CLAUDE.md` is only background documentation.
+
+6. Written conventions have demonstrably lost against trained behavior: issue #13 commissioned `ghi-write` because agents continued stacking comments despite the written rule, whereas instructions delivered at the moment of action do not have that same disadvantage.
+
+## Division of labor
+
+1. Scripts fetch, format, merge deltas, and separate issues by state without spending an agent model turn.
+
+2. Scripts inside the write tool measure length and check references without spending an agent model turn.
+
+3. Scripts calculate freshness, scan for supersession, and scan link integrity without spending an agent model turn.
+
+4. The wrapper’s script checks answers against the closed-issues file without spending an agent model turn.
+
+5. `ghi-info` uses one model turn to decide which issues matter to a question and to make similarity verdicts.
+
+6. `ghi-info` performs cross-link edits, which are its only permitted write category.
+
+7. The writing agent, through `ghi-write`, owns routing, substantive body content, and the lean-split rewrite because it already possesses the needed authoring context.
+
+## Deliberately not in version 1
+
+1. A vector or graph database is excluded because the context window itself serves as the database, and current evidence provides no condition under which that choice should be reversed.
+
+2. GitHub’s MCP server is excluded as the write interface because its generic writes do not include this system’s checks, and the project’s own tool is intended to remain the write interface.
+
+3. A hard block on raw `gh` writes is excluded because it would create a single point of failure and absolute restrictions can backfire; it should return only if override audits show evasion rather than genuine breakage.
+
+4. Purging old closed issues from GitHub is excluded because the burden is on context and attention rather than GitHub itself, and tiering in the mirror addresses that burden; it should return only if mirror tiering stops being sufficient.
+
+5. Multiple watchdog processes are excluded because one overall timeout is sufficient at the scale of one question at a time; they should return only if that single timeout proves too coarse.
+
+6. Committing the mirror is excluded because derived changes would clutter the history users read; it should return only if there is a need to grep across checkouts that per-machine regeneration cannot satisfy.
+
+## Verify at build
+
+1. Confirm, though it is documented but not tested here, that closing, reopening, and changing labels move an issue’s `updated` timestamp just as body edits and comments do.
+
+2. Confirm whether one PreToolUse reply can combine `updatedInput` with `additionalContext`, since that combination is undocumented.
+
+3. Confirm the Codex equivalents of pre-tool hooks: the runtime is known to have hooks, but the relevant field names are not verified.
+
+4. Confirm the API shape of the cross-reference timeline event intended to provide backlinks for the reference graph.
+
+5. Confirm that the tool can mimic `gh` output in the format agents expect.
+
+6. Confirm that both the Ubuntu box’s `gh` authentication and its long-lived Claude token continue working unattended, since the box’s authentication has expired in the past.
