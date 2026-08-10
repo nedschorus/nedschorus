@@ -89,7 +89,7 @@ In scope:
    `empty-change`, `unknown-base`, `base-not-on-main`, plus B2's
    `unsafe-path`. Each refusal names the error, the specific facts, and the
    exact next action (B5's verb-first phrasing), and touches nothing.
-2. **The digest** (specification field 7): SHA-256 over base id, sorted
+2. **The digest** (specification field 8): SHA-256 over base id, sorted
    path list, each path's new bytes, and the import triple. Screened
    against history at submit, so an identical resubmit answers
    `already-checked-in <commit>` having done no work.
