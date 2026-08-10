@@ -5,6 +5,8 @@ design-as-of: 2026-08-07
 
 # ghi-knowledge-agent — plan for the user's walk
 
+**Integrated 2026-08-07:** every ruling and post-walk direction in this file is folded into [ghi-info-agent-design.md](ghi-info-agent-design.md), the document of record going forward; this file remains as the walk's decision trail.
+
 *(The name is provisional and is walk item 2. The user called `ghi-knowledge-agent` "pretty good", 2026-08-07 — not yet a ruling.)*
 
 **This agent is an instance of a class the project already designed.** [26-dynamic-agent-team-model.md](../issues/26-dynamic-agent-team-model.md) (pair of [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26)) defines **domain-knowledge agents**: long-lived domains, and "the GHIs" is the first domain that document lists; short tasks (answer a question, maintain the domain); lifecycle active / idle / exited, with exited-by-default and on-demand spawn as the fallback until idle-wake is verified; and the ruling that the expert's real asset is *its curated domain files, which a fresh spawn loads in seconds*. This plan is that class's first concrete build, and its decisions should land consistent with that document or explicitly revise it.
