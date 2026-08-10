@@ -5,6 +5,7 @@ Eight reviews read in full (all cells present). Triage classes: (A) genuine desi
 ## Walk order (opened 2026-08-09, new-vp session 3a11d08f)
 
 1. Purpose: what the grid found, the three triage classes, and the bar for fixes
+   *processed 2026-08-09 → accepted (purpose item; user confirmed the per-class breakdown expectation: bundles list every fix concretely, any fix can be pulled out, C confirms per ruling)*
 2. (A) The output contracts — the ask's bare-list-plus-notes channel, the adjudication verdict grammar, and a precedent/absence mode so the post-check stops eating correct closed-issue answers
 3. (A) The flag problem — maintenance flags have no destination; duty list understates; proposal: a standing draft-labeled maintenance issue written through the tool, extending ghi-info's write class
 4. (B) Write-path corrections bundle — length-check timing wording, fail-open scope, edit-vs-its-own-issue exclusion, `close --comment` hole, non-body edits pass through, delete carries the override, comments as the one taught exception, tool self-interception note, check-to-write race named as residual
