@@ -17,6 +17,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/handoff-context-threshold-hook.py"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {
