@@ -7,7 +7,8 @@ item-by-item, a fresh context redrafts the reviewer instructions and a
 NEW walk starts from scratch over that draft. The user's assessment of
 the first merged draft: it has good content but keys the whole document
 off the wrong word — "simple" does not appear to be the right concept to
-organize around; his current candidate name is the **sanity reviewer**.
+organize around; his ruled candidate name is the **sanity-checker** (refined from
+"sanity reviewer" the same day).
 The redraft reads everything, including the rejected draft (knowing its
 keyword framing is wrong), and this file's body remains the requirements
 record. Items 3–10 below were never walked; their content feeds the new
