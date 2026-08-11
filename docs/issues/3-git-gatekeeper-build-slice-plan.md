@@ -195,6 +195,29 @@ scope by design: the expiry sweep and the liveness check.
   invocation first sweeps retained `--no-wait` refusal records older than
   30 days — opportunistic, no daemon. Slice 4 work: it lands with the
   machinery that creates the records.
+- **Advisory sees untracked files** (user-ruled 2026-08-11, Codex-leg
+  WALK-3): drop `--untracked-files=no` from the advisory's status call so
+  a forgotten new file — its likeliest target — is named; ignored files
+  stay hidden, and the advisory still never blocks. One test case; apply
+  with the Codex-leg fix batch.
+- **Parser-layer errors join the JSON contract** (user-ruled 2026-08-11,
+  Codex-leg WALK-2): wrap argparse so command-line-form errors — unknown
+  flag, missing argument, unknown subcommand — emit the `malformed-field`
+  teaching refusal as JSON with exit 1, quoting argparse's complaint in
+  facts, instead of usage text with exit 2 (the defect code). Test cases
+  for each shape; apply with the Codex-leg fix batch.
+- **Refuse symlinked declared paths** (user-ruled 2026-08-11, Codex-leg
+  WALK-1): a declared path that is itself a symlink refuses
+  `malformed-field` — `Path.is_file()` follows links, so today a
+  symlink-to-file passes and its target's bytes (possibly outside the
+  repository) would be read as declared content. One lstat check plus one
+  test case; apply with the Codex-leg fix batch.
+- **Cancel kills the process group and waits** (user-ruled 2026-08-11,
+  Codex-leg WALK-4): killing only the recorded worker pid leaves an
+  already-spawned `git push` child running, so `cancelled` could be
+  answered while the push lands moments later. Slice 4 builds cancel as:
+  process-group kill, wait for exit, then the history query. Lands with
+  the cancel machinery it corrects.
 - **Liveness check before the resubmit sweep** (md-review finding HG31,
   noted 2026-08-11). Concurrent identical submissions share one digest and
   therefore one workspace; before sweeping a leftover workspace, test

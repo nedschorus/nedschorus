@@ -19,9 +19,23 @@ Finding keys: **G#** = codex-hunt-good (sol, 87 findings), **F#** = codex-hunt-f
 ## 2. WALK — genuine design questions for the owner
 
 - **WALK-1. Symlink and path-type semantics at the gate** (G15, F6). The `--files` validation ("no absolute paths, no `..`, nothing under `.git/`") says nothing about symlinks. Verified in the program: `Path.is_file()` follows links, so a declared symlink-to-file passes as regular and its **target's** bytes — possibly outside the repository — are read as the declared content; candidate writes into the clone could likewise follow a base-checkout symlink. The gate is the security boundary; ruling needed: refuse symlinks (the program already refuses other non-regular files as `malformed-field`) or define their semantics.
+  processed 2026-08-11 → accepted as recommended: refuse outright as
+  `malformed-field`; semantics grow in when a real need arrives. Spec
+  field-1 sentence added; program change queued in the slice plan's
+  follow-ups (applies with the fix batch).
 - **WALK-2. CLI endings outside the JSON contract** (G27, F10, G3, part of G53). "Every invocation prints exactly one JSON object on stdout" is false for argparse-level failures: no subcommand, unknown flag, `check-in` without `--files` → usage text, exit 2 (the *program-defect* code). And slice-5's surface has no registered subcommand, so reaching it gives an argparse error, not the promised `unbuilt-option`. Ruling: wrap the parser so form-level CLI errors become `malformed-field` JSON, or scope the every-invocation claim.
+  processed 2026-08-11 → accepted, option 1 (wrap the parser): the JSON
+  contract holds at every layer, exit 2 stays a true defect signal. Spec
+  exit-code paragraph amended; program change queued in the slice plan.
 - **WALK-3. Advisory misses untracked files** (G37). Verified: the program uses `git status --untracked-files=no`, so a forgotten **added** file — the advisory's likeliest target — is never flagged, though added paths are accepted check-in content. Ruling: include untracked files (noise risk) or record the residual.
+  processed 2026-08-11 → accepted, include untracked: the advisory's
+  likeliest target is a forgotten new file, gitignore bounds the noise,
+  and the advisory has a live consumer (the calling agent, same turn).
+  Spec advisory paragraph amended; program change queued.
 - **WALK-4. Cancel-versus-push child race** (G52, F18). Killing `worker.pid` does not kill an already-spawned `git push` child; the history query can return before the child's push lands, so `cancelled` can be reported and the commit arrive afterward. Fix shape is mechanical (process-group kill + wait before querying) — slice-4 scope, like the ruled 4.1.
+  processed 2026-08-11 → accepted as recommended: spec cancel paragraph
+  amended (group kill, wait, then query); slice-4 build note queued
+  beside 4.1 in the slice plan.
 - **WALK-5. The protection audit's trigger anchor is stale** (G73, F23-part). The audit runs "at each handoff scrub (the cleanup pass every agent session runs when handing off)" — but fast-handoff-design.md (2026-08-02 revision) records that scrub modes were superseded and "full manual scrubs died with the committed tier." The audit needs a live cadence anchor (the recycle cycle?) — owner names it; slice-5 scope.
 
 **Environment note** (from G79, otherwise rejected): `~/Projects/nedlern` does not exist on this box, though CLAUDE.md and the program's `--legacy-repo` default point at it. Imports would refuse `import-invalid` (named, safe) until a legacy checkout exists here. Worth the owner's awareness, not a spec defect.
