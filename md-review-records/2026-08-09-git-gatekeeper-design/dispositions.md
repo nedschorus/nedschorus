@@ -335,7 +335,12 @@ S9 Collapse the refusal catalog (~19 → ~10); delete dead `empty-change`.
    2026-08-10 attempt had never finished its browser half — no credential
    existed); all four Codex cells relaunched against the revised spec,
    reports land beside the Claude cells in this directory. The item (and
-   the walk) closes when their triage is presented. Process defect
+   the walk) closes when their triage is presented.
+   Triage landed 2026-08-11: `codex-dispositions.md` in this directory —
+   both restates pass; 5 new WALK items and 23 FIX items survive
+   verification; 24 moot against this file's rulings, 3 stale (overtaken
+   by 151e046), 30 rejected. The walk continues there: its own Walk order
+   section is the plan and carries the marks. Process defect
    recorded: the grid should pre-flight each runtime's availability
    before launching and report absences up front — one-line check in
    `scripts/md-review-grid.py`, ordinary follow-up work.

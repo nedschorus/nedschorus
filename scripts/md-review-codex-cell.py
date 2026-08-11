@@ -23,12 +23,14 @@ import tempfile
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
 
-# Tier -> Codex model id. One place to update as models change. Both ids
-# user-picked and live-verified 2026-08-03 (the bare names "sol"/"terra" are
-# rejected by the CLI; the version-prefixed ids are the accepted form).
+# Tier -> Codex model id. One place to update as models change. Good tier
+# user-picked and live-verified 2026-08-03; floor moved terra -> luna at the
+# user's direction 2026-08-11, live-verified the same day (the bare names
+# "sol"/"luna" are rejected by the CLI; the version-prefixed ids are the
+# accepted form).
 TIER_TO_CODEX_MODEL = {
     "good": "gpt-5.6-sol",
-    "floor": "gpt-5.6-terra",
+    "floor": "gpt-5.6-luna",
 }
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
