@@ -17,8 +17,54 @@ added an md-review of the settled draft before the calibration run.
    failure was weighing, which the axis statement fixes; then the user
    directed a full three-source merge, complete not condensed, keeping
    simplicity as the central concept with reliability/testability as
-   what it must deliver). Merged draft written; the user's ruling on it
-   is pending.
+   what it must deliver). First merged draft REJECTED 2026-08-11: it
+   tried to overwrite the meaning of "simple" (opening by redefining the
+   word away from its everyday sense), which the user ruled against; he
+   also judged the drafting session's context anchored by the long
+   naming discussion. Retry ruled: rewrite from raw sources in a fresh
+   context (post-/clear), no meta-discussion of the word — plain
+   language, concrete hunts, results must be better / more reliable /
+   more testable. The rejected draft stays in git history; the user's
+   verbatim statement is preserved in the appendix below.
+
+## Appendix — the user's axis statement, verbatim (2026-08-11)
+
+The core input for any redraft, exactly as he wrote it (typos included;
+clean up spelling when quoting into a prompt, change nothing else):
+
+> look for changes to components, steps, states, dependencies or other
+> design changes that would simplify this plan, instruction or proposal.
+> Simplification can take several forms. It can mean to take this MD
+> file easier to read and understand. It can mean to make the plan or
+> design easier to use, that is more reliable, more autonomous, with
+> fewer or no user interventions required. The best simplifications
+> don't appear simple at first glance. They replace LLM prompts or
+> English instructions with code so that the steps, states or algorithm
+> is both hundreds of times faster, deterministic, followed exactly, and
+> can be tested and tuned exactly. Ten, a hundred or even a thousand
+> lines of python in reality is simpler than using invoking an agent and
+> short prompt. Simplicity can also mean easier to build or maintain,
+> but not at the expense of reliability and test-ability. The goal is a
+> highly reliable, understandable, easily maintainable system. Trading
+> long and complex for shorter and simpler is a win - in both code and
+> prompts, but also trading simple and short prompts, for even simpler,
+> but far longer code. Your overall goal is to counter the unfortunately
+> tendency of AIs to add complexity and almost never simplify or reject
+> dealing with theorectical problems or edge cases that have no pratical
+> value to solve. Also if you identify unsolvable problems or open ended
+> problems, reject complex near solutions and instead look to solve the
+> known and easily identified parts, and then note the insolveable parts
+> so that the user or an AI can not fall into the trap of tying to solve
+> the whole problem, when it can only partially be solved.
+
+Standing rulings on any redraft (user, 2026-08-11): complete and clear,
+never condensed at the cost of comprehension; do not redefine or
+overwrite the everyday meaning of "simple" — no meta-discussion of the
+word; simplicity stays the central concept (renaming the review
+"reliability refactoring" was declined); the result must do the right
+things — better, more reliable, more testable — "simplification is the
+best way to improve code or prompts, but only if it does the right
+things."
 3. Confirm draft § Discipline: the roadmap rule (expected-trigger
    machinery is not cuttable)
 4. Confirm draft § Discipline: forcing functions count as consumers
