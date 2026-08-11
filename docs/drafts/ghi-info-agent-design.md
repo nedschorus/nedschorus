@@ -5,6 +5,15 @@ design-as-of: 2026-08-09
 
 # ghi-info — the GHI knowledge agent (design)
 
+## Walk order — integration walk (opened 2026-08-09, new-vp session 3a11d08f; this block is removed when the walk closes)
+
+1. The walked core, confirmed whole — identity, duties, answer form, seat, mirror shape, no-gate posture, three-layer stack
+2. The GHI write path — hook rewrite, the tool's four-step sequence, comments/close/delete, soft block and override, accepted holes
+3. The ask path — wrapper steps, drift notice and recheck, `--include-closed`, throwaway-session concurrency, fallback ladder
+4. The session and currency — lifecycle, recycle triggers, two-cadence refresh, freshness and the Superseded-by marker
+5. Maintenance and fixers — the sweep, spawned focused fixers, escalation, the model-per-role open question
+6. Close-out — where this document lands, the build GHI, and the riders (ghi-write walk resume, correctness-rule review, #26 lifecycle revision)
+
 How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](ghi-gatekeeper-plan-draft.md).
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured today: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
