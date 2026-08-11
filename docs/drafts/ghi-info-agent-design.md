@@ -8,6 +8,7 @@ design-as-of: 2026-08-09
 ## Walk order — integration walk (opened 2026-08-09, new-vp session 3a11d08f; this block is removed when the walk closes)
 
 1. The walked core, confirmed whole — identity, duties, answer form, seat, mirror shape, no-gate posture, three-layer stack
+   *processed 2026-08-09 → CONFIRMED in six parts (user); rider ruled: the over-specification correctness rule lands in the skill-authoring checklist's Register section, not CLAUDE.md — applied same day; nothing from this design touches CLAUDE.md.*
 2. The GHI write path — hook rewrite, the tool's four-step sequence, comments/close/delete, soft block and override, accepted holes
 3. The ask path — wrapper steps, drift notice and recheck, `--include-closed`, throwaway-session concurrency, fallback ladder
 4. The session and currency — lifecycle, recycle triggers, two-cadence refresh, freshness and the Superseded-by marker
