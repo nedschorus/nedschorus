@@ -1,5 +1,38 @@
 # Subtraction-reviewer prompt lessons — from the S1–S9 walk corrections
 
+## Walk order
+
+Re-planned 2026-08-11 mid-walk: item 2's discussion produced a complete
+merged prompt draft (`docs/drafts/simplification-review-prompt-draft.md`
+— the user's axis statement + choirmaster's additions + Codex's
+naming/vocabulary notes, per the user's combine-all-three direction), so
+items 3–8 become confirmations of that draft's sections, and the user
+added an md-review of the settled draft before the calibration run.
+
+1. Purpose: what these rulings produce and the bar they meet
+   processed 2026-08-11 → accepted; capture is the walk-order block.
+2. The core prompt: axis, concept, method
+   open 2026-08-11 — revised twice (TRADE line withdrawn as unhelpful —
+   the flawed run's LOST field already declared costs honestly, the
+   failure was weighing, which the axis statement fixes; then the user
+   directed a full three-source merge, complete not condensed, keeping
+   simplicity as the central concept with reliability/testability as
+   what it must deliver). Merged draft written; the user's ruling on it
+   is pending.
+3. Confirm draft § Discipline: the roadmap rule (expected-trigger
+   machinery is not cuttable)
+4. Confirm draft § Discipline: forcing functions count as consumers
+5. Confirm draft § Discipline: operator cost is not builder cost
+6. Confirm the keeps: refute-your-own-candidates, collision flagging,
+   already-lean verdicts; decide whether the six validated cut classes
+   get enumerated explicitly or stay implicit in the ladder
+7. Confirm draft § Report format: the consequence sweep
+8. Confirm draft § Report format: quoted grounds
+9. md-review the settled draft (user-directed 2026-08-11: zero-context
+   agents must understand their instructions)
+10. The calibration protocol — rerun against the archived spec, score
+    against S1–S9 as ground truth
+
 Source evidence: the one-off subtraction review `claude-subtract-fable.md`
 (Fable, off-grid, user-requested 2026-08-10) and the user's nine rulings on
 it, recorded under Group S in `dispositions.md`. Status: the subtract cell
