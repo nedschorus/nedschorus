@@ -14,6 +14,7 @@ design-as-of: 2026-08-09
 3. The ask path — wrapper steps, drift notice and recheck, `--include-closed`, throwaway-session concurrency, fallback ladder
    *processed 2026-08-09 → APPROVED in two parts (user), with the drift notice reworded to kill an ambiguity: the closure fact is the script's, established from the just-refreshed mirror — the notice hands the agent the fact and asks only for a judgment redo over mirror files; the agent never calls GitHub to verify state.*
 4. The session and currency — lifecycle, recycle triggers, two-cadence refresh, freshness and the Superseded-by marker
+   *processed 2026-08-09 → APPROVED (user).*
 5. Maintenance and fixers — the sweep, spawned focused fixers, escalation, the model-per-role open question
 6. Close-out — where this document lands, the build GHI, and the riders (ghi-write walk resume, correctness-rule review, #26 lifecycle revision)
 
