@@ -13,10 +13,12 @@ exactly the content pushed, the commit's trailers carry the whole
 machine-readable record, and the caller has the commit id.
 
 Built: a synchronous check-in end to end (slice 1); the entry checkpoint — the
-recorded gate every legacy import crosses, plus the `imports` query that
-derives the whole import table from history (slice 2); and concurrent
-check-ins, where a request that loses the race is integrated over the newer
-commits by the program rather than by the calling agent (slice 3).
+recorded gate every legacy import crosses (slice 2; the import record is read
+straight from history with `git log origin/main --grep "Gatekeeper-import:"` —
+an `imports` table subcommand was built here and deleted by user ruling
+2026-08-10, the trailer being the record and the git command the view); and
+concurrent check-ins, where a request that loses the race is integrated over
+the newer commits by the program rather than by the calling agent (slice 3).
 
 Check-ins run in parallel with no queue and no lock, because GitHub already
 provides the one property the design rests on: a push either wins cleanly or
@@ -28,8 +30,8 @@ so the request is refused as `conflict` instead: the program never guesses at
 an author's intent.
 
 Not yet built, and which slice takes it: --no-wait, the detached worker,
-status and cancel (4); the trailer-absence and
-branch-protection audits (5). Reaching one of those is a named refusal,
+status and cancel (4); the branch-protection audit (5). Reaching one of
+those is a named refusal,
 `unbuilt-option`, never an unnamed ending and never a crash — exit code 2 is
 reserved for a defect in this program, so an argument parser rejection must
 not be how a caller learns a slice boundary.
@@ -46,6 +48,11 @@ under a different message deduplicates, and work that already went through
 answers already-checked-in with its commit id. An agent that crashed never
 reconstructs what happened; it submits again.
 
+The base — the main commit the work started from — is computed by the
+program (`git merge-base HEAD origin/main`, after a fetch, in the caller's
+checkout), never declared: user ruling 2026-08-10, replacing a --base field
+and its two hand-off refusals. Same exact id, no relay step to garble.
+
 Reply contract (B1): exactly one JSON object on stdout, always carrying a
 human-readable `summary`. Exit 0 for success and informational answers, 1 for
 a catalog refusal (the gatekeeper working correctly), 2 for a program defect.
@@ -56,12 +63,11 @@ endings, so a refusal leaves the repository and the disk untouched.
 
 Usage:
   git-gatekeeper.py check-in --files <path>... --message <text>
-                    --base <40-hex> --issue none|<n> --agent <runtime/model>
+                    --issue none|<n> --agent <runtime/model>
                     (--import none | --import-commit <40-hex>
                      --import-source <path> --import-dest <path>)
                     [--wait] [--repo <dir>] [--remote <url-or-path>]
                     [--legacy-repo <dir>]
-  git-gatekeeper.py imports [--repo <dir>] [--remote <url-or-path>]
 """
 
 import argparse
@@ -99,7 +105,7 @@ class Refusal(Exception):
     """A named catalog refusal: the error, the facts, and the exact next act.
 
     Never a bare error code. B5: the next action is verb-first and specific —
-    "resubmit with --base <current-main-id>", never "fix the problem" — and
+    "resubmit without that path", never "fix the problem" — and
     one term is used per concept across the whole catalog, because agents
     pattern-match this text. A path is always a "path", never a "file".
     """
@@ -167,7 +173,7 @@ def screen_unsafe_path(path: str, position: str) -> None:
     else:
         return
     raise Refusal(
-        "unsafe-path",
+        "malformed-field",
         f"the {position} path {path!r} contains {detail}",
         "Rename the path so it contains only printable ASCII without whitespace, "
         "then resubmit. Paths of this shape are refused rather than quoted because "
@@ -178,7 +184,7 @@ def screen_unsafe_path(path: str, position: str) -> None:
 def screen_paths(raw_paths: list[str]) -> list[str]:
     if not raw_paths:
         raise Refusal(
-            "empty-change", "the --files list is empty",
+            "malformed-field", "the --files list is empty",
             "Resubmit with --files naming at least one repository-relative path.",
         )
 
@@ -228,7 +234,7 @@ def screen_import(arguments, declared_paths: list[str]) -> dict | None:
     if arguments.import_declaration == "none":
         if supplied:
             raise Refusal(
-                "import-incomplete",
+                "import-invalid",
                 f"--import none was given alongside {', '.join('--import-' + n for n in sorted(supplied))}",
                 "Resubmit with either --import none, or all three of --import-commit, "
                 "--import-source and --import-dest — never both forms.",
@@ -245,7 +251,7 @@ def screen_import(arguments, declared_paths: list[str]) -> dict | None:
 
     if not supplied:
         raise Refusal(
-            "import-incomplete", "no import was declared",
+            "import-invalid", "no import was declared",
             "Resubmit with --import none when this change imports nothing, or with all "
             "three of --import-commit, --import-source and --import-dest when it does. "
             "The declaration is never optional: an unrecorded import is the one thing "
@@ -254,7 +260,7 @@ def screen_import(arguments, declared_paths: list[str]) -> dict | None:
     if len(supplied) < len(parts):
         missing = sorted(set(parts) - set(supplied))
         raise Refusal(
-            "import-incomplete",
+            "import-invalid",
             f"the import declaration is missing {', '.join('--import-' + n for n in missing)}",
             "Resubmit with all three of --import-commit, --import-source and "
             "--import-dest. A partial triple cannot be recorded, so it cannot be "
@@ -273,7 +279,7 @@ def screen_import(arguments, declared_paths: list[str]) -> dict | None:
 
     if parts["dest"] not in declared_paths:
         raise Refusal(
-            "import-dest-undeclared",
+            "import-invalid",
             f"the import destination {parts['dest']!r} is not in --files",
             "Resubmit with the destination path also named in --files. The import "
             "writes that path, so the declaration must say so.",
@@ -297,7 +303,7 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
     )
     if inside.returncode != 0:
         raise Refusal(
-            "legacy-unreadable",
+            "import-invalid",
             f"{legacy_repository!r} is not a readable git repository: "
             f"{inside.stderr.strip() or 'no stderr'}",
             "Resubmit with --legacy-repo naming a readable checkout of the legacy "
@@ -311,7 +317,7 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
     )
     if known.returncode != 0:
         raise Refusal(
-            "import-source-missing",
+            "import-invalid",
             f"no commit {import_declaration['commit']} exists in the legacy repository",
             "Resubmit with --import-commit set to a commit id that exists in the legacy "
             "repository.",
@@ -324,7 +330,7 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
     )
     if shown.returncode != 0:
         raise Refusal(
-            "import-source-missing",
+            "import-invalid",
             f"the path {import_declaration['source']!r} does not exist in the legacy "
             f"repository at commit {import_declaration['commit']}",
             "Resubmit with --import-source set to the path as it stood at that commit; "
@@ -337,18 +343,9 @@ def screen_form(arguments) -> dict:
     """Validate every field that can be judged without touching a repository."""
     if not arguments.message or not arguments.message.strip():
         raise Refusal(
-            "missing-message", "--message is empty",
+            "malformed-field", "--message is empty",
             "Resubmit with --message stating what the change does and why. "
             "Intent lives with the author; it cannot be auto-filled.",
-        )
-
-    if not FULL_COMMIT_ID.match(arguments.base or ""):
-        raise Refusal(
-            "malformed-field",
-            f"--base {arguments.base!r} is not a full 40-character commit id",
-            "Resubmit with the full 40-character id of the main commit this work "
-            "started from. Abbreviations can turn ambiguous as history grows, and "
-            "branch names move.",
         )
 
     if arguments.issue != "none" and not ISSUE_NUMBER.match(arguments.issue or ""):
@@ -379,7 +376,8 @@ def screen_form(arguments) -> dict:
     return {
         "paths": paths,
         "message": arguments.message.strip(),
-        "base": arguments.base,
+        # The base joins the request after screening: it is computed from the
+        # caller's checkout (which screening never touches), never declared.
         "issue": arguments.issue,
         "agent": arguments.agent.strip(),
         "import": import_declaration,
@@ -390,7 +388,34 @@ def screen_form(arguments) -> dict:
     }
 
 
-# --- Reading the caller's worktree and the declared base -------------------
+# --- Reading the caller's worktree and computing the base ------------------
+
+
+def compute_base(repository: Path) -> str:
+    """The exact main commit the work started from — computed, never declared.
+
+    `git merge-base HEAD origin/main`, after a fetch, in the caller's checkout
+    (user ruling 2026-08-10, replacing a caller-supplied --base field): every
+    caller gets the exact right value deterministically, with no relay step to
+    garble. The result is on main by construction. Accepted residual, recorded
+    in the specification: a caller who refreshed from main mid-task presents a
+    too-new fork point — a blind spot the wrapper-derived design shared.
+    """
+    run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=repository, check=False)
+    merged = subprocess.run(
+        ["git", "merge-base", "HEAD", f"origin/{MAIN_BRANCH}"],
+        cwd=str(repository), capture_output=True, text=True, check=False,
+    )
+    base = merged.stdout.strip()
+    if merged.returncode != 0 or not FULL_COMMIT_ID.match(base):
+        raise Refusal(
+            "malformed-field",
+            f"the base could not be computed in {str(repository)!r}: "
+            f"git merge-base HEAD origin/main said: {merged.stderr.strip() or 'nothing'}",
+            "Ensure the repository has an 'origin' remote whose main branch shares "
+            "history with HEAD, then resubmit. The base is computed, never declared.",
+        )
+    return base
 
 
 def read_worktree_content(
@@ -457,11 +482,9 @@ def classify_changes(
                 "unchanged path in the list is a mistake somewhere.",
             )
         changes[path] = "deleted" if new is None else ("added" if old is None else "modified")
-    if not changes:
-        raise Refusal(
-            "empty-change", "no declared path differs from the declared base",
-            "Resubmit once the working copy actually differs from the base.",
-        )
+    # No aggregate nothing-differs branch exists: it was unreachable — the
+    # first unchanged path refuses `unchanged-path` before any aggregate check
+    # could run — and was deleted as dead code (user ruling 2026-08-10).
     return changes
 
 
@@ -581,25 +604,6 @@ def prepare_clone(workspace: Path, remote: str) -> Path:
     run_git(["config", "user.name", "nedschorus-git-gatekeeper"], cwd=clone)
     run_git(["config", "user.email", "gatekeeper@nedschorus.invalid"], cwd=clone)
     return clone
-
-
-def validate_base(clone: Path, base: str) -> None:
-    known = run_git(["cat-file", "-e", f"{base}^{{commit}}"], cwd=clone, check=False)
-    if known.returncode != 0:
-        raise Refusal(
-            "unknown-base", f"no commit {base} exists in this repository",
-            "Resubmit with --base set to a commit id that exists on main; read the "
-            "current tip with: git rev-parse origin/main",
-        )
-    ancestor = run_git(
-        ["merge-base", "--is-ancestor", base, f"origin/{MAIN_BRANCH}"], cwd=clone, check=False
-    )
-    if ancestor.returncode != 0:
-        raise Refusal(
-            "base-not-on-main", f"commit {base} is not on main's history",
-            "Resubmit with --base set to a commit that is on main; read the current "
-            "tip with: git rev-parse origin/main",
-        )
 
 
 def find_existing_check_in(clone: Path, digest: str, ref: str | None = None) -> str | None:
@@ -746,9 +750,9 @@ def integrate_and_push(
                 f"{', '.join(collision)}. Intervening commits:\n"
                 f"{describe_commits(clone, base, target)}",
                 "Update your working copy from main, re-apply the change on top of "
-                f"the current tip {target}, resolve the overlap by hand, and resubmit "
-                "with --base set to that tip. The adjusted work digests fresh and "
-                "processes as a new request.",
+                f"the current tip {target}, resolve the overlap by hand, and resubmit. "
+                "The recomputed base then reflects that tip, and the adjusted work "
+                "digests fresh and processes as a new request.",
             )
 
     raise Refusal(
@@ -765,6 +769,7 @@ def check_in(arguments) -> int:
     request = screen_form(arguments)
     repository = resolve_repository(arguments.repo)
     remote = resolve_remote(repository, arguments.remote)
+    request["base"] = compute_base(repository)
     worktree = read_worktree_content(repository, request["paths"], request["import"])
     if request["import"] is not None:
         worktree[request["import"]["dest"]] = read_legacy_content(
@@ -783,7 +788,6 @@ def check_in(arguments) -> int:
         clone_parent = Path(tempfile.mkdtemp(prefix="screening-", dir=workspace_root()))
         clone = prepare_clone(clone_parent, remote)
 
-        validate_base(clone, request["base"])
         base_content = read_base_content(clone, request["base"], request["paths"])
         request["changes"] = classify_changes(worktree, base_content)
 
@@ -835,70 +839,6 @@ def check_in(arguments) -> int:
             shutil.rmtree(workspace, ignore_errors=True)
 
 
-def parse_import_trailers(commit_id: str, when: str, body: str) -> list[dict]:
-    """Every Gatekeeper-import line on one commit becomes one row.
-
-    B2's parser stance: repeated lines are the hand-pushed bypass class — the
-    program itself writes at most one — and each still derives a row, so a
-    bypass shows up in the table rather than being silently collapsed.
-    """
-    rows = []
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("Gatekeeper-import:"):
-            continue
-        value = stripped.split(":", 1)[1].strip()
-        if value == "none":
-            continue
-        source, separator, destination = value.partition(f" {UNSAFE_PATH_MARKER} ")
-        legacy_commit, _, source_path = source.partition(" ")
-        if not separator or not legacy_commit or not source_path or not destination:
-            rows.append({
-                "commit": commit_id, "when": when, "malformed": value,
-            })
-            continue
-        rows.append({
-            "commit": commit_id, "when": when, "legacy_commit": legacy_commit,
-            "source": source_path, "destination": destination.strip(),
-        })
-    return rows
-
-
-def imports_table(arguments) -> int:
-    """The import table, derived from history — never from a side file.
-
-    This derived view replaces the retired entry-manifest row rule: a shared
-    append-file would make any two parallel imports conflict by construction,
-    and would duplicate what the trailer already says.
-    """
-    repository = resolve_repository(arguments.repo)
-    remote = resolve_remote(repository, arguments.remote)
-
-    workspace_root().mkdir(parents=True, exist_ok=True)
-    scratch = Path(tempfile.mkdtemp(prefix="imports-", dir=workspace_root()))
-    try:
-        clone = prepare_clone(scratch, remote)
-        separator = "\x1e"
-        log = run_git(
-            ["log", f"origin/{MAIN_BRANCH}", f"--format=%H%x1f%aI%x1f%B{separator}"],
-            cwd=clone,
-        )
-        rows: list[dict] = []
-        for record in log.stdout.split(separator):
-            if not record.strip():
-                continue
-            commit_id, _, rest = record.strip().partition("\x1f")
-            when, _, body = rest.partition("\x1f")
-            rows.extend(parse_import_trailers(commit_id, when, body))
-        rows.reverse()  # oldest first: the order the imports actually happened
-
-        summary = (f"{len(rows)} import(s) recorded on main" if rows
-                   else "no imports recorded on main")
-        return emit({"outcome": "imports", "imports": rows, "summary": summary}, EXIT_SUCCESS)
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
-
-
 def unbuilt_command(name: str, slice_number: int) -> int:
     raise Refusal(
         "unbuilt-option", f"the {name} command is not built in this version",
@@ -917,7 +857,6 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check-in", help="check work in to main")
     check.add_argument("--files", nargs="+", required=True, metavar="PATH")
     check.add_argument("--message", required=True)
-    check.add_argument("--base", required=True, metavar="COMMIT")
     check.add_argument("--import", dest="import_declaration", default=None, metavar="none",
                        help="'none', or omit and give the three --import-* parts")
     check.add_argument("--import-commit", default=None, metavar="COMMIT")
@@ -937,10 +876,6 @@ def build_parser() -> argparse.ArgumentParser:
         later = commands.add_parser(name, help=f"{name} a request (slice 4)")
         later.add_argument("digest", nargs="?", default=None)
 
-    table = commands.add_parser("imports", help="print the legacy import table")
-    table.add_argument("--repo", default=None, help="the repository to read history from")
-    table.add_argument("--remote", default=None, help="where main lives; defaults to origin")
-
     return parser
 
 
@@ -950,8 +885,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if arguments.command == "check-in":
             return check_in(arguments)
-        if arguments.command == "imports":
-            return imports_table(arguments)
         return unbuilt_command(arguments.command, 4)
     except Refusal as refusal:
         return emit({

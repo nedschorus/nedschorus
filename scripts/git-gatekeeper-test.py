@@ -9,19 +9,22 @@ git-generic, so the fixture is faithful and the real nedschorus repository is
 untouchable by this suite. Nothing here authenticates, and nothing here reads
 the legacy tree.
 
-Coverage, against the specification's build-slice test list:
+Coverage, against the specification's acceptance-test index:
   T1  every form refusal names its error and leaves no side effect
   T2  the happy path's four success guarantees, trailer asserted exactly
   T3  the digest: identical resubmit deduplicates; changed content digests
       fresh; metadata-only changes do not move the digest
   T9  the advisory: undeclared worktree changes are noted, never blocking
-  T10 the imports query derives the exact table from the trailers
-  T11 every import error class refuses correctly
+  T11 every import defect refuses as import-invalid, facts naming the defect
   T4  concurrent check-ins: the winner is unaware, the loser integrates
   T5  a real conflict refuses, naming the paths, the commits and the fix
   T6  sustained head movement ends at the retry cap, never a spin
   plus the `unbuilt-option` boundary,
-  B2's trailer round-trip and repeated-line stance, and B3d's version floors.
+  B2's trailer round-trip, and B3d's version floors.
+  (T10 retired 2026-08-10 with the `imports` subcommand; the trailer's
+  exactness stays covered by the import happy path and B2's round-trip.
+  The base is computed by the program since the same ruling, so no --base
+  form cases exist.)
 
 The import cases read a stand-in LEGACY repository fixture (B3b), never the
 real nedlern tree — which does not exist on this box in any case.
@@ -126,7 +129,7 @@ def base_request(work, remote, base, files, message="fixture change", issue="non
     accident measures argparse, not the gatekeeper.
     """
     fields = {
-        "--message": message, "--base": base, "--import": "none", "--issue": issue,
+        "--message": message, "--import": "none", "--issue": issue,
         "--agent": "claude-code/opus-5", "--repo": str(work), "--remote": str(remote),
     }
     fields.update(overrides or {})
@@ -297,7 +300,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("T5 conflict names the intervening commit",
           "change the very path" in payload.get("facts", ""), payload)
     check("T5 conflict teaches the next action",
-          "--base" in payload.get("next_action", ""), payload)
+          "resubmit" in payload.get("next_action", "")
+          and "main" in payload.get("next_action", ""), payload)
     check("T5 the rival's version is still what main holds",
           git(["show", "main:README.md"], remote).stdout == "seed\nthe rival's version\n")
     check("T5 conflict did not move main",
@@ -378,17 +382,13 @@ with tempfile.TemporaryDirectory() as workspace_name:
     main_before = git(["rev-parse", "main"], remote).stdout.strip()
 
     form_cases = [
-        ("missing-message", base_request(work, remote, base, ["README.md"], "   ")),
-        ("malformed-field",
-         base_request(work, remote, base, ["README.md"], overrides={"--base": "abc123"})),
-        ("unknown-base",
-         base_request(work, remote, base, ["README.md"], overrides={"--base": "0" * 40})),
+        ("malformed-field", base_request(work, remote, base, ["README.md"], "   ")),
         ("malformed-field", base_request(work, remote, base, ["README.md"], issue="zero")),
         ("malformed-field",
          base_request(work, remote, base, ["README.md"], overrides={"--agent": "  "})),
         ("unknown-path", base_request(work, remote, base, ["no-such-path.txt"])),
         ("unchanged-path", base_request(work, remote, base, ["keep.txt"])),
-        ("unsafe-path", base_request(work, remote, base, ["a path with spaces.txt"])),
+        ("malformed-field", base_request(work, remote, base, ["a path with spaces.txt"])),
         ("malformed-field", base_request(work, remote, base, ["/etc/passwd"])),
         ("malformed-field", base_request(work, remote, base, ["../escape.txt"])),
         ("malformed-field", base_request(work, remote, base, [".git/config"])),
@@ -453,7 +453,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     def import_request(files, dest, source="old-tool.py", commit=None, message="import a tool",
                        drop=(), extra=None):
-        arguments = ["check-in", "--files", *files, "--message", message, "--base", base,
+        arguments = ["check-in", "--files", *files, "--message", message,
                      "--issue", "none", "--agent", "claude-code/opus-5",
                      "--repo", str(work), "--remote", str(remote), "--legacy-repo", str(legacy)]
         triple = {"--import-commit": commit or legacy_commit,
@@ -466,16 +466,16 @@ with tempfile.TemporaryDirectory() as workspace_name:
     code, payload = run_gatekeeper(
         import_request(["tools/imported-tool.py"], "tools/imported-tool.py"), state_home
     )
-    check("T10 a declared import checks in", payload.get("outcome") == "checked-in", payload)
+    check("a declared import checks in", payload.get("outcome") == "checked-in", payload)
     imported_commit = payload.get("commit", "")
     if imported_commit:
         content = git(["show", f"{imported_commit}:tools/imported-tool.py"], remote).stdout
-        check("T10 the import copies the bytes as they stood at the declared commit",
+        check("the import copies the bytes as they stood at the declared commit",
               content == "print('the legacy version')\n", repr(content))
 
         body = git(["show", "--no-patch", "--format=%B", imported_commit], remote).stdout
         expected = f"Gatekeeper-import: {legacy_commit} old-tool.py -> tools/imported-tool.py"
-        check("T10 the import trailer records the whole triple", expected in body, body)
+        check("the import trailer records the whole triple", expected in body, body)
 
         # B2: the trailer must survive git's own trailer parser, not just a
         # substring match — the record is only as good as what can read it.
@@ -486,62 +486,51 @@ with tempfile.TemporaryDirectory() as workspace_name:
         check("B2 the trailer round-trips through git interpret-trailers",
               expected in interpreted, interpreted)
 
-    code, payload = run_gatekeeper(["imports", "--repo", str(work), "--remote", str(remote)],
-                                   state_home)
-    check("T10 the imports query exits 0", code == 0, f"{code} {payload}")
-    rows = payload.get("imports", [])
-    check("T10 the imports table derives exactly one row", len(rows) == 1, rows)
-    if rows:
-        check("T10 the row names the legacy commit", rows[0].get("legacy_commit") == legacy_commit, rows)
-        check("T10 the row names the source", rows[0].get("source") == "old-tool.py", rows)
-        check("T10 the row names the destination",
-              rows[0].get("destination") == "tools/imported-tool.py", rows)
-        check("T10 the row names the check-in commit that carried it",
-              rows[0].get("commit") == imported_commit, rows)
-
-    check("T10 a non-importing check-in contributes no row",
-          all(row.get("source") != "README.md" for row in rows), rows)
-
-    # B2: repeated trailer lines are the hand-pushed bypass class. The program
-    # writes one; a bypass writing two must still surface as two rows rather
-    # than being silently collapsed into one.
-    doubled = gatekeeper.parse_import_trailers(
-        "abc", "2026-08-08T00:00:00Z",
-        "a hand-pushed commit\n\n"
-        "Gatekeeper-import: " + "1" * 40 + " a.py -> b.py\n"
-        "Gatekeeper-import: " + "2" * 40 + " c.py -> d.py\n",
-    )
-    check("B2 each repeated import trailer derives its own row", len(doubled) == 2, doubled)
-    check("B2 a malformed import trailer is surfaced, not dropped",
-          gatekeeper.parse_import_trailers("abc", "t", "Gatekeeper-import: nonsense\n")[0]
-          .get("malformed") == "nonsense")
+        # T10 retired 2026-08-10: the `imports` subcommand was deleted. The
+        # trailer is the record; the view is one documented git command, and
+        # the deleted command must stay deleted rather than resurface.
+        listed = git(["log", "main", "--grep", "Gatekeeper-import: " + legacy_commit],
+                     remote).stdout
+        check("the documented git-log view finds the import trailer",
+              imported_commit[:7] in listed or imported_commit in listed, listed)
+        code, payload = run_gatekeeper(["imports"], state_home)
+        check("the deleted imports subcommand is gone (argparse rejects it)",
+              payload.get("outcome") == "UNPARSEABLE" and code != 0, payload)
 
     # --- T11: every import error class -------------------------------------
+    # Every import defect refuses as the one code import-invalid (four codes
+    # merged 2026-08-10); the facts distinguish the defects, so each case also
+    # asserts its distinguishing fact fragment.
     import_error_cases = [
-        ("import-incomplete", import_request(["tools/x.py"], "tools/x.py",
-                                             drop=("--import-source",))),
-        ("import-incomplete", import_request(["tools/x.py"], "tools/x.py",
-                                             drop=("--import-commit", "--import-source"))),
-        ("import-incomplete", import_request(["tools/x.py"], "tools/x.py",
-                                             drop=("--import-commit", "--import-source",
-                                                   "--import-dest"))),
-        ("import-incomplete", import_request(["tools/x.py"], "tools/x.py",
-                                             extra=["--import", "none"])),
-        ("import-dest-undeclared", import_request(["README.md"], "tools/undeclared.py")),
-        ("import-source-missing", import_request(["tools/x.py"], "tools/x.py",
-                                                 source="no-such-legacy-path.py")),
-        ("import-source-missing", import_request(["tools/x.py"], "tools/x.py",
-                                                 commit="0" * 40)),
-        ("malformed-field", import_request(["tools/x.py"], "tools/x.py", commit="abc123")),
-        ("unsafe-path", import_request(["tools/x.py"], "tools/x.py",
-                                       source="a legacy path.py")),
+        ("import-invalid", "missing",
+         import_request(["tools/x.py"], "tools/x.py", drop=("--import-source",))),
+        ("import-invalid", "missing",
+         import_request(["tools/x.py"], "tools/x.py",
+                        drop=("--import-commit", "--import-source"))),
+        ("import-invalid", "no import was declared",
+         import_request(["tools/x.py"], "tools/x.py",
+                        drop=("--import-commit", "--import-source", "--import-dest"))),
+        ("import-invalid", "--import none was given alongside",
+         import_request(["tools/x.py"], "tools/x.py", extra=["--import", "none"])),
+        ("import-invalid", "not in --files",
+         import_request(["README.md"], "tools/undeclared.py")),
+        ("import-invalid", "does not exist in the legacy repository",
+         import_request(["tools/x.py"], "tools/x.py", source="no-such-legacy-path.py")),
+        ("import-invalid", "no commit",
+         import_request(["tools/x.py"], "tools/x.py", commit="0" * 40)),
+        ("malformed-field", "not a full 40-character commit id",
+         import_request(["tools/x.py"], "tools/x.py", commit="abc123")),
+        ("malformed-field", "whitespace",
+         import_request(["tools/x.py"], "tools/x.py", source="a legacy path.py")),
     ]
     main_before_imports = git(["rev-parse", "main"], remote).stdout.strip()
-    for expected_error, arguments in import_error_cases:
+    for expected_error, fact_fragment, arguments in import_error_cases:
         code, payload = run_gatekeeper(arguments, state_home)
-        label = f"T11 {expected_error}"
+        label = f"T11 {expected_error} ({fact_fragment[:24]})"
         check(f"{label} refuses by name", payload.get("error") == expected_error, payload)
         check(f"{label} exits 1", code == 1, code)
+        check(f"{label} facts name the defect",
+              fact_fragment in payload.get("facts", ""), payload)
         check(f"{label} teaches the next action", bool(payload.get("next_action")), payload)
 
     code, payload = run_gatekeeper(
@@ -549,7 +538,9 @@ with tempfile.TemporaryDirectory() as workspace_name:
                        extra=["--legacy-repo", str(workspace / "not-a-repository")]),
         state_home,
     )
-    check("T11 legacy-unreadable refuses by name", payload.get("error") == "legacy-unreadable", payload)
+    check("T11 an unreadable legacy checkout refuses import-invalid",
+          payload.get("error") == "import-invalid"
+          and "not a readable git repository" in payload.get("facts", ""), payload)
 
     check("T11 no import refusal moved main",
           git(["rev-parse", "main"], remote).stdout.strip() == main_before_imports)

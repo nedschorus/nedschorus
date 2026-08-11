@@ -168,6 +168,17 @@ Rulings from the user's review of the revised spec (records:
 `md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
 spec text.
 
+Applied 2026-08-11 (suite 140 cases green, was 146): the `imports`
+deletion, the base absorption, and the catalog collapse below — plus one
+stray the sweep exposed: the program's `unsafe-path` code, which the spec's
+catalog never listed, folded into `malformed-field` under the same
+collapse principle. The refusal-text quality pass ran the same day over
+the final catalog: every refusal site meets the user's bar (facts name
+the offending path/field and embed what the program holds — stderr,
+intervening commits, the current tip; next actions are verb-first and
+specific); no entry needed a user judgment call. Still pending, slice-4
+scope by design: the expiry sweep and the liveness check.
+
 - **Refusal-text quality pass** (user-ruled 2026-08-10). The bar, in the
   user's words: a refused check-in gets "the best, most useful and
   actionable refusal text that can be reliably generated." Sweep every
