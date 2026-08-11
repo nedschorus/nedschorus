@@ -27,6 +27,14 @@ Recommend: keep base in the digest (correctness of integration depends on
 it); teach the ambiguity instead — `empty-change`/`unchanged-path` refusal
 text gains one line: "if you refreshed from main after a crash or conflict,
 your work may already be on main — check `git log`". WALK.
+processed 2026-08-10 → revised: base stays in the digest (ruled); the
+refusal-text hint is withdrawn as make-work — the crash window is near
+zero, the handoff case is the handoff's defect to fix at its source, and
+`unchanged-path` already names the operative fact. Digest-scope sentence
+added to the spec. Superseded by a broader ruling the discussion produced:
+a refusal-text quality pass over the whole catalog (the user's bar: the
+best, most useful, actionable text that can be reliably generated),
+recorded in the slice plan. 4.2 withdrawn with this.
 
 1.2 **The sudoers target must not be agent-writable** (HG42). A sudoers rule
 naming `scripts/git-gatekeeper.py` inside the checkout runs whatever bytes an
@@ -35,23 +43,42 @@ Recommend: C2 gains a binding — the privileged lane invokes a **root-owned
 copy outside every checkout** (e.g. `/usr/local/lib/nedschorus-gatekeeper/`),
 updated only by a deliberate deploy step through the user; the in-repo file
 stays the source of truth and the test target. WALK (amends C2).
+processed 2026-08-10 → revised then accepted: root-owned copy outside
+every checkout as recommended, but the manual deploy step is rejected — no
+interim special case. The copy self-upgrades from main; safe because the
+gatekeeper source joins the instruction-file class with slice 6's evidence
+check enforcing walked approval, which makes slice 6 a prerequisite of
+privileged-lane activation. Captured: C2 amendment in the bindings doc
+(with the standing deployed-copies-self-upgrade principle), spec
+enforcement bullet, slice plan re-sequenced.
 
 1.3 **Mode-only changes are impossible through the gate** (HG15ii). Content
 comparison ignores the executable bit, so `chmod +x` alone refuses as
 `unchanged-path`. Recommend: RESIDUAL, recorded in the spec — scripts here
 run via `python3 <path>`, so the bit is cosmetic today; grows when first
 needed. WALK to confirm.
+processed 2026-08-10 → accepted as recommended: residual, build nothing;
+recorded in the spec beside the `unchanged-path` refusal definition.
 
 1.4 **Retained refusal workspaces have no expiry** (HG29). A `--no-wait`
 caller that dies never triggers the sweep. Recommend: any gatekeeper
 invocation opportunistically sweeps refusal records older than 30 days —
 one rule, no daemon. WALK (slice-4 scope).
+processed 2026-08-10 → accepted as recommended; spec States section
+amended beside B4d, slice-4 line added to the slice plan's follow-ups.
 
 1.5 **Single-word subcommands vs the naming rule** (HG20). `imports`,
 `status`, `cancel` are 1-part names; CLAUDE.md wants 3–4-part grepable names.
 Recommend: keep — subcommands ride under the program's name (the grep target
 is `git-gatekeeper.py imports`), and renaming now strands the built suite;
 record the exemption reasoning in the spec. WALK.
+processed 2026-08-10 → accepted as recommended; exemption note added to
+the spec beside the query definitions.
+open 2026-08-10 — side point the user raised: CLAUDE.md's grepable-name
+rule may deserve a clarification that some single words are legitimately
+best (language-keyword-like contexts, qualifiers riding under a multi-part
+parent name). Undecided ("we might"); CLAUDE.md is instruction-class, so
+any edit takes his walked approval. Raise when convenient.
 
 ## Group 2 — FIX: contradictions the folding introduced (stale absolutes)
 
@@ -125,6 +152,12 @@ issues:write for the machinery.
 (HF15) — mark "no agent ever holds it" as the C3 target state, true at
 amendment application.
 
+Group 2 processed 2026-08-11 → batch approved by the user and applied to
+the spec: 2.1–2.8, 2.10–2.21, 2.23–2.25 as triaged (2.7 in its
+slice-6-scheduled form; 2.8 as plain test seams per S8; 2.6 without the
+imports shape per S5; 2.20 renamed `import-invalid` per S9). 2.9 was
+applied earlier during S4; 2.22 died with the trailer audit (S3).
+
 ## Group 3 — FIX: references and vocabulary
 
 3.1 B-codes get their pointer: `docs/issues/queue/3-gatekeeper-build-bindings.md`
@@ -159,20 +192,150 @@ see Implementation status)" to the field or a genre note beside it.
 3.13 pid-reuse and cross-machine pid limits (HG32) — RESIDUAL now; slice 4
 records start-time beside the pid.
 
+Group 3 processed 2026-08-11 → batch approved by the user and applied to
+the spec: 3.1–3.5, 3.7–3.8, 3.10–3.13 (3.10 with its pointer retargeted
+to the spec's own C6 bullet after the C-doc's retirement; 3.5 unified on
+"walked-approval evidence"). 3.9 was applied during S7; 3.6 died with the
+trailer audit (S3). 3.13's slice-4 start-time note added to the spec's
+crash-recovery paragraph and covered in the slice plan by the slice-4
+scope it already states.
+
 ## Group 4 — CODE: program follow-ups (not spec text)
 
 4.1 Concurrent identical submissions share one digest workspace — add a
 liveness check before the resubmit sweep (HG31); slice-4 work, noted in the
 slice plan.
+processed 2026-08-11 → noted in the slice plan's follow-ups section, as
+triaged; user confirmed.
 4.2 `empty-change`/`unchanged-path` refusal text gains the
 "already on main?" hint once 1.1 is ruled.
+processed 2026-08-10 → withdrawn with 1.1; superseded by the refusal-text
+quality pass recorded in the slice plan.
 4.3 C7's `unavailable-when-privileged` refusal lands with the credential
 work.
+processed 2026-08-10 → withdrawn with S8 (C7 struck to zero).
+
+## Group S — WALK: subtraction findings (added mid-walk 2026-08-10)
+
+From the user-requested subtraction-only hunt (`claude-subtract-fable.md`
+in this directory — an off-grid Fable cell, additions forbidden, run to
+counter the grid's additive bias). Full WHAT/WHY/LOST/COST per finding in
+that file; one ruling each. Rulings here supersede earlier walk rulings
+where they collide (S1 vs 1.4's expiry sweep; S2 vs 1.2's self-update and
+slice-6 chain) — the earlier marks get updated when these land.
+
+Walk lesson (user, 2026-08-10, at S6): a simplification review needs its
+optimization axis stated — "asking to simplify is like asking to optimize
+without context: faster, cheaper, more reliable, simpler to write, simpler
+to maintain, simpler to use?" This project's axis: simple-to-operate over
+simple-to-build; mechanical forcing functions over trained LLM habit;
+logging is cheap, log-consuming machinery is the cost. The S-rulings below
+apply that axis. (Pending: same lesson to agent memory — blocked by the
+instruction-file guard, approval to be asked at walk close.)
+
+S1 Cut slice 4 entirely (async mode, worker, `status`, `cancel`, retained
+   records, expiry); defer to "not in v1" with trigger *checks become slow*.
+   processed 2026-08-10 → rejected by the user: tests and reviews are
+   planned and may be quite slow, so the deferral trigger is expected to
+   fire — build the worker machinery while the system is still simple and
+   fast. Slice 4 stands as planned; cancel-in-v1 and 1.4's expiry ruling
+   stand.
+S2 Drop the self-updating root copy; manual `sudo cp` deploy; slice 6 no
+   longer gates privileged-lane activation.
+   processed 2026-08-10 → rejected by the user: simple-to-operate beats
+   simple-to-build — the 1.2 ruling stands (self-updating copy, slice 6
+   gates activation). One capture kept from the finding: the fail-safe
+   property recorded in the C2 amendment (a stale copy enforces the old
+   contract and can never run agent bytes — staleness costs availability,
+   never safety).
+S3 Delete the trailer-absence audit; keep the branch-protection audit.
+   processed 2026-08-10 → accepted by the user, over the presenter's
+   keep recommendation. His reasoning: logging is the easy half — the real
+   cost is machinery to consume the logs, and this detector has no
+   consumer. Applied: spec enforcement section rewritten around the one
+   audit, T12 retired, slice-5 row and slice-plan prose updated.
+   Consequences for the batches: 2.22 (break-glass trips the trailer
+   audit) and 3.6 (distinct names for two audits) are mooted; re-triage
+   drops them. T12's row in 3.6 moot likewise.
+S4 Retire the C-bindings doc; deduplicate spec↔slice-plan sections.
+   processed 2026-08-10 → accepted, all three parts. (a) C-doc deleted
+   (git rm; committed version at 0890848; today's two C-doc-only
+   sentences — the fail-safe property, the self-update standing
+   principle — moved into the spec's C2 bullet first, with the working
+   deploy path). Spec's revision note updated to record the retirement.
+   (b) narrowed per 2.9: spec's build-slice section retitled "Acceptance
+   tests", keeps the T-index, points at the slice plan for sequencing —
+   2.9 is thereby applied early. (c) the classification's one home is the
+   spec's § Relationship (class tags added there); the slice plan's
+   restating table replaced by a pointer plus its unique slice-landing
+   notes.
+S5 Delete the `imports` subcommand; the trailer plus `git log --grep` is
+   the view.
+   processed 2026-08-10 → accepted (the trailer record and T11 screening
+   are untouched; only the redundant reader goes). Spec: subcommand bullet
+   replaced with the git-log view, cut table updated, T10 retired, 1.5's
+   naming note trimmed, status line annotated. Slice plan: slice-2 row
+   updated; program-deletion follow-up queued for after the walk.
+   Consequence: 2.6's imports-reply-shape fix is mooted; re-triage drops
+   that clause.
+S6 Drop `--issue` and the `Gatekeeper-issue` trailer.
+   processed 2026-08-10 → rejected by the user (the presenter's initial
+   accept recommendation reversed itself under his question). The field's
+   value is not downstream parsing but the mechanically forced, recorded
+   answer — a check-in cannot proceed without stating an issue or an
+   explicit `none`; dropping it trades a deterministic linkage for a
+   probabilistic LLM habit, and absence would become indistinguishable
+   from forgetting. Carrying cost is trivial. The 2026-07-24 trailer set
+   stands intact. Walk lesson recorded (see S-group headnote): a
+   simplification review needs its optimization axis stated — this
+   project's axis is operational reliability and simple-to-operate,
+   not less code.
+S7 Absorb `--base` into the program; field leaves the contract.
+   processed 2026-08-10 → accepted: same exact commit id, computed by the
+   program (merge-base after fetch, in the caller's checkout) instead of
+   relayed by the cooperative tier — reliability moves from the
+   probabilistic tier to the mechanical one. `unknown-base` /
+   `base-not-on-main` retired; mid-task-refresh blind spot recorded as an
+   accepted residual (shared exactly by the previous wrapper design).
+   Spec: grammar, field 3, candidate construction, catalog, C6 bullet
+   updated — 3.9's merge-base operands statement applied in the process.
+   Slice plan: program rework queued post-walk. Mooted: 3.9; 2.8's
+   grammar fix loses no scope (--repo/--remote still get added).
+S8 C7 shrinks to a remote-pin line, or to zero.
+   processed 2026-08-10 → accepted at zero (user chose zero over the
+   presenter's pin recommendation): both refusals struck as guards that
+   guard nothing; no remote pin — the token's scope, set once by the
+   user, is the guard. Spec C7 bullet rewritten to record the reasoning.
+   Consequences: 4.3 (the `unavailable-when-privileged` refusal) is
+   withdrawn; 2.5 drops its C7-refusal clause; 2.8 still adds
+   `--repo`/`--remote` to the grammar but as plain test seams, no
+   privileged-mode note.
+S9 Collapse the refusal catalog (~19 → ~10); delete dead `empty-change`.
+   processed 2026-08-11 → accepted, all three parts: `empty-change`
+   deleted as unreachable (a real latent defect the review found),
+   `missing-message` folded into `malformed-field`, the four import codes
+   merged into `import-invalid`. Spec fields and catalog updated; program
+   work queued in the slice plan. Consequences: 2.20's two cases now
+   answer `import-invalid` (its documentation clause survives with the
+   new name); 1.1's digest-scope sentence updated to drop its
+   `empty-change` mention at batch application.
 
 ## Walk order
 
-1. Group 1 items (five rulings), one per item
-2. Groups 2–3 in one batch each (mechanical; approve the batch, spot-check
-   any item)
-3. Group 4 noted for the slice plan
-4. Codex leg: rerun after `codex login`, or accept the Claude-only review
+1. Group 1 items (five rulings), one per item — DONE 2026-08-10, all five
+   processed above
+2. Group S items S1–S9 (nine rulings), one per item — inserted 2026-08-10
+   at the user's direction, ahead of the batches so surviving spec text is
+   fixed once
+3. Groups 2–3 in one batch each (mechanical; approve the batch, spot-check
+   any item), re-triaged first to drop fixes mooted by Group S rulings
+4. Group 4 noted for the slice plan
+5. Codex leg: rerun after `codex login`, or accept the Claude-only review
+   open 2026-08-11 — ruled: rerun. Device-auth login completed (the
+   2026-08-10 attempt had never finished its browser half — no credential
+   existed); all four Codex cells relaunched against the revised spec,
+   reports land beside the Claude cells in this directory. The item (and
+   the walk) closes when their triage is presented. Process defect
+   recorded: the grid should pre-flight each runtime's availability
+   before launching and report absences up front — one-line check in
+   `scripts/md-review-grid.py`, ordinary follow-up work.
