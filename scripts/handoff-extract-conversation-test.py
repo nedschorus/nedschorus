@@ -126,7 +126,8 @@ with tempfile.TemporaryDirectory() as workspace:
     exit_code = extractor.main(["--transcript-path", str(path), "--output", str(Path(workspace) / "default.md")])
     check("extraction runs with no boundary argument at all", exit_code == 0, f"got {exit_code}")
     default_text = (Path(workspace) / "default.md").read_text(encoding="utf-8")
-    check("default extraction names the floor in its header", "clearing 2500 words" in default_text,
+    check("default extraction names the floor in its header",
+          f"clearing {extractor.MINIMUM_DIALOG_WORDS} words" in default_text,
           default_text[:200])
 
     # --- Noise classes are dropped ---------------------------------------
