@@ -91,7 +91,7 @@ For each finding:
 
 A wording-level trim is not worth reporting — a readability finding must be structural: reorganize, split, merge, or deduplicate, never polish phrasing.
 
-Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the candidates that survive. Say explicitly which sections or mechanisms are already minimal — "the rest is already lean" is a finding, and certifying leanness is as valuable as proposing change. A certification needs none of these fields: name what you examined and the grounds you checked.
+Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the candidates that survive. Say explicitly which sections or mechanisms are already minimal — "the rest is already lean" is a finding, and certifying leanness is as valuable as proposing change. A certification needs none of these fields: name what you examined and the grounds you checked. Certification must survive the replacement test: before certifying a mechanism lean, name the simplest existing thing that could deliver the same result — one git command, an existing setting, a broader refusal code, prevention already in place. If such a thing exists, you have found a redundancy, not a leanness — report the cut and keep the simpler mechanism.
 
 ## Two worked examples from this project's ruled history
 
