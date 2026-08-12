@@ -11,7 +11,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 1. Purpose and status: what this walk decides and the bar its rulings meet — processed 2026-08-11 → accepted
 2. Assignment: identity, inputs, read/write scope, findings flow — processed 2026-08-11 → accepted (inputs stay MD files plus their links)
 3. The forms a saner plan can take (the six bullets) — processed 2026-08-11 → accepted
-4. The goal paragraph: counter added complexity; checks-checking-checks
+4. The goal paragraph: counter added complexity; checks-checking-checks — processed 2026-08-11 → accepted as is (guarantee-weakening-proposal sentence stays dropped; refute-your-own-candidates covers it)
 5. Priority order when simplifications conflict
 6. The highest-value form: prompts to code
 7. The method: six questions and two hunts
