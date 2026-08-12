@@ -21,7 +21,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 10. Question 4: Externalize — processed 2026-08-11 → revised (prompted agent → mechanical solution named on both sides; gated on a more reliable, more maintainable, easier-to-test result)
 11. Question 5: Verify — processed 2026-08-11 → accepted as is
 12. Question 6: Delegate the residue — processed 2026-08-11 → accepted as is
-13. The two hunts and the earned-finding guard
+13. The two hunts and the earned-finding guard — processed 2026-08-11 → revised (prompts-to-code hunt kept; per-mechanism requirement-restatement hunt replaced with the whole-design step-back: a better way, an unknown unknown)
 14. Cut classes with a validated track record
 15. Discipline: roadmap, forcing functions, operator cost
 16. Discipline: theoretical problems, unsolvable problems, ruling collisions
@@ -80,7 +80,7 @@ A finding must be earned: the mechanism you propose is itself new complexity, an
 Two hunts deserve their own sections in your report, because they are where the highest-value findings hide:
 
 - **Prompts-to-code:** list every place the design relies on an LLM following English instructions where a script could do the job.
-- **The question itself:** for each major mechanism, state the requirement it serves and ask whether a different framing of that requirement dissolves the mechanism.
+- **A better way:** step back from the design as a whole and ask — is there a better way to solve this problem? And are we missing something important, an unknown unknown?
 
 ## Cut classes with a validated track record
 
