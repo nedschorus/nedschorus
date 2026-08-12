@@ -4,30 +4,6 @@ Status: DRAFT, walked and settled with the user 2026-08-11 (18 items; dispositio
 
 Everything below the rule is the prompt itself, written for a reviewer with zero context beyond what it names.
 
-## Walk order
-
-New walk opened 2026-08-11, from scratch over this draft — the successor to the closed walk recorded in `md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md`. Dispositions are marked here per item; this block is removed when the draft settles.
-
-1. Purpose and status: what this walk decides and the bar its rulings meet — processed 2026-08-11 → accepted
-2. Assignment: identity, inputs, read/write scope, findings flow — processed 2026-08-11 → accepted (inputs stay MD files plus their links)
-3. The forms a saner plan can take (the six bullets) — processed 2026-08-11 → accepted
-4. The goal paragraph: counter added complexity; checks-checking-checks — processed 2026-08-11 → accepted as is (guarantee-weakening-proposal sentence stays dropped; refute-your-own-candidates covers it)
-5. Priority order when simplifications conflict — processed 2026-08-11 → accepted (trade-on-its-face closing stays dropped; the LOST field carries the per-finding obligation)
-6. The highest-value form: prompts to code — processed 2026-08-11 → accepted
-7. The method: six questions and two hunts — re-planned 2026-08-11 (user direction): the earned-finding guard added to the method; each of the six questions walked individually for exactly how it makes the result simpler or saner; items 7–13 below replace this item
-7. Question 1: Delete — processed 2026-08-11 → accepted as is
-8. Question 2: Encode — processed 2026-08-11 → revised ("rule"/"query" were ambiguous between code and prompt; list recast as unambiguously code-side artifacts, "easily understood" added)
-9. Question 3: Constrain — processed 2026-08-11 → revised (qualifier added: only when the bounded choice produces a simpler or saner result)
-10. Question 4: Externalize — processed 2026-08-11 → revised (prompted agent → mechanical solution named on both sides; gated on a more reliable, more maintainable, easier-to-test result)
-11. Question 5: Verify — processed 2026-08-11 → accepted as is
-12. Question 6: Delegate the residue — processed 2026-08-11 → accepted as is
-13. The two hunts and the earned-finding guard — processed 2026-08-11 → revised (prompts-to-code hunt kept; per-mechanism requirement-restatement hunt replaced with the whole-design step-back: a better way, an unknown unknown)
-14. Cut classes with a validated track record — processed 2026-08-11 → accepted as is (explicit enumeration confirmed; carrier-vs-invariant heading kept)
-15. Discipline: roadmap, forcing functions, operator cost — processed 2026-08-11 → accepted (with the user's softened roadmap and forcing-function wording)
-16. Discipline: theoretical problems, unsolvable problems, ruling collisions — processed 2026-08-11 → accepted
-17. Report format — processed 2026-08-11 → accepted
-18. Two calibration examples — processed 2026-08-11 → accepted
-
 ---
 
 ## Your assignment
