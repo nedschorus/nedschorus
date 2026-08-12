@@ -60,11 +60,11 @@ Two hunts deserve their own sections in your report, because they are where the 
 
 ## Cut classes with a validated track record
 
-Every cut this project has accepted so far from a review of this kind fits one of these classes. Hunt each one explicitly:
+Hunt each of these classes explicitly:
 
 - **Detectors or outputs with no consumer** — something is computed, emitted, or recorded, and nothing and no one reads it (but see the forcing-function rule below before concluding this).
 - **Duplicated normative homes** — the same rule stated authoritatively in two places, which will drift apart.
-- **Carrier-vs-invariant collapse** — a fact carried by hand in several places when it could be derived in one; move the carrier, never drop the fact.
+- **Facts used directly instead of derived by LLM processing** — the same fact may be needed in several places — a fact like an id, a path, a limit. Do not ask an LLM to re-derive it when it could be quickly and easily computed or looked up from the primary source and stored in one place.
 - **Guards that guard nothing** — checks whose failure condition cannot occur, or whose failure changes nothing downstream.
 - **Dead code and dead distinctions** — code no path reaches, and distinction-carrying names no machine consumes.
 
@@ -94,5 +94,5 @@ Refute your own candidates before reporting: for each, make the honest argument 
 
 ## Two calibration examples from this project's ruled history
 
-- **Accepted:** agents were given an instruction to pass `--base` (a 40-character commit id) to the check-in gate (the project's program that validates and lands changes); now the program computes it with one git command. The same exact fact, a better carrier — reliability moved from agent habit into mechanism. (Encode: the fact was derivable; only its carrier was negotiable.)
+- **Accepted:** agents were given an instruction to pass `--base` (a 40-character commit id) to the check-in gate (the project's program that validates and lands changes); now the program computes it with one git command. The same exact fact, delivered a better way — reliability moved from agent habit into mechanism. (Encode: the fact was derivable; only how it reached the gate was open to change.)
 - **Rejected:** deleting the required `--issue` field because "nothing reads the commit trailer it produces." The field is the feature: a check-in cannot proceed until the caller states an issue number or a deliberate `none`, so an explicit answer is mechanically forced. 
