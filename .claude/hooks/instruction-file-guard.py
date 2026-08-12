@@ -48,11 +48,13 @@ def is_protected(file_path: str) -> bool:
     path = Path(file_path)
     if path.name in PROTECTED_BASENAMES:
         return True
-    try:
-        relative = path.resolve().relative_to(project_root())
-    except ValueError:
-        relative = path
-    return PROTECTED_DIRECTORY in relative.parts
+    parts = path.resolve().parts
+    for index, part in enumerate(parts):
+        if part == PROTECTED_DIRECTORY:
+            if index + 1 < len(parts) and parts[index + 1] == "worktrees":
+                continue  # a worktree checkout's home under .claude/worktrees/, not its .claude
+            return True
+    return False
 
 
 def consume_approval_marker(marker_path: Path) -> bool:
