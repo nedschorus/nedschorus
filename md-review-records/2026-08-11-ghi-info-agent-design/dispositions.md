@@ -65,6 +65,11 @@ hunt reports; per-report texts are the sibling files in this directory.
    and the walk-order item-2 annotation.*
 6. The sweep's own ask (the question it puts to ghi-info on a fixer's behalf) is an
    unwritten dependent prompt, with no failed-ask branch
+   *processed 2026-08-11 → APPROVED (user): the question template landed verbatim in
+   § Prompts (Sweep ask) with the failure rule — a failed ask never blocks a repair;
+   the sweep spawns the fixer with the related-issues clause dropped. User rider
+   noted in place: a dead box credential stalls the fleet, not just this ask — that
+   case is the sweep's credential check, § Verify at build.*
 7. Small correctness batch: comment-denial grammar break; "two request forms"
    undercount; blocked-fix escalation has no named actor; adjudication draft omits the
    title; verdict/related list arity; create-specific wording on edit refusals

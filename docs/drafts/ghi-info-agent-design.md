@@ -117,7 +117,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: every prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt (four request forms), the resume ask, the adjudication request, the link-repair request (user-ruled 2026-08-11: worded here rather than left to build), and the write tool replies. The section's required md-review ran 2026-08-11; dispositions in [md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md](../../md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md).
+**Status: every prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt (four request forms), the resume ask, the adjudication request, the link-repair request (user-ruled 2026-08-11: worded here rather than left to build), the sweep ask, and the write tool replies. The section's required md-review ran 2026-08-11; dispositions in [md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md](../../md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md).
 
 ### Fixer brief — pair document behind its issue (approved 2026-08-11)
 
@@ -241,6 +241,12 @@ Sent by the sweep for each link-integrity finding — `ghi-info`'s one write cla
 > You are asked to repair a link. \<one sentence from the sweep stating the defect, e.g.: Issue #31's body cites docs/issues/31-foo.md, which does not resolve on main. — or: docs/issues/31-foo.md backlinks #29, but its issue is #31.\>
 >
 > Repair exactly this link and nothing else. Issue edits go through gh as normal; document changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; if it still fails, report blocked). Reply with exactly one of: done: \<the repair\> — done: no change needed — \<why, e.g. the link already resolves\> — or blocked: \<what stopped you\>.
+
+### Sweep ask (sweep → ghi-info-ask, before spawning a fixer; approved 2026-08-11)
+
+Run by the sweep through scripts/ghi-info-ask.py, like any ask; the answer becomes the brief's related-issues list. A failed ask never blocks a repair: the sweep spawns the fixer with the related-issues clause dropped from the brief. (A dead box credential stalls far more than this ask; that fleet-wide case is the sweep's credential check, § Verify at build.)
+
+> A fixer is about to \<the job in one clause, e.g.: update the pair document docs/issues/31-foo.md to match issue #31's current state — or: shorten issue #17's body, merging the substance into its pair document\>. What should it read first?
 
 ### Write tool replies (refusals and appended instructions; approved 2026-08-11)
 
