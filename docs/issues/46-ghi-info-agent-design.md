@@ -1,33 +1,17 @@
 ---
-status: integrated design; decisions ruled 2026-08-07 in the plan walk, md-review corrections ruled 2026-08-09; integration walk in progress — items 1–5 processed, item 6 (close-out) open; § Prompts md-review dispositioned 2026-08-11
+status: landed design; build tracked in nedschorus#46
 design-as-of: 2026-08-11
 ---
 
 # ghi-info — the GHI knowledge agent (design)
 
-## Walk order — integration walk (opened 2026-08-09, new-vp session 3a11d08f; this block is removed when the walk closes)
-
-1. The walked core, confirmed whole — identity, duties, answer form, seat, mirror shape, no-gate posture, three-layer stack
-   *processed 2026-08-09 → CONFIRMED in six parts (user); rider ruled: the over-specification correctness rule lands in the skill-authoring checklist's Register section, not CLAUDE.md — applied same day; nothing from this design touches CLAUDE.md.*
-2. The GHI write path — hook rewrite, the tool's four-step sequence, comments/close/delete, soft block and override, accepted holes
-   *revised 2026-08-11 (user, settled after a soft/hard back-and-forth in the § Prompts md-review walk): denials stay soft with a reconsider-to-pass override — reconsider once against the refusal's stated reason and, still convinced, pass one resubmit via the `.ghi-issue-write-reconsidered` marker; no user approval, no forced escalation — GHI-filing mistakes are not worth the user's attention. The open-perimeter half of the ruling stands. See § The GHI write path, "Soft block, reconsider-to-pass."*
-   *processed 2026-08-09 → APPROVED in three parts (user), with the soft-block observation captured: code reviewers reflexively push to harden soft blocks, so the ruling is now recorded in the greppable Accepted-residual form, which the standing reviewer counterpart rule protects — re-flagged only with evidence matching the named reopening trigger, never as an ordinary finding. Side answers ruled along the way: untouched state changes reach the mirror through the normal delta with the recycle rewrite as backstop; mirror fields grow by deliberate one-line script edits, never automatically.*
-3. The ask path — wrapper steps, drift notice and recheck, `--include-closed`, throwaway-session concurrency, fallback ladder
-   *processed 2026-08-09 → APPROVED in two parts (user), with the drift notice reworded to kill an ambiguity: the closure fact is the script's, established from the just-refreshed mirror — the notice hands the agent the fact and asks only for a judgment redo over mirror files; the agent never calls GitHub to verify state.*
-4. The session and currency — lifecycle, recycle triggers, two-cadence refresh, freshness and the Superseded-by marker
-   *processed 2026-08-09 → APPROVED (user).*
-5. Maintenance and fixers — the sweep, spawned focused fixers, escalation, the model-per-role open question
-   *processed 2026-08-11 → APPROVED (user), via a fixer-brief drafting round and a zero-context teaching walk. Rulings: the single fixer brief split into two templates, one per defect kind — the sweep picks the template, each brief covers exactly one job; the sweep pre-runs `scripts/ghi-info-ask.py` and embeds the reading list in the brief — the fixer invokes nothing; "do only the job stated above" replaced "smallest change"; every prompt opens for a zero-context reader; `BODY_WORD_LIMIT` starting value 500 (constants line updated); staleness swept one direction only, issue-ahead, with the lapsed-cite gap recorded as accepted residual (§ Maintenance and fixers); ruled text in an over-length body moves verbatim into the pair document with the body summary citing it — only rewording blocks (Template B); every prompt the design depends on lands verbatim in § Prompts, which passes its own md-review before the design's status closes — four prompts still owed there.*
-6. Close-out — where this document lands, the build GHI, and the riders (ghi-write walk resume, correctness-rule review, #26 lifecycle revision)
-   *open 2026-08-11 — close-out sequence approved (user): draft the four owed § Prompts entries one at a time → md-review the section → landing decision (recommendation on the table: the design becomes the build GHI's pair document) → file the build GHI → queue the riders. Prompts all final; § Prompts md-review run and dispositioned 2026-08-11 ([md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md](../../md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md)) — its rider of deep whole-doc findings awaits routing at this item's close.*
-
-How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](ghi-gatekeeper-plan-draft.md).
+How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](../drafts/ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](../drafts/ghi-gatekeeper-plan-draft.md).
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
 
 ## What ghi-info is
 
-The first build of the domain-knowledge-agent class defined in [26-dynamic-agent-team-model.md](../issues/26-dynamic-agent-team-model.md) ("the GHIs" is that class's first listed domain). Three duties:
+The first build of the domain-knowledge-agent class defined in [26-dynamic-agent-team-model.md](26-dynamic-agent-team-model.md) ("the GHIs" is that class's first listed domain). Three duties:
 
 1. **Answer asks.** A GHI author, before filing or editing, asks what it should read. The answer is a bare list — "read #13, #24, #31."
 2. **Maintain.** Cross-links between issues, and link integrity across the issue–MD boundary in both directions: every GHI→MD reference resolves on main; every pair MD backlinks its correct GHI(s). Link repairs are `ghi-info`'s own writes — its only write class. Detected problems beyond links — a pair MD stale relative to its issue, a body over the length limit — spawn fixers (§ Maintenance and fixers).
@@ -86,17 +70,17 @@ Accepted residual: an issue can change between verdict and write.
 
 **Close** is a state change with a reason (completed / not planned); plain `close` and `reopen` pass the hook untouched and the delta feed carries them. **Non-body edits** (labels, title-only, milestones) pass through — accepted residual: a rename could disguise a duplicate. **Delete** is denied — close instead; the record is append-forward.
 
-**Soft block, reconsider-to-pass.** A refusal's one job is a deliberate second look (user-ruled 2026-08-11, settling a soft/hard back-and-forth: GHI-filing mistakes are not worth the user's attention — a smart agent told to reconsider, and reconsidering, is good enough). Every deny path ends with the same closing line (verbatim in § Prompts): reconsider once against the refusal's stated reason; still convinced, write the reasoning into `.ghi-issue-write-reconsidered` at the repository root and resubmit — the marker passes exactly one write and is consumed by it (the `.claude/hooks/instruction-file-guard.py` mechanics, live on main, carrying the agent's reconsidered reasoning rather than user approval; the reasoning stays visible in the transcript). Infrastructure failure never produces a refusal: adjudication fails open. **Accepted residual (user-ruled 2026-08-07, reaffirmed 2026-08-09; unchanged by the 2026-08-11 revision):** the enumeration holes stay open — `gh api`, MCP tools, creative quoting — under **the cooperative posture**: enforcement targets mistakes, not evasion (the same stance as [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md) § The credential and enforcement). Reviewers re-flag the open perimeter only with evidence matching its reopening trigger: the delta showing deliberate evasion, not breakage. Bypassed writes still appear in the delta, where the sweep finds their symptoms.
+**Soft block, reconsider-to-pass.** A refusal's one job is a deliberate second look (user-ruled 2026-08-11: GHI-filing mistakes are not worth the user's attention — a smart agent told to reconsider, and reconsidering, is good enough). Every deny path ends with the same closing line (verbatim in § Prompts): reconsider once against the refusal's stated reason; still convinced, write the reasoning into `.ghi-issue-write-reconsidered` at the repository root and resubmit — the marker passes exactly one write and is consumed by it (the `.claude/hooks/instruction-file-guard.py` mechanics, live on main, carrying the agent's reconsidered reasoning rather than user approval; the reasoning stays visible in the transcript). Infrastructure failure never produces a refusal: adjudication fails open. **Accepted residual (user-ruled 2026-08-07, reaffirmed 2026-08-09):** the enumeration holes stay open — `gh api`, MCP tools, creative quoting — under **the cooperative posture**: enforcement targets mistakes, not evasion (the same stance as [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md) § The credential and enforcement). Reviewers re-flag the open perimeter only with evidence matching its reopening trigger: the delta showing deliberate evasion, not breakage. Bypassed writes still appear in the delta, where the sweep finds their symptoms.
 
 **Codex** is in scope as the planned companion runtime; until its hook equivalence is verified at build, Codex-side writes ride the accepted-holes class with the skill as their up-front layer.
 
 ## Maintenance and fixers
 
-The sweep is script work riding the two feeds: the length check over changed bodies, the `Superseded-by:` marker scan, and the link-integrity scan in both directions (the MD side read from the repo checkout, not the mirror). Findings spawn **one-shot focused fixer agents** (the class in [26-dynamic-agent-team-model.md](../issues/26-dynamic-agent-team-model.md); launched per [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41)) with tight briefs — one defect each, verbatim in § Prompts. Fixers write through the normal path; their reading list is pre-fetched by the sweep, so the fixer invokes nothing to discover its inputs. **Fixer repairs land on main immediately (user-ruled 2026-08-11, an explicit exception to the review-lane convention):** the fixer commits and pushes its document changes itself — on a push race, re-pull and retry once, else blocked — the same immediacy the issue half of every repair already has through gh. The guardrails are the brief's blocked conditions, and the record is append-forward and revertable; the same ruling covers `ghi-info`'s document-side link repairs. `ghi-info` repairs links only, never substance. Pair staleness is swept in one direction only — issue moved, pair MD not. The reverse (MD landed on main, issue silent since) is deliberately unswept (user-ruled 2026-08-11): MD-ahead is the pair sequence's normal intermediate state, and the body is a summary many MD edits never touch. **Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). The sweep files a blocked fix's escalation from the fixer's `blocked:` reply — one `draft`-labeled issue naming what blocked it. Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
+The sweep is script work riding the two feeds: the length check over changed bodies, the `Superseded-by:` marker scan, and the link-integrity scan in both directions (the MD side read from the repo checkout, not the mirror). Findings spawn **one-shot focused fixer agents** (the class in [26-dynamic-agent-team-model.md](26-dynamic-agent-team-model.md); launched per [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41)) with tight briefs — one defect each, verbatim in § Prompts. Fixers write through the normal path; their reading list is pre-fetched by the sweep, so the fixer invokes nothing to discover its inputs. **Fixer repairs land on main immediately (user-ruled 2026-08-11, an explicit exception to the review-lane convention):** the fixer commits and pushes its document changes itself — on a push race, re-pull and retry once, else blocked — the same immediacy the issue half of every repair already has through gh. The guardrails are the brief's blocked conditions, and the record is append-forward and revertable; the same ruling covers `ghi-info`'s document-side link repairs. `ghi-info` repairs links only, never substance. Pair staleness is swept in one direction only — issue moved, pair MD not. The reverse (MD landed on main, issue silent since) is deliberately unswept (user-ruled 2026-08-11): MD-ahead is the pair sequence's normal intermediate state, and the body is a summary many MD edits never touch. **Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). The sweep files a blocked fix's escalation from the fixer's `blocked:` reply — one `draft`-labeled issue naming what blocked it. Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
 
 ## The three-layer stack
 
-1. **`ghi-write`** (skill; in build — walk in progress at [ghi-write-skill-draft.md](ghi-write-skill-draft.md)): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-info` first, route by state, edit rather than duplicate, write lean, and the pair sequence: write the MD, land it, then cite it.
+1. **`ghi-write`** (skill; in build — walk in progress at [ghi-write-skill-draft.md](../drafts/ghi-write-skill-draft.md)): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-info` first, route by state, edit rather than duplicate, write lean, and the pair sequence: write the MD, land it, then cite it.
 2. **Hook + tool** — the correctness backstop when the skill does not fire: on the covered write path with `ghi-info` answering, a missed trigger costs efficiency — a late merge catch, one comment retry. The fail-open window and the enumeration holes are the accepted residuals, visible in the delta.
 3. **CLAUDE.md** — ambient documentation only ([nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) is this project's record of a written convention losing to trained habit).
 
@@ -117,9 +101,8 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: every prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt (four request forms), the resume ask, the adjudication request, the link-repair request (user-ruled 2026-08-11: worded here rather than left to build), the sweep ask, and the write tool replies. The section's required md-review ran 2026-08-11; dispositions in [md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md](../../md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md).
 
-### Fixer brief — pair document behind its issue (approved 2026-08-11)
+### Fixer brief — pair document behind its issue
 
 The sweep fills every slot, including the reading list, which it gets by running `ghi-info-ask.py` itself before spawning — the fixer invokes nothing.
 
@@ -146,7 +129,7 @@ The sweep fills every slot, including the reading list, which it gets by running
 > - done: no change needed — \<why the issue's change required no document update\>
 > - blocked: \<what stopped you, quoting the text at issue\>
 
-### Fixer brief — issue body over the length limit (approved 2026-08-11)
+### Fixer brief — issue body over the length limit
 
 Same slot-filling contract as above. The ruled-text handling is the verbatim-move exception (user-ruled 2026-08-11): ruled text may change address, never wording.
 
@@ -174,11 +157,11 @@ Same slot-filling contract as above. The ruled-text handling is the verbatim-mov
 > - done: \<what changed — files, issue numbers\>
 > - blocked: \<what stopped you, quoting the text at issue\>
 
-### Drift notice (ghi-info-ask post-check → ghi-info; final, worded 2026-08-09 in § The ask path)
+### Drift notice (ghi-info-ask post-check → ghi-info)
 
 > #\<n\> closed on \<date\> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list.
 
-### Cold-start prompt (ghi-info session birth; approved 2026-08-11)
+### Cold-start prompt (ghi-info session birth)
 
 Delivered as the first prompt of a fresh session — cold start fires when no stored session exists or a recycle trigger has fired (ghi-info-ask step 2). The ask itself follows, worded per the resume-ask prompt. `<mirror-path>` is wrapper-filled.
 
@@ -204,7 +187,7 @@ Delivered as the first prompt of a fresh session — cold start fires when no st
 > - Whether an old ruling still binds is never yours to judge. Reply: escalate: \<one sentence naming the ruling and the doubt\>.
 > - These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets out-of-scope even when it touches a ruling.
 
-### Resume ask prompt (ghi-info-ask step 3; approved 2026-08-11)
+### Resume ask prompt (ghi-info-ask step 3)
 
 Sent on every reading-list request. On a fresh session it follows the cold-start prompt; on a resumed session it stands alone, so it carries the re-read preamble — the wrapper notices drift for the agent. Angle-bracket lines are filled or dropped whole by the script as marked; the asker's question passes through verbatim, never rewritten. The request names its form in the cold-start prompt's own words so the two prompts interlock.
 
@@ -214,7 +197,7 @@ Sent on every reading-list request. On a fresh session it follows the cold-start
 >
 > \<only with --include-closed:\> Closed history is wanted for this request: grep issues-closed.md as well; closed pointers are expected, each tagged with its close date.
 
-### Adjudication request (write tool step 2 → ghi-info; approved 2026-08-11)
+### Adjudication request (write tool step 2 → ghi-info)
 
 Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft title and body pass through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's. That includes any `escalate:` or `out-of-scope` reply — accepted residual: adjudication never escalates; ruling questions surface on the ask path.
 
@@ -232,7 +215,7 @@ Sent by the write tool for every body-bearing create or edit, before the write. 
 >
 > Reply with exactly one line: `verdict: too-similar #n` or `verdict: related #n,#m` or `verdict: unrelated`.
 
-### Link-repair request (sweep → ghi-info; approved 2026-08-11)
+### Link-repair request (sweep → ghi-info)
 
 Sent by the sweep for each link-integrity finding — `ghi-info`'s one write class. Rides the same wrapper as the other requests, hence the same changed-entries preamble. The done/blocked reply contract mirrors the fixer briefs'.
 
@@ -242,13 +225,13 @@ Sent by the sweep for each link-integrity finding — `ghi-info`'s one write cla
 >
 > Repair exactly this link and nothing else. Issue edits go through gh as normal; document changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; if it still fails, report blocked). Reply with exactly one of: done: \<the repair\> — done: no change needed — \<why, e.g. the link already resolves\> — or blocked: \<what stopped you\>.
 
-### Sweep ask (sweep → ghi-info-ask, before spawning a fixer; approved 2026-08-11)
+### Sweep ask (sweep → ghi-info-ask, before spawning a fixer)
 
 Run by the sweep through scripts/ghi-info-ask.py, like any ask; the answer becomes the brief's related-issues list. A failed ask never blocks a repair: the sweep spawns the fixer with the related-issues clause dropped from the brief. (A dead box credential stalls far more than this ask; that fleet-wide case is the sweep's credential check, § Verify at build.)
 
 > A fixer is about to \<the job in one clause, e.g.: update the pair document docs/issues/31-foo.md to match issue #31's current state — or: shorten issue #17's body, merging the substance into its pair document\>. What should it read first?
 
-### Write tool replies (refusals and appended instructions; approved 2026-08-11)
+### Write tool replies (refusals and appended instructions)
 
 Every deny path shares one shape — refused, the reason, the way(s) forward — and ends with the reconsider-to-pass line below (user-ruled 2026-08-11): the block's job is one deliberate second look, not user attention. The last two are not refusals: they are lines the tool appends after a successful write, following `gh`'s own output, which the tool relays verbatim.
 
@@ -309,4 +292,4 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 6. Both box credentials survive unattended operation (the box's auth has expired before) — the sweep checks validity and flags expiry before it bites.
 7. Comment-fetch cost at real volume (measured once: 0.42 s for one issue with comments).
 
-**Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: `BODY_WORD_LIMIT` 500 (user-ruled 2026-08-11, raised from the 400 in the approved constants batch — neither value derived, both starting guesses; in the write tool; the sweep imports it); closes-since-birth recycle threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
+**Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: `BODY_WORD_LIMIT` 500 (in the write tool; the sweep imports it); closes-since-birth recycle threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.

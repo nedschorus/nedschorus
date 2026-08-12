@@ -5,7 +5,7 @@ design-as-of: 2026-08-07
 
 # ghi-knowledge-agent — plan for the user's walk
 
-**Integrated 2026-08-07:** every ruling and post-walk direction in this file is folded into [ghi-info-agent-design.md](ghi-info-agent-design.md), the document of record going forward; this file remains as the walk's decision trail.
+**Integrated 2026-08-07:** every ruling and post-walk direction in this file is folded into [46-ghi-info-agent-design.md](../issues/46-ghi-info-agent-design.md), the document of record going forward; this file remains as the walk's decision trail.
 
 *(The name is provisional and is walk item 2. The user called `ghi-knowledge-agent` "pretty good", 2026-08-07 — not yet a ruling.)*
 

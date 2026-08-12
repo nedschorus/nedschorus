@@ -1,4 +1,11 @@
-# Dispositions — md-review of docs/drafts/ghi-info-agent-design.md, 2026-08-11
+# Dispositions — md-review of ghi-info-agent-design.md, 2026-08-11
+
+(The reviewed document landed after this review as docs/issues/46-ghi-info-agent-design.md,
+the pair document of the build GHI nedschorus#46; per-report target paths reflect its
+pre-landing home in docs/drafts/. Integration-walk remainder at landing time: queue the
+riders — resume the ghi-write walk at docs/drafts/ghi-write-skill-draft.md item 2, the
+correctness-rule review, the #26 lifecycle revision — the walk's scaffolding block was
+stripped at landing per the user's dead-weight ruling.)
 
 Pass scoped by user ruling to the new § Prompts section (the section's own required
 md-review before the design's status closes); the grid reviews whole documents, so
