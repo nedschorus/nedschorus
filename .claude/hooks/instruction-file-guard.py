@@ -19,6 +19,11 @@ the marker and the transcript, not tamper-proofing.
 .claude/ is in the protected set as self-protection: this hook's own wiring
 lives in .claude/settings.json, and an unguarded settings file is a guard an
 agent can delete.
+
+The harness's auto-memory under ~/.claude/projects/ is deliberately inside the
+protected set (user-ruled 2026-08-11): every memory entry is user-reviewed.
+Other harness state (transcripts, handoffs) carries no review requirement — a
+carve-out is added when a real harness write trips this guard, not in advance.
 """
 
 import json
