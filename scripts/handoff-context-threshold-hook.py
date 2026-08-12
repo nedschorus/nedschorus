@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """Tell a session to write its handoff once context runs low.
 
-The handoff system's auto-trigger, half two (specification:
+The handoff system's auto-trigger (specification:
 docs/cross-project/fast-handoff-design.md). Wire it as a Stop hook in
 settings.json; it runs at every turn boundary.
 
 Stop-hook stdin does not carry the context window, so the used share is
 computed from the session's own transcript: every assistant record carries
 the model and the token usage of the request that produced it. That works
-for headless sessions too, which never run a status line. The relay file
-written by handoff-statusline-context-relay.py is the fallback for a session
-whose first turn has not completed yet.
+in every session type, headless included — a statusline-relay fallback was
+cut 2026-08-12 because its only remaining trigger was a session whose first
+turn had not completed, a moment the threshold cannot be crossed.
 
 When the used share reaches the threshold, the hook emits a system message
 telling the agent to run the handoff skill; the supervisor takes over from
 there. Below the threshold it stays silent.
 
-It fires ONCE per session: after firing it records the fact beside the relay
-file, so the reminder does not repeat at every subsequent turn while the
-agent is composing the handoff.
+It fires ONCE per session: after firing it records the fact in the handoff
+directory, so the reminder does not repeat at every subsequent turn while
+the agent is composing the handoff.
 
 Threshold: --threshold-used-percentage, default 50.
 """
@@ -29,7 +29,7 @@ import json
 import sys
 from pathlib import Path
 
-RELAY_DIRECTORY = Path.home() / ".claude" / "handoffs"
+HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
 # Context window per model, so a percentage can be computed from the transcript
 # alone — the status line is an interactive-only surface, and headless sessions
@@ -66,32 +66,12 @@ _supervisor_spec.loader.exec_module(supervisor)
 HANDOFF_INSTRUCTION = "Run the handoff skill now."
 
 
-def read_json_file(path: Path):
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-        return None
-
-
 def hook_payload_from_stdin() -> dict:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
-
-
-def context_used_percentage(session_id: str):
-    """Return the session's used-context share, or None if unreported."""
-    relay = read_json_file(RELAY_DIRECTORY / f"{session_id}-context.json")
-    if not relay:
-        return None
-    remaining = relay.get("remaining_percentage")
-    if not isinstance(remaining, (int, float)):
-        return None
-    return 100.0 - remaining
 
 
 def context_window_for(model: str) -> int:
@@ -145,8 +125,7 @@ def newest_assistant_message(path: Path):
 def context_used_percentage_from_transcript(transcript_path: str):
     """Return the session's used-context share, read from its transcript.
 
-    The path for headless sessions, which never run a status line and so never
-    produce a relay file. Every assistant record carries both the model and the
+    Every assistant record carries both the model and the
     usage of the request that produced it; the newest record's input plus
     cached tokens is what the model last had in front of it, and the model id
     gives the window to divide by.
@@ -186,21 +165,19 @@ def main(argv=None) -> int:
     if not session_id:
         return 0  # no session to reason about; stay silent
 
-    # The transcript is the primary source: every session has one, headless
-    # included. The relay file is the fallback for the case the transcript
-    # cannot answer — a session whose first turn has not completed yet.
+    # Every session has a transcript, headless included; before the first
+    # assistant turn completes there is nothing to measure and nothing near
+    # the threshold either, so None simply stays silent.
     used = context_used_percentage_from_transcript(payload.get("transcript_path", ""))
-    if used is None:
-        used = context_used_percentage(session_id)
     if used is None or used < arguments.threshold_used_percentage:
         return 0  # nothing measurable yet, or still plenty of room
 
     if arguments.agent and not supervisor.supervisor_liveness(
-        RELAY_DIRECTORY / f"{arguments.agent}-supervisor-state.json"
+        HANDOFF_DIRECTORY / f"{arguments.agent}-supervisor-state.json"
     )[0]:
         return 0  # nobody is watching; asking for a handoff would hang the session
 
-    fired_marker = RELAY_DIRECTORY / f"{session_id}-handoff-asked"
+    fired_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-asked"
     if fired_marker.exists():
         return 0  # already asked this session; do not nag every turn
 
