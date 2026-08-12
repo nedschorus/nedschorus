@@ -66,7 +66,7 @@ The tool's sequence per write:
 
 Accepted residual: an issue can change between verdict and write.
 
-**Comments:** `gh issue comment` — and `close --comment` — are denied with a teaching reply: a comment cannot be mechanically rewritten into the body edit the revision convention requires ([nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Project organization) — where the content lands, and what it supersedes, only the author knows. The reply teaches both paths: integrate into the body by edit, or resubmit through the tool's comment verb naming an event kind from the fixed catalog (instance outcome, completion, ruling challenge; growth only by explicit ruling; whether "completion" collapses into close-with-reason is deferred to the `ghi-write` walk). One lost turn per attempt, accepted.
+**Comments:** `gh issue comment` — and `close --comment` — are denied with a teaching reply: a comment cannot be mechanically rewritten into the body edit the revision convention requires ([nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Project organization) — where the content lands, and what it supersedes, only the author knows. The reply teaches both paths: integrate into the body by edit, or resubmit through the tool's comment verb naming an event kind from the fixed catalog (instance outcome, ruling challenge; growth only by explicit ruling; "completion" is not a comment event — it collapsed into close-with-reason plus the body edit recording the outcome, user-ruled 2026-08-12). One lost turn per attempt, accepted.
 
 **Close** is a state change with a reason (completed / not planned); plain `close` and `reopen` pass the hook untouched and the delta feed carries them. **Non-body edits** (labels, title-only, milestones) pass through — accepted residual: a rename could disguise a duplicate. **Delete** is denied — close instead; the record is append-forward.
 
@@ -251,7 +251,7 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 
 **Comment denial** (`gh issue comment`, `close --comment`):
 
-> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, completion, ruling challenge — resubmit through the tool's comment verb naming that event kind.
+> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, ruling challenge — resubmit through the tool's comment verb naming that event kind. A completion is neither: record the outcome in the body by edit, then close the issue with its reason.
 >
 > If you believe this refusal is wrong, reconsider once against its stated reason. Still convinced, write your reasoning into .ghi-issue-write-reconsidered at the repository root and resubmit — the marker passes exactly one write and is consumed by it.
 
