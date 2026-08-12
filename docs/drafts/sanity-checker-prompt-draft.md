@@ -14,12 +14,19 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 4. The goal paragraph: counter added complexity; checks-checking-checks — processed 2026-08-11 → accepted as is (guarantee-weakening-proposal sentence stays dropped; refute-your-own-candidates covers it)
 5. Priority order when simplifications conflict — processed 2026-08-11 → accepted (trade-on-its-face closing stays dropped; the LOST field carries the per-finding obligation)
 6. The highest-value form: prompts to code — processed 2026-08-11 → accepted
-7. The method: six questions and two hunts
-8. Cut classes with a validated track record
-9. Discipline: roadmap, forcing functions, operator cost
-10. Discipline: theoretical problems, unsolvable problems, ruling collisions
-11. Report format
-12. Two calibration examples
+7. The method: six questions and two hunts — re-planned 2026-08-11 (user direction): the earned-finding guard added to the method; each of the six questions walked individually for exactly how it makes the result simpler or saner; items 7–13 below replace this item
+7. Question 1: Delete
+8. Question 2: Encode
+9. Question 3: Constrain
+10. Question 4: Externalize
+11. Question 5: Verify
+12. Question 6: Delegate the residue
+13. The two hunts and the earned-finding guard
+14. Cut classes with a validated track record
+15. Discipline: roadmap, forcing functions, operator cost
+16. Discipline: theoretical problems, unsolvable problems, ruling collisions
+17. Report format
+18. Two calibration examples
 
 ---
 
@@ -67,6 +74,8 @@ For every component, step, state, or dependency — and for every model-mediated
 4. **Externalize** — can state, control flow, policy, or retry logic move out of the prompt into mechanism?
 5. **Verify** — can code mechanically check the result even where a model produces it?
 6. **Delegate the residue** — what remains is the genuinely interpretive part; leave it with the model, explicitly.
+
+A finding must be earned: the mechanism you propose is itself new complexity, and it must pay for itself by preventing a real failure or removing a recurring cost. A step that works reliably today, costs little, and fails loudly is not a finding — the ladder generates candidates; the priority order decides which are worth building.
 
 Two hunts deserve their own sections in your report, because they are where the highest-value findings hide:
 
