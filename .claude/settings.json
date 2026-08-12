@@ -1,6 +1,9 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash(gh pr merge *)"
+    ]
   },
   "hooks": {
     "Stop": [
