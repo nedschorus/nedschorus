@@ -1,6 +1,6 @@
 ---
-status: integrated design; decisions ruled 2026-08-07 in the plan walk, md-review corrections ruled 2026-08-09; awaiting the user's integration walk
-design-as-of: 2026-08-09
+status: integrated design; decisions ruled 2026-08-07 in the plan walk, md-review corrections ruled 2026-08-09; integration walk in progress — items 1–5 processed, item 6 (close-out) open; § Prompts md-review dispositioned 2026-08-11
+design-as-of: 2026-08-11
 ---
 
 # ghi-info — the GHI knowledge agent (design)
@@ -18,11 +18,11 @@ design-as-of: 2026-08-09
 5. Maintenance and fixers — the sweep, spawned focused fixers, escalation, the model-per-role open question
    *processed 2026-08-11 → APPROVED (user), via a fixer-brief drafting round and a zero-context teaching walk. Rulings: the single fixer brief split into two templates, one per defect kind — the sweep picks the template, each brief covers exactly one job; the sweep pre-runs `scripts/ghi-info-ask.py` and embeds the reading list in the brief — the fixer invokes nothing; "do only the job stated above" replaced "smallest change"; every prompt opens for a zero-context reader; `BODY_WORD_LIMIT` starting value 500 (constants line updated); staleness swept one direction only, issue-ahead, with the lapsed-cite gap recorded as accepted residual (§ Maintenance and fixers); ruled text in an over-length body moves verbatim into the pair document with the body summary citing it — only rewording blocks (Template B); every prompt the design depends on lands verbatim in § Prompts, which passes its own md-review before the design's status closes — four prompts still owed there.*
 6. Close-out — where this document lands, the build GHI, and the riders (ghi-write walk resume, correctness-rule review, #26 lifecycle revision)
-   *open 2026-08-11 — close-out sequence approved (user): draft the four owed § Prompts entries one at a time → md-review the section → landing decision (recommendation on the table: the design becomes the build GHI's pair document) → file the build GHI → queue the riders. Prompt drafting in progress; § Prompts' owed/final labels are the per-prompt marks.*
+   *open 2026-08-11 — close-out sequence approved (user): draft the four owed § Prompts entries one at a time → md-review the section → landing decision (recommendation on the table: the design becomes the build GHI's pair document) → file the build GHI → queue the riders. Prompts all final; § Prompts md-review run and dispositioned 2026-08-11 ([md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md](../../md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md)) — its rider of deep whole-doc findings awaits routing at this item's close.*
 
 How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](ghi-gatekeeper-plan-draft.md).
 
-The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured today: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
+The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
 
 ## What ghi-info is
 
@@ -30,7 +30,7 @@ The first build of the domain-knowledge-agent class defined in [26-dynamic-agent
 
 1. **Answer asks.** A GHI author, before filing or editing, asks what it should read. The answer is a bare list — "read #13, #24, #31."
 2. **Maintain.** Cross-links between issues, and link integrity across the issue–MD boundary in both directions: every GHI→MD reference resolves on main; every pair MD backlinks its correct GHI(s). Link repairs are `ghi-info`'s own writes — its only write class. Detected problems beyond links — a pair MD stale relative to its issue, a body over the length limit — spawn fixers (§ Maintenance and fixers).
-3. **Adjudicate writes.** The write tool consults `ghi-info` with the actual draft body — plus, for edits, the target issue number, which is excluded from the comparison. The reply is one line: `verdict: too-similar #n` / `related #n,#m` / `unrelated`. A malformed reply is treated as unavailable (fail-open). From the verdict the tool composes the author-facing reply: **too-similar** (duplicate, overlapping, conflicting) — the write is refused with a merge instruction: read #n, then merge this content into it by editing it; **related but compatible** — the write proceeds, and the reply names the GHIs to become familiar with; **unrelated** — plain success.
+3. **Adjudicate writes.** The write tool consults `ghi-info` with the actual draft title and body — plus, for edits, the target issue number, which is excluded from the comparison. The reply is one line: `verdict: too-similar #n` / `related #n,#m` / `unrelated`. A malformed reply is treated as unavailable (fail-open). From the verdict the tool composes the author-facing reply: **too-similar** (duplicate, overlapping, conflicting) — the write is refused with a merge instruction: read #n, then merge this content into it by editing it; **related but compatible** — the write proceeds, and the reply names the GHIs to become familiar with; **unrelated** — plain success.
 
 Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgment; terms defined in [nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Project organization); authoring issue or MD substance; anything beyond the issue corpus — asked about the wiki or the code, it returns a fixed `out-of-scope` reply. Whether an old ruling still binds is never `ghi-info`'s to decide. Its reply names the ruling and the doubt (`escalate:`), and the question travels up the chain unswallowed: the caller resolves it if it can, and otherwise it lands as one `draft`-labeled issue — the same escalation surface as a blocked fix — for whoever can attend to it, agent or human.
 
@@ -56,7 +56,7 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 ## The ask path (ghi-info-ask)
 
-`scripts/ghi-info-ask.py`, run by any agent — and by `ghi-write` step 1. The write tool's adjudication consult rides this same wrapper (user-ruled 2026-08-11): one stored session, one refresh-and-resume machinery, two request forms. In order:
+`scripts/ghi-info-ask.py`, run by any agent — and by `ghi-write` step 1. The write tool's adjudication consult rides this same wrapper (user-ruled 2026-08-11): one stored session, one refresh-and-resume machinery, every request form riding it (reading-list asks, adjudication consults, link-repair requests). In order:
 
 1. Run the mirror refresh (delta).
 2. Resume the stored session; cold-start when none exists or a recycle trigger has fired. If another ask holds the session, cold-start a throwaway session instead — nothing waits, nothing shares a transcript.
@@ -91,7 +91,7 @@ Accepted residual: an issue can change between verdict and write.
 
 ## Maintenance and fixers
 
-The sweep is script work riding the two feeds: the length check over changed bodies, the `Superseded-by:` marker scan, and the link-integrity scan in both directions (the MD side read from the repo checkout, not the mirror). Findings spawn **one-shot focused fixer agents** (the class in [26-dynamic-agent-team-model.md](../issues/26-dynamic-agent-team-model.md); launched per [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41)) with tight briefs — "issue #31 moved on <date>; its pair MD has not: update the MD." Fixers write through the normal path and consult `ghi-info` like any GHI author. `ghi-info` repairs links only, never substance. Pair staleness is swept in one direction only — issue moved, pair MD not. The reverse (MD landed on main, issue silent since) is deliberately unswept (user-ruled 2026-08-11): MD-ahead is the pair sequence's normal intermediate state, and the body is a summary many MD edits never touch. **Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). A blocked fix escalates as one `draft`-labeled issue naming what blocked it. Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
+The sweep is script work riding the two feeds: the length check over changed bodies, the `Superseded-by:` marker scan, and the link-integrity scan in both directions (the MD side read from the repo checkout, not the mirror). Findings spawn **one-shot focused fixer agents** (the class in [26-dynamic-agent-team-model.md](../issues/26-dynamic-agent-team-model.md); launched per [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41)) with tight briefs — one defect each, verbatim in § Prompts. Fixers write through the normal path; their reading list is pre-fetched by the sweep, so the fixer invokes nothing to discover its inputs. **Fixer repairs land on main immediately (user-ruled 2026-08-11, an explicit exception to the review-lane convention):** the fixer commits and pushes its document changes itself — on a push race, re-pull and retry once, else blocked — the same immediacy the issue half of every repair already has through gh. The guardrails are the brief's blocked conditions, and the record is append-forward and revertable; the same ruling covers `ghi-info`'s document-side link repairs. `ghi-info` repairs links only, never substance. Pair staleness is swept in one direction only — issue moved, pair MD not. The reverse (MD landed on main, issue silent since) is deliberately unswept (user-ruled 2026-08-11): MD-ahead is the pair sequence's normal intermediate state, and the body is a summary many MD edits never touch. **Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). The sweep files a blocked fix's escalation from the fixer's `blocked:` reply — one `draft`-labeled issue naming what blocked it. Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
 
 ## The three-layer stack
 
@@ -116,7 +116,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: every prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt (four request forms), the resume ask, the adjudication request, the link-repair request (user-ruled 2026-08-11: worded here rather than left to build), and the write tool replies. The section awaits its md-review pass, required before the design's status closes.
+**Status: every prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt (four request forms), the resume ask, the adjudication request, the link-repair request (user-ruled 2026-08-11: worded here rather than left to build), and the write tool replies. The section's required md-review ran 2026-08-11; dispositions in [md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md](../../md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md).
 
 ### Fixer brief — pair document behind its issue (approved 2026-08-11)
 
@@ -130,7 +130,7 @@ The sweep fills every slot, including the reading list, which it gets by running
 >
 > Rules:
 >
-> - You change only the pair document, committed on your branch with a message stating what and why. You do not write to any issue.
+> - You change only the pair document, committed with a message stating what and why and landed on main immediately: push; on a push race, re-pull and retry once — if it still fails, report blocked. You do not write to any issue.
 > - Do only the job stated above.
 >
 > Stop and report blocked instead of editing if:
@@ -142,6 +142,7 @@ The sweep fills every slot, including the reading list, which it gets by running
 > Your final message is exactly one of:
 >
 > - done: \<what changed — files\>
+> - done: no change needed — \<why the issue's change required no document update\>
 > - blocked: \<what stopped you, quoting the text at issue\>
 
 ### Fixer brief — issue body over the length limit (approved 2026-08-11)
@@ -156,7 +157,7 @@ Same slot-filling contract as above. The ruled-text handling is the verbatim-mov
 >
 > Rules:
 >
-> - The body edit goes through gh as normal. Document changes are committed on your branch with a message stating what and why.
+> - Land the document before the body edit: document changes are committed with a message stating what and why and pushed to main immediately (on a push race, re-pull and retry once; if it still fails, report blocked). The body edit then goes through gh as normal — the write tool refuses citations that do not resolve on main, which is why the document lands first.
 > - Nothing removed from the body may be lost: it must land in the pair document.
 > - Text marked as ruled ("user-ruled", "boss-ruled", "Accepted residual", a dated ruling) moves only word-for-word: carry it into the pair document verbatim, and have the body's summary cite where it went.
 > - Do only the job stated above.
@@ -192,9 +193,9 @@ Delivered as the first prompt of a fresh session — cold start fires when no st
 > Requests arrive in four forms:
 >
 > 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
-> 2. **You are shown a draft issue body** and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. A reply in any other shape is thrown away.
+> 2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. A reply in any other shape is thrown away.
 > 3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any `Superseded-by:` link, and reply with a corrected reading list.
-> 4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are committed on your branch with a message stating what and why. Reply done: \<the repair\> or blocked: \<what stopped you\>.
+> 4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; else report blocked). Reply done: \<the repair\>, done: no change needed — \<why\>, or blocked: \<what stopped you\>.
 >
 > Boundaries:
 >
@@ -214,13 +215,15 @@ Sent on every reading-list request. On a fresh session it follows the cold-start
 
 ### Adjudication request (write tool step 2 → ghi-info; approved 2026-08-11)
 
-Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft body passes through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's. That includes any `escalate:` or `out-of-scope` reply — accepted residual: adjudication never escalates; ruling questions surface on the ask path.
+Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft title and body pass through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's. That includes any `escalate:` or `out-of-scope` reply — accepted residual: adjudication never escalates; ruling questions surface on the ask path.
 
 > \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering.
 >
-> You are shown a draft issue body and asked whether the corpus already covers it.
+> You are shown a draft issue — title and body — and asked whether the corpus already covers it.
 >
 > \<only for edits:\> This draft edits issue #\<n\>: leave #\<n\> out of the comparison.
+>
+> Draft title: \<the draft title, verbatim\>
 >
 > Draft body, verbatim:
 >
@@ -236,7 +239,7 @@ Sent by the sweep for each link-integrity finding — `ghi-info`'s one write cla
 >
 > You are asked to repair a link. \<one sentence from the sweep stating the defect, e.g.: Issue #31's body cites docs/issues/31-foo.md, which does not resolve on main. — or: docs/issues/31-foo.md backlinks #29, but its issue is #31.\>
 >
-> Repair exactly this link and nothing else. Issue edits go through gh as normal; document changes are committed on your branch with a message stating what and why. Reply with exactly one of: done: \<the repair\> — or — blocked: \<what stopped you\>.
+> Repair exactly this link and nothing else. Issue edits go through gh as normal; document changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; if it still fails, report blocked). Reply with exactly one of: done: \<the repair\> — done: no change needed — \<why, e.g. the link already resolves\> — or blocked: \<what stopped you\>.
 
 ### Write tool replies (refusals and appended instructions; approved 2026-08-11)
 
@@ -244,19 +247,21 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 
 **Reference-check refusal** (a cited in-repo path does not resolve on main):
 
-> Refused: the body cites \<path\>, which does not resolve on main. Two ways forward: land the MD first, then rerun this write; or file now without the reference and add it by edit once the MD lands.
+> Refused: the body cites \<path\>, which does not resolve on main. Two ways forward: land the MD first, then rerun this write; or write now without the reference and add it by edit once the MD lands.
 >
 > \<the audited one-use override line, per the instruction-file-guard pattern\>
 
 **Too-similar refusal** (adjudication verdict):
 
-> Refused: #\<n\> already covers this ground. Read #\<n\>, then merge this content into it by editing it — do not file a new issue.
+> Refused: #\<n\> already covers this ground. Read #\<n\>, then merge this content into it by editing it — not as a new issue or a parallel edit.
+>
+> \<only for edits:\> #\<x\>, the issue you were editing, keeps its current body; if #\<n\> now carries its ground, mark it Superseded-by: #\<n\> and close it with a reason.
 >
 > \<the audited one-use override line, per the instruction-file-guard pattern\>
 
 **Comment denial** (`gh issue comment`, `close --comment`):
 
-> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, completion, ruling challenge — resubmit through the tool's comment verb naming that event kind.
+> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, completion, ruling challenge — resubmit through the tool's comment verb naming that event kind.
 >
 > \<the audited one-use override line, per the instruction-file-guard pattern\>
 
@@ -287,7 +292,7 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 
 ## Verify at build
 
-Each with its failure branch:
+Each with its failure branch (item 7 is a plain measurement and carries none):
 
 1. An issue's `updated` timestamp moves on close, reopen, and label changes as on body edits and comments (documented; untested here) — else the recycle-time rewrite bounds the lag.
 2. `updatedInput` combined with `additionalContext` in one PreToolUse reply (undocumented) — else the tool's reply carries everything and context injection goes unused.

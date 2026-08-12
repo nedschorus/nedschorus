@@ -35,6 +35,14 @@ hunt reports; per-report texts are the sibling files in this directory.
 4. Fixer-brief executability: Template B's new-document citation trips the reference
    check; "your branch" landing path and re-sweep loop; Template A lacks a no-change
    outcome
+   *processed 2026-08-11 → APPROVED (user), direction set by the user: fixer repairs
+   land on main immediately — an explicit, dated exception to the review-lane
+   convention (the issue half of every repair was already live through gh; guardrails
+   are the brief's blocked conditions; record is append-forward and revertable). This
+   dissolves (a) and (b): Template B lands the document before the citing body edit;
+   branch language removed from all four prompts; push-race handling is re-pull,
+   retry once, else blocked. (c) landed: done: no change needed added to Template A
+   and the link-repair request.*
 5. The override line is a described, unwritten prompt inside four "final" replies; slot
    notation conflates script-filled slots with agent-reply shapes
 6. The sweep's own ask (the question it puts to ghi-info on a fixer's behalf) is an
@@ -42,12 +50,30 @@ hunt reports; per-report texts are the sibling files in this directory.
 7. Small correctness batch: comment-denial grammar break; "two request forms"
    undercount; blocked-fix escalation has no named actor; adjudication draft omits the
    title; verdict/related list arity; create-specific wording on edit refusals
+   *processed 2026-08-11 → applied under the item-1 scope ruling (user waived per-fix
+   asks): grammar fixed; "every request form riding it" replaces the undercount; the
+   sweep files blocked-fix escalations from the blocked: reply; adjudication carries
+   draft title and body (duty 3, cold-start form 2, request prompt); #n,#m defined as
+   one-or-more; too-similar refusal gains the edit case (edited issue keeps its body;
+   Superseded-by + close if the merge target carries its ground) and reference-check
+   refusal says "write now" not "file now". Also folded: the fixers-consult-ghi-info
+   sentence replaced by the pre-fetched-reading-list contract, and the inline
+   example brief now points at § Prompts instead of restating it.*
 8. Housekeeping batch: design-as-of stale; frontmatter status vs walk block; item-6
    "drafting in progress" stale; "measured today" undated; verify-at-build item 7
    lead-in contract
+   *processed 2026-08-11 → applied: design-as-of 2026-08-11; status says walk in
+   progress with item 6 open; item-6 note points at this dispositions file; the
+   corpus measurement dated 2026-08-07; the failure-branch lead-in names item 7 as a
+   plain measurement; § Prompts status now records the review as run with dispositions
+   linked.*
 9. Rider: deep whole-doc findings recorded for a follow-up (mirror two-file torn reads
    and refresh races; empty-mirror first run; session-claim atomicity; throwaway-session
    counter accounting; drift recheck riding the adjudication path; absence claims vs the
    one-line closed file; freshness "project events" undefined; Superseded-by marker
    location vs closed-file schema; sweep trigger/cadence unstated; ghi-write vs
    ghi-issue-write naming; ruling-conflict during adjudication)
+   *processed 2026-08-11 → recorded here as the rider; routing (Verify-at-build
+   entries vs the build GHI) is decided at integration-walk item 6 close-out. Note:
+   ruling-conflict during adjudication was resolved by item 3 (too-similar covers it);
+   it stays listed only as the trail to that ruling.*
