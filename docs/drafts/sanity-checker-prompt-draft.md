@@ -19,7 +19,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 8. Question 2: Encode — processed 2026-08-11 → revised ("rule"/"query" were ambiguous between code and prompt; list recast as unambiguously code-side artifacts, "easily understood" added)
 9. Question 3: Constrain — processed 2026-08-11 → revised (qualifier added: only when the bounded choice produces a simpler or saner result)
 10. Question 4: Externalize — processed 2026-08-11 → revised (prompted agent → mechanical solution named on both sides; gated on a more reliable, more maintainable, easier-to-test result)
-11. Question 5: Verify
+11. Question 5: Verify — processed 2026-08-11 → accepted as is
 12. Question 6: Delegate the residue
 13. The two hunts and the earned-finding guard
 14. Cut classes with a validated track record
