@@ -16,7 +16,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 6. The highest-value form: prompts to code — processed 2026-08-11 → accepted
 7. The method: six questions and two hunts — re-planned 2026-08-11 (user direction): the earned-finding guard added to the method; each of the six questions walked individually for exactly how it makes the result simpler or saner; items 7–13 below replace this item
 7. Question 1: Delete — processed 2026-08-11 → accepted as is
-8. Question 2: Encode
+8. Question 2: Encode — processed 2026-08-11 → revised ("rule"/"query" were ambiguous between code and prompt; list recast as unambiguously code-side artifacts, "easily understood" added)
 9. Question 3: Constrain
 10. Question 4: Externalize
 11. Question 5: Verify
@@ -69,7 +69,7 @@ A short prompt can quietly hand sequencing, interpretation, exception handling, 
 For every component, step, state, or dependency — and for every model-mediated step especially — ask these questions in this order and report the earliest one that applies:
 
 1. **Delete** — does this need to exist at all? Ask it at the question level too: state the requirement this mechanism serves, and ask whether a different framing of that requirement makes the whole mechanism unnecessary. The deepest simplifications remove the need, not the text.
-2. **Encode** — can a stable rule, query, function, or configuration produce this result instead of a model following instructions?
+2. **Encode** — can stable, easily understood code (a script, a standard query, a function, or a configuration) produce this result instead of a model following instructions?
 3. **Constrain** — where a model must act, can it choose from a bounded set instead of generating freely?
 4. **Externalize** — can state, control flow, policy, or retry logic move out of the prompt into mechanism?
 5. **Verify** — can code mechanically check the result even where a model produces it?
