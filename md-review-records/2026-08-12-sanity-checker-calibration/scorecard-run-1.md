@@ -48,6 +48,6 @@ Walk of these results and the proposed fixes, opened 2026-08-12; dispositions ma
 3. Result, bad half: the accepted cuts — 2/6 surfaced — processed 2026-08-12 → accepted
 4. The four misses share one shape: defended or repaired instead of cut
 5. Proposed fix 1: add the log-machinery lesson to the prompt — processed 2026-08-12 → accepted as revised in discussion: the lesson plus the not-ignoring clause (problem handled elsewhere, or the blind spot named in LOST) added to the no-consumer cut class
-6. Proposed fix 2: deletion-before-repair rule
+6. Proposed fix 2: deletion-before-repair rule — processed 2026-08-12 → accepted as revised in discussion: reworded in document terms (search the documents for what depends on the broken mechanism; the reviewer cannot observe runtime consequences), added to The rules
 7. The findings beyond the ground truth (informational)
 8. Next step: rerun, then the second document
