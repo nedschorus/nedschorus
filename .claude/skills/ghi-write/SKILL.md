@@ -1,13 +1,13 @@
 ---
 name: ghi-write
-description: Use BEFORE any write that touches a GitHub issue in this project — filing a new issue, editing an issue body, commenting on an issue, or promoting queue material into an issue. Creating or revising any project artifact that might belong in an issue also triggers it, because routing is part of the skill. Not for merely reading or citing an issue.
+description: Use BEFORE any write that touches a GitHub issue in this project — filing a new issue, editing an issue body, commenting on an issue, or promoting queue material into an issue. Deciding whether material should become an issue also triggers it, because routing that decision is part of the skill. Not for merely reading or citing an issue.
 ---
 
 # ghi-write
 
 ## When Used
 
-Before filing a new issue, editing an issue body, commenting on an issue, or writing project material whose home (issue, queue, or MD) is not yet decided.
+Before filing a new issue, editing an issue body, commenting on an issue, or deciding whether material belongs in an issue.
 
 ## What to do
 
