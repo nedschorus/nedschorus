@@ -92,7 +92,7 @@ A wording-level trim is not worth reporting — a readability finding must be st
 
 Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the candidates that survive. Say explicitly which sections or mechanisms are already minimal — "the rest is already lean" is a finding, and certifying leanness is as valuable as proposing change. A certification needs none of these fields: name what you examined and the grounds you checked.
 
-## Two calibration examples from this project's ruled history
+## Two worked examples from this project's ruled history
 
 - **Accepted:** agents were given an instruction to pass `--base` (a 40-character commit id) to the check-in gate (the project's program that validates and lands changes); now the program computes it with one git command. The same exact fact, delivered a better way — reliability moved from agent habit into mechanism. (Encode: the fact was derivable; only how it reached the gate was open to change.)
 - **Rejected:** deleting the required `--issue` field because "nothing reads the commit trailer it produces." The field is the feature: a check-in cannot proceed until the caller states an issue number or a deliberate `none`, so an explicit answer is mechanically forced. 
