@@ -23,6 +23,7 @@ One tension for the walk: the commission asks for a description "written pushy" 
 7. What to do, step 4 — write for a zero-context reader
    *processed 2026-08-12 → accepted: the three pre-submit tests stand as drafted; confirmed against the item-5 split rule — "identifiable from the issue alone" reads as the body plus what it cites, so a pair's summary body passes without the reader opening the MD; the split rule lives in step 2 and is not restated here.*
 8. What to do, step 5 — openable references and checked claims
+   *processed 2026-08-12 → accepted: the three bullets stand as drafted; noted without text change — the write tool now mechanically enforces the in-repo-paths-resolve-on-main check (the skill line front-loads it), and a step-1 ask that returns nothing is itself a valid absence receipt (query and scope named).*
 9. How to do it
 10. Close-out: where the skill file lands and what closes the commission
     *carries (added 2026-08-12, from item 4's discussion): the skill names scripts/ghi-info-ask.py, which does not exist until nedschorus#46 builds it — rule whether the skill file lands on main before the script exists (the fallback ladder covers the gap) or waits for the build.*
