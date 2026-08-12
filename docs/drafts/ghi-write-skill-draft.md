@@ -15,12 +15,14 @@ One tension for the walk: the commission asks for a description "written pushy" 
 3. When Used
    *processed 2026-08-12 → accepted: the section stands as drafted — it names the three homes (issue, queue, MD) so "home not yet decided" is checkable, and does not repeat the description's load-time exclusion.*
 4. What to do, step 1 — search before filing
+   *processed 2026-08-12 → revised: step 1 rewritten from search-first to ask-first per the landed design (docs/issues/46-ghi-info-agent-design.md § The ask path) — ask ghi-info via scripts/ghi-info-ask.py, read what it returns, edit-over-file unchanged; the author's own search demotes to the fallback ladder (mirror grep, then gh search), and a failed ask never blocks the write. The ladder also covers the pre-build window while nedschorus#46 is open: a missing script is just a failed ask. Applied to the skill text below; the How-to command lines follow at item 9; the landing-sequence question is carried at item 10.*
 5. What to do, step 2 — route by state
 6. What to do, step 3 — revise by editing the body
 7. What to do, step 4 — write for a zero-context reader
 8. What to do, step 5 — openable references and checked claims
 9. How to do it
 10. Close-out: where the skill file lands and what closes the commission
+    *carries (added 2026-08-12, from item 4's discussion): the skill names scripts/ghi-info-ask.py, which does not exist until nedschorus#46 builds it — rule whether the skill file lands on main before the script exists (the fallback ladder covers the gap) or waits for the build.*
 
 Everything below the line is the proposed skill file, verbatim.
 
@@ -40,7 +42,7 @@ Before filing a new issue, editing an issue body, commenting on an issue, or wri
 
 ## What to do
 
-1. Search before filing. Search existing issues (open and closed) and the pair documents for the subject. When an existing artifact covers it, edit that artifact — a revision of the existing issue is the default disposition, the same way md-write defaults to REVISE.
+1. Ask before filing. Put the subject to ghi-info by running scripts/ghi-info-ask.py with the question (add `--include-closed` when asking about precedent or absence); read the issues it returns and the pair documents they cite. When an existing artifact covers the subject, edit that artifact — a revision of the existing issue is the default disposition, the same way md-write defaults to REVISE. A failed ask never blocks the write: fall back to grepping the local mirror, then `gh` search, and proceed under these rules.
 2. Route by state. Every artifact is either final at its home or in a named queue with a drain:
    - Material whose disposition is not yet decided goes to its destination queue — `docs/wiki/queue/` for wiki-bound doctrine, `docs/issues/queue/` for pair-bound MDs, the `draft` label for queued issues — with no GHI.
    - Anything carrying pending state — a wanted feature or component, an open question, a commitment to act — gets a GHI: issue-only when lean, an MD-GHI pair when substantial working material rides with it.
