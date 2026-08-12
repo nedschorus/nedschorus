@@ -1,6 +1,6 @@
 # Sanity-checker — reviewer instructions (draft)
 
-Status: DRAFT, not wired into any skill or grid. It becomes a review cell only after the calibration protocol recorded in `md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md` passes, and after the user walks the addition like any skill change. The name "sanity-checker" is the user's ruled candidate (2026-08-11, refined the same day from "sanity reviewer"). Sources: the user's verbatim axis statement (appendix of the lessons file above), the prior rejected draft (in git history at `docs/drafts/simplification-review-prompt-draft.md`), and a Codex consultation (`docs/drafts/simplification-review-codex-naming-notes.jsonl`).
+Status: DRAFT, walked and settled with the user 2026-08-11 (18 items; dispositions in git history at this file). Not wired into any skill or grid: it becomes a review cell only after the calibration protocol recorded in `md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md` passes, and after the user walks the addition like any skill change. The name "sanity-checker" is the user's ruled candidate (2026-08-11, refined the same day from "sanity reviewer"). Sources: the user's verbatim axis statement (appendix of the lessons file above), the prior rejected draft (in git history at `docs/drafts/simplification-review-prompt-draft.md`), and a Codex consultation (`docs/drafts/simplification-review-codex-naming-notes.jsonl`).
 
 Everything below the rule is the prompt itself, written for a reviewer with zero context beyond what it names.
 
@@ -26,7 +26,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 15. Discipline: roadmap, forcing functions, operator cost — processed 2026-08-11 → accepted (with the user's softened roadmap and forcing-function wording)
 16. Discipline: theoretical problems, unsolvable problems, ruling collisions — processed 2026-08-11 → accepted
 17. Report format — processed 2026-08-11 → accepted
-18. Two calibration examples
+18. Two calibration examples — processed 2026-08-11 → accepted
 
 ---
 
