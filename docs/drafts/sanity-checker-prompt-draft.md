@@ -13,7 +13,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 3. The forms a saner plan can take (the six bullets) — processed 2026-08-11 → accepted
 4. The goal paragraph: counter added complexity; checks-checking-checks — processed 2026-08-11 → accepted as is (guarantee-weakening-proposal sentence stays dropped; refute-your-own-candidates covers it)
 5. Priority order when simplifications conflict — processed 2026-08-11 → accepted (trade-on-its-face closing stays dropped; the LOST field carries the per-finding obligation)
-6. The highest-value form: prompts to code
+6. The highest-value form: prompts to code — processed 2026-08-11 → accepted
 7. The method: six questions and two hunts
 8. Cut classes with a validated track record
 9. Discipline: roadmap, forcing functions, operator cost
