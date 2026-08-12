@@ -4,7 +4,7 @@ The calibration protocol's second-document run (2026-08-12), doubling as the san
 
 ## Walk order
 
-1. Purpose: what this walk decides and how the reviewer did
+1. Purpose: what this walk decides and how the reviewer did — processed 2026-08-12 → accepted
 2. F1 — two auto-trigger mechanisms where one covers every session type (Delete)
 3. F2 — the threshold hook's silence gate suppresses the self-healing path (Delete; collision flagged)
 4. F3 — the queue-status line has no named reader in the detached case (route, name, or cut; #32 collision flagged)
