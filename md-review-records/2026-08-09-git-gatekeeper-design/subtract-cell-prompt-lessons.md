@@ -2,6 +2,14 @@
 
 ## Walk order
 
+CLOSED OUT 2026-08-12: the redraft this section anticipated exists at
+`docs/drafts/sanity-checker-prompt-draft.md`. It was walked from
+scratch and settled 2026-08-11 (18 items; dispositions in that file's
+git history) and md-reviewed 2026-08-11/12 (record and dispositions in
+`md-review-records/2026-08-11-sanity-checker-prompt-draft/`). This
+file remains the requirements record; the calibration protocol in its
+final section is the live next step before any grid seat.
+
 WALK CLOSED 2026-08-11 at item 2 (user direction): rather than continue
 item-by-item, a fresh context redrafts the reviewer instructions and a
 NEW walk starts from scratch over that draft. The user's assessment of

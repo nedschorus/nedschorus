@@ -20,4 +20,6 @@ Overall: the four restate reports show the draft is understood — both restater
 11. The name "sanity-checker" vs the naming rule (claude-hunt-good #37; codex-hunt-good #4) — processed 2026-08-12 → rejected, no change: the name stands as ruled; the naming-history discoverability concern is moot because the draft-era history becomes irrelevant at deployment
 12. "Calibration" naming two things (claude-hunt-good #38) — processed 2026-08-12 → revised (user ruling: clearest wording): body section renamed "Two worked examples from this project's ruled history"; "calibration" now appears only in the status header's pointer to the lessons-file protocol, which vanishes at deployment
 13. The Discipline heading vs its contents (claude-hunt-good #28) — processed 2026-08-12 → revised (user wording): heading is now "The rules"
-14. Housekeeping outside the draft: the stale walk-order block in subtract-cell-prompt-lessons.md (codex-hunt-floor #1)
+14. Housekeeping outside the draft: the stale walk-order block in subtract-cell-prompt-lessons.md (codex-hunt-floor #1) — processed 2026-08-12 → accepted: dated close-out note added to that file's walk-order section; requirements record and calibration protocol unchanged
+
+Walk closed 2026-08-12: all 14 items processed. The md-review's accepted and revised fixes are in the draft on the choirmaster branch; the calibration protocol is the next step, on the user's word.
