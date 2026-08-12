@@ -10,6 +10,7 @@ design-as-of: 2026-08-11
 1. The walked core, confirmed whole — identity, duties, answer form, seat, mirror shape, no-gate posture, three-layer stack
    *processed 2026-08-09 → CONFIRMED in six parts (user); rider ruled: the over-specification correctness rule lands in the skill-authoring checklist's Register section, not CLAUDE.md — applied same day; nothing from this design touches CLAUDE.md.*
 2. The GHI write path — hook rewrite, the tool's four-step sequence, comments/close/delete, soft block and override, accepted holes
+   *revised 2026-08-11 (user): denials hardened — the override is removed from every deny path; wrongful refusals escalate and get fixed as bugs. The open-perimeter half of the ruling stands. See § The GHI write path, "Hard denials, open perimeter."*
    *processed 2026-08-09 → APPROVED in three parts (user), with the soft-block observation captured: code reviewers reflexively push to harden soft blocks, so the ruling is now recorded in the greppable Accepted-residual form, which the standing reviewer counterpart rule protects — re-flagged only with evidence matching the named reopening trigger, never as an ordinary finding. Side answers ruled along the way: untouched state changes reach the mirror through the normal delta with the recycle rewrite as backstop; mirror fields grow by deliberate one-line script edits, never automatically.*
 3. The ask path — wrapper steps, drift notice and recheck, `--include-closed`, throwaway-session concurrency, fallback ladder
    *processed 2026-08-09 → APPROVED in two parts (user), with the drift notice reworded to kill an ambiguity: the closure fact is the script's, established from the just-refreshed mirror — the notice hands the agent the fact and asks only for a judgment redo over mirror files; the agent never calls GitHub to verify state.*
@@ -83,9 +84,9 @@ Accepted residual: an issue can change between verdict and write.
 
 **Comments:** `gh issue comment` — and `close --comment` — are denied with a teaching reply: a comment cannot be mechanically rewritten into the body edit the revision convention requires ([nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Project organization) — where the content lands, and what it supersedes, only the author knows. The reply teaches both paths: integrate into the body by edit, or resubmit through the tool's comment verb naming an event kind from the fixed catalog (instance outcome, completion, ruling challenge; growth only by explicit ruling; whether "completion" collapses into close-with-reason is deferred to the `ghi-write` walk). One lost turn per attempt, accepted.
 
-**Close** is a state change with a reason (completed / not planned); plain `close` and `reopen` pass the hook untouched and the delta feed carries them. **Non-body edits** (labels, title-only, milestones) pass through — accepted residual: a rename could disguise a duplicate. **Delete** is denied — close instead; the record is append-forward; the denial carries the override like every other.
+**Close** is a state change with a reason (completed / not planned); plain `close` and `reopen` pass the hook untouched and the delta feed carries them. **Non-body edits** (labels, title-only, milestones) pass through — accepted residual: a rename could disguise a duplicate. **Delete** is denied — close instead; the record is append-forward.
 
-**Soft block.** Every deny path carries the audited one-use override (the `.claude/hooks/instruction-file-guard.py` pattern, live on main). **Accepted residual (user-ruled 2026-08-07, reaffirmed 2026-08-09):** the block is soft, not hard, and the enumeration holes stay open — `gh api`, MCP tools, creative quoting — under **the cooperative posture**: enforcement targets mistakes, not evasion (the same stance as [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md) § The credential and enforcement). Reviewers re-flag this only with evidence matching its reopening trigger: the override audit showing overrides used to dodge the tool rather than answer genuine breakage. Bypassed writes still appear in the delta, where the sweep finds their symptoms.
+**Hard denials, open perimeter.** A refused write has no override (user-ruled 2026-08-11, revising the soft-deny half of the 2026-08-07/09 soft-block ruling): a wrongful refusal is a bug — the author reports blocked or files one `draft`-labeled issue naming the refusal and why it is wrong, and the checker gets fixed; the user always retains the manual gh path. Infrastructure failure never produces a refusal: adjudication fails open. **Accepted residual (user-ruled 2026-08-07, reaffirmed 2026-08-09; unchanged by the 2026-08-11 revision):** the enumeration holes stay open — `gh api`, MCP tools, creative quoting — under **the cooperative posture**: enforcement targets mistakes, not evasion (the same stance as [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md) § The credential and enforcement). Reviewers re-flag the open perimeter only with evidence matching its reopening trigger: the delta showing deliberate evasion, not breakage. Bypassed writes still appear in the delta, where the sweep finds their symptoms.
 
 **Codex** is in scope as the planned companion runtime; until its hook equivalence is verified at build, Codex-side writes ride the accepted-holes class with the skill as their up-front layer.
 
@@ -243,13 +244,13 @@ Sent by the sweep for each link-integrity finding — `ghi-info`'s one write cla
 
 ### Write tool replies (refusals and appended instructions; approved 2026-08-11)
 
-Every deny path shares one shape — refused, the reason, the way(s) forward — and ends with the audited one-use override (the `instruction-file-guard.py` pattern, live on main), rendered here as a slot. The last two are not refusals: they are lines the tool appends after a successful write, following `gh`'s own output, which the tool relays verbatim.
+Every deny path shares one shape — refused, the reason, the way(s) forward — and ends with the escalation line below. There is no override (user-ruled 2026-08-11): a wrongful refusal is a bug to fix, never a thing to bypass. The last two are not refusals: they are lines the tool appends after a successful write, following `gh`'s own output, which the tool relays verbatim.
 
 **Reference-check refusal** (a cited in-repo path does not resolve on main):
 
 > Refused: the body cites \<path\>, which does not resolve on main. Two ways forward: land the MD first, then rerun this write; or write now without the reference and add it by edit once the MD lands.
 >
-> \<the audited one-use override line, per the instruction-file-guard pattern\>
+> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
 
 **Too-similar refusal** (adjudication verdict):
 
@@ -257,19 +258,19 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 >
 > \<only for edits:\> #\<x\>, the issue you were editing, keeps its current body; if #\<n\> now carries its ground, mark it Superseded-by: #\<n\> and close it with a reason.
 >
-> \<the audited one-use override line, per the instruction-file-guard pattern\>
+> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
 
 **Comment denial** (`gh issue comment`, `close --comment`):
 
 > Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, completion, ruling challenge — resubmit through the tool's comment verb naming that event kind.
 >
-> \<the audited one-use override line, per the instruction-file-guard pattern\>
+> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
 
 **Delete denial:**
 
 > Refused: issues are never deleted — the record is append-forward. Close it instead, with a reason: completed or not planned.
 >
-> \<the audited one-use override line, per the instruction-file-guard pattern\>
+> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
 
 **Related-verdict note** (appended to a successful write when adjudication returned `related`):
 
@@ -285,7 +286,7 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 |---|---|---|
 | Vector or graph database | The context window is the database | Retrieval quality measurably degrades, or the open corpus outgrows the window |
 | GitHub MCP server as the write surface | Generic writes carrying none of our checks | A runtime whose writes cannot be hooked becomes a write surface |
-| Hard block on raw `gh` writes | Single point of failure for all issue writes | The override audit shows dodging, not breakage |
+| Hard block on raw `gh` writes | Single point of failure for all issue writes | The delta shows deliberate evasion, not breakage |
 | GitHub-side purge of old closed issues | The weight lands on context and attention; the closed file carries them cheaply | The closed-file treatment no longer suffices |
 | Multi-watchdog process supervision | One overall timeout at one-question scale | The single timeout proves too blunt |
 | Committed mirror | Derived churn would pollute the history the user reads | A need to grep the mirror across checkouts that per-machine regeneration cannot meet |

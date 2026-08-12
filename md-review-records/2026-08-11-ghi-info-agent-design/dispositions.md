@@ -45,6 +45,17 @@ hunt reports; per-report texts are the sibling files in this directory.
    and the link-repair request.*
 5. The override line is a described, unwritten prompt inside four "final" replies; slot
    notation conflates script-filled slots with agent-reply shapes
+   *processed 2026-08-11 → REVISED by user ruling, reached through a realism analysis
+   of wrongful refusals (infra failure fails open and never refuses; the too-similar
+   verdict is the only substantial wrongful-refusal source; unattended agents cannot
+   quote user approval anyway): write-tool denials are now HARD — the override is
+   removed entirely, revising the soft-deny half of the 2026-08-07/09 soft-block
+   ruling (the open-perimeter half stands, its reopening trigger now the delta showing
+   deliberate evasion). The four slots replaced by a verbatim escalation line (report
+   blocked or file one draft-labeled issue; the user retains the manual gh path); the
+   dead cut-table trigger and delete-denial override reference cleaned up. The slot-
+   notation point is resolved by the same edit: no described-only slot remains, and
+   reply-shape slots read as reply shapes in context.*
 6. The sweep's own ask (the question it puts to ghi-info on a fixer's behalf) is an
    unwritten dependent prompt, with no failed-ask branch
 7. Small correctness batch: comment-denial grammar break; "two request forms"
