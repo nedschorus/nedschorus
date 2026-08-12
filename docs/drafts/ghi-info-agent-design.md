@@ -10,7 +10,7 @@ design-as-of: 2026-08-11
 1. The walked core, confirmed whole — identity, duties, answer form, seat, mirror shape, no-gate posture, three-layer stack
    *processed 2026-08-09 → CONFIRMED in six parts (user); rider ruled: the over-specification correctness rule lands in the skill-authoring checklist's Register section, not CLAUDE.md — applied same day; nothing from this design touches CLAUDE.md.*
 2. The GHI write path — hook rewrite, the tool's four-step sequence, comments/close/delete, soft block and override, accepted holes
-   *revised 2026-08-11 (user): denials hardened — the override is removed from every deny path; wrongful refusals escalate and get fixed as bugs. The open-perimeter half of the ruling stands. See § The GHI write path, "Hard denials, open perimeter."*
+   *revised 2026-08-11 (user, settled after a soft/hard back-and-forth in the § Prompts md-review walk): denials stay soft with a reconsider-to-pass override — reconsider once against the refusal's stated reason and, still convinced, pass one resubmit via the `.ghi-issue-write-reconsidered` marker; no user approval, no forced escalation — GHI-filing mistakes are not worth the user's attention. The open-perimeter half of the ruling stands. See § The GHI write path, "Soft block, reconsider-to-pass."*
    *processed 2026-08-09 → APPROVED in three parts (user), with the soft-block observation captured: code reviewers reflexively push to harden soft blocks, so the ruling is now recorded in the greppable Accepted-residual form, which the standing reviewer counterpart rule protects — re-flagged only with evidence matching the named reopening trigger, never as an ordinary finding. Side answers ruled along the way: untouched state changes reach the mirror through the normal delta with the recycle rewrite as backstop; mirror fields grow by deliberate one-line script edits, never automatically.*
 3. The ask path — wrapper steps, drift notice and recheck, `--include-closed`, throwaway-session concurrency, fallback ladder
    *processed 2026-08-09 → APPROVED in two parts (user), with the drift notice reworded to kill an ambiguity: the closure fact is the script's, established from the just-refreshed mirror — the notice hands the agent the fact and asks only for a judgment redo over mirror files; the agent never calls GitHub to verify state.*
@@ -86,7 +86,7 @@ Accepted residual: an issue can change between verdict and write.
 
 **Close** is a state change with a reason (completed / not planned); plain `close` and `reopen` pass the hook untouched and the delta feed carries them. **Non-body edits** (labels, title-only, milestones) pass through — accepted residual: a rename could disguise a duplicate. **Delete** is denied — close instead; the record is append-forward.
 
-**Hard denials, open perimeter.** A refused write has no override (user-ruled 2026-08-11, revising the soft-deny half of the 2026-08-07/09 soft-block ruling): a wrongful refusal is a bug — the author reports blocked or files one `draft`-labeled issue naming the refusal and why it is wrong, and the checker gets fixed; the user always retains the manual gh path. Infrastructure failure never produces a refusal: adjudication fails open. **Accepted residual (user-ruled 2026-08-07, reaffirmed 2026-08-09; unchanged by the 2026-08-11 revision):** the enumeration holes stay open — `gh api`, MCP tools, creative quoting — under **the cooperative posture**: enforcement targets mistakes, not evasion (the same stance as [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md) § The credential and enforcement). Reviewers re-flag the open perimeter only with evidence matching its reopening trigger: the delta showing deliberate evasion, not breakage. Bypassed writes still appear in the delta, where the sweep finds their symptoms.
+**Soft block, reconsider-to-pass.** A refusal's one job is a deliberate second look (user-ruled 2026-08-11, settling a soft/hard back-and-forth: GHI-filing mistakes are not worth the user's attention — a smart agent told to reconsider, and reconsidering, is good enough). Every deny path ends with the same closing line (verbatim in § Prompts): reconsider once against the refusal's stated reason; still convinced, write the reasoning into `.ghi-issue-write-reconsidered` at the repository root and resubmit — the marker passes exactly one write and is consumed by it (the `.claude/hooks/instruction-file-guard.py` mechanics, live on main, carrying the agent's reconsidered reasoning rather than user approval; the reasoning stays visible in the transcript). Infrastructure failure never produces a refusal: adjudication fails open. **Accepted residual (user-ruled 2026-08-07, reaffirmed 2026-08-09; unchanged by the 2026-08-11 revision):** the enumeration holes stay open — `gh api`, MCP tools, creative quoting — under **the cooperative posture**: enforcement targets mistakes, not evasion (the same stance as [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md) § The credential and enforcement). Reviewers re-flag the open perimeter only with evidence matching its reopening trigger: the delta showing deliberate evasion, not breakage. Bypassed writes still appear in the delta, where the sweep finds their symptoms.
 
 **Codex** is in scope as the planned companion runtime; until its hook equivalence is verified at build, Codex-side writes ride the accepted-holes class with the skill as their up-front layer.
 
@@ -244,13 +244,13 @@ Sent by the sweep for each link-integrity finding — `ghi-info`'s one write cla
 
 ### Write tool replies (refusals and appended instructions; approved 2026-08-11)
 
-Every deny path shares one shape — refused, the reason, the way(s) forward — and ends with the escalation line below. There is no override (user-ruled 2026-08-11): a wrongful refusal is a bug to fix, never a thing to bypass. The last two are not refusals: they are lines the tool appends after a successful write, following `gh`'s own output, which the tool relays verbatim.
+Every deny path shares one shape — refused, the reason, the way(s) forward — and ends with the reconsider-to-pass line below (user-ruled 2026-08-11): the block's job is one deliberate second look, not user attention. The last two are not refusals: they are lines the tool appends after a successful write, following `gh`'s own output, which the tool relays verbatim.
 
 **Reference-check refusal** (a cited in-repo path does not resolve on main):
 
 > Refused: the body cites \<path\>, which does not resolve on main. Two ways forward: land the MD first, then rerun this write; or write now without the reference and add it by edit once the MD lands.
 >
-> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
+> If you believe this refusal is wrong, reconsider once against its stated reason. Still convinced, write your reasoning into .ghi-issue-write-reconsidered at the repository root and resubmit — the marker passes exactly one write and is consumed by it.
 
 **Too-similar refusal** (adjudication verdict):
 
@@ -258,19 +258,19 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 >
 > \<only for edits:\> #\<x\>, the issue you were editing, keeps its current body; if #\<n\> now carries its ground, mark it Superseded-by: #\<n\> and close it with a reason.
 >
-> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
+> If you believe this refusal is wrong, reconsider once against its stated reason. Still convinced, write your reasoning into .ghi-issue-write-reconsidered at the repository root and resubmit — the marker passes exactly one write and is consumed by it.
 
 **Comment denial** (`gh issue comment`, `close --comment`):
 
 > Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that convention requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, completion, ruling challenge — resubmit through the tool's comment verb naming that event kind.
 >
-> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
+> If you believe this refusal is wrong, reconsider once against its stated reason. Still convinced, write your reasoning into .ghi-issue-write-reconsidered at the repository root and resubmit — the marker passes exactly one write and is consumed by it.
 
 **Delete denial:**
 
 > Refused: issues are never deleted — the record is append-forward. Close it instead, with a reason: completed or not planned.
 >
-> No override exists. If this refusal is wrong, do not work around it: report blocked or file one draft-labeled issue naming the refusal and why — a wrongful refusal is a bug to fix, and the user can always perform the write himself.
+> If you believe this refusal is wrong, reconsider once against its stated reason. Still convinced, write your reasoning into .ghi-issue-write-reconsidered at the repository root and resubmit — the marker passes exactly one write and is consumed by it.
 
 **Related-verdict note** (appended to a successful write when adjudication returned `related`):
 

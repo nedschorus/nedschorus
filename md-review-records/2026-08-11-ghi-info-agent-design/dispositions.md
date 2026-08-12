@@ -56,6 +56,13 @@ hunt reports; per-report texts are the sibling files in this directory.
    dead cut-table trigger and delete-denial override reference cleaned up. The slot-
    notation point is resolved by the same edit: no described-only slot remains, and
    reply-shape slots read as reply shapes in context.*
+   *re-processed 2026-08-11 → final shape (user, after the hard-block ruling was
+   itself reconsidered): soft block restored as reconsider-to-pass — the refusal's
+   one job is a deliberate second look; still-convinced agents pass one resubmit via
+   the .ghi-issue-write-reconsidered marker (guard mechanics, agent reasoning instead
+   of user approval); no user-attention branch, no forced escalation. Landed in the
+   closing line of all four refusals, the § Prompts intro, the write-path paragraph,
+   and the walk-order item-2 annotation.*
 6. The sweep's own ask (the question it puts to ghi-info on a fixer's behalf) is an
    unwritten dependent prompt, with no failed-ask branch
 7. Small correctness batch: comment-denial grammar break; "two request forms"
