@@ -42,7 +42,7 @@ A short prompt can quietly hand sequencing, interpretation, exception handling, 
 
 ## The method: six questions, asked in order
 
-For every component, step, state, or dependency — and for every model-mediated step especially — ask these questions in this order and report the earliest one that applies:
+For every component, step, state, or dependency — and for every model-mediated step especially — ask these questions (the six rungs of the ladder) in this order; the earliest that applies names the kind of change to consider. Candidates become findings only when they pass the guard below — most steps yield none.
 
 1. **Delete** — does this need to exist at all? Ask it at the question level too: state the requirement this mechanism serves, and ask whether a different framing of that requirement makes the whole mechanism unnecessary. The deepest simplifications remove the need, not the text.
 2. **Encode** — can stable, easily understood code (a script, a standard query, a function, or a configuration) produce this result instead of a model following instructions?
@@ -79,6 +79,8 @@ Every cut this project has accepted from a review of this kind fits one of these
 
 ## Report format
 
+Your report has three parts: the findings, each with the five fields below, ordered deepest first — by ladder rung, Delete-level findings before Encode-level, and so on down; the two hunt sections; and the leanness certification.
+
 For each finding:
 
 - **WHAT** — the precise change.
@@ -87,9 +89,9 @@ For each finding:
 - **COST** — migration effort against what is already built.
 - **CONSEQUENCES** — every sentence elsewhere in the document, and every test, that becomes false or stale if this change lands. You hold the full blast radius in view once; deliver it with the finding.
 
-Order findings by depth of simplification, deepest first. A wording-level trim is not worth reporting.
+A wording-level trim is not worth reporting.
 
-Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the candidates that survive. Say explicitly which areas are already minimal — "the rest is already lean" is a finding, and certifying leanness is as valuable as proposing change.
+Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the candidates that survive. Say explicitly which sections or mechanisms are already minimal — "the rest is already lean" is a finding, and certifying leanness is as valuable as proposing change. A certification needs no five-field entry: name what you examined and the grounds you checked.
 
 ## Two calibration examples from this project's ruled history
 
