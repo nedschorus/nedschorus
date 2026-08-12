@@ -10,7 +10,11 @@ computed from the session's own transcript: every assistant record carries
 the model and the token usage of the request that produced it. That works
 in every session type, headless included — a statusline-relay fallback was
 cut 2026-08-12 because its only remaining trigger was a session whose first
-turn had not completed, a moment the threshold cannot be crossed.
+turn had not completed, a moment the threshold cannot be crossed. A
+supervisor-liveness gate (silent unless --agent's supervisor was alive) was
+cut the same day: since self-registration (2026-08-06) a firing with no
+supervisor watching starts an adopting one, so silence only ever turned a
+dead supervisor into a permanent stall.
 
 When the used share reaches the threshold, the hook emits a system message
 telling the agent to run the handoff skill; the supervisor takes over from
@@ -24,7 +28,6 @@ Threshold: --threshold-used-percentage, default 50.
 """
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -52,12 +55,6 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 # assistant record. Sized to clear a few large tool-result records; the read
 # doubles from here when that is not enough.
 FIRST_TAIL_READ_BYTES = 256 * 1024
-
-_supervisor_spec = importlib.util.spec_from_file_location(
-    "handoff_supervisor", Path(__file__).with_name("handoff-supervisor.py")
-)
-supervisor = importlib.util.module_from_spec(_supervisor_spec)
-_supervisor_spec.loader.exec_module(supervisor)
 
 # The skill carries the whole procedure. A hook message that restated any of it
 # would be a second copy going stale on its own schedule, which this one did
@@ -154,10 +151,6 @@ def context_used_percentage_from_transcript(transcript_path: str):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
     parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
-    parser.add_argument(
-        "--agent", default="",
-        help="agent name; when given, the hook stays silent unless that agent's supervisor is alive",
-    )
     arguments = parser.parse_args(argv)
 
     payload = hook_payload_from_stdin()
@@ -171,11 +164,6 @@ def main(argv=None) -> int:
     used = context_used_percentage_from_transcript(payload.get("transcript_path", ""))
     if used is None or used < arguments.threshold_used_percentage:
         return 0  # nothing measurable yet, or still plenty of room
-
-    if arguments.agent and not supervisor.supervisor_liveness(
-        HANDOFF_DIRECTORY / f"{arguments.agent}-supervisor-state.json"
-    )[0]:
-        return 0  # nobody is watching; asking for a handoff would hang the session
 
     fired_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-asked"
     if fired_marker.exists():
