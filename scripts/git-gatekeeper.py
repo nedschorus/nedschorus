@@ -6,7 +6,7 @@ Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-git-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
-Slices 1 to 3 of five are built. For each request the program does exactly
+Slices 1 to 4 of five are built. For each request the program does exactly
 one of two things — checks the work in, or refuses and teaches the fix. On
 success four things are true: the change is on main, the checks ran against
 exactly the content pushed, the commit's trailers carry the whole
@@ -29,12 +29,16 @@ touched the same path, re-applying would mean choosing whose version survives,
 so the request is refused as `conflict` instead: the program never guesses at
 an author's intent.
 
-Not yet built, and which slice takes it: --no-wait, the detached worker,
-status and cancel (4); the branch-protection audit (5). Reaching one of
-those is a named refusal,
-`unbuilt-option`, never an unnamed ending and never a crash — exit code 2 is
-reserved for a defect in this program, so an argument parser rejection must
-not be how a caller learns a slice boundary.
+Slice 4 (built 2026-08-12): --no-wait detaches a worker into its own
+session (process group), whose outcome lands in history on success or as
+the retained B4d refusal record on refusal; status answers checked-in /
+in-progress / abandoned / the retained record (once, then swept) / unknown;
+cancel kills the worker's whole process group, waits, then lets history
+arbitrate — four outcomes. Every invocation opportunistically sweeps stale
+workspaces (30-day refusal records, day-old screening scratch and
+dead-worker leftovers). Not yet built: the branch-protection audit
+(slice 5). Exit code 2 stays reserved for a defect in this program; the
+parser layer refuses malformed command lines as JSON, exit 1.
 
 The entry checkpoint's guarantee is that the record cannot lag the system: an
 import is declared as a triple, validated against the legacy repository at
@@ -76,9 +80,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 WORKSPACE_ROOT_NAME = "nedschorus-gatekeeper"
@@ -361,13 +367,6 @@ def screen_form(arguments) -> dict:
             "Resubmit with --agent <runtime/model> naming the runtime and model that "
             "produced this change, for example 'claude-code/opus-5'. The environment "
             "carries the runtime but not the model, so the caller declares it.",
-        )
-
-    if getattr(arguments, "no_wait", False):
-        raise Refusal(
-            "unbuilt-option", "--no-wait is not built in this version",
-            "Resubmit with --wait. The detached worker, status and cancel arrive "
-            "together in slice 4 of the git-gatekeeper build (nedschorus#3).",
         )
 
     paths = screen_paths(arguments.files)
@@ -779,6 +778,251 @@ def integrate_and_push(
     )
 
 
+
+
+# --- The worker lifecycle (slice 4) -----------------------------------------
+# The caller's process is the worker in --wait mode; --no-wait detaches one.
+# Everything here rests on the same invariant as crash recovery: the atomic
+# push is the only durable effect, so every state question is answered from
+# history plus what the workspace holds.
+
+STALE_SCREENING_SECONDS = 24 * 60 * 60
+STALE_WORKSPACE_SECONDS = 24 * 60 * 60
+REFUSAL_RECORD_RETENTION_SECONDS = 30 * 24 * 60 * 60
+
+
+def process_start_time(pid: int) -> str:
+    """The /proc start-time of a pid (clock ticks since boot); '' unreadable.
+
+    3.13: a recycled pid can masquerade as a live worker; the start-time
+    unmasks it. Linux-specific by design — this box is the gate's home.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return ""
+
+
+def write_worker_identity(workspace: Path) -> None:
+    pid = os.getpid()
+    (workspace / "worker.pid").write_text(
+        f"{pid} {process_start_time(pid)}", encoding="utf-8"
+    )
+
+
+def worker_state(workspace: Path) -> str:
+    """'alive', 'dead', or 'none' — the whole state machine's oracle."""
+    if not workspace.is_dir():
+        return "none"
+    try:
+        tokens = (workspace / "worker.pid").read_text(encoding="utf-8").split()
+        pid = int(tokens[0])
+    except (OSError, ValueError, IndexError):
+        return "dead"
+    recorded_start = tokens[1] if len(tokens) > 1 else "0"
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "dead"
+    except PermissionError:
+        pass  # alive under another user; still alive
+    live_start = process_start_time(pid)
+    # "0" is the spawner's placeholder before the worker stamps itself.
+    if recorded_start not in ("", "0") and live_start and recorded_start != live_start:
+        return "dead"
+    return "alive"
+
+
+def sweep_stale_workspaces() -> None:
+    """Opportunistic housekeeping at every invocation (ruled 2026-08-10):
+    refusal records older than 30 days, screening scratch and dead-worker
+    workspaces older than a day. Never blocks, never reports — a caller
+    whose record aged out resubmits, the same recovery as every lost reason.
+    """
+    try:
+        entries = list(workspace_root().iterdir())
+    except OSError:
+        return
+    now = time.time()
+    for entry in entries:
+        try:
+            age = now - entry.stat().st_mtime
+            if entry.name.startswith("screening-"):
+                if age > STALE_SCREENING_SECONDS:
+                    shutil.rmtree(entry, ignore_errors=True)
+                continue
+            if not entry.is_dir():
+                continue
+            if (entry / "refusal.json").is_file():
+                if age > REFUSAL_RECORD_RETENTION_SECONDS:
+                    shutil.rmtree(entry, ignore_errors=True)
+                continue
+            if age > STALE_WORKSPACE_SECONDS and worker_state(entry) == "dead":
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def retain_refusal_record(workspace: Path, digest: str, refusal: Refusal) -> None:
+    """B4d: a refused --no-wait request keeps its workspace holding just the
+    JSON refusal record; status returns it once, then sweeps."""
+    for entry in ("candidate", "declared"):
+        shutil.rmtree(workspace / entry, ignore_errors=True)
+    (workspace / "worker.pid").unlink(missing_ok=True)
+    (workspace / "request.json").unlink(missing_ok=True)
+    (workspace / "refusal.json").write_text(json.dumps({
+        "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
+        "next_action": refusal.next_action, "digest": digest,
+        "summary": f"refused: {refusal.error} — {refusal.facts}",
+    }), encoding="utf-8")
+
+
+def require_digest(arguments, command: str) -> str:
+    digest = getattr(arguments, "digest", None)
+    if not digest:
+        raise Refusal(
+            "malformed-field", f"{command} needs the request digest",
+            f"Resubmit as: git-gatekeeper.py {command} <digest> — the digest is "
+            "in the reply of the submission being asked about.",
+        )
+    return digest
+
+
+def fetch_and_find(repository: Path, digest: str) -> str | None:
+    run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=repository, check=False)
+    return find_existing_check_in(repository, digest)
+
+
+def run_worker(arguments) -> int:
+    """The detached half of --no-wait. Detached means nobody is listening:
+    outcomes land in history (success) or the B4d record (refusal), where
+    status finds them. Never prints; the reply channel is the workspace."""
+    workspace = workspace_root() / arguments.digest
+    record_path = workspace / "request.json"
+    if not record_path.is_file():
+        return EXIT_DEFECT
+    request = json.loads(record_path.read_text(encoding="utf-8"))
+    digest = request["digest"]
+
+    # Stamp identity, yielding briefly to the spawner's placeholder write so
+    # the exact start-time always wins the file.
+    deadline = time.time() + 2
+    while not (workspace / "worker.pid").is_file() and time.time() < deadline:
+        time.sleep(0.05)
+    write_worker_identity(workspace)
+
+    pause = float(os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE", "0") or 0)
+    if pause:  # test seam: holds the WORKING state open for cancel/liveness cases
+        time.sleep(pause)
+
+    worktree: dict[str, bytes | None] = {}
+    for path, change in request["changes"].items():
+        worktree[path] = (
+            None if change == "deleted"
+            else (workspace / "declared" / path).read_bytes()
+        )
+    clone = workspace / "candidate"
+    try:
+        try:
+            integrate_and_push(clone, request, worktree, digest)
+        except AlreadyCheckedIn:
+            pass
+        shutil.rmtree(workspace, ignore_errors=True)
+        return EXIT_SUCCESS
+    except Refusal as refusal:
+        retain_refusal_record(workspace, digest, refusal)
+        return EXIT_REFUSED
+    except Exception as defect:  # noqa: BLE001 - the record is the defect channel here
+        retain_refusal_record(workspace, digest, Refusal(
+            "program-defect", f"{type(defect).__name__}: {defect}",
+            "Report this against nedschorus#3; it is a bug in the gatekeeper, "
+            "not a problem with the request.",
+        ))
+        return EXIT_DEFECT
+
+
+def status_query(arguments) -> int:
+    digest = require_digest(arguments, "status")
+    repository = resolve_repository(getattr(arguments, "repo", None))
+    commit = fetch_and_find(repository, digest)
+    if commit:
+        return emit({"outcome": "checked-in", "digest": digest, "commit": commit,
+                     "summary": f"checked-in {commit}"}, EXIT_SUCCESS)
+    workspace = workspace_root() / digest
+    record_path = workspace / "refusal.json"
+    if record_path.is_file():
+        try:
+            payload = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {"outcome": "refused", "error": "workspace-io-error",
+                       "facts": "the retained refusal record was unreadable",
+                       "next_action": "Resubmit the work; resubmitting is always safe.",
+                       "digest": digest,
+                       "summary": "refused: workspace-io-error — record unreadable"}
+        shutil.rmtree(workspace, ignore_errors=True)  # returned once, then swept (B4d)
+        return emit(payload, EXIT_REFUSED)
+    state = worker_state(workspace)
+    if state == "alive":
+        return emit({"outcome": "in-progress", "digest": digest,
+                     "summary": "in-progress — a live worker holds this request; "
+                                "ask again shortly"}, EXIT_SUCCESS)
+    if state == "dead":
+        return emit({"outcome": "abandoned", "digest": digest,
+                     "summary": "abandoned — workspace present, worker dead; "
+                                "resubmit safely, the sweep is automatic"}, EXIT_SUCCESS)
+    return emit({"outcome": "unknown", "digest": digest,
+                 "summary": "unknown — no trace of this digest; submit it, "
+                            "submitting is always safe"}, EXIT_SUCCESS)
+
+
+def cancel_request(arguments) -> int:
+    """Outcomes, exactly four (spec § States, crashes, cancel, and errors)."""
+    digest = require_digest(arguments, "cancel")
+    repository = resolve_repository(getattr(arguments, "repo", None))
+    commit = fetch_and_find(repository, digest)
+    if commit:
+        return emit({"outcome": "too-late", "digest": digest, "commit": commit,
+                     "summary": f"too-late — already-checked-in {commit}; the remedy "
+                                "for a bad checked-in change is a revert through the "
+                                "same gate"}, EXIT_SUCCESS)
+    workspace = workspace_root() / digest
+    state = worker_state(workspace)
+    if state == "none":
+        return emit({"outcome": "unknown-request", "digest": digest,
+                     "summary": "unknown-request — no trace of this digest"},
+                    EXIT_SUCCESS)
+    if state == "alive":
+        # WALK-4 (ruled 2026-08-12): kill the whole process group and WAIT —
+        # a pid-only kill leaves an already-spawned git push child racing the
+        # history query below.
+        try:
+            pid = int((workspace / "worker.pid").read_text(encoding="utf-8").split()[0])
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (OSError, ValueError, ProcessLookupError, PermissionError):
+            pass
+        deadline = time.time() + 10
+        while time.time() < deadline and worker_state(workspace) == "alive":
+            time.sleep(0.1)
+        if worker_state(workspace) == "alive":
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError, PermissionError):
+                pass
+            while time.time() < deadline + 5 and worker_state(workspace) == "alive":
+                time.sleep(0.1)
+        commit = fetch_and_find(repository, digest)
+        if commit:
+            shutil.rmtree(workspace, ignore_errors=True)
+            return emit({"outcome": "too-late", "digest": digest, "commit": commit,
+                         "summary": f"too-late — already-checked-in {commit}; the "
+                                    "push won the race"}, EXIT_SUCCESS)
+    shutil.rmtree(workspace, ignore_errors=True)
+    return emit({"outcome": "cancelled", "digest": digest,
+                 "summary": "cancelled — the workspace is swept; nothing reached "
+                            "main"}, EXIT_SUCCESS)
+
+
 def check_in(arguments) -> int:
     request = screen_form(arguments)
     repository = resolve_repository(arguments.repo)
@@ -813,17 +1057,53 @@ def check_in(arguments) -> int:
                 "summary": f"already-checked-in {already}",
             }, EXIT_SUCCESS)
 
+        # 4.1 (ruled 2026-08-10): concurrent identical submissions share one
+        # digest workspace — a live twin is answered, never swept from under.
+        existing = workspace_root() / digest
+        if worker_state(existing) == "alive":
+            return emit({
+                "outcome": "in-progress", "digest": digest,
+                "summary": "in-progress — a live worker already holds this exact "
+                           f"work; collect the outcome with: status {digest}",
+            }, EXIT_SUCCESS)
+        shutil.rmtree(existing, ignore_errors=True)
+
         # The request record: written once, read by everything downstream.
-        workspace = workspace_root() / digest
-        shutil.rmtree(workspace, ignore_errors=True)
+        workspace = existing
         workspace.mkdir(parents=True, exist_ok=True)
         (workspace / "request.json").write_text(
             json.dumps({**request, "digest": digest, "remote": remote}, indent=2),
             encoding="utf-8",
         )
-        (workspace / "worker.pid").write_text(str(os.getpid()), encoding="utf-8")
+        write_worker_identity(workspace)
+        # The declaration snapshot: the worker (and any resubmit-side rebuild)
+        # reads declared bytes from here, never from the caller's live
+        # worktree, whose state at worker time is nobody's promise (B4c).
+        for declared_path, declared_content in worktree.items():
+            if declared_content is None:
+                continue
+            snapshot = workspace / "declared" / declared_path
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_bytes(declared_content)
         shutil.move(str(clone), str(workspace / "candidate"))
         clone = workspace / "candidate"
+
+        if getattr(arguments, "no_wait", False):
+            spawned = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "worker", digest],
+                start_new_session=True, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            (workspace / "worker.pid").write_text(
+                f"{spawned.pid} 0", encoding="utf-8"  # worker stamps exact identity
+            )
+            workspace = None  # ownership passed to the worker; do not sweep
+            return emit({
+                "outcome": "accepted", "digest": digest,
+                "next_action": f"Collect the outcome with: git-gatekeeper.py "
+                               f"status {digest}",
+                "summary": f"accepted {digest}",
+            }, EXIT_SUCCESS)
 
         try:
             commit, integrated_over = integrate_and_push(clone, request, worktree, digest)
@@ -851,15 +1131,6 @@ def check_in(arguments) -> int:
             shutil.rmtree(clone_parent, ignore_errors=True)
         if workspace is not None:
             shutil.rmtree(workspace, ignore_errors=True)
-
-
-def unbuilt_command(name: str, slice_number: int) -> int:
-    raise Refusal(
-        "unbuilt-option", f"the {name} command is not built in this version",
-        f"Nothing to do: {name} arrives in slice {slice_number} of the git-gatekeeper "
-        "build (nedschorus#3). Until then, resubmit the work itself with check-in — "
-        "resubmitting is always safe.",
-    )
 
 
 class TeachingArgumentParser(argparse.ArgumentParser):
@@ -904,8 +1175,13 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--no-wait", dest="no_wait", action="store_true")
 
     for name in ("status", "cancel"):
-        later = commands.add_parser(name, help=f"{name} a request (slice 4)")
+        later = commands.add_parser(name, help=f"{name} a request by digest")
         later.add_argument("digest", nargs="?", default=None)
+        later.add_argument("--repo", default=None,
+                           help="the repository whose history answers")
+
+    worker = commands.add_parser("worker", help="internal: the detached --no-wait worker")
+    worker.add_argument("digest")
 
     return parser
 
@@ -914,9 +1190,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     try:
         arguments = parser.parse_args(argv)
+        sweep_stale_workspaces()
         if arguments.command == "check-in":
             return check_in(arguments)
-        return unbuilt_command(arguments.command, 4)
+        if arguments.command == "status":
+            return status_query(arguments)
+        if arguments.command == "cancel":
+            return cancel_request(arguments)
+        return run_worker(arguments)
     except Refusal as refusal:
         return emit({
             "outcome": "refused", "error": refusal.error, "facts": refusal.facts,

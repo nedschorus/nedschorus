@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for git-gatekeeper.py, slices 1 to 3.
+"""Tests for git-gatekeeper.py, slices 1 to 4.
 
 Run: python3 scripts/git-gatekeeper-test.py
 
@@ -19,7 +19,10 @@ Coverage, against the specification's acceptance-test index:
   T4  concurrent check-ins: the winner is unaware, the loser integrates
   T5  a real conflict refuses, naming the paths, the commits and the fix
   T6  sustained head movement ends at the retry cap, never a spin
-  plus the `unbuilt-option` boundary,
+  T7  the worker lifecycle: --no-wait accepted, every status outcome
+      (checked-in / in-progress / abandoned / unknown / the B4d record)
+  T8  cancel: all four branches, group-kill-and-wait for a live worker
+  plus the 4.1 live-twin in-progress answer, the expiry sweep,
   B2's trailer round-trip, and B3d's version floors.
   (T10 retired 2026-08-10 with the `imports` subcommand; the trailer's
   exactness stays covered by the import happy path and B2's round-trip.
@@ -39,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("git-gatekeeper.py")
@@ -428,18 +432,136 @@ with tempfile.TemporaryDirectory() as workspace_name:
           not (state_home / "nedschorus-gatekeeper").exists()
           or not any((state_home / "nedschorus-gatekeeper").iterdir()))
 
-    # --- the slice boundary is a named refusal, never a crash --------------
-    for label, arguments in (
-        ("--no-wait", base_request(work, remote, base, ["README.md"]) + ["--no-wait"]),
-        ("status", ["status", "deadbeef"]),
-        ("cancel", ["cancel", "deadbeef"]),
-    ):
-        code, payload = run_gatekeeper(arguments, state_home)
-        check(f"unbuilt {label} refuses by name",
-              payload.get("error") == "unbuilt-option", payload)
-        check(f"unbuilt {label} exits 1, not 2 — a boundary is not a defect", code == 1, code)
-        check(f"unbuilt {label} names the slice that builds it",
-              "slice" in payload.get("next_action", ""), payload)
+    # --- slice 4: the worker lifecycle (T7, T8) -----------------------------
+    remote, work, base = make_fixture(workspace, "nowait")
+    (work / "README.md").write_text("seed\nasync change\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["README.md"], "async change") + ["--no-wait"],
+        state_home,
+    )
+    check("T7 --no-wait answers accepted with the digest",
+          payload.get("outcome") == "accepted"
+          and len(payload.get("digest", "")) == 64, payload)
+    nowait_digest = payload.get("digest", "")
+    status_payload = {}
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        code, status_payload = run_gatekeeper(
+            ["status", nowait_digest, "--repo", str(work)], state_home)
+        if status_payload.get("outcome") == "checked-in":
+            break
+        time.sleep(0.3)
+    check("T7 status reaches checked-in after a no-wait submission",
+          status_payload.get("outcome") == "checked-in", status_payload)
+    check("T7 the async change is on main",
+          git(["show", "main:README.md"], remote).stdout == "seed\nasync change\n")
+    check("T7 the worker swept its workspace on success",
+          not (state_home / "nedschorus-gatekeeper" / nowait_digest).exists())
+    code, payload = run_gatekeeper(["cancel", nowait_digest, "--repo", str(work)],
+                                   state_home)
+    check("T8 cancel after the push answers too-late",
+          payload.get("outcome") == "too-late" and payload.get("commit"), payload)
+    code, payload = run_gatekeeper(["cancel", "0" * 64, "--repo", str(work)], state_home)
+    check("T8 cancelling an unknown digest answers unknown-request",
+          payload.get("outcome") == "unknown-request", payload)
+    code, payload = run_gatekeeper(["status", "0" * 64, "--repo", str(work)], state_home)
+    check("T7 status on an unknown digest answers unknown",
+          payload.get("outcome") == "unknown", payload)
+
+    # B4d + liveness: a paused worker holds WORKING open; a rival then makes
+    # its eventual push a real conflict, retained as the refusal record.
+    remote, work, base = make_fixture(workspace, "b4d")
+    rival = workspace / "b4d-rival"
+    git(["clone", "--quiet", str(remote), str(rival)], workspace)
+    git(["config", "user.name", "rival"], rival)
+    git(["config", "user.email", "rival@nedschorus.invalid"], rival)
+    (work / "README.md").write_text("seed\nours\n", encoding="utf-8")
+    paused_environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                          "GATEKEEPER_TEST_WORKER_PAUSE": "3"}
+    paused_environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH),
+         *base_request(work, remote, base, ["README.md"], "will conflict"),
+         "--no-wait"],
+        capture_output=True, text=True, check=False, env=paused_environment)
+    accepted = json.loads(completed.stdout)
+    b4d_digest = accepted.get("digest", "")
+    check("B4d the paused submission was accepted",
+          accepted.get("outcome") == "accepted", accepted)
+    code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
+                                   state_home)
+    check("T7 status reports in-progress while the worker lives",
+          payload.get("outcome") == "in-progress", payload)
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["README.md"], "will conflict"), state_home)
+    check("a live twin submission answers in-progress, never swept (4.1)",
+          payload.get("outcome") == "in-progress", payload)
+    (rival / "README.md").write_text("seed\ntheirs\n", encoding="utf-8")
+    git(["add", "-A"], rival)
+    git(["commit", "--quiet", "-m", "rival changes the very same path"], rival)
+    git(["push", "--quiet", "origin", "main"], rival)
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
+                                       state_home)
+        if payload.get("outcome") != "in-progress":
+            break
+        time.sleep(0.3)
+    check("B4d status returns the retained conflict refusal",
+          payload.get("error") == "conflict", payload)
+    check("B4d the retained refusal exits 1", code == 1, code)
+    code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
+                                   state_home)
+    check("B4d the record is returned once, then swept (second status: unknown)",
+          payload.get("outcome") == "unknown", payload)
+
+    # T8: cancelling a live worker — group kill, wait, history arbitrates.
+    remote, work, base = make_fixture(workspace, "cancelrun")
+    (work / "README.md").write_text("seed\nnever lands\n", encoding="utf-8")
+    long_pause = {**paused_environment, "GATEKEEPER_TEST_WORKER_PAUSE": "30"}
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH),
+         *base_request(work, remote, base, ["README.md"], "to be cancelled"),
+         "--no-wait"],
+        capture_output=True, text=True, check=False, env=long_pause)
+    cancel_digest = json.loads(completed.stdout).get("digest", "")
+    code, payload = run_gatekeeper(["cancel", cancel_digest, "--repo", str(work)],
+                                   state_home)
+    check("T8 cancelling a live worker answers cancelled",
+          payload.get("outcome") == "cancelled", payload)
+    check("T8 the cancelled work never reached main",
+          git(["show", "main:README.md"], remote).stdout == "seed\n")
+    check("T8 the cancelled workspace is swept",
+          not (state_home / "nedschorus-gatekeeper" / cancel_digest).exists())
+
+    # T7: the abandoned state, and cancel's fourth branch.
+    fake_digest = "f" * 64
+    fake_workspace = state_home / "nedschorus-gatekeeper" / fake_digest
+    fake_workspace.mkdir(parents=True)
+    (fake_workspace / "request.json").write_text("{}", encoding="utf-8")
+    (fake_workspace / "worker.pid").write_text("999999 0", encoding="utf-8")
+    code, payload = run_gatekeeper(["status", fake_digest, "--repo", str(work)],
+                                   state_home)
+    check("T7 a dead-worker workspace reports abandoned",
+          payload.get("outcome") == "abandoned", payload)
+    code, payload = run_gatekeeper(["cancel", fake_digest, "--repo", str(work)],
+                                   state_home)
+    check("T8 cancelling an abandoned workspace answers cancelled",
+          payload.get("outcome") == "cancelled", payload)
+    check("T8 the abandoned workspace is swept", not fake_workspace.exists())
+
+    # The opportunistic expiry sweep (ruled 2026-08-10).
+    old_stamp = time.time() - 31 * 24 * 3600
+    aged_record = state_home / "nedschorus-gatekeeper" / ("e" * 64)
+    aged_record.mkdir(parents=True)
+    (aged_record / "refusal.json").write_text("{}", encoding="utf-8")
+    os.utime(aged_record, (old_stamp, old_stamp))
+    aged_scratch = state_home / "nedschorus-gatekeeper" / "screening-stale"
+    aged_scratch.mkdir()
+    os.utime(aged_scratch, (old_stamp, old_stamp))
+    run_gatekeeper(["status", "0" * 64, "--repo", str(work)], state_home)
+    check("the sweep clears a 31-day-old refusal record", not aged_record.exists())
+    check("the sweep clears stale screening scratch", not aged_scratch.exists())
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.
