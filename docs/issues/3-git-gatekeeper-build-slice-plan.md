@@ -168,8 +168,12 @@ Rulings from the user's review of the revised spec (records:
 `md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
 spec text.
 
-Applied 2026-08-11 (suite 140 cases green, was 146): the `imports`
-deletion, the base absorption, and the catalog collapse below — plus one
+Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports`
+deletion, the base absorption, and the catalog collapse below.
+Applied 2026-08-12 (suite 150 cases green): the symlink refusal, the
+parser-contract wrap, the untracked-files advisory, and the digest
+length-prefix reframing (Codex FIX-2 — the tag-only framing was
+collidable by crafted content; every component is now length-prefixed) — plus one
 stray the sweep exposed: the program's `unsafe-path` code, which the spec's
 catalog never listed, folded into `malformed-field` under the same
 collapse principle. The refusal-text quality pass ran the same day over
@@ -195,19 +199,19 @@ scope by design: the expiry sweep and the liveness check.
   invocation first sweeps retained `--no-wait` refusal records older than
   30 days — opportunistic, no daemon. Slice 4 work: it lands with the
   machinery that creates the records.
-- **Advisory sees untracked files** (user-ruled 2026-08-11, Codex-leg
-  WALK-3): drop `--untracked-files=no` from the advisory's status call so
+- APPLIED 2026-08-12 — **Advisory sees untracked files** (user-ruled
+  2026-08-11, Codex-leg WALK-3): drop `--untracked-files=no` from the advisory's status call so
   a forgotten new file — its likeliest target — is named; ignored files
   stay hidden, and the advisory still never blocks. One test case; apply
   with the Codex-leg fix batch.
-- **Parser-layer errors join the JSON contract** (user-ruled 2026-08-11,
-  Codex-leg WALK-2): wrap argparse so command-line-form errors — unknown
+- APPLIED 2026-08-12 — **Parser-layer errors join the JSON contract**
+  (user-ruled 2026-08-11, Codex-leg WALK-2): wrap argparse so command-line-form errors — unknown
   flag, missing argument, unknown subcommand — emit the `malformed-field`
   teaching refusal as JSON with exit 1, quoting argparse's complaint in
   facts, instead of usage text with exit 2 (the defect code). Test cases
   for each shape; apply with the Codex-leg fix batch.
-- **Refuse symlinked declared paths** (user-ruled 2026-08-11, Codex-leg
-  WALK-1): a declared path that is itself a symlink refuses
+- APPLIED 2026-08-12 — **Refuse symlinked declared paths** (user-ruled
+  2026-08-11, Codex-leg WALK-1): a declared path that is itself a symlink refuses
   `malformed-field` — `Path.is_file()` follows links, so today a
   symlink-to-file passes and its target's bytes (possibly outside the
   repository) would be read as declared content. One lstat check plus one

@@ -208,6 +208,15 @@ with tempfile.TemporaryDirectory() as workspace_name:
     )
     check("T3 changed content digests fresh", fresh_digest != payload["digest"])
 
+    # Framing regression (2026-08-12): a crafted single file whose bytes
+    # embed the tag sequence must not collide with the two-file request it
+    # imitates — the length prefixes keep them apart.
+    crafted_one = {"a": b"x\x00path\x00b\x00content\x00y"}
+    plain_two = {"a": b"x", "b": b"y"}
+    check("T3 crafted content cannot collide two different requests",
+          gatekeeper.compute_digest(base, crafted_one, "none")
+          != gatekeeper.compute_digest(base, plain_two, "none"))
+
     # --- T9: the advisory ---------------------------------------------------
     remote, work, base = make_fixture(workspace, "advisory")
     (work / "README.md").write_text("seed\ndeclared\n", encoding="utf-8")
@@ -220,6 +229,16 @@ with tempfile.TemporaryDirectory() as workspace_name:
           "keep.txt" in payload.get("advisory", ""), payload)
     check("T9 the undeclared path did not reach main",
           git(["show", "main:keep.txt"], remote).stdout == "untouched\n")
+
+    git(["checkout", "--quiet", "--", "."], work)  # drop the advisory props
+    git(["pull", "--quiet"], work)  # refresh past the first check-in
+    (work / "brand-new.txt").write_text("forgotten new file\n", encoding="utf-8")
+    (work / "README.md").write_text("seed\ndeclared\nagain\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["README.md"], "declare again"), state_home
+    )
+    check("T9 the advisory names an untracked (new) file",
+          "brand-new.txt" in payload.get("advisory", ""), payload)
 
     # --- T4: the loser integrates over the newer commits --------------------
     # A request whose base is behind main exercises the identical code path as
@@ -432,6 +451,29 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("error") == "malformed-field", payload)
     check("an unrecognised --import value exits 1", code == 1, code)
 
+    # A declared symlink refuses (ruled 2026-08-12): the gate reads
+    # regular-file bytes and does not follow links.
+    (work / "linked.txt").symlink_to(work / "README.md")
+    code, payload = run_gatekeeper(base_request(work, remote, base, ["linked.txt"]),
+                                   state_home)
+    check("a declared symlink refuses as malformed-field",
+          payload.get("error") == "malformed-field"
+          and "symlink" in payload.get("facts", ""), payload)
+    check("a declared symlink exits 1", code == 1, code)
+
+    # Command-line-form errors join the JSON contract (ruled 2026-08-11):
+    # argparse-level mistakes refuse like any malformed field, exit 1 —
+    # never usage text with the defect code.
+    for cli_label, cli_arguments in (
+        ("an unknown flag", base_request(work, remote, base, ["README.md"]) + ["--bogus"]),
+        ("a missing required field", ["check-in", "--files", "README.md"]),
+        ("no subcommand at all", []),
+    ):
+        code, payload = run_gatekeeper(cli_arguments, state_home)
+        check(f"{cli_label} refuses as malformed-field JSON",
+              payload.get("error") == "malformed-field", payload)
+        check(f"{cli_label} exits 1, not the defect code", code == 1, code)
+
     # --- deletions and additions, since the happy path only modified -------
     remote, work, base = make_fixture(workspace, "addremove")
     (work / "added.txt").write_text("new content\n", encoding="utf-8")
@@ -494,8 +536,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
         check("the documented git-log view finds the import trailer",
               imported_commit[:7] in listed or imported_commit in listed, listed)
         code, payload = run_gatekeeper(["imports"], state_home)
-        check("the deleted imports subcommand is gone (argparse rejects it)",
-              payload.get("outcome") == "UNPARSEABLE" and code != 0, payload)
+        check("the deleted imports subcommand refuses as a malformed command line",
+              payload.get("error") == "malformed-field" and code == 1, payload)
 
     # --- T11: every import error class -------------------------------------
     # Every import defect refuses as the one code import-invalid (four codes

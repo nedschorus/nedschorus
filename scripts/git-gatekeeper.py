@@ -434,6 +434,12 @@ def read_worktree_content(
         if path == import_destination:
             continue
         candidate = repository / path
+        if candidate.is_symlink():
+            raise Refusal(
+                "malformed-field", f"the path {path!r} is a symlink",
+                "Resubmit naming regular files only: the gate reads regular-file "
+                "bytes and does not follow links (ruled 2026-08-12).",
+            )
         if candidate.is_file():
             content[path] = candidate.read_bytes()
         elif candidate.exists():
@@ -496,18 +502,24 @@ def compute_digest(base: str, worktree: dict[str, bytes | None], import_declarat
     metadata still deduplicates — which is what makes resubmission safe.
     """
     digest = hashlib.sha256()
-    digest.update(base.encode("utf-8"))
+
+    def frame(tag: bytes, content: bytes) -> None:
+        # Length-prefixed under a NUL-framed tag (2026-08-12): tag-only
+        # framing was collidable — one file whose bytes contained the tag
+        # sequence serialized identically to two files (Codex finding G25).
+        digest.update(b"\x00" + tag + b"\x00")
+        digest.update(str(len(content)).encode("ascii") + b":")
+        digest.update(content)
+
+    frame(b"base", base.encode("utf-8"))
     for path in sorted(worktree):
-        digest.update(b"\x00path\x00")
-        digest.update(path.encode("utf-8"))
+        frame(b"path", path.encode("utf-8"))
         content = worktree[path]
         if content is None:
-            digest.update(b"\x00deleted\x00")
+            frame(b"deleted", b"")
         else:
-            digest.update(b"\x00content\x00")
-            digest.update(content)
-    digest.update(b"\x00import\x00")
-    digest.update(import_declaration.encode("utf-8"))
+            frame(b"content", content)
+    frame(b"import", import_declaration.encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -518,7 +530,9 @@ def undeclared_changes(repository: Path, declared: list[str]) -> list[str]:
     never blocks; the likeliest cause of a surprise here is a forgotten
     declaration, which is worth saying out loud.
     """
-    status = run_git(["status", "--porcelain", "--untracked-files=no"], cwd=repository, check=False)
+    # Untracked files included (ruled 2026-08-12): a forgotten NEW file is
+    # the advisory's likeliest target; .gitignore still hides scratch.
+    status = run_git(["status", "--porcelain"], cwd=repository, check=False)
     if status.returncode != 0:
         return []
     others = []
@@ -848,8 +862,25 @@ def unbuilt_command(name: str, slice_number: int) -> int:
     )
 
 
+class TeachingArgumentParser(argparse.ArgumentParser):
+    """Command-line-form errors join the JSON contract (user-ruled 2026-08-11).
+
+    argparse's default is usage text on stderr and exit 2 — the defect code.
+    A caller's typo is not a gatekeeper defect: it refuses like every other
+    malformed field, teaching form intact, exit 1.
+    """
+
+    def error(self, message):
+        raise Refusal(
+            "malformed-field", f"the command line is malformed: {message}",
+            "Resubmit with a corrected invocation; the request grammar is in the "
+            "specification (docs/cross-project/git-gatekeeper-design.md) and in "
+            "--help.",
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = TeachingArgumentParser(
         prog="git-gatekeeper.py", description="The single check-in gate for nedschorus.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -881,8 +912,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    arguments = parser.parse_args(argv)
     try:
+        arguments = parser.parse_args(argv)
         if arguments.command == "check-in":
             return check_in(arguments)
         return unbuilt_command(arguments.command, 4)

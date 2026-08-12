@@ -46,6 +46,14 @@ Finding keys: **G#** = codex-hunt-good (sol, 87 findings), **F#** = codex-hunt-f
 
 ## 3. FIX — defects in the current text, most important first
 
+FIX batch processed 2026-08-12 → approved by the user as one batch and
+applied: all 23 corrections landed in the spec (29 replacement spots),
+FIX-2's program half landed as the digest length-prefix reframing with a
+crafted-collision regression test, and the three ruled program changes
+(WALK-1 symlinks, WALK-2 parser contract, WALK-3 untracked advisory)
+applied alongside. Suite 150 cases green. Remaining from this triage: the
+environment note (walk item 26).
+
 - **FIX-1. Slice-6 status misparses as "built"** (G1/F1; G38, G85, G87, F28; both restates misread it). Quote: *"is BUILT through slice 3 of five — plus slice 6 (the review-evidence check), scheduled 2026-08-10 as a prerequisite of activating the privileged lane —"*. "Plus slice 6" grammatically attaches to BUILT; both restate cells read slice 6 as existing, while § Open says its evidence format is undesigned. Also "scheduled 2026-08-10" is ambiguous (ruled on that date vs. due that date) and now past. Correction: *"BUILT through slice 3 of five (a sixth slice, the review-evidence check, was added by ruling 2026-08-10 as a prerequisite of activating the privileged lane; not yet built — its evidence format is undesigned, § Open)"*.
 - **FIX-2. The digest-framing claim is false** (G25). Quote: *"NUL-framed field tags between components, so concatenation can never make two different requests read as one."* Verified in `compute_digest`: content bytes carry no length prefix, so a single file whose bytes contain `x\0path\0b\0content\0y` serializes identically to two files `a`→`x`, `b`→`y` — two different requests, one digest, wrong dedupe. A broken mechanical guarantee. Correction: length-prefix content in the program (queue in slice plan) and restate the canonical form; interim spec fix: drop "can never".
 - **FIX-3. "The raw-push residual is detected at its source" is now false** (G72/F23, G78, G75/F24). Quote: *"The raw-push residual is \*detected at its source\*, not prevented: a standing branch-protection audit…"*; cut-table row 8: *"the procedural gap is audit-detected (that audit itself deleted 2026-08-10)"* — self-invalidating. The protection audit checks **configuration**; a pre-C2 authorized raw push leaves configuration green, and S3 deleted the only detector that saw commits. Correction: reword — the audit detects protection drift; the pre-C2 raw-push gap is accepted undetected (S3's no-consumer reasoning), closed by C2; while rewriting, widen *"can arise only from break-glass … or a protection failure"* with "or a gatekeeper defect" (G75/F24). Fix the cut-table parenthetical to say the *trailer* audit was deleted, not the gap's detection story.
