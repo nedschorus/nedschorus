@@ -56,7 +56,7 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 ## The ask path (ghi-info-ask)
 
-`scripts/ghi-info-ask.py`, run by any agent — and by `ghi-write` step 1. In order:
+`scripts/ghi-info-ask.py`, run by any agent — and by `ghi-write` step 1. The write tool's adjudication consult rides this same wrapper (user-ruled 2026-08-11): one stored session, one refresh-and-resume machinery, two request forms. In order:
 
 1. Run the mirror refresh (delta).
 2. Resume the stored session; cold-start when none exists or a recycle trigger has fired. If another ask holds the session, cold-start a throwaway session instead — nothing waits, nothing shares a transcript.
@@ -116,7 +116,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: the two fixer briefs, the drift notice, the cold-start prompt, and the resume ask are final; two prompts are owed** — adjudication request (write tool step 2), refusal templates (the write tool's deny paths). Owed prompts are drafted and user-approved before this section's md-review. **Open question (raised 2026-08-11, undecided):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the owed list awaits a ruling.
+**Status: the two fixer briefs, the drift notice, the cold-start prompt, the resume ask, and the adjudication request are final; one prompt set is owed** — the refusal templates (the write tool's deny paths). Owed prompts are drafted and user-approved before this section's md-review. **Open question (raised 2026-08-11, undecided):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the owed list awaits a ruling.
 
 ### Fixer brief — pair document behind its issue (approved 2026-08-11)
 
@@ -210,7 +210,21 @@ Sent on every reading-list request. On a fresh session it follows the cold-start
 >
 > \<only with --include-closed:\> Closed history is wanted for this request: grep issues-closed.md as well; closed pointers are expected, each tagged with its close date.
 
-### Adjudication request (write tool step 2 → ghi-info) — owed
+### Adjudication request (write tool step 2 → ghi-info; approved 2026-08-11)
+
+Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft body passes through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's.
+
+> \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering.
+>
+> You are shown a draft issue body and asked whether the corpus already covers it.
+>
+> \<only for edits:\> This draft edits issue #\<n\>: leave #\<n\> out of the comparison.
+>
+> Draft body, verbatim:
+>
+> \<the draft body\>
+>
+> Reply with exactly one line: `verdict: too-similar #n` or `verdict: related #n,#m` or `verdict: unrelated`.
 
 ### Refusal templates (write tool deny paths: too-similar merge instruction, comment teaching reply, delete denial) — owed
 
