@@ -32,7 +32,7 @@ The first build of the domain-knowledge-agent class defined in [26-dynamic-agent
 2. **Maintain.** Cross-links between issues, and link integrity across the issue–MD boundary in both directions: every GHI→MD reference resolves on main; every pair MD backlinks its correct GHI(s). Link repairs are `ghi-info`'s own writes — its only write class. Detected problems beyond links — a pair MD stale relative to its issue, a body over the length limit — spawn fixers (§ Maintenance and fixers).
 3. **Adjudicate writes.** The write tool consults `ghi-info` with the actual draft body — plus, for edits, the target issue number, which is excluded from the comparison. The reply is one line: `verdict: too-similar #n` / `related #n,#m` / `unrelated`. A malformed reply is treated as unavailable (fail-open). From the verdict the tool composes the author-facing reply: **too-similar** (duplicate, overlapping, conflicting) — the write is refused with a merge instruction: read #n, then merge this content into it by editing it; **related but compatible** — the write proceeds, and the reply names the GHIs to become familiar with; **unrelated** — plain success.
 
-Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgment; terms defined in [nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Project organization); authoring issue or MD substance; anything beyond the issue corpus — asked about the wiki or the code, it returns a fixed `out-of-scope` reply. Whether an old ruling still binds always escalates to the user.
+Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgment; terms defined in [nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Project organization); authoring issue or MD substance; anything beyond the issue corpus — asked about the wiki or the code, it returns a fixed `out-of-scope` reply. Whether an old ruling still binds is never `ghi-info`'s to decide. Its reply names the ruling and the doubt (`escalate:`), and the question travels up the chain unswallowed: the caller resolves it if it can, and otherwise it lands as one `draft`-labeled issue — the same escalation surface as a blocked fix — for whoever can attend to it, agent or human.
 
 ## The GHI mirror (ghi-mirror)
 
@@ -61,7 +61,7 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 1. Run the mirror refresh (delta).
 2. Resume the stored session; cold-start when none exists or a recycle trigger has fired. If another ask holds the session, cold-start a throwaway session instead — nothing waits, nothing shares a transcript.
 3. Prompt: the question — plus, on resume, the changed-issue numbers with the instruction to re-read those entries from the mirror before answering. `--include-closed` marks a deliberate closed-history question (precedent, absence): `ghi-info` greps the closed file, and closed pointers are expected.
-4. Post-check: every returned pointer is verified against the mirror — plain script work; the fact is established here, never by the agent. An unexpected closed pointer triggers one drift notice back to `ghi-info`, carrying the fact and asking only for a judgment redo: "#31 closed on <date> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list." One recheck per ask; the agent reads only mirror files and never calls GitHub. Whatever remains is delivered with truthful tags ("#31 (closed 2026-08-08)"); note lines are plain sentences. Unexpected closed pointers count toward the stale-match trigger; expected ones do not.
+4. Post-check: every returned pointer is verified against the mirror — plain script work; the fact is established here, never by the agent. An unexpected closed pointer triggers one drift notice back to `ghi-info`, carrying the fact and asking only for a judgment redo: "#31 closed on <date> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list." One recheck per ask; the agent reads only mirror files and never calls GitHub. Whatever remains is delivered with truthful tags ("#31 (closed 2026-08-08)"); note lines are plain sentences. Replies that are not reading lists — `escalate:`, `out-of-scope` — pass through to the caller verbatim; the caller owns the escalation and must not swallow it. Unexpected closed pointers count toward the stale-match trigger; expected ones do not.
 5. Print the list.
 
 One overall timeout (inside the hook budget); a killed run is a named failure. Auth is the box's two credentials — its `gh` login and its long-lived Claude token (interactive logins expire unattended). Precedent: nedsmessenger runs this pattern live (`~/Projects/nedsmessenger/adapter/adapter.py`, `ask_claude` — headless `claude -p --resume`, answer off the exit stream; NM runs three watchdogs where version 1 here starts with one timeout).
@@ -200,6 +200,7 @@ Delivered as the first prompt of a fresh session — cold start fires when no st
 >
 > - Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: out-of-scope.
 > - Whether an old ruling still binds is never yours to judge. Reply: escalate: \<one sentence naming the ruling and the doubt\>.
+> - These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets out-of-scope even when it touches a ruling.
 
 ### Resume ask prompt (ghi-info-ask step 3; approved 2026-08-11)
 
@@ -213,7 +214,7 @@ Sent on every reading-list request. On a fresh session it follows the cold-start
 
 ### Adjudication request (write tool step 2 → ghi-info; approved 2026-08-11)
 
-Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft body passes through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's.
+Sent by the write tool for every body-bearing create or edit, before the write. Rides the same wrapper as asks (§ The ask path) — hence the same changed-entries preamble, dropped whole on cold start or an empty delta. The draft body passes through verbatim. A missing or malformed reply means the write proceeds without adjudication (fail-open) — the tool's behavior, not the prompt's. That includes any `escalate:` or `out-of-scope` reply — accepted residual: adjudication never escalates; ruling questions surface on the ask path.
 
 > \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering.
 >

@@ -25,6 +25,13 @@ hunt reports; per-report texts are the sibling files in this directory.
    sentence added.*
 3. Escalate/out-of-scope replies have no stated consumer; on the adjudication path any
    non-verdict reply silently becomes fail-open
+   *processed 2026-08-11 → APPROVED (user), direction revised in discussion: escalation
+   goes up the chain, not to the user first — the invariant is "never decided by the
+   machinery, never swallowed." Landed: the ruled always-escalates-to-the-user sentence
+   replaced (caller resolves or it lands as one draft-labeled issue, the blocked-fix
+   surface); ask path passes non-list replies through verbatim with the caller owning
+   them; cold-start boundaries gained question/verdict precedence; adjudication
+   fail-open on non-verdict replies recorded as accepted residual.*
 4. Fixer-brief executability: Template B's new-document citation trips the reference
    check; "your branch" landing path and re-sweep loop; Template A lacks a no-change
    outcome
