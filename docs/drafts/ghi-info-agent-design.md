@@ -116,7 +116,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: the two fixer briefs, the drift notice, and the cold-start prompt are final; three prompts are owed** — resume ask (ghi-info-ask step 3), adjudication request (write tool step 2), refusal templates (the write tool's deny paths). Owed prompts are drafted and user-approved before this section's md-review. **Open question (raised 2026-08-11, undecided):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the owed list awaits a ruling.
+**Status: the two fixer briefs, the drift notice, the cold-start prompt, and the resume ask are final; two prompts are owed** — adjudication request (write tool step 2), refusal templates (the write tool's deny paths). Owed prompts are drafted and user-approved before this section's md-review. **Open question (raised 2026-08-11, undecided):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the owed list awaits a ruling.
 
 ### Fixer brief — pair document behind its issue (approved 2026-08-11)
 
@@ -200,7 +200,15 @@ Delivered as the first prompt of a fresh session — cold start fires when no st
 > - Asked anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: out-of-scope.
 > - Whether an old ruling still binds is never yours to judge. Reply: escalate: \<one sentence naming the ruling and the doubt\>.
 
-### Resume ask prompt (ghi-info-ask step 3) — owed
+### Resume ask prompt (ghi-info-ask step 3; approved 2026-08-11)
+
+Sent on every reading-list request. On a fresh session it follows the cold-start prompt; on a resumed session it stands alone, so it carries the re-read preamble — the wrapper notices drift for the agent. Angle-bracket lines are filled or dropped whole by the script as marked; the asker's question passes through verbatim, never rewritten. The request names its form in the cold-start prompt's own words so the two prompts interlock.
+
+> \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering — an entry may have moved to issues-closed.md.
+>
+> You are asked for a reading list. \<the asker's question, relayed verbatim, e.g.: An agent is about to file an issue proposing a retry policy for the launch scripts. What should it read first?\>
+>
+> \<only with --include-closed:\> Closed history is wanted for this request: grep issues-closed.md as well; closed pointers are expected, each tagged with its close date.
 
 ### Adjudication request (write tool step 2 → ghi-info) — owed
 
