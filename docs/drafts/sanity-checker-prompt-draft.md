@@ -88,7 +88,7 @@ For each finding:
 - **LOST** — what is genuinely given up, and which priority from the order above pays for it; "nothing" is rarely true.
 - **CONSEQUENCES** — every sentence elsewhere in the document under review, and every test described in the documents you read, that becomes false or stale if this change lands. You hold the full blast radius in view once; deliver it with the finding.
 
-A wording-level trim is not worth reporting.
+A wording-level trim is not worth reporting — a readability finding must be structural: reorganize, split, merge, or deduplicate, never polish phrasing.
 
 Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the candidates that survive. Say explicitly which sections or mechanisms are already minimal — "the rest is already lean" is a finding, and certifying leanness is as valuable as proposing change. A certification needs none of these fields: name what you examined and the grounds you checked.
 
