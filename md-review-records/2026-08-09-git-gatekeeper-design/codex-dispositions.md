@@ -86,8 +86,15 @@ environment note (walk item 26).
 
 **REJECT (30):** G8 (trailer = the design's defined record; the commit carries content/message), G11, G24 (origin/transcript explicitly best-effort cooperative), G18 (synopsis placeholder is guidance), G23-part (stated validation *is* non-empty), G28 (store-corruption enumeration below spec altitude), G32 (step-7 happy-path context; status contract names both sources), G34, G35 (constructive guarantees scoped to declared, gate-processed work), G39 (v1 syntax-only is stated), G40 (deliberately judgment-based), G41 (deferral prose, not contract), G43 ("digest alone" within the operative environment the same sentence defines), G49 (cancel is the hung-worker remedy; timeout = machinery without consumer), G55 ("after the slice ships" arm covers it), G56 (derivative aggregate), G57, G59, G60, G61, G74 (threat/implementation altitude; C3 closes the class), G63 (activation explicitly waits on slice 6), G67 (template is an author-completed prefill), G68, G69 (deliberate manual lane), G79 (environment, not spec — noted above), G81 (values pend the account naming), G86 (issues are the project's record medium), G5 (its "sole normative home" contradiction misreads the antecedent — the C-doc, not the B-doc; its unsafe-path substance survives in FIX-16), F5 (under the seam, the caller checkout's origin *is* the test remote), F11 (atomic-consume detail below spec altitude).
 
-## Walk order (pending)
+## Walk order
 
-1. WALK-1 through WALK-5, one ruling each
-2. FIX-1 through FIX-23 as one batch (spot-check any number)
-3. The environment note, acknowledged
+WALK COMPLETE 2026-08-12: all items processed (marks above at each item).
+The environment note was acknowledged by the user 2026-08-12 — no action;
+the fix on the day an import is first needed here is one git clone. This
+closed the whole git-gatekeeper review walk (26 items across dispositions.md
+and this file, 2026-08-10 through 2026-08-12).
+
+1. WALK-1 through WALK-5, one ruling each — done
+2. FIX-1 through FIX-23 as one batch — done, applied with the ruled
+   program changes (suite 150 green)
+3. The environment note — acknowledged
