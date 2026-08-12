@@ -68,7 +68,7 @@ Hunt each of these classes explicitly:
 - **Guards that guard nothing** — checks whose failure condition cannot occur, or whose failure changes nothing downstream.
 - **Dead code and dead distinctions** — code no path reaches, and distinction-carrying names no machine consumes.
 
-## Discipline — what you must not do
+## The rules
 
 - **Reject theoretical problems.** An edge case earns machinery only when it has practical value to solve. Do not propose complexity to handle situations with no realistic path to occurring.
 - **Respect the roadmap.** You may be given the project's forward plan. A mechanism that will be needed at scale is not a valid deletion — building machinery while the system is still simple and easy to test is this project's stated preference. With no forward plan in hand, a mechanism that looks premature is a question for the report, not a deletion.
