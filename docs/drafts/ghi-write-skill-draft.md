@@ -25,6 +25,7 @@ One tension for the walk: the commission asks for a description "written pushy" 
 8. What to do, step 5 — openable references and checked claims
    *processed 2026-08-12 → accepted: the three bullets stand as drafted; noted without text change — the write tool now mechanically enforces the in-repo-paths-resolve-on-main check (the skill line front-loads it), and a step-1 ask that returns nothing is itself a valid absence receipt (query and scope named).*
 9. How to do it
+   *processed 2026-08-12 → revised: the Search line became the Ask line with the fallback ladder inline (mirror grep, then gh search, then pair-document grep), and Close / Comment lines were added carrying the item-6 catalog mechanics; File, Edit, compose-in-a-file, and queue-routing lines unchanged. The named scripts and ghi-mirror/ remain unbuilt until nedschorus#46 — gh alone works today; the landing-sequence question rides at item 10.*
 10. Close-out: where the skill file lands and what closes the commission
     *carries (added 2026-08-12, from item 4's discussion): the skill names scripts/ghi-info-ask.py, which does not exist until nedschorus#46 builds it — rule whether the skill file lands on main before the script exists (the fallback ladder covers the gap) or waits for the build.*
 
@@ -61,9 +62,11 @@ Before filing a new issue, editing an issue body, commenting on an issue, or wri
 
 ## How to do it
 
-- Search: `gh issue list --repo nedschorus/nedschorus --state all --search "<terms>"`, and grep the repository for pair documents on the subject.
+- Ask: `scripts/ghi-info-ask.py "<question>"`; add `--include-closed` when asking about precedent or absence. When the ask fails, fall back in order: grep `ghi-mirror/` in the checkout (stale unless freshly regenerated), then `gh issue list --repo nedschorus/nedschorus --state all --search "<terms>"`, and grep the repository for pair documents on the subject.
 - File: `gh issue create --repo nedschorus/nedschorus --title "<title>" --body-file <file>`.
 - Edit: `gh issue edit <number> --repo nedschorus/nedschorus --body-file <file>`.
+- Close: after the body edit recording the outcome, `gh issue close <number> --repo nedschorus/nedschorus --reason "completed"` (or `"not planned"`).
+- Comment (the two catalog events only): resubmit through the write tool `scripts/ghi-issue-write.py`'s comment verb naming the event kind; plain `gh issue comment` is denied by the write path.
 - Compose bodies in a file and pass `--body-file`; an inline `--body` with backticks is silently mangled by the shell.
 - Queue routing: write the queue file under its destination directory, or add the `draft` label to the issue; the drain process is [nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24).
 ```
