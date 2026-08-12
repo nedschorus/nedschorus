@@ -2,7 +2,7 @@
 
 The calibration protocol's second-document run (2026-08-12), doubling as the sanity-checker's first real engagement: the settled prompt reviewed the live fast-handoff design with the built handoff skill and its draft as context. Reviewer report: `claude-sanity-check-fable.md` in this directory; the reviewed revision is snapshotted as `reviewed-fast-handoff-design.md`. Triage verified every load-bearing quote against the live documents; all seven findings survived. The user rules per finding below.
 
-## Walk order
+## Walk order (original)
 
 1. Purpose: what this walk decides and how the reviewer did — processed 2026-08-12 → accepted
 2. F1 — two auto-trigger mechanisms where one covers every session type (Delete)
@@ -12,3 +12,18 @@ The calibration protocol's second-document run (2026-08-12), doubling as the san
 6. F5 — Tests and Components predate the word-floor ruling (reconcile)
 7. F6 — three disagreeing status homes (merge)
 8. F7 — Known holes holds three closed holes (move rulings to their mechanisms)
+
+## Restructure — user-ruled 2026-08-12
+
+While weighing F1 the user ruled on the document's purpose itself: there is no utility in prose that documents what is better understood by reading the code — a design document's remaining value is only what code cannot carry (dated rulings and their whys, verified harness facts, known holes, a pointer to the scripts). That ruling resolves the four documentation findings wholesale rather than one by one:
+
+- **F1 (document half), F5, F6, F7 — accepted as a class.** Resolution: gut `docs/cross-project/fast-handoff-design.md` to rulings, verified facts, known holes, and a component pointer; every mechanism-description paragraph — the material that drifts — goes. The gut lands after the remaining code rulings, so the surviving text reflects them.
+
+The remaining walk is the four code-behavior decisions:
+
+1. F1 (code half) — the statusline relay + fallback path in the threshold hook: keep or delete
+2. F2 — remove the hook's supervisor-liveness silence gate
+3. F3 — the queue-status line: route to a reader or cut
+4. F4 — mechanize the per-upgrade canary re-run
+
+## Rulings on the code items
