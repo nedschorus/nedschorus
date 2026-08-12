@@ -30,6 +30,6 @@ Before filing a new issue, editing an issue body, commenting on an issue, or dec
 - File: `gh issue create --repo nedschorus/nedschorus --title "<title>" --body-file <file>`.
 - Edit: `gh issue edit <number> --repo nedschorus/nedschorus --body-file <file>`.
 - Close: after the body edit recording the outcome, `gh issue close <number> --repo nedschorus/nedschorus --reason "completed"` (or `"not planned"`).
-- Comment (the two catalog events only): resubmit through the write tool `scripts/ghi-issue-write.py`'s comment verb naming the event kind; plain `gh issue comment` is denied by the write path.
+- Comment (the two catalog events only): submit through the write tool `scripts/ghi-issue-write.py`'s comment verb naming the event kind; the write path denies plain `gh issue comment`. Until [nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46) builds the tool, plain `gh issue comment` naming the event kind is the interim path.
 - Compose bodies in a file and pass `--body-file`; an inline `--body` with backticks is silently mangled by the shell.
 - Queue routing: write the queue file under its destination directory, or add the `draft` label to the issue; the drain process is [nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24).

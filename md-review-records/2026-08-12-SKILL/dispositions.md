@@ -13,6 +13,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 4. The pair bullet: the 500-word test and the substantial-material test cross; "land it" undefined — rewrite ("land it on main"; crossing resolved)
    *processed 2026-08-12 → revised as proposed: substance now decides the form (pair when substantial material rides, issue-only otherwise), the plain 500 bounds every body — matching what the write tool enforces — with the crossing case answered ("a body that cannot is carrying pair material"), and "land it" becomes "land it on main". The same-day plain-500 ruling is preserved; this adds only the precedence and the definition it didn't cover.*
 5. The comment line in the pre-#46 gap: only path names an unbuilt tool, deny claim not yet true, no fallback — add the interim path
+   *processed 2026-08-12 → revised as proposed: "resubmit" → "submit"; the deny stated as the write path's rule; and an explicit interim sentence — plain gh issue comment naming the event kind until nedschorus#46 builds the tool. Rider for the post-push close-out batch: note in #46's body that the build deletes the interim sentence from the skill.*
 6. Comment catalog clarity: gloss "instance outcome"; align the founding plan's stale three-event catalog with today's completion ruling
 7. One fallback ladder, stated once: step 1 defers command detail to How-to; mirror rung gets "when present"
 8. Unresolvable names: drop the md-write analogy clause and generalize the edit sentence; expand GHI at first use; gloss ghi-info; one cite line to the design doc
