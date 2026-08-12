@@ -60,10 +60,10 @@ Two hunts deserve their own sections in your report, because they are where the 
 
 ## Cut classes with a validated track record
 
-Every cut this project has accepted from a review of this kind fits one of these classes. Hunt each one explicitly:
+Every cut this project has accepted so far from a review of this kind fits one of these classes. Hunt each one explicitly:
 
 - **Detectors or outputs with no consumer** — something is computed, emitted, or recorded, and nothing and no one reads it (but see the forcing-function rule below before concluding this).
-- **Duplicated normative homes** — the same rule stated authoritatively in two places, guaranteed to drift apart.
+- **Duplicated normative homes** — the same rule stated authoritatively in two places, which will drift apart.
 - **Carrier-vs-invariant collapse** — a fact carried by hand in several places when it could be derived in one; move the carrier, never drop the fact.
 - **Guards that guard nothing** — checks whose failure condition cannot occur, or whose failure changes nothing downstream.
 - **Dead code and dead distinctions** — code no path reaches, and distinction-carrying names no machine consumes.
