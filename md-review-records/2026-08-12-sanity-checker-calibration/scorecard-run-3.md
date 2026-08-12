@@ -24,4 +24,4 @@ Notable: the replacement test was applied in good faith where the reviewer thoug
 
 ## Status
 
-Run 3 scored. The user rules on: iterate again, accept and proceed to the protocol's second document, or stop.
+Run 3 scored. User ruling 2026-08-12: **accepted** — three clean runs on the rejected cuts, all deep cuts surfacing, the residual miss class (S5/S8/S9, the three smallest cuts) costs thoroughness not safety, and perfection is not the goal. The protocol's second-document run proceeds against the live `docs/cross-project/fast-handoff-design.md` (no ruled ground truth exists there; the user's triage of its findings is the judgment).
