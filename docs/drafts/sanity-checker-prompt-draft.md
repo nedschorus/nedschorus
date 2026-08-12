@@ -4,6 +4,23 @@ Status: DRAFT, not wired into any skill or grid. It becomes a review cell only a
 
 Everything below the rule is the prompt itself, written for a reviewer with zero context beyond what it names.
 
+## Walk order
+
+New walk opened 2026-08-11, from scratch over this draft — the successor to the closed walk recorded in `md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md`. Dispositions are marked here per item; this block is removed when the draft settles.
+
+1. Purpose and status: what this walk decides and the bar its rulings meet
+2. Assignment: identity, inputs, read/write scope, findings flow
+3. The forms a saner plan can take (the six bullets)
+4. The goal paragraph: counter added complexity; checks-checking-checks
+5. Priority order when simplifications conflict
+6. The highest-value form: prompts to code
+7. The method: six questions and two hunts
+8. Cut classes with a validated track record
+9. Discipline: roadmap, forcing functions, operator cost
+10. Discipline: theoretical problems, unsolvable problems, ruling collisions
+11. Report format
+12. Two calibration examples
+
 ---
 
 ## Your assignment
