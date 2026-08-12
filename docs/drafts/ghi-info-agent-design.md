@@ -116,7 +116,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: the two fixer briefs, the drift notice, the cold-start prompt, the resume ask, and the adjudication request are final; one prompt set is owed** — the refusal templates (the write tool's deny paths). Owed prompts are drafted and user-approved before this section's md-review. **Open question (raised 2026-08-11, undecided):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the owed list awaits a ruling.
+**Status: every listed prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt, the resume ask, the adjudication request, and the write tool replies. **Open before this section's md-review (raised 2026-08-11):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the set awaits a ruling.
 
 ### Fixer brief — pair document behind its issue (approved 2026-08-11)
 
@@ -226,7 +226,41 @@ Sent by the write tool for every body-bearing create or edit, before the write. 
 >
 > Reply with exactly one line: `verdict: too-similar #n` or `verdict: related #n,#m` or `verdict: unrelated`.
 
-### Refusal templates (write tool deny paths: too-similar merge instruction, comment teaching reply, delete denial) — owed
+### Write tool replies (refusals and appended instructions; approved 2026-08-11)
+
+Every deny path shares one shape — refused, the reason, the way(s) forward — and ends with the audited one-use override (the `instruction-file-guard.py` pattern, live on main), rendered here as a slot. The last two are not refusals: they are lines the tool appends after a successful write, following `gh`'s own output, which the tool relays verbatim.
+
+**Reference-check refusal** (a cited in-repo path does not resolve on main):
+
+> Refused: the body cites \<path\>, which does not resolve on main. Two ways forward: land the MD first, then rerun this write; or file now without the reference and add it by edit once the MD lands.
+>
+> \<the audited one-use override line, per the instruction-file-guard pattern\>
+
+**Too-similar refusal** (adjudication verdict):
+
+> Refused: #\<n\> already covers this ground. Read #\<n\>, then merge this content into it by editing it — do not file a new issue.
+>
+> \<the audited one-use override line, per the instruction-file-guard pattern\>
+
+**Comment denial** (`gh issue comment`, `close --comment`):
+
+> Refused: comments do not land as comments here. The revision convention keeps the body current, and a comment cannot be mechanically rewritten into the body edit that requires — where the content lands, and what it supersedes, only you know. Two ways forward: integrate the content into the issue body by edit; or, if this is a genuine event — instance outcome, completion, ruling challenge — resubmit through the tool's comment verb naming that event kind.
+>
+> \<the audited one-use override line, per the instruction-file-guard pattern\>
+
+**Delete denial:**
+
+> Refused: issues are never deleted — the record is append-forward. Close it instead, with a reason: completed or not planned.
+>
+> \<the audited one-use override line, per the instruction-file-guard pattern\>
+
+**Related-verdict note** (appended to a successful write when adjudication returned `related`):
+
+> Related issues worth knowing: #\<n\>, #\<m\>.
+
+**Over-length instruction** (appended when the landed body exceeds the limit):
+
+> This body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into the linked pair MD, creating or updating it. Ask ghi-info what to link.
 
 ## Deliberately not in version 1
 
