@@ -37,7 +37,7 @@ main through the program.** Everything that does not serve that goes later.
 | 1 **BUILT 2026-08-08** | Synchronous check-in end to end: screening → candidate → commit → push | T1, T2, T3, T9 | the manual merge lane, on the happy path |
 | 2 **BUILT 2026-08-08** | The entry checkpoint: `--import` (the `imports` query was built here, then deleted by user ruling 2026-08-10 — `git log --grep` is the view) | T11 (T10 retired) | hand-recorded legacy imports |
 | 3 **BUILT 2026-08-09** | Concurrency: loser integrates over newer commits, real conflict refuses, retry cap | T4, T5, T6 | slice 1's `main-moved` refusal |
-| 4 | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery | T7, T8 | slice 1's `unbuilt-option` refusal |
+| 4 **BUILT 2026-08-12** | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery, the expiry sweep | T7, T8 | slice 1's `unbuilt-option` refusal |
 | 5 | Enforcement surfaces: branch-protection audit, repo git config, CLAUDE.md workflow lines (trailer-absence audit deleted, user-ruled 2026-08-10) | B3c | the founding-window "boss watches every landing" guard |
 
 Not in any of the five, and deliberately so: the review-evidence check for
@@ -168,8 +168,17 @@ Rulings from the user's review of the revised spec (records:
 `md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
 spec text.
 
-Applied 2026-08-11 (suite 140 cases green, was 146): the `imports`
-deletion, the base absorption, and the catalog collapse below — plus one
+Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports`
+deletion, the base absorption, and the catalog collapse below.
+Applied 2026-08-12 (suite then 150 cases green): the symlink refusal, the
+parser-contract wrap, the untracked-files advisory, and the digest
+length-prefix reframing. Slice 4 itself BUILT later the same day (suite
+162 green): the worker lifecycle landed with all four of its ruled build
+notes — the 30-day expiry sweep (plus stale screening scratch and
+day-old dead-worker leftovers), the liveness check before the resubmit
+sweep, process-group kill-and-wait for cancel, and the worker start-time
+recorded beside its pid (Codex FIX-2 — the tag-only framing was
+collidable by crafted content; every component is now length-prefixed) — plus one
 stray the sweep exposed: the program's `unsafe-path` code, which the spec's
 catalog never listed, folded into `malformed-field` under the same
 collapse principle. The refusal-text quality pass ran the same day over
@@ -191,35 +200,36 @@ scope by design: the expiry sweep and the liveness check.
   beyond what the check-in computed. Entries whose text needs a judgment
   call go to the user rather than being decided silently. Runs alongside
   slice 4.
-- **Refusal-record expiry** (user-ruled 2026-08-10). Every gatekeeper
+- APPLIED 2026-08-12 with slice 4 — **Refusal-record expiry**
+  (user-ruled 2026-08-10). Every gatekeeper
   invocation first sweeps retained `--no-wait` refusal records older than
   30 days — opportunistic, no daemon. Slice 4 work: it lands with the
   machinery that creates the records.
-- **Advisory sees untracked files** (user-ruled 2026-08-11, Codex-leg
-  WALK-3): drop `--untracked-files=no` from the advisory's status call so
+- APPLIED 2026-08-12 — **Advisory sees untracked files** (user-ruled
+  2026-08-11, Codex-leg WALK-3): drop `--untracked-files=no` from the advisory's status call so
   a forgotten new file — its likeliest target — is named; ignored files
   stay hidden, and the advisory still never blocks. One test case; apply
   with the Codex-leg fix batch.
-- **Parser-layer errors join the JSON contract** (user-ruled 2026-08-11,
-  Codex-leg WALK-2): wrap argparse so command-line-form errors — unknown
+- APPLIED 2026-08-12 — **Parser-layer errors join the JSON contract**
+  (user-ruled 2026-08-11, Codex-leg WALK-2): wrap argparse so command-line-form errors — unknown
   flag, missing argument, unknown subcommand — emit the `malformed-field`
   teaching refusal as JSON with exit 1, quoting argparse's complaint in
   facts, instead of usage text with exit 2 (the defect code). Test cases
   for each shape; apply with the Codex-leg fix batch.
-- **Refuse symlinked declared paths** (user-ruled 2026-08-11, Codex-leg
-  WALK-1): a declared path that is itself a symlink refuses
+- APPLIED 2026-08-12 — **Refuse symlinked declared paths** (user-ruled
+  2026-08-11, Codex-leg WALK-1): a declared path that is itself a symlink refuses
   `malformed-field` — `Path.is_file()` follows links, so today a
   symlink-to-file passes and its target's bytes (possibly outside the
   repository) would be read as declared content. One lstat check plus one
   test case; apply with the Codex-leg fix batch.
-- **Cancel kills the process group and waits** (user-ruled 2026-08-11,
-  Codex-leg WALK-4): killing only the recorded worker pid leaves an
+- APPLIED 2026-08-12 with slice 4 — **Cancel kills the process group and
+  waits** (user-ruled 2026-08-11, Codex-leg WALK-4): killing only the recorded worker pid leaves an
   already-spawned `git push` child running, so `cancelled` could be
   answered while the push lands moments later. Slice 4 builds cancel as:
   process-group kill, wait for exit, then the history query. Lands with
   the cancel machinery it corrects.
-- **Liveness check before the resubmit sweep** (md-review finding HG31,
-  noted 2026-08-11). Concurrent identical submissions share one digest and
+- APPLIED 2026-08-12 with slice 4 — **Liveness check before the resubmit
+  sweep** (md-review finding HG31, noted 2026-08-11). Concurrent identical submissions share one digest and
   therefore one workspace; before sweeping a leftover workspace, test
   whether its recorded worker is alive — alive answers `in-progress`
   instead of sweeping the ground from under a running twin. Slice 4 work:

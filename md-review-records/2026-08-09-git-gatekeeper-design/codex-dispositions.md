@@ -37,10 +37,22 @@ Finding keys: **G#** = codex-hunt-good (sol, 87 findings), **F#** = codex-hunt-f
   amended (group kill, wait, then query); slice-4 build note queued
   beside 4.1 in the slice plan.
 - **WALK-5. The protection audit's trigger anchor is stale** (G73, F23-part). The audit runs "at each handoff scrub (the cleanup pass every agent session runs when handing off)" — but fast-handoff-design.md (2026-08-02 revision) records that scrub modes were superseded and "full manual scrubs died with the committed tier." The audit needs a live cadence anchor (the recycle cycle?) — owner names it; slice-5 scope.
+  processed 2026-08-12 → accepted, anchor named: each session recycle,
+  riding the fast-handoff supervisor's cycle — no new machinery, runs
+  several times a day. Spec audit sentence amended; slice 5 builds it
+  there.
 
 **Environment note** (from G79, otherwise rejected): `~/Projects/nedlern` does not exist on this box, though CLAUDE.md and the program's `--legacy-repo` default point at it. Imports would refuse `import-invalid` (named, safe) until a legacy checkout exists here. Worth the owner's awareness, not a spec defect.
 
 ## 3. FIX — defects in the current text, most important first
+
+FIX batch processed 2026-08-12 → approved by the user as one batch and
+applied: all 23 corrections landed in the spec (29 replacement spots),
+FIX-2's program half landed as the digest length-prefix reframing with a
+crafted-collision regression test, and the three ruled program changes
+(WALK-1 symlinks, WALK-2 parser contract, WALK-3 untracked advisory)
+applied alongside. Suite 150 cases green. Remaining from this triage: the
+environment note (walk item 26).
 
 - **FIX-1. Slice-6 status misparses as "built"** (G1/F1; G38, G85, G87, F28; both restates misread it). Quote: *"is BUILT through slice 3 of five — plus slice 6 (the review-evidence check), scheduled 2026-08-10 as a prerequisite of activating the privileged lane —"*. "Plus slice 6" grammatically attaches to BUILT; both restate cells read slice 6 as existing, while § Open says its evidence format is undesigned. Also "scheduled 2026-08-10" is ambiguous (ruled on that date vs. due that date) and now past. Correction: *"BUILT through slice 3 of five (a sixth slice, the review-evidence check, was added by ruling 2026-08-10 as a prerequisite of activating the privileged lane; not yet built — its evidence format is undesigned, § Open)"*.
 - **FIX-2. The digest-framing claim is false** (G25). Quote: *"NUL-framed field tags between components, so concatenation can never make two different requests read as one."* Verified in `compute_digest`: content bytes carry no length prefix, so a single file whose bytes contain `x\0path\0b\0content\0y` serializes identically to two files `a`→`x`, `b`→`y` — two different requests, one digest, wrong dedupe. A broken mechanical guarantee. Correction: length-prefix content in the program (queue in slice plan) and restate the canonical form; interim spec fix: drop "can never".
@@ -74,8 +86,15 @@ Finding keys: **G#** = codex-hunt-good (sol, 87 findings), **F#** = codex-hunt-f
 
 **REJECT (30):** G8 (trailer = the design's defined record; the commit carries content/message), G11, G24 (origin/transcript explicitly best-effort cooperative), G18 (synopsis placeholder is guidance), G23-part (stated validation *is* non-empty), G28 (store-corruption enumeration below spec altitude), G32 (step-7 happy-path context; status contract names both sources), G34, G35 (constructive guarantees scoped to declared, gate-processed work), G39 (v1 syntax-only is stated), G40 (deliberately judgment-based), G41 (deferral prose, not contract), G43 ("digest alone" within the operative environment the same sentence defines), G49 (cancel is the hung-worker remedy; timeout = machinery without consumer), G55 ("after the slice ships" arm covers it), G56 (derivative aggregate), G57, G59, G60, G61, G74 (threat/implementation altitude; C3 closes the class), G63 (activation explicitly waits on slice 6), G67 (template is an author-completed prefill), G68, G69 (deliberate manual lane), G79 (environment, not spec — noted above), G81 (values pend the account naming), G86 (issues are the project's record medium), G5 (its "sole normative home" contradiction misreads the antecedent — the C-doc, not the B-doc; its unsafe-path substance survives in FIX-16), F5 (under the seam, the caller checkout's origin *is* the test remote), F11 (atomic-consume detail below spec altitude).
 
-## Walk order (pending)
+## Walk order
 
-1. WALK-1 through WALK-5, one ruling each
-2. FIX-1 through FIX-23 as one batch (spot-check any number)
-3. The environment note, acknowledged
+WALK COMPLETE 2026-08-12: all items processed (marks above at each item).
+The environment note was acknowledged by the user 2026-08-12 — no action;
+the fix on the day an import is first needed here is one git clone. This
+closed the whole git-gatekeeper review walk (26 items across dispositions.md
+and this file, 2026-08-10 through 2026-08-12).
+
+1. WALK-1 through WALK-5, one ruling each — done
+2. FIX-1 through FIX-23 as one batch — done, applied with the ruled
+   program changes (suite 150 green)
+3. The environment note — acknowledged
