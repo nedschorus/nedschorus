@@ -16,6 +16,7 @@ design-as-of: 2026-08-09
 4. The session and currency — lifecycle, recycle triggers, two-cadence refresh, freshness and the Superseded-by marker
    *processed 2026-08-09 → APPROVED (user).*
 5. Maintenance and fixers — the sweep, spawned focused fixers, escalation, the model-per-role open question
+   *processed 2026-08-11 → APPROVED (user), via a fixer-brief drafting round and a zero-context teaching walk. Rulings: the single fixer brief split into two templates, one per defect kind — the sweep picks the template, each brief covers exactly one job; the sweep pre-runs `scripts/ghi-info-ask.py` and embeds the reading list in the brief — the fixer invokes nothing; "do only the job stated above" replaced "smallest change"; every prompt opens for a zero-context reader; `BODY_WORD_LIMIT` starting value 500 (constants line updated); staleness swept one direction only, issue-ahead, with the lapsed-cite gap recorded as accepted residual (§ Maintenance and fixers); ruled text in an over-length body moves verbatim into the pair document with the body summary citing it — only rewording blocks (Template B); every prompt the design depends on lands verbatim in § Prompts, which passes its own md-review before the design's status closes — four prompts still owed there.*
 6. Close-out — where this document lands, the build GHI, and the riders (ghi-write walk resume, correctness-rule review, #26 lifecycle revision)
 
 How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](ghi-gatekeeper-plan-draft.md).
@@ -109,6 +110,78 @@ The sweep is script work riding the two feeds: the length check over changed bod
 | Cross-link repairs | `ghi-info` | its one write class |
 | Routing, body substance, the lean-split merge | the GHI author (via `ghi-write`) | context already loaded |
 | Stale-MD and over-length repairs found by the sweep | spawned focused fixers | one one-shot agent each |
+
+## Prompts
+
+Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
+
+**Status: two fixer briefs and the drift notice are final; four prompts are owed** — cold-start (session birth), resume ask (ghi-info-ask step 3), adjudication request (write tool step 2), refusal templates (the write tool's deny paths). Owed prompts are drafted and user-approved before this section's md-review.
+
+### Fixer brief — pair document behind its issue (approved 2026-08-11)
+
+The sweep fills every slot, including the reading list, which it gets by running `ghi-info-ask.py` itself before spawning — the fixer invokes nothing.
+
+> You are a fixer: a one-shot agent spawned when a maintenance script finds that a pair document in this project's GitHub-issue records has fallen behind its issue. Your entire purpose is to bring the one document below up to date, then exit.
+>
+> Job: Issue #\<n\> changed on \<date\>; its pair document \<path\> is untouched since \<date\>. Update the document to match the issue's current state.
+>
+> Read first: issue #\<n\>; its pair document at \<path\>; and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
+>
+> Rules:
+>
+> - You change only the pair document, committed on your branch with a message stating what and why. You do not write to any issue.
+> - Do only the job stated above.
+>
+> Stop and report blocked instead of editing if:
+>
+> - the change would alter text marked as ruled ("user-ruled", "boss-ruled", "Accepted residual", a dated ruling), or would choose between two such statements;
+> - the issue and document conflict in a way the record does not resolve;
+> - you are unsure the change is correct.
+>
+> Your final message is exactly one of:
+>
+> - done: \<what changed — files\>
+> - blocked: \<what stopped you, quoting the text at issue\>
+
+### Fixer brief — issue body over the length limit (approved 2026-08-11)
+
+Same slot-filling contract as above. The ruled-text handling is the verbatim-move exception (user-ruled 2026-08-11): ruled text may change address, never wording.
+
+> You are a fixer: a one-shot agent spawned when a maintenance script finds an issue body in this project's GitHub-issue records grown past the length limit. Your entire purpose is to shorten the one body below, then exit.
+>
+> Job: Issue #\<n\>'s body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into its pair document \<path\>, creating it if it does not exist.
+>
+> Read first: issue #\<n\>; its pair document at \<path\> (may not exist yet); and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
+>
+> Rules:
+>
+> - The body edit goes through gh as normal. Document changes are committed on your branch with a message stating what and why.
+> - Nothing removed from the body may be lost: it must land in the pair document.
+> - Text marked as ruled ("user-ruled", "boss-ruled", "Accepted residual", a dated ruling) moves only word-for-word: carry it into the pair document verbatim, and have the body's summary cite where it went.
+> - Do only the job stated above.
+>
+> Stop and report blocked instead of editing if:
+>
+> - the change would reword text marked as ruled — moving it verbatim, as the rules allow, is the only permitted handling — or would choose between two such statements;
+> - the issue and document conflict in a way the record does not resolve;
+> - you are unsure the change is correct.
+>
+> Your final message is exactly one of:
+>
+> - done: \<what changed — files, issue numbers\>
+> - blocked: \<what stopped you, quoting the text at issue\>
+
+### Drift notice (ghi-info-ask post-check → ghi-info; final, worded 2026-08-09 in § The ask path)
+
+> #\<n\> closed on \<date\> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list.
+
+### Cold-start prompt (ghi-info session birth) — owed
+
+### Resume ask prompt (ghi-info-ask step 3) — owed
+
+### Adjudication request (write tool step 2 → ghi-info) — owed
+
+### Refusal templates (write tool deny paths: too-similar merge instruction, comment teaching reply, delete denial) — owed
 
 ## Deliberately not in version 1
 
