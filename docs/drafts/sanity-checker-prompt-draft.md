@@ -22,7 +22,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 11. Question 5: Verify — processed 2026-08-11 → accepted as is
 12. Question 6: Delegate the residue — processed 2026-08-11 → accepted as is
 13. The two hunts and the earned-finding guard — processed 2026-08-11 → revised (prompts-to-code hunt kept; per-mechanism requirement-restatement hunt replaced with the whole-design step-back: a better way, an unknown unknown)
-14. Cut classes with a validated track record
+14. Cut classes with a validated track record — processed 2026-08-11 → accepted as is (explicit enumeration confirmed; carrier-vs-invariant heading kept)
 15. Discipline: roadmap, forcing functions, operator cost
 16. Discipline: theoretical problems, unsolvable problems, ruling collisions
 17. Report format
