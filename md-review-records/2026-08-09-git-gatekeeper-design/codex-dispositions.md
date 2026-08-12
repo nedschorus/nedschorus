@@ -37,6 +37,10 @@ Finding keys: **G#** = codex-hunt-good (sol, 87 findings), **F#** = codex-hunt-f
   amended (group kill, wait, then query); slice-4 build note queued
   beside 4.1 in the slice plan.
 - **WALK-5. The protection audit's trigger anchor is stale** (G73, F23-part). The audit runs "at each handoff scrub (the cleanup pass every agent session runs when handing off)" — but fast-handoff-design.md (2026-08-02 revision) records that scrub modes were superseded and "full manual scrubs died with the committed tier." The audit needs a live cadence anchor (the recycle cycle?) — owner names it; slice-5 scope.
+  processed 2026-08-12 → accepted, anchor named: each session recycle,
+  riding the fast-handoff supervisor's cycle — no new machinery, runs
+  several times a day. Spec audit sentence amended; slice 5 builds it
+  there.
 
 **Environment note** (from G79, otherwise rejected): `~/Projects/nedlern` does not exist on this box, though CLAUDE.md and the program's `--legacy-repo` default point at it. Imports would refuse `import-invalid` (named, safe) until a legacy checkout exists here. Worth the owner's awareness, not a spec defect.
 
