@@ -10,6 +10,7 @@ Run: python3 scripts/handoff-auto-trigger-test.py
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -46,16 +47,44 @@ with tempfile.TemporaryDirectory() as workspace:
     relay.RELAY_DIRECTORY = relay_directory
 
     # --- Status line rendering (in-process, so the patched directory applies)
+    # Field set and format are the user's, walked 2026-08-08; see the script's
+    # module docstring for what each field is and why the rest were dropped.
     payload = {
         "session_id": "test-session",
         "workspace": {"current_dir": "/Users/el/Projects/nedschorus"},
         "model": {"display_name": "Fable 5"},
+        "effort": {"level": "high"},
         "context_window": {"remaining_percentage": 62.4},
     }
     line = relay.status_line_text(payload)
     check("status line names the working directory", "nedschorus" in line, line)
+    check("status line names the host", os.uname().nodename.split(".")[0] in line, line)
     check("status line names the model", "Fable 5" in line, line)
-    check("status line reports context left", "context 62% left" in line, line)
+    check("status line names the effort level", "high" in line, line)
+    check("status line reports context remaining, not used", "62%" in line, line)
+
+    # Quota windows: both percentages are REMAINING, so a payload reporting
+    # 23% used must render 77%. Getting this backwards is the likely bug, and
+    # it is invisible by inspection because both are plausible numbers.
+    quota_payload = dict(payload)
+    quota_payload["rate_limits"] = {
+        "five_hour": {"used_percentage": 23.0, "resets_at": "2099-01-01T00:00:00Z"},
+        "seven_day": {"used_percentage": 11.0, "resets_at": "2099-01-01T00:00:00Z"},
+    }
+    quota_line = relay.status_line_text(quota_payload)
+    check("five-hour window renders remaining, not used", "77%" in quota_line, quota_line)
+    check("seven-day window renders remaining, not used", "89%" in quota_line, quota_line)
+
+    check("a quota reset in the past reads as now", relay.time_until("2000-01-01T00:00:00Z") == "now")
+    check("an unparseable quota reset is dropped", relay.time_until("not-a-timestamp") == "")
+
+    # agent.name is absent for an ordinary session and must not print an
+    # empty separator-bounded segment when it is.
+    check("no agent segment without an agent name", relay.agent_segment(payload) == "")
+    check(
+        "the agent name appears when the session has one",
+        "choirmaster" in relay.status_line_text({**payload, "agent": {"name": "choirmaster"}}),
+    )
 
     relay.write_relay(payload)
     written = json.loads((relay_directory / "test-session-context.json").read_text(encoding="utf-8"))
@@ -67,7 +96,11 @@ with tempfile.TemporaryDirectory() as workspace:
         not (relay_directory / "no-context-session-context.json").exists(),
     )
 
-    check("status line survives an empty payload", relay.status_line_text({}) == "")
+    # An empty payload no longer renders empty: the host is derived locally,
+    # not from the payload, so the line degrades to it rather than vanishing.
+    empty_line = relay.status_line_text({})
+    check("status line survives an empty payload", os.uname().nodename.split(".")[0] in empty_line, empty_line)
+    check("an empty payload adds no stray separators", relay.SEPARATOR not in empty_line, empty_line)
     relay.RELAY_DIRECTORY = original_relay_directory
 
     # --- The hook, as the harness runs it: a subprocess reading stdin -----
