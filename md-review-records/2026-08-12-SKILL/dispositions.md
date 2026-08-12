@@ -15,6 +15,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 5. The comment line in the pre-#46 gap: only path names an unbuilt tool, deny claim not yet true, no fallback — add the interim path
    *processed 2026-08-12 → revised as proposed: "resubmit" → "submit"; the deny stated as the write path's rule; and an explicit interim sentence — plain gh issue comment naming the event kind until nedschorus#46 builds the tool. Rider for the post-push close-out batch: note in #46's body that the build deletes the interim sentence from the skill.*
 6. Comment catalog clarity: gloss "instance outcome"; align the founding plan's stale three-event catalog with today's completion ruling
+   *processed 2026-08-12 → revised as proposed: both events glossed in step 3 (instance outcome = one run of a recurring process while the issue stays open; ruling anchored to "the issue records"), drawing the instance-vs-completion line three hunters could not find; and the founding plan's revision-convention catalog surgically updated to the two-event form with the dated collapse note — the third durable home of the completion ruling, missed this morning.*
 7. One fallback ladder, stated once: step 1 defers command detail to How-to; mirror rung gets "when present"
 8. Unresolvable names: drop the md-write analogy clause and generalize the edit sentence; expand GHI at first use; gloss ghi-info; one cite line to the design doc
 9. "Every artifact is either final at its home…" — reviewers misread "final"; propose dropping the word (doctrine meaning preserved)
