@@ -38,3 +38,16 @@ Novel findings beyond the ground truth, for what they show about the prompt's st
 ## Status
 
 Run 1 scored; prompt iteration and rerun pending the user's rulings. The protocol requires a second document after a passing run, before any grid-seat proposal.
+
+## Walk order
+
+Walk of these results and the proposed fixes, opened 2026-08-12; dispositions marked here per item.
+
+1. Purpose: what this walk decides and the bar — processed 2026-08-12 → accepted
+2. Result, good half: the rejected cuts — 3/3 handled correctly — processed 2026-08-12 → accepted, with the user's standing note: perfection is not the goal — it is unreachable; the pass bar is a target for tuning, not a demand for 9/9
+3. Result, bad half: the accepted cuts — 2/6 surfaced — processed 2026-08-12 → accepted
+4. The four misses share one shape: defended or repaired instead of cut
+5. Proposed fix 1: add the log-machinery lesson to the prompt — processed 2026-08-12 → accepted as revised in discussion: the lesson plus the not-ignoring clause (problem handled elsewhere, or the blind spot named in LOST) added to the no-consumer cut class
+6. Proposed fix 2: deletion-before-repair rule
+7. The findings beyond the ground truth (informational)
+8. Next step: rerun, then the second document

@@ -62,7 +62,7 @@ Two hunts deserve their own sections in your report, because they are where the 
 
 Hunt each of these classes explicitly:
 
-- **Detectors or outputs with no consumer** — something is computed, emitted, or recorded, and nothing and no one reads it (but see the forcing-function rule below before concluding this).
+- **Detectors or outputs with no consumer** — something is computed, emitted, or recorded, and nothing and no one reads it (but see the forcing-function rule below before concluding this). Recording is the cheap half — emitting a log line, filing an issue. The real cost is the machinery that must read what was recorded and act on it. A detector whose output feeds no such machinery — and none planned — is a cut candidate even when detection sounds prudent. Cutting it is not ignoring the problem: either the problem is already handled elsewhere (prevention, containment), or the finding's LOST field names the new blind spot explicitly, so it is accepted with eyes open.
 - **Duplicated normative homes** — the same rule stated authoritatively in two places, which will drift apart.
 - **Facts used directly instead of derived by LLM processing** — the same fact may be needed in several places — a fact like an id, a path, a limit. Do not ask an LLM to re-derive it when it could be quickly and easily computed or looked up from the primary source and stored in one place.
 - **Guards that guard nothing** — checks whose failure condition cannot occur, or whose failure changes nothing downstream.
