@@ -154,8 +154,11 @@ def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
 
     Rides undocumented harness state: tasks are <N>.json files under
     ~/.claude/tasks/<session-id>/, and a session started with an explicit id
-    reads whatever is already there. Re-run the canaries in
-    handoff-supervisor-test.py after every Claude Code upgrade.
+    reads whatever is already there. An upgrade breaking this is detected at
+    the successor's ignition count-check, with the queues as the backstop
+    (per-upgrade canary re-runs were dropped as a remembered duty,
+    user-ruled 2026-08-12); the canaries in handoff-supervisor-test.py
+    (--canary) diagnose it when that fires.
     """
     source = TASKS_ROOT / retiring_session_id
     if not source.is_dir():

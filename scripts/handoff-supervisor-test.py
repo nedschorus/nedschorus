@@ -3,9 +3,10 @@
 
 Run: python3 scripts/handoff-supervisor-test.py
 Add --canary to also run the two live task-preseed canaries, which launch
-real headless sessions. Run those after every Claude Code upgrade: pre-seed
-rides undocumented harness state, and these two cases are what detect it
-breaking.
+real headless sessions. Pre-seed rides undocumented harness state; an
+upgrade breaking it is detected at the successor's ignition count-check
+(the queues are the backstop), and these two cases are the diagnosis to
+run when that fires.
 
 Prints one line per case and exits non-zero if any case fails.
 """
