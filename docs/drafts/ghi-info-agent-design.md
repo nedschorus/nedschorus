@@ -116,7 +116,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
-**Status: every listed prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt, the resume ask, the adjudication request, and the write tool replies. **Open before this section's md-review (raised 2026-08-11):** the design gives `ghi-info` one write class — cross-link repairs found by the sweep — but words no request prompt for it, and the cold-start prompt's three request forms do not cover such a request; whether a link-repair request joins the set awaits a ruling.
+**Status: every prompt is final** — the two fixer briefs, the drift notice, the cold-start prompt (four request forms), the resume ask, the adjudication request, the link-repair request (user-ruled 2026-08-11: worded here rather than left to build), and the write tool replies. The section awaits its md-review pass, required before the design's status closes.
 
 ### Fixer brief — pair document behind its issue (approved 2026-08-11)
 
@@ -189,11 +189,12 @@ Delivered as the first prompt of a fresh session — cold start fires when no st
 >
 > GitHub is the source of truth and the mirror is your only view of it. Never call GitHub — no gh, no API, no web.
 >
-> Requests arrive in three forms:
+> Requests arrive in four forms:
 >
 > 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
 > 2. **You are shown a draft issue body** and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. A reply in any other shape is thrown away.
 > 3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any `Superseded-by:` link, and reply with a corrected reading list.
+> 4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are committed on your branch with a message stating what and why. Reply done: \<the repair\> or blocked: \<what stopped you\>.
 >
 > Boundaries:
 >
@@ -225,6 +226,16 @@ Sent by the write tool for every body-bearing create or edit, before the write. 
 > \<the draft body\>
 >
 > Reply with exactly one line: `verdict: too-similar #n` or `verdict: related #n,#m` or `verdict: unrelated`.
+
+### Link-repair request (sweep → ghi-info; approved 2026-08-11)
+
+Sent by the sweep for each link-integrity finding — `ghi-info`'s one write class. Rides the same wrapper as the other requests, hence the same changed-entries preamble. The done/blocked reply contract mirrors the fixer briefs'.
+
+> \<only on resume, and only when the refresh changed entries:\> Since your last request, these mirror entries changed: #\<n\>, #\<m\>. Re-read them in the mirror before answering.
+>
+> You are asked to repair a link. \<one sentence from the sweep stating the defect, e.g.: Issue #31's body cites docs/issues/31-foo.md, which does not resolve on main. — or: docs/issues/31-foo.md backlinks #29, but its issue is #31.\>
+>
+> Repair exactly this link and nothing else. Issue edits go through gh as normal; document changes are committed on your branch with a message stating what and why. Reply with exactly one of: done: \<the repair\> — or — blocked: \<what stopped you\>.
 
 ### Write tool replies (refusals and appended instructions; approved 2026-08-11)
 
