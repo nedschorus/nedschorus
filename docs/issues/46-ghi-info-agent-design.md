@@ -80,7 +80,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 ## The three-layer stack
 
-1. **`ghi-write`** (skill; in build — walk in progress at [ghi-write-skill-draft.md](../drafts/ghi-write-skill-draft.md)): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-info` first, route by state, edit rather than duplicate, write lean, and the pair sequence: write the MD, land it, then cite it.
+1. **`ghi-write`** (skill; landed at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md), user-ruled 2026-08-12; decision trail at [ghi-write-skill-draft.md](../drafts/ghi-write-skill-draft.md)): fires when a GHI author is about to file or edit; front-loads the right behavior — ask `ghi-info` first, route by state, edit rather than duplicate, write lean, and the pair sequence: write the MD, land it, then cite it.
 2. **Hook + tool** — the correctness backstop when the skill does not fire: on the covered write path with `ghi-info` answering, a missed trigger costs efficiency — a late merge catch, one comment retry. The fail-open window and the enumeration holes are the accepted residuals, visible in the delta.
 3. **CLAUDE.md** — ambient documentation only ([nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) is this project's record of a written convention losing to trained habit).
 

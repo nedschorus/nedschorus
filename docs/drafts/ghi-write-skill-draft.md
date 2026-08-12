@@ -1,5 +1,7 @@
 # ghi-write skill — draft for the user's walk
 
+*Landed 2026-08-12: the ruled text lives at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md); this draft is the decision trail.*
+
 Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) (the commission) and `docs/wiki/queue/skill-authoring-checklist.md` (the authoring rules). Instructions only; the justifying evidence lives in the commission issue.
 
 One tension for the walk: the commission asks for a description "written pushy" (undertriggering is the known failure direction); the checklist calls pushy descriptions a hypothesis to adopt only with false-trigger tests. The draft's description is firm about the trigger class without exhortation — rule which register wins. *(Ruled 2026-08-12: the plain register wins; see walk-order item 2.)*
@@ -28,6 +30,7 @@ One tension for the walk: the commission asks for a description "written pushy" 
    *processed 2026-08-12 → revised: the Search line became the Ask line with the fallback ladder inline (mirror grep, then gh search, then pair-document grep), and Close / Comment lines were added carrying the item-6 catalog mechanics; File, Edit, compose-in-a-file, and queue-routing lines unchanged. The named scripts and ghi-mirror/ remain unbuilt until nedschorus#46 — gh alone works today; the landing-sequence question rides at item 10.*
 10. Close-out: where the skill file lands and what closes the commission
     *carries (added 2026-08-12, from item 4's discussion): the skill names scripts/ghi-info-ask.py, which does not exist until nedschorus#46 builds it — rule whether the skill file lands on main before the script exists (the fallback ladder covers the gap) or waits for the build.*
+    *processed 2026-08-12 → accepted: land now, not after the #46 build — the fallback ladder makes the skill correct in the gap. The ruled text copied to .claude/skills/ghi-write/SKILL.md on the walk branch; this draft stays as the decision trail with a pointer at its top; the design doc's stack line updated to point at the landed skill; md-review before the user-deputized push. nedschorus#13 closes after the push by the skill's own rules — body edit recording the outcome (path, and the plain-over-pushy register ruling), then close with reason completed; nedschorus#46 stays open as the build commission.*
 
 Everything below the line is the proposed skill file, verbatim.
 
