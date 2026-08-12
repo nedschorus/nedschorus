@@ -25,7 +25,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 14. Cut classes with a validated track record — processed 2026-08-11 → accepted as is (explicit enumeration confirmed; carrier-vs-invariant heading kept)
 15. Discipline: roadmap, forcing functions, operator cost — processed 2026-08-11 → accepted (with the user's softened roadmap and forcing-function wording)
 16. Discipline: theoretical problems, unsolvable problems, ruling collisions — processed 2026-08-11 → accepted
-17. Report format
+17. Report format — processed 2026-08-11 → accepted
 18. Two calibration examples
 
 ---
