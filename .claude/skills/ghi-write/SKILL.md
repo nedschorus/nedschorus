@@ -11,7 +11,7 @@ Before filing a new issue, editing an issue body, commenting on an issue, or dec
 
 ## What to do
 
-1. Ask before filing. Put the subject to ghi-info by running scripts/ghi-info-ask.py with the question (add `--include-closed` when asking about precedent or absence); read the issues it returns and the pair documents they cite. When an existing artifact covers the subject, edit that artifact — a revision of the existing issue is the default disposition, the same way md-write defaults to REVISE. A failed ask never blocks the write: fall back to grepping the local mirror, then `gh` search, and proceed under these rules.
+1. Ask before filing. Put the subject to ghi-info as a question — the ask command and its fallback ladder are under How to do it; read the issues it returns and the pair documents they cite. When an existing artifact covers the subject, edit that artifact — a revision of the existing issue is the default disposition, the same way md-write defaults to REVISE. A failed ask never blocks the write: fall down the ladder and proceed under these rules.
 2. Route by state. Every artifact is either final at its home or in a named queue with a drain:
    - Material whose fate is not yet decided goes to a queue, not to an issue: `docs/wiki/queue/` for wiki-bound doctrine, `docs/issues/queue/` for pair-bound MDs; a candidate issue queues as a `draft`-labeled issue — the label is the issue world's queue membership.
    - Anything carrying pending state — a wanted feature or component, an open question, a commitment to act — gets a GHI: an MD-GHI pair when substantial working material rides with it, issue-only otherwise, and the issue body stays under 500 words either way — a body that cannot is carrying pair material. The body carries the summary, the pair MD the substance; the pair sequence is write the MD, land it on main, then cite it from the issue.
@@ -26,7 +26,7 @@ Before filing a new issue, editing an issue body, commenting on an issue, or dec
 
 ## How to do it
 
-- Ask: `scripts/ghi-info-ask.py "<question>"`; add `--include-closed` when asking about precedent or absence. When the ask fails, fall back in order: grep `ghi-mirror/` in the checkout (stale unless freshly regenerated), then `gh issue list --repo nedschorus/nedschorus --state all --search "<terms>"`, and grep the repository for pair documents on the subject.
+- Ask: `scripts/ghi-info-ask.py "<question>"`; add `--include-closed` when asking about precedent or absence. When the ask fails, fall back in order: grep `ghi-mirror/` in the checkout when present (stale unless freshly regenerated), then `gh issue list --repo nedschorus/nedschorus --state all --search "<terms>"`, and grep the repository for pair documents on the subject.
 - File: `gh issue create --repo nedschorus/nedschorus --title "<title>" --body-file <file>`.
 - Edit: `gh issue edit <number> --repo nedschorus/nedschorus --body-file <file>`.
 - Close: after the body edit recording the outcome, `gh issue close <number> --repo nedschorus/nedschorus --reason "completed"` (or `"not planned"`).
