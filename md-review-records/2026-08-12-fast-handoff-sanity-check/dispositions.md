@@ -21,7 +21,7 @@ While weighing F1 the user ruled on the document's purpose itself: there is no u
 
 The remaining walk is the four code-behavior decisions:
 
-1. F1 (code half) — the statusline relay + fallback path in the threshold hook: keep or delete
+1. F1 (code half) — the statusline relay + fallback path in the threshold hook: keep or delete — processed 2026-08-12 → accepted, relay deleted. Reading the built hook overturned the keep recommendation's premise: an unknown model id never consults the relay (it takes the 200K default window, which over-fires safely), so the fallback's only trigger was a session whose first turn had not completed — a moment the threshold cannot be crossed. Execution note: the relay script was mostly the user-walked statusline renderer with the relay write fused in, so the renderer survives as `scripts/session-statusline-command.py` (tests split out alongside); only the side-file write, the hook's fallback read, and the stale side files were deleted.
 2. F2 — remove the hook's supervisor-liveness silence gate
 3. F3 — the queue-status line: route to a reader or cut
 4. F4 — mechanize the per-upgrade canary re-run
