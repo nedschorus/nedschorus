@@ -15,7 +15,7 @@ New walk opened 2026-08-11, from scratch over this draft — the successor to th
 5. Priority order when simplifications conflict — processed 2026-08-11 → accepted (trade-on-its-face closing stays dropped; the LOST field carries the per-finding obligation)
 6. The highest-value form: prompts to code — processed 2026-08-11 → accepted
 7. The method: six questions and two hunts — re-planned 2026-08-11 (user direction): the earned-finding guard added to the method; each of the six questions walked individually for exactly how it makes the result simpler or saner; items 7–13 below replace this item
-7. Question 1: Delete
+7. Question 1: Delete — processed 2026-08-11 → accepted as is
 8. Question 2: Encode
 9. Question 3: Constrain
 10. Question 4: Externalize
