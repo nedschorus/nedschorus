@@ -167,11 +167,38 @@ def run_liveness_report_cases(workspace: Path):
     check("an unreadable heartbeat reads as nobody watching", result.returncode == 1, result.stdout)
 
 
+def run_app_hosted_cases(workspace: Path):
+    """An app-hosted session gets its handoff written but never a supervisor:
+    the successor a detached supervisor launches has no seat, so the writer
+    must refuse, name the manual path, and leave the session working."""
+    original_ancestry = writer.app_hosted_ancestry
+    original_environment = dict(os.environ)
+    writer.app_hosted_ancestry = lambda pid: True
+    os.environ["CLAUDE_CODE_SESSION_ID"] = "test-session"
+    os.environ["CLAUDE_PID"] = "12345"
+    try:
+        started, detail = writer.start_adopting_supervisor("tester", workspace)
+    finally:
+        writer.app_hosted_ancestry = original_ancestry
+        os.environ.clear()
+        os.environ.update(original_environment)
+    check("an app-hosted session never starts a supervisor", started is False, detail)
+    check(
+        "the app-hosted refusal names the desktop app and the manual path",
+        "desktop app" in detail and "clear" in detail, detail,
+    )
+    check(
+        "process id 1 has no app ancestry",
+        writer.app_hosted_ancestry("1") is False, "launchd read as app-hosted",
+    )
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
     run_counter_cases(Path(temporary_directory))
     run_invocation_cases(Path(temporary_directory))
     run_liveness_report_cases(Path(temporary_directory))
+    run_app_hosted_cases(Path(temporary_directory))
 
 print()
 if failures:

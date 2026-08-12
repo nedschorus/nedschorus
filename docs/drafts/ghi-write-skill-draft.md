@@ -4,6 +4,23 @@ Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus
 
 One tension for the walk: the commission asks for a description "written pushy" (undertriggering is the known failure direction); the checklist calls pushy descriptions a hypothesis to adopt only with false-trigger tests. The draft's description is firm about the trigger class without exhortation — rule which register wins.
 
+## Walk order (opened 2026-08-06, new-vp session 3a11d08f)
+
+1. Purpose and the bar the text is judged by
+   *processed 2026-08-07 → accepted (purpose item; no capture)*
+2. The description — the trigger
+   *open 2026-08-07 — the gate premise this item was parked on is gone; see below.*
+   *Parked first against a pre-tool-hook gate on issue writes, on the reasoning that a gate blocking unmediated writes would remove the undertriggering risk the "pushy" register was meant to cover. That direction was then rejected: neither reads nor writes are gated (`ghi-gatekeeper-plan-draft.md`). So no mechanical backstop exists and the description carries the whole trigger alone — the original register question stands unchanged, and the "a hook covers the write path" argument against pushiness is withdrawn. What still bears on this item: the search-first step is being redirected from the agent running its own search to asking a dedicated issue-knowledge agent (`ghi-info-agent-plan-draft.md`), which changes what the skill's step 1 instructs but not what the description must trigger on.*
+   *Backstop restored 2026-08-07, changing the calculus again (see `ghi-info-agent-plan-draft.md`, write-time integration): the rewrite-hook-plus-tool design — not a gate; `gh` writes are silently routed through the project tool, which runs the checks and consults ghi-info — means a missed skill trigger no longer causes damage, only a less efficient path (a late duplicate catch, a comment retry). The skill is the layer that front-loads the right behavior so agents are not blocked and made to retry (user framing, 2026-08-07); the hook and tool are the correctness backstop when it does not fire. Consequence for this item when the walk resumes: the description can stay firm — pushy is not needed and its false-trigger test debt is not incurred.*
+3. When Used
+4. What to do, step 1 — search before filing
+5. What to do, step 2 — route by state
+6. What to do, step 3 — revise by editing the body
+7. What to do, step 4 — write for a zero-context reader
+8. What to do, step 5 — openable references and checked claims
+9. How to do it
+10. Close-out: where the skill file lands and what closes the commission
+
 Everything below the line is the proposed skill file, verbatim.
 
 ---

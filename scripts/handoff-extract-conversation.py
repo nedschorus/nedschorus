@@ -47,11 +47,13 @@ PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 # the whole extraction.
 MAXIMUM_RECORD_BYTES = 4 * 1024 * 1024
 
-# How much dialog the successor receives. Sized against measured sessions:
-# 2500 words is roughly eighteen exchanges. This number, plus the transcript
-# pointer and the left-behind count in the header, is what replaced asking
-# the retiring agent to judge a boundary.
-MINIMUM_DIALOG_WORDS = 2500
+# How much dialog the successor receives: 1600 words is roughly eleven
+# exchanges (trimmed from 2500 after live restarts showed the longer tail
+# unused — the asymmetry favors lean: a starved successor reads the
+# transcript it is pointed at once; a fat tail taxes every restart). This
+# number, plus the transcript pointer and the left-behind count in the
+# header, is what replaced asking the retiring agent to judge a boundary.
+MINIMUM_DIALOG_WORDS = 1600
 
 
 class TranscriptProblem(Exception):

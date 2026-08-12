@@ -54,6 +54,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(workspace, str(workspace / "docs" / "ordinary.md"))
     check("an ordinary file passes", result.returncode == 0, result.stderr)
 
+    worktree = workspace / ".claude" / "worktrees" / "some-worktree"
+    result = run_hook(workspace, str(worktree / "docs" / "ordinary.md"))
+    check("an ordinary file in a worktree passes (the plumbing prefix is not the checkout's .claude)",
+          result.returncode == 0, result.stderr)
+    result = run_hook(workspace, str(worktree / ".walk-approved"))
+    check("a worktree's own approval marker passes (the circular-block bug)",
+          result.returncode == 0, result.stderr)
+    result = run_hook(workspace, str(worktree / ".claude" / "hooks" / "some-hook.py"))
+    check("a worktree's own .claude machinery is still blocked", result.returncode == 2)
+
     result = run_hook(workspace, "")
     check("a payload without a file path passes", result.returncode == 0)
 

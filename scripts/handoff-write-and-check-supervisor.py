@@ -92,6 +92,40 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
     os.replace(temporary_path, handoff_path)
 
 
+def app_hosted_ancestry(process_id: str) -> bool:
+    """True when the session's process ancestry runs through the Claude desktop app.
+
+    A supervisor takes over by killing the session and launching a successor on
+    the same seat. A console seat survives that; the desktop app's conversation
+    pane does not — its session process is a child of the app bundle, and a
+    successor launched by a detached supervisor has no seat at all (observed
+    2026-08-11: the successor ran its first turn and stalled at the first need
+    for the user). The bundle's path in the ancestry is the observable
+    difference between the two seats.
+    """
+    pid = process_id
+    for _ in range(20):
+        try:
+            output = subprocess.run(
+                ["ps", "-o", "ppid=,comm=", "-p", pid],
+                capture_output=True, text=True, check=False,
+            ).stdout.strip()
+        except OSError:
+            return False
+        if not output:
+            return False
+        parts = output.split(None, 1)
+        if len(parts) < 2:
+            return False
+        parent_pid, command = parts[0], parts[1]
+        if "Claude.app" in command:
+            return True
+        if parent_pid in ("0", "1", pid):
+            return False
+        pid = parent_pid
+    return False
+
+
 def start_adopting_supervisor(agent: str, handoff_directory: Path):
     """Start a supervisor that adopts THIS session. Returns (started, detail).
 
@@ -107,6 +141,13 @@ def start_adopting_supervisor(agent: str, handoff_directory: Path):
     process_id = os.environ.get("CLAUDE_PID", "")
     if not session_id or not process_id.isdigit():
         return False, "this session does not report its id and process id in the environment"
+
+    if app_hosted_ancestry(process_id):
+        return False, (
+            "this session is hosted by the Claude desktop app, and a supervisor cannot take "
+            "over an app conversation — the successor it launches has no seat. Ask the user "
+            "to clear this session and point the fresh one at the handoff file"
+        )
 
     supervisor_path = Path(__file__).with_name("handoff-supervisor.py")
     log_path = handoff_directory / f"{agent}-supervisor.log"
