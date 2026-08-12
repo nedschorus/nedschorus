@@ -21,6 +21,7 @@ One tension for the walk: the commission asks for a description "written pushy" 
 6. What to do, step 3 — revise by editing the body
    *processed 2026-08-12 → revised: "completion" collapsed into close-with-reason — the comment catalog keeps two events (instance outcome, ruling challenge); a finished commitment records its outcome in the body by edit, then closes with its reason, since the close is itself a recorded event and a completion comment would restate both. This settles the question docs/issues/46-ghi-info-agent-design.md deferred to this walk; the design's catalog line and its comment-deny teaching prompt updated in the same commit.*
 7. What to do, step 4 — write for a zero-context reader
+   *processed 2026-08-12 → accepted: the three pre-submit tests stand as drafted; confirmed against the item-5 split rule — "identifiable from the issue alone" reads as the body plus what it cites, so a pair's summary body passes without the reader opening the MD; the split rule lives in step 2 and is not restated here.*
 8. What to do, step 5 — openable references and checked claims
 9. How to do it
 10. Close-out: where the skill file lands and what closes the commission
