@@ -1,4 +1,8 @@
 {
+  "statusLine": {
+    "type": "command",
+    "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/handoff-statusline-context-relay.py"
+  },
   "permissions": {
     "defaultMode": "bypassPermissions"
   },
@@ -20,6 +24,16 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/instruction-file-guard.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/handoff-context-threshold-hook.py"
           }
         ]
       }
