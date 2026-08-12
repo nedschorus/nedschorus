@@ -205,13 +205,18 @@ def extract_dialog(session_id: str, working_directory: Path, output_path: Path) 
     return result.returncode == 0
 
 
-def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int) -> str:
+def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
+                          queue_status: str = "") -> str:
     next_step = handoff_fields.get("next-step", "").strip()
     elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
     lines = [
         f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
         f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
     ]
+    if queue_status:
+        # The rot-visibility duty (#32): the successor is the one reader every
+        # supervisor mode has — a detached supervisor's console is a log file.
+        lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
     if next_step:
         lines.append(f"Then take the next step: {next_step}")
     else:
@@ -405,14 +410,15 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
 
-    print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
+    queue_status = queue_status_line(settings.working_directory)
+    print(f"handoff-supervisor: {queue_status}")
 
     successor_session_id = str(uuid.uuid4())
     copied = preseed_tasks(retiring_session_id, successor_session_id)
     print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
 
     prompt = build_ignition_prompt(
-        extract_path, handoff_fields, task_count_for(successor_session_id)
+        extract_path, handoff_fields, task_count_for(successor_session_id), queue_status
     )
     return successor_session_id, prompt
 
