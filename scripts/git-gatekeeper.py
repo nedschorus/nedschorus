@@ -86,6 +86,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1085,7 +1086,29 @@ def require_digest(arguments, command: str) -> str:
 
 
 def fetch_and_find(repository: Path, digest: str) -> str | None:
-    run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=repository, check=False)
+    """The commit this digest reached main as, or None — never a guess.
+
+    The fetch failure is NOT swallowed here (ruled 2026-08-12). A stale
+    origin/main made `cancel` assert 'nothing reached main' while the commit sat
+    on the remote, and `status` answer 'unknown — submit it' for work already
+    checked in: both are asserted facts resting on a question that was never
+    asked. `network-down` is already in the catalog and already documented as
+    safely resubmittable.
+
+    Deliberately different from the base computation, where a failed fetch stays
+    tolerated: there it degrades to a staler base which the behind-main
+    integration absorbs, while here it decides whether the answer is true.
+    """
+    fetched = run_git(["fetch", "--quiet", "origin", MAIN_BRANCH],
+                      cwd=repository, check=False)
+    if fetched.returncode != 0:
+        raise Refusal(
+            "network-down",
+            f"main could not be fetched, so whether this work reached it is "
+            f"unknown: {fetched.stderr.strip() or 'no stderr'}",
+            "Ask again once the remote is reachable; resubmitting is always safe, "
+            "and a request that did reach main answers already-checked-in.",
+        )
     return find_existing_check_in(repository, digest)
 
 
@@ -1424,14 +1447,29 @@ def check_in(arguments) -> int:
             }, EXIT_SUCCESS)
         shutil.rmtree(existing, ignore_errors=True)
 
-        # The request record: written once, read by everything downstream.
+        # The claim IS the creation (ruled 2026-08-12). Testing whether the
+        # workspace was occupied and then creating it left a gap between the
+        # two: a twin arriving inside it saw a directory with no pid file,
+        # concluded the owner was dead, and deleted the live sibling's request
+        # and clone — the exact case 4.1 exists to prevent. An exclusive mkdir
+        # cannot be raced, and the identity is stamped before anything else so
+        # the 'unknown' window is one rename wide.
         workspace = existing
-        workspace.mkdir(parents=True, exist_ok=True)
+        try:
+            workspace.mkdir(parents=True)
+        except FileExistsError:
+            return emit({
+                "outcome": "in-progress", "digest": digest,
+                "summary": "in-progress — another submission claimed this exact "
+                           f"work first; collect the outcome with: status {digest}",
+            }, EXIT_SUCCESS)
+        write_worker_identity(workspace)
+        # The request record: written once, read by everything downstream.
         (workspace / "request.json").write_text(
-            json.dumps({**request, "digest": digest, "remote": remote}, indent=2),
+            json.dumps({**request, "digest": digest, "remote": remote,
+                        "host": socket.gethostname()}, indent=2),
             encoding="utf-8",
         )
-        write_worker_identity(workspace)
         # The declaration snapshot: the worker (and any resubmit-side rebuild)
         # reads declared bytes from here, never from the caller's live
         # worktree, whose state at worker time is nobody's promise (B4c).

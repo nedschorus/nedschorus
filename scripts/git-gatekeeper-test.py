@@ -561,6 +561,20 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
 
+    # A failed fetch is never read as absence (ruled 2026-08-12): status and
+    # cancel used to grep a stale origin/main and assert 'unknown' or
+    # 'cancelled — nothing reached main' for work that had reached it. The
+    # catalog already carries network-down, documented as safely resubmittable.
+    remote, work, base = make_fixture(workspace, "unreachable-remote")
+    git(["remote", "set-url", "origin", str(workspace / "no-such-remote.git")], work)
+    for subcommand in ("status", "cancel"):
+        code, payload = run_gatekeeper(
+            [subcommand, "1" * 64, "--repo", str(work)], state_home
+        )
+        check(f"{subcommand} answers network-down rather than asserting absence",
+              payload.get("error") == "network-down", payload)
+        check(f"{subcommand} exits 1 on network-down", code == 1, code)
+
     # The advisory names real files (ruled 2026-08-12). Plain --porcelain
     # collapses a wholly-new directory to one entry, so a declared new file
     # inside one was reported as an undeclared change — the advisory named the
