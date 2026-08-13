@@ -11,6 +11,6 @@ When MD files are finalized so future agents can clearly understand them (wiki f
 
 ## What to do
 
-1. Run `scripts/md-review-grid.py --target <path>`. It launches eight reviewers and saves their reviews to the `md-review-records/` directory. The script output tells you what to do next.
+1. Run `scripts/md-review-grid.py --target <path>` as a background task, and arm a Monitor on its output that emits an event per `saved:` and per `FAILED` line — each finished review reaches you the moment it lands, and a failed cell surfaces immediately instead of being discovered at the end. It launches eight reviewers and saves their reviews to the `md-review-records/` directory. The script output tells you what to do next.
 2. Read each md-review report as it arrives. Triage as you go, but keep your judgments provisional until all eight reviews are in, as the later reviews may offer more insight than the earlier ones.
 3. When you have processed all reviews and formulated a draft response, use the walk-me-through skill to walk through what problems were detected, and what you propose to do about them. Order the walk from items of most importance to least.
