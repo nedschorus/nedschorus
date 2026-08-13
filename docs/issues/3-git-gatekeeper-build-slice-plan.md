@@ -603,9 +603,15 @@ remains in git history at `4cadb46`.
   ([`scripts/git-gatekeeper.py:1509`](../../scripts/git-gatekeeper.py)),
   the worker still yields to it with the wait-for-existence loop, and
   `worker_state` still skips the comparison when the recorded start time
-  is `"0"`, so defects (2) and (3) stand. Whether that was an oversight or
-  a deviation ruled during application is not recorded in the fix commit;
-  it is open for the user.
+  is `"0"`, so defects (2) and (3) stand. An oversight, not a deviation
+  ruled during application: the applying session proposed the one-writer
+  form itself and had it ruled, then at application fixed only the
+  start-time token that `ps` had broken, treated the spawner's placeholder
+  as fixed ground while doing so, and wrote its identity-guard case to
+  assert that the worker's stamp *beats* the placeholder — pinning the
+  happy-path outcome of the very race the ruling deleted. It committed
+  that batch noting it was behind schedule and reached its context-recycle
+  threshold three items later. The one-writer half remains to be applied.
 - APPLIED 2026-08-12 (`cb582d6`) — **Version floors are met by upgrading
   hosts, not by lowering the floors.** The suite asserts Python ≥ 3.12 and
   git ≥ 2.40. A stock macOS host meets neither: its system `python3` is
