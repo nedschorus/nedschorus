@@ -24,7 +24,15 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
    *processed 2026-08-12 → revised as proposed: the skill's lead-in reads "either at its home or in a named queue with a drain" — the address meaning of the founding plan's artifact-lifecycle rule, minus the word all four hunts read as content-finality (which made an open issue look excluded by the binary). The founding plan's fuller verbatim sentence stays untouched.*
 10. Factual micro-fixes: backtick claim overbroad; `--limit` on the gh search rung; `duplicate` close reason; "before filing" → "before submitting"; "from the issue alone" gets "(the body plus what it cites)" — capture of the 2026-08-12 walk-item-7 ruling that lives only in a commit message
     *processed 2026-08-12 → revised, all five applied as proposed.*
-11. Declined findings, presented for pull-back: the never-blocks absolutes, second-issue rule, skill heading structure, zero-context three-test specialization, reader's-seat, reading stopping-point, body-file housekeeping, remaining missing-script findings (the ruled #46 gap)
+11.–17. Formerly one batch-decline item; re-planned 2026-08-12 at the user's instruction ("ignoring criticism is a mistake — usually we can find a better way to word things") into one item per group, each presented with a candidate rewording:
+11. The never-blocks absolutes (failed ask; ambiguity)
+    *processed 2026-08-12 → revised: "never blocks" → "does not block" in step 1; the discriminator's trailing "; ambiguity never blocks the write" maxim deleted as restatement. User's reasoning recorded: CLAUDE.md counsels against absolutes and neither of us sees benefit in them except extraordinary cases — the reviewers were echoing the project's own rule.*
+12. The second-issue rule's missing boundary
+13. Generic section headings (What to do / How to do it)
+14. Zero-context tests vs CLAUDE.md's broader "usable"
+15. Judgment terms without tests (covers the subject; substantial; reading stopping point)
+16. Unbuilt machinery — a permanent-truth pointer to the #46 build
+17. Remainder: reader's-seat, body-file housekeeping (doctrine/home already resolved by item 8's cite line)
 
 ## Finding-to-item map
 
