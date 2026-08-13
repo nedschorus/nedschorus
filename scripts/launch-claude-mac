@@ -20,7 +20,11 @@
 # Inside the session runs the handoff supervisor, which launches the claude
 # session, recycles it on every handoff, and exits when its agent stops without
 # handing off; the tmux session closes with it, so nothing lingers. A second
-# launch of a running name attaches instead of duplicating.
+# launch of a running name attaches instead of duplicating, and the supervisor
+# holds a per-agent lock that refuses a second copy even if tmux is bypassed.
+# The one duplicate this cannot see is the same name launched on BOTH machines:
+# the two have separate locks and separate handoff files, so they would run as
+# two unrelated agents wearing one name. Keep each name on one machine.
 #
 # --no-attach creates the session without attaching this terminal (for scripts
 # and checks); attach later by running the plain form.
@@ -37,8 +41,24 @@ AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
 SUPERVISOR="$SCRIPT_DIRECTORY/handoff-supervisor.py"
 
+# The no-name case is the common mistake, so it teaches rather than scolds:
+# what a name is for, and which agents are running right now to pick from or
+# avoid colliding with.
 usage() {
     echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+    echo >&2
+    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    echo "tmux session, the home directory ($AGENTS_ROOT/<name>), and the agent's handoff" >&2
+    echo "files. Running a name that is already up ATTACHES to that agent — you cannot" >&2
+    echo "start a second copy of one." >&2
+    echo >&2
+    running=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')
+    if [ -n "$running" ]; then
+        echo "Agents running on this Mac now: $running" >&2
+    else
+        echo "No agents are running on this Mac now." >&2
+    fi
+    echo "(Agents on the Ubuntu box are separate: launch-claude-ubuntu.)" >&2
     exit 2
 }
 

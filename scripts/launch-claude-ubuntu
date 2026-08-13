@@ -21,6 +21,9 @@
 # stops without handing off; the tmux session closes with it, so nothing
 # lingers. A second launch of a running name attaches instead of duplicating,
 # and the supervisor's own lock refuses a duplicate even if tmux is bypassed.
+# The one duplicate this cannot see is the same name launched on BOTH machines:
+# the two have separate locks and separate handoff files, so they would run as
+# two unrelated agents wearing one name. Keep each name on one machine.
 #
 # --no-attach creates the session without attaching this terminal (for
 # scripts and checks); attach later by running the plain form.
@@ -35,8 +38,26 @@ set -eu
 AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
 
+# The no-name case is the common mistake, so it teaches rather than scolds:
+# what a name is for, and which agents are up on the box right now to pick from
+# or avoid colliding with. The listing costs one SSH round trip and happens
+# only on this error path, never on a launch.
 usage() {
     echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    echo >&2
+    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    echo "tmux session on the box, the home directory ($AGENTS_ROOT/<name>), and the" >&2
+    echo "agent's handoff files. Running a name that is already up ATTACHES to that" >&2
+    echo "agent — you cannot start a second copy of one." >&2
+    echo >&2
+    running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
+        'tmux list-sessions -F "#{session_name}" 2>/dev/null' 2>/dev/null | tr '\n' ' ')
+    if [ -n "$running" ]; then
+        echo "Agents running on the box now: $running" >&2
+    else
+        echo "No agents are running on the box now (or it could not be reached)." >&2
+    fi
+    echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
     exit 2
 }
 
