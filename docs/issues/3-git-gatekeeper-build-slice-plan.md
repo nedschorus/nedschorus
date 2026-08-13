@@ -287,8 +287,9 @@ stock macOS host; the two failures are environment artifacts, not code
 defects (Apple's git 2.39.5 below the 2.40 floor — see the version-floors
 entry — and `user.useConfigOnly` unset in the enclosing repository, which
 may be a setup step slice 5 assumes rather than performs). The audit's
-account-name casefold and the identity guard's one-writer half landed after
-this batch and took the suite to 205.
+account-name casefold, the identity guard's one-writer half, and the
+named-phase seam with its cancel-truthfulness cases landed after this batch
+and took the suite to 213.
 
 These rulings were first recorded in a standalone document,
 `docs/issues/3-gatekeeper-review-fix-rulings-2026-08-12.md`, which existed
@@ -662,8 +663,9 @@ remains in git history at `4cadb46`.
   without the machine it belongs to. Specification correction applied
   alongside: the states section described the workspace as "discoverable
   from the digest alone", which holds only on the host that created it.
-- APPLIED IN PART 2026-08-12 (across the seven fix commits) — **The
-  regression set, and the phase seam it needs.** The 162-case suite caught
+- APPLIED 2026-08-12 (the cases, across the seven fix commits) and
+  2026-08-13 (the phase seam and the cases needing it) — **The regression
+  set, and the phase seam it needs.** The 162-case suite caught
   none of the defects above, for two structural reasons worth recording
   rather than the individual gaps. It tests what the code does rather than
   what was ruled — the clearest case being the process-group kill: WALK-4
@@ -682,17 +684,34 @@ remains in git history at `4cadb46`.
   fix, several would pass vacuously. The eleven groups ruled: path safety;
   kill scope; cancel truthfulness; torn pid file; refusal record; twin
   claim; symlinks in both directions; repository resolution; advisory;
-  identity guard; host locality. Roughly 25–30 cases. Applied: the cases
-  landed inside the seven fix commits above rather than as one batch, and
-  the suite went 162 → 202. **Not applied: the named-phase seam**, the
-  ruled prerequisite — the program still carries only the single pre-git
-  pause (`GATEKEEPER_TEST_WORKER_PAUSE`), so the two cancel-truthfulness
-  cases that need it are unwritten: a worker pushing inside cancel's wait
-  yielding `too-late`, and a worker surviving SIGKILL yielding
-  `cancel-failed`. `cancel-failed` is built in the program and covered by
-  no case. The host-locality case is likewise unwritten.
-- APPLIED IN PART 2026-08-12 — **The harness synchronises by handshake,
-  fails soft, and reaps what it spawns.** Three weaknesses in the test
+  identity guard; host locality. Roughly 25–30 cases. Ten of the eleven
+  groups landed inside the seven fix commits above rather than as one
+  batch, taking the suite 162 → 202. The eleventh, cancel truthfulness,
+  waited on the named-phase seam, which was the ruled prerequisite and was
+  not built at the time; both were built 2026-08-13. The seam
+  (`worker_phase`, env `GATEKEEPER_TEST_WORKER_PAUSE_AT`) replaces the
+  single pre-git sleep: the worker writes a `.reached-<phase>` file on
+  arrival at `before-git`, `before-push` and `after-push`, and blocks at
+  the one phase a test names until that test creates `.release-<phase>`.
+  It is inert unless the variable is set. A companion variable,
+  `GATEKEEPER_TEST_WORKER_IGNORES_TERM`, makes the held worker ignore
+  SIGTERM; it stands in for the two ways a real worker outlives its
+  cancellation — a `git push` child that survived a single-process kill,
+  and a worker the canceller lacks permission to signal — neither of which
+  is constructible from inside one test process. The two cases: a worker
+  released inside cancel's ten-second SIGTERM wait pushes, and cancel
+  answers `too-late` with the commit; and a workspace whose recorded worker
+  is alive but unsignalable (pid 1, the case skipping itself where that pid
+  *is* signalable, as when running as root) yields `cancel-failed`, exit 1,
+  workspace left in place. Red conditions verified by mutation rather than
+  against the pre-fix program, since the cancel fixes had already landed:
+  removing the every-path history re-check turns the first case's answer
+  into `cancelled`, and removing the post-kill liveness confirmation does
+  the same to the second — the exact false `cancelled` the ruling exists to
+  prevent. Still unwritten: the host-locality case.
+- APPLIED 2026-08-12 (the git-version parse and the `finally` reaping) and
+  2026-08-13 (the rest) — **The harness synchronises by handshake, fails
+  soft, and reaps what it spawns.** Three weaknesses in the test
   harness itself, independent of what it covers. It makes a timing bet:
   the refusal-record and liveness cases must fit a `status` invocation, a
   full second check-in and a rival's git work inside a three-second worker
@@ -716,12 +735,21 @@ remains in git history at `4cadb46`.
   signal under a generous timeout — removing the race instead of widening
   it; make the helpers mark their case failed and let the run continue;
   reap spawned workers in a `finally`; and print the number of cases run,
-  so a short run is visible on sight. Applied: the git-version parse that
-  was crashing the run on macOS, and `finally` reaping around the
-  worker-spawning cases. **Not applied: handshake synchronisation** (which
-  waits on the phase seam that was not built), **fail-soft helpers**, and
-  **the printed case count** — the suite still ends with the failure line
-  alone.
+  so a short run is visible on sight. The git-version parse that was
+  crashing the run on macOS and the `finally` reaping around the
+  worker-spawning cases landed with the fix batch; the rest landed
+  2026-08-13 once the seam existed. The three-second and thirty-second
+  worker sleeps are gone: a `wait_for` helper watches the seam's phase
+  files, and the B4d case now releases the worker only after the rival's
+  conflicting commit is on main, so the conflict it asserts is guaranteed
+  rather than raced for. The `git` wrapper records a failed case and
+  returns instead of raising, and every bare decode of a subprocess reply
+  goes through `load_payload`, which answers `UNPARSEABLE` rather than
+  raising. The run ends with the number of cases run, printed before the
+  failure line. The value of that last part was immediate: building these
+  cases collided a fixture digest with an existing one, and the resulting
+  `FileExistsError` ended the run a third of the way through — visible on
+  sight as a short count, invisible before.
 - APPLIED 2026-08-12 (`6d356d2`) — **Document contradictions corrected
   with the fixes.** All introduced or left standing by PR #49, none
   needing a separate decision: the specification stated slice 4 is BUILT

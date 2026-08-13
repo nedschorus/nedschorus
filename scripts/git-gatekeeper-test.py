@@ -55,9 +55,12 @@ gatekeeper = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gatekeeper)
 
 failures = []
+cases_run = 0
 
 
 def check(case_name, condition, detail=""):
+    global cases_run
+    cases_run += 1
     if condition:
         print(f"PASS  {case_name}")
     else:
@@ -65,13 +68,48 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def wait_for(predicate, seconds=60, interval=0.02):
+    """Wait on a condition, not on a duration (ruled 2026-08-12).
+
+    The cases that hold a worker open used to bet that their own work — a
+    status call, a whole second check-in, a rival's git work — finished inside
+    a fixed sleep. On a loaded host the sleep won and the assertion inverted
+    quietly into the opposite outcome. Every such wait now watches the phase
+    files the worker writes, under a timeout generous enough that expiry means
+    a real defect rather than a slow machine.
+    """
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return bool(predicate())
+
+
 def git(arguments, cwd, check_result=True):
+    """Fails its own case rather than unwinding the run (ruled 2026-08-12).
+
+    This helper used to raise on a non-zero exit, and nothing caught it, so one
+    broken fixture ended the suite where it stood. That surfaced as a traceback
+    rather than a false green — but the cases that never ran left no trace, and
+    a traceback after a hundred passes reads as an environment hiccup rather
+    than as a third of the suite not executing.
+    """
     completed = subprocess.run(
         ["git", *arguments], cwd=str(cwd), capture_output=True, text=True, check=False
     )
     if check_result and completed.returncode != 0:
-        raise AssertionError(f"git {' '.join(arguments)} failed: {completed.stderr}")
+        check(f"git {' '.join(arguments)} succeeds in {Path(cwd).name}",
+              False, completed.stderr.strip() or completed.stdout.strip())
     return completed
+
+
+def load_payload(text):
+    """A reply that is not JSON is a failed case, never a dead run."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"outcome": "UNPARSEABLE", "stdout": text}
 
 
 def run_gatekeeper(arguments, state_home):
@@ -488,14 +526,14 @@ with tempfile.TemporaryDirectory() as workspace_name:
     git(["config", "user.email", "rival@nedschorus.invalid"], rival)
     (work / "README.md").write_text("seed\nours\n", encoding="utf-8")
     paused_environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
-                          "GATEKEEPER_TEST_WORKER_PAUSE": "3"}
+                          "GATEKEEPER_TEST_WORKER_PAUSE_AT": "before-git"}
     paused_environment.pop("CLAUDE_CODE_SESSION_ID", None)
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH),
          *base_request(work, remote, base, ["README.md"], "will conflict"),
          "--no-wait"],
         capture_output=True, text=True, check=False, env=paused_environment)
-    accepted = json.loads(completed.stdout)
+    accepted = load_payload(completed.stdout)
     b4d_digest = accepted.get("digest", "")
 
     # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13). check_in
@@ -528,6 +566,9 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     check("B4d the paused submission was accepted",
           accepted.get("outcome") == "accepted", accepted)
+    check("the worker announces the phase it is held at",
+          wait_for(lambda: (b4d_workspace / ".reached-before-git").exists()),
+          sorted(p.name for p in b4d_workspace.iterdir()))
     code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
                                    state_home)
     check("T7 status reports in-progress while the worker lives",
@@ -540,6 +581,10 @@ with tempfile.TemporaryDirectory() as workspace_name:
     git(["add", "-A"], rival)
     git(["commit", "--quiet", "-m", "rival changes the very same path"], rival)
     git(["push", "--quiet", "origin", "main"], rival)
+    # Released only now that the rival's conflicting commit is on main, so the
+    # worker's push is guaranteed to lose. The old form raced the rival's git
+    # work against a three-second sleep.
+    (b4d_workspace / ".release-before-git").write_text("", encoding="utf-8")
     deadline = time.time() + 60
     while time.time() < deadline:
         code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
@@ -558,13 +603,14 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # T8: cancelling a live worker — group kill, wait, history arbitrates.
     remote, work, base = make_fixture(workspace, "cancelrun")
     (work / "README.md").write_text("seed\nnever lands\n", encoding="utf-8")
-    long_pause = {**paused_environment, "GATEKEEPER_TEST_WORKER_PAUSE": "30"}
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_PATH),
          *base_request(work, remote, base, ["README.md"], "to be cancelled"),
          "--no-wait"],
-        capture_output=True, text=True, check=False, env=long_pause)
-    cancel_digest = json.loads(completed.stdout).get("digest", "")
+        capture_output=True, text=True, check=False, env=paused_environment)
+    cancel_digest = load_payload(completed.stdout).get("digest", "")
+    cancel_workspace = state_home / "nedschorus-gatekeeper" / cancel_digest
+    wait_for(lambda: (cancel_workspace / ".reached-before-git").exists())
     code, payload = run_gatekeeper(["cancel", cancel_digest, "--repo", str(work)],
                                    state_home)
     check("T8 cancelling a live worker answers cancelled",
@@ -573,6 +619,86 @@ with tempfile.TemporaryDirectory() as workspace_name:
           git(["show", "main:README.md"], remote).stdout == "seed\n")
     check("T8 the cancelled workspace is swept",
           not (state_home / "nedschorus-gatekeeper" / cancel_digest).exists())
+
+    # Cancel truthfulness, first half (ruled 2026-08-12): a push that lands
+    # inside cancel's wait must be reported. The history re-check used to run
+    # only on the live-worker branch and only before the wait, so a worker that
+    # pushed inside it was answered "cancelled — nothing reached main" while
+    # status reported the commit a second later. The worker is held at
+    # before-push and ignores SIGTERM, standing in for the two real ways a
+    # worker outlives its cancellation; it is released while cancel waits.
+    remote, work, base = make_fixture(workspace, "cancel-race")
+    (work / "README.md").write_text("seed\nwins the race\n", encoding="utf-8")
+    racing_environment = {**paused_environment,
+                          "GATEKEEPER_TEST_WORKER_PAUSE_AT": "before-push",
+                          "GATEKEEPER_TEST_WORKER_IGNORES_TERM": "1"}
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH),
+         *base_request(work, remote, base, ["README.md"], "pushes inside the wait"),
+         "--no-wait"],
+        capture_output=True, text=True, check=False, env=racing_environment)
+    race_digest = load_payload(completed.stdout).get("digest", "")
+    race_workspace = state_home / "nedschorus-gatekeeper" / race_digest
+    check("the worker reaches the pre-push phase",
+          wait_for(lambda: (race_workspace / ".reached-before-push").exists()),
+          race_digest)
+    race_environment = {**os.environ, "XDG_STATE_HOME": str(state_home)}
+    race_environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    canceller = subprocess.Popen(
+        [sys.executable, str(SCRIPT_PATH), "cancel", race_digest, "--repo", str(work)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=race_environment)
+    try:
+        # Cancel's SIGTERM wait is ten seconds; releasing after one leaves nine
+        # of margin, and overshooting cannot pass wrongly — SIGKILL would end
+        # the worker with nothing pushed and the case would fail, not invert.
+        time.sleep(1)
+        (race_workspace / ".release-before-push").write_text("", encoding="utf-8")
+        race_stdout, _ = canceller.communicate(timeout=120)
+    finally:
+        if canceller.poll() is None:
+            canceller.kill()
+            canceller.communicate()
+    race_payload = load_payload(race_stdout)
+    check("cancel answers too-late when the push lands inside its wait",
+          race_payload.get("outcome") == "too-late"
+          and race_payload.get("commit"), race_payload)
+    check("the push that won the race is on main",
+          git(["show", "main:README.md"], remote).stdout == "seed\nwins the race\n")
+
+    # Cancel truthfulness, second half (ruled 2026-08-12): a worker cancel
+    # cannot stop yields cancel-failed, the fifth outcome, and keeps its
+    # workspace. Nothing confirmed the kill before that ruling — both killpg
+    # calls swallow every error and worker_state reads permission-denied as
+    # alive — so a worker this user cannot signal produced a false "cancelled"
+    # after fifteen seconds of trying. Reproduced with pid 1, which is alive,
+    # foreign, and unsignalable; the case is skipped where it is signalable
+    # (running as root), because there cancel would really signal that group.
+    try:
+        os.kill(1, 0)
+        init_is_unsignalable = False
+    except PermissionError:
+        init_is_unsignalable = True
+    except OSError:
+        init_is_unsignalable = False
+    if init_is_unsignalable and os.geteuid() != 0:
+        unstoppable_digest = "8" * 64
+        unstoppable = state_home / "nedschorus-gatekeeper" / unstoppable_digest
+        unstoppable.mkdir(parents=True)
+        (unstoppable / "request.json").write_text("{}", encoding="utf-8")
+        (unstoppable / "worker.pid").write_text(
+            f"1 {gatekeeper.process_start_time(1)}", encoding="utf-8")
+        code, payload = run_gatekeeper(
+            ["cancel", unstoppable_digest, "--repo", str(work)], state_home)
+        check("cancel answers cancel-failed when it cannot stop the worker",
+              payload.get("outcome") == "cancel-failed", payload)
+        check("cancel-failed exits 1", code == 1, code)
+        check("cancel-failed names the worker it could not stop",
+              "1" in payload.get("facts", ""), payload)
+        check("cancel-failed leaves the workspace in place, never swept",
+              unstoppable.is_dir(), payload)
+    else:
+        print("SKIP  cancel-failed: pid 1 is signalable from this account")
 
     # T7: the abandoned state, and cancel's fourth branch.
     fake_digest = "f" * 64
@@ -880,7 +1006,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
          "--repo-slug", "nedschorus/nedschorus"],
         capture_output=True, text=True, check=False, env=no_gh_environment,
     )
-    audit_payload = json.loads(completed.stdout)
+    audit_payload = load_payload(completed.stdout)
     check("B3c audit without gh answers audit-failed, never a silent skip",
           audit_payload.get("outcome") == "audit-failed"
           and completed.returncode == 1, audit_payload)
@@ -1050,7 +1176,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         [sys.executable, str(SCRIPT_PATH), *base_request(work, remote, base, ["README.md"])],
         capture_output=True, text=True, check=False, env=environment,
     )
-    origin_payload = json.loads(completed.stdout)
+    origin_payload = load_payload(completed.stdout)
     origin_body = git(
         ["show", "--no-patch", "--format=%B", origin_payload["commit"]], remote
     ).stdout
@@ -1060,6 +1186,11 @@ with tempfile.TemporaryDirectory() as workspace_name:
     shutil.rmtree(state_home, ignore_errors=True)
 
 print()
+# The count is printed so a short run is visible on sight (ruled 2026-08-12): a
+# run that ends early leaves the cases it never reached with no trace at all,
+# and a traceback arriving after a hundred passes reads as an environment
+# hiccup rather than as a third of the suite not executing.
+print(f"{cases_run} cases run")
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
     sys.exit(1)

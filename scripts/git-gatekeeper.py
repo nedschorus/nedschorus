@@ -1116,6 +1116,42 @@ def fetch_and_find(repository: Path, digest: str) -> str | None:
     return find_existing_check_in(repository, digest)
 
 
+# The named-phase test seam (ruled 2026-08-12, built 2026-08-13). It replaces a
+# single pre-git sleep that every liveness, twin and refusal-record case had to
+# fit its own work inside — a status call, a full second check-in and a rival's
+# git work in three seconds, about five times margin on an idle machine and
+# nothing on a loaded one. When the sleep won, the assertions inverted quietly
+# into the opposite outcome rather than failing. A test now waits for the file
+# the worker writes on arrival at a phase, and releases it by creating the
+# release file, so no case depends on how long anything takes.
+#
+# Inert unless GATEKEEPER_TEST_WORKER_PAUSE_AT is set: it then names the one
+# phase the worker blocks at, and arrival files are written at every phase.
+WORKER_PHASES = ("before-git", "before-push", "after-push")
+WORKER_PHASE_RELEASE_TIMEOUT = 120
+
+
+def worker_phase(workspace: Path, phase: str) -> None:
+    """Announce arrival at `phase`; block there when a test asked for it."""
+    paused_at = os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE_AT")
+    if not paused_at:
+        return
+    (workspace / f".reached-{phase}").write_text("", encoding="utf-8")
+    if paused_at != phase:
+        return
+    if os.environ.get("GATEKEEPER_TEST_WORKER_IGNORES_TERM"):
+        # Stands in for the two ways a real worker outlives its cancellation: a
+        # `git push` child that survived a single-process kill, and a worker the
+        # canceller lacks permission to signal. Neither is constructible from
+        # inside one test process, and both pose cancel the same question —
+        # does it answer only what it verified?
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    release = workspace / f".release-{phase}"
+    deadline = time.monotonic() + WORKER_PHASE_RELEASE_TIMEOUT
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+
 def run_worker(arguments) -> int:
     """The detached half of --no-wait. Detached means nobody is listening:
     outcomes land in history (success) or the B4d record (refusal), where
@@ -1135,9 +1171,7 @@ def run_worker(arguments) -> int:
     request = json.loads(record_path.read_text(encoding="utf-8"))
     digest = request["digest"]
 
-    pause = float(os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE", "0") or 0)
-    if pause:  # test seam: holds the WORKING state open for cancel/liveness cases
-        time.sleep(pause)
+    worker_phase(workspace, "before-git")
 
     worktree: dict[str, bytes | None] = {}
     for path, change in request["changes"].items():
@@ -1147,10 +1181,12 @@ def run_worker(arguments) -> int:
         )
     clone = workspace / "candidate"
     try:
+        worker_phase(workspace, "before-push")
         try:
             integrate_and_push(clone, request, worktree, digest)
         except AlreadyCheckedIn:
             pass
+        worker_phase(workspace, "after-push")
         shutil.rmtree(workspace, ignore_errors=True)
         return EXIT_SUCCESS
     except Refusal as refusal:
