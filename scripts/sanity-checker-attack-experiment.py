@@ -129,8 +129,12 @@ def run_codex(prompt: str, isolated: bool) -> tuple:
         "--output-last-message", str(last_message_path),
         "-m", CODEX_MODEL,
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
-        prompt,
     ]
+    if isolated:
+        # The scratch directory is deliberately not a git repository; codex
+        # refuses untrusted non-repo directories without this flag.
+        command.append("--skip-git-repo-check")
+    command.append(prompt)
     completed = subprocess.run(
         command, stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=sys.stderr,
         text=True, check=False, timeout=CELL_TIMEOUT_SECONDS,
