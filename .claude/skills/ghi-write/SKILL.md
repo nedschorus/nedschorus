@@ -11,8 +11,8 @@ Before filing a new issue, editing an issue body, commenting on an issue, or dec
 
 ## What to do
 
-1. Ask before filing. Put the subject to ghi-info, the project's issue-knowledge agent, as a question — the ask command and its fallback ladder are under How to do it; read the issues it returns and the documents they cite. When an existing artifact covers the subject, edit that artifact — revision is the default disposition. A failed ask does not block the write: fall down the ladder and proceed under these rules.
-2. Route by state. Every artifact is either at its home or in a named queue with a drain:
+1. Ask before filing. Put the subject to ghi-info, the project's issue-knowledge agent, as a question — the ask command and its fallback ladder are under How to do it; read the issues it returns and the documents they cite. When an existing issue or pair document covers the subject — the same matter, not merely the same area — edit that artifact; revision is the default disposition. A failed ask does not block the write: fall down the ladder and proceed under these rules.
+2. Route by state. Every artifact this skill routes is either at its home or in a named queue with a drain:
    - Material whose fate is not yet decided goes to a queue, not to an issue: `docs/wiki/queue/` for wiki-bound doctrine, `docs/issues/queue/` for pair-bound MDs; a candidate issue queues as a `draft`-labeled issue — the label is the issue world's queue membership.
    - Anything carrying pending state — a wanted feature or component, an open question, a commitment to act — gets a GHI (GitHub issue): an MD-GHI pair when substantial working material rides with it, issue-only otherwise, and the issue body stays under 500 words either way — a body that cannot is carrying pair material. The body carries the summary, the pair MD the substance; the pair sequence is write the MD, land it on main, then cite it from the issue.
    - Final reference content awaiting nothing is a bare MD at its home.

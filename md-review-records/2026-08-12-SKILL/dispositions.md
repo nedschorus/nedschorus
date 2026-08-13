@@ -34,6 +34,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 14. Zero-context tests vs CLAUDE.md's broader "usable"
     *processed 2026-08-12 → rejected, no change, verified by a minimal-context subagent dispatched at the user's instruction (its verdict: no defect, no rewording): step 4's gate governs issue writes only ("before submitting", "from the issue alone"); the no-next-action class routes to a bare MD at step 2 and never reaches the gate; every write reaching it carries a next action by construction, including the completion body-edit whose next action is the close-with-reason; the third test is CLAUDE.md's "usable" operationalized for issues, not a second rule to reconcile.*
 15. Judgment terms without tests (covers the subject; substantial; reading stopping point)
+    *processed 2026-08-12 → revised beyond the drafted proposal: the user flagged "existing artifact" as unbounded (any file grep can find) — the edit-over-file sentence now names the classes ("an existing issue or pair document") and carries the same-matter gloss; his follow-up question surfaced the same error at step 2's lead-in, now bounded ("Every artifact this skill routes"), adopting the terra-6/sol-8 findings declined at triage. "Substantial" stands (item 4's crossing sentence is its floor); the reading stopping point stays declined (ghi-info's reading list is the bound).*
 16. Unbuilt machinery — a permanent-truth pointer to the #46 build
 17. Remainder: reader's-seat, body-file housekeeping (doctrine/home already resolved by item 8's cite line)
 
