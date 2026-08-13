@@ -561,6 +561,40 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
 
+    # Death requires positive evidence (ruled 2026-08-12). An unreadable or
+    # absent worker.pid used to read as "dead", the strongest conclusion from
+    # the weakest evidence: status called a running request abandoned, and a
+    # twin submission deleted the live worker's clone and spawned a rival.
+    for torn_label, torn_bytes in (("an empty", ""), ("a garbage", "not-a-pid")):
+        torn_digest = ("a" if torn_label == "an empty" else "b") * 64
+        torn_workspace = state_home / "nedschorus-gatekeeper" / torn_digest
+        torn_workspace.mkdir(parents=True)
+        (torn_workspace / "request.json").write_text("{}", encoding="utf-8")
+        (torn_workspace / "worker.pid").write_text(torn_bytes, encoding="utf-8")
+        code, payload = run_gatekeeper(["status", torn_digest, "--repo", str(work)],
+                                       state_home)
+        check(f"{torn_label} worker.pid is not evidence of death",
+              payload.get("outcome") == "in-progress", payload)
+        check(f"{torn_label} worker.pid leaves the workspace intact",
+              torn_workspace.is_dir(), payload)
+
+    # The retained refusal record survives a status that lands mid-write, and is
+    # delivered once (ruled 2026-08-12): the record was written in place after
+    # its siblings were unlinked, so a status arriving in either window either
+    # reported "abandoned" for a refused request or replaced the reason with a
+    # generic io error and then swept it.
+    unreadable_digest = "c" * 64
+    unreadable_workspace = state_home / "nedschorus-gatekeeper" / unreadable_digest
+    unreadable_workspace.mkdir(parents=True)
+    (unreadable_workspace / "refusal.json").write_text("{half-written",
+                                                       encoding="utf-8")
+    code, payload = run_gatekeeper(["status", unreadable_digest, "--repo", str(work)],
+                                   state_home)
+    check("an unreadable refusal record is reported, not invented",
+          payload.get("error") == "workspace-io-error", payload)
+    check("an unreadable refusal record is retained, not swept",
+          unreadable_workspace.is_dir(), payload)
+
     # Kill scope (ruled 2026-08-12): a recorded pid that does not lead its own
     # process group is signalled alone. worker.pid is written above the
     # --no-wait branch, so a waiting check-in records its own pid, whose group

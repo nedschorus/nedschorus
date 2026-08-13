@@ -111,6 +111,11 @@ EXIT_SUCCESS = 0
 EXIT_REFUSED = 1
 EXIT_DEFECT = 2
 
+# 'unknown' — an unreadable or absent worker.pid — is treated as live
+# everywhere except the age-gated sweep (ruled 2026-08-12, see worker_state):
+# a workspace is never destroyed on the strength of a file we could not read.
+LIVE_STATES = ("alive", "unknown")
+
 
 class Refusal(Exception):
     """A named catalog refusal: the error, the facts, and the exact next act.
@@ -831,11 +836,26 @@ def process_start_time(pid: int) -> str:
         return ""
 
 
+def write_atomically(target: Path, content: str) -> None:
+    """Write through a temporary sibling and rename into place (ruled
+    2026-08-12).
+
+    Every writer of `worker.pid` and of the retained refusal record used to
+    truncate in place, and every reader treated an unreadable file as proof the
+    worker was dead. Between those lay a window in which the file was empty on
+    disk while the worker was alive: `status` answered `abandoned`, and a twin
+    submission deleted the live worker's clone and spawned a rival on the same
+    digest. A rename is atomic, so a reader sees the old contents or the new and
+    never nothing.
+    """
+    temporary = target.with_name(f".{target.name}.writing")
+    temporary.write_text(content, encoding="utf-8")
+    os.replace(temporary, target)
+
+
 def write_worker_identity(workspace: Path) -> None:
     pid = os.getpid()
-    (workspace / "worker.pid").write_text(
-        f"{pid} {process_start_time(pid)}", encoding="utf-8"
-    )
+    write_atomically(workspace / "worker.pid", f"{pid} {process_start_time(pid)}")
 
 
 def signal_worker(pid: int, signal_number: int) -> None:
@@ -876,21 +896,31 @@ def worker_stopped(workspace: Path, seconds: float) -> bool:
     """
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if worker_state(workspace) != "alive":
+        if worker_state(workspace) not in LIVE_STATES:
             return True
         time.sleep(0.1)
-    return worker_state(workspace) != "alive"
+    return worker_state(workspace) not in LIVE_STATES
 
 
 def worker_state(workspace: Path) -> str:
-    """'alive', 'dead', or 'none' — the whole state machine's oracle."""
+    """'alive', 'dead', 'unknown', or 'none' — the whole state machine's oracle.
+
+    Death requires positive evidence (ruled 2026-08-12). An unreadable or absent
+    `worker.pid` used to return 'dead', which is the strongest conclusion drawn
+    from the weakest evidence: it let a twin delete a live worker's clone and
+    let `status` report a running request as abandoned. It now returns
+    'unknown', which every caller treats as live, because the asymmetry is
+    decisive — guessing alive wrongly leaves a directory the aged sweep collects
+    later, while guessing dead wrongly destroys work in flight and loses its
+    reason silently.
+    """
     if not workspace.is_dir():
         return "none"
     try:
         tokens = (workspace / "worker.pid").read_text(encoding="utf-8").split()
         pid = int(tokens[0])
     except (OSError, ValueError, IndexError):
-        return "dead"
+        return "unknown"
     recorded_start = tokens[1] if len(tokens) > 1 else "0"
     try:
         # Known limit, recorded rather than guarded (2026-08-12): os.kill(pid, 0)
@@ -935,7 +965,10 @@ def sweep_stale_workspaces() -> None:
                 if age > REFUSAL_RECORD_RETENTION_SECONDS:
                     shutil.rmtree(entry, ignore_errors=True)
                 continue
-            if age > STALE_WORKSPACE_SECONDS and worker_state(entry) == "dead":
+            # Age-gated, so a transient 'unknown' (the moment between a
+            # workspace being created and its worker stamping itself) is
+            # never collected, while a day-old one still is.
+            if age > STALE_WORKSPACE_SECONDS and worker_state(entry) in ("dead", "unknown"):
                 shutil.rmtree(entry, ignore_errors=True)
         except OSError:
             continue
@@ -946,13 +979,22 @@ def retain_refusal_record(workspace: Path, digest: str, refusal: Refusal) -> Non
     JSON refusal record; status returns it once, then sweeps."""
     for entry in ("candidate", "declared"):
         shutil.rmtree(workspace / entry, ignore_errors=True)
-    (workspace / "worker.pid").unlink(missing_ok=True)
-    (workspace / "request.json").unlink(missing_ok=True)
-    (workspace / "refusal.json").write_text(json.dumps({
+    # The record is written before anything else is removed, and atomically
+    # (ruled 2026-08-12). The old order unlinked worker.pid and request.json
+    # first, so a status arriving in that gap saw no record and no worker and
+    # answered "abandoned — resubmit safely" for a request that had in fact
+    # refused with a real reason; and the in-place write left an instant where
+    # the file existed but was empty, which status read as unparseable, replaced
+    # with a generic workspace-io-error, and then swept — destroying the only
+    # copy of the reason. Never demolish the old state before the new state
+    # exists.
+    write_atomically(workspace / "refusal.json", json.dumps({
         "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
         "next_action": refusal.next_action, "digest": digest,
         "summary": f"refused: {refusal.error} — {refusal.facts}",
-    }), encoding="utf-8")
+    }))
+    (workspace / "worker.pid").unlink(missing_ok=True)
+    (workspace / "request.json").unlink(missing_ok=True)
 
 
 def require_digest(arguments, command: str) -> str:
@@ -1037,18 +1079,35 @@ def status_query(arguments) -> int:
                                 "always safe"}, EXIT_SUCCESS)
     record_path = workspace / "refusal.json"
     if record_path.is_file():
+        # B4d's "returned once, then swept" is enforced by the filesystem
+        # (ruled 2026-08-12): the record is claimed with an atomic rename, so of
+        # two concurrent status calls exactly one wins it — before, both
+        # received the full record.
+        claimed = workspace / "refusal.claimed.json"
         try:
-            payload = json.loads(record_path.read_text(encoding="utf-8"))
+            os.replace(record_path, claimed)
+        except OSError:
+            claimed = record_path  # lost the claim, or cannot rename: read in place
+        try:
+            payload = json.loads(claimed.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            payload = {"outcome": "refused", "error": "workspace-io-error",
-                       "facts": "the retained refusal record was unreadable",
-                       "next_action": "Resubmit the work; resubmitting is always safe.",
-                       "digest": digest,
-                       "summary": "refused: workspace-io-error — record unreadable"}
+            # An unreadable record is unknown, not spent: it is left in place
+            # for a retry rather than swept (ruled 2026-08-12). Sweeping here
+            # destroyed the caller's only copy of the reason whenever a status
+            # landed mid-write.
+            return emit({"outcome": "refused", "error": "workspace-io-error",
+                         "facts": "the retained refusal record could not be read; "
+                                  "it is left in place",
+                         "next_action": f"Ask again with: git-gatekeeper.py status "
+                                        f"{digest} — if it stays unreadable, resubmit "
+                                        "the work; resubmitting is always safe.",
+                         "digest": digest,
+                         "summary": "refused: workspace-io-error — record unreadable, "
+                                    "retained"}, EXIT_REFUSED)
         shutil.rmtree(workspace, ignore_errors=True)  # returned once, then swept (B4d)
         return emit(payload, EXIT_REFUSED)
     state = worker_state(workspace)
-    if state == "alive":
+    if state in LIVE_STATES:
         return emit({"outcome": "in-progress", "digest": digest,
                      "summary": "in-progress — a live worker holds this request; "
                                 "ask again shortly"}, EXIT_SUCCESS)
@@ -1075,7 +1134,7 @@ def cancel_request(arguments) -> int:
                                 "machine is cancelled there"},
                     EXIT_SUCCESS)
     pid = None
-    if worker_state(workspace) == "alive":
+    if worker_state(workspace) in LIVE_STATES:
         # WALK-4 (ruled 2026-08-12): stop the worker and WAIT — a kill that does
         # not wait leaves an already-spawned git push child racing the history
         # query below. Scope ruled the same day: the group only when the
@@ -1102,7 +1161,7 @@ def cancel_request(arguments) -> int:
         return emit({"outcome": "too-late", "digest": digest, "commit": commit,
                      "summary": f"too-late — already-checked-in {commit}; the "
                                 "push won the race"}, EXIT_SUCCESS)
-    if worker_state(workspace) == "alive":
+    if worker_state(workspace) in LIVE_STATES:
         return emit({"outcome": "cancel-failed", "digest": digest,
                      "facts": f"worker {pid} is still alive after SIGTERM and "
                               "SIGKILL",
@@ -1281,7 +1340,7 @@ def check_in(arguments) -> int:
         # 4.1 (ruled 2026-08-10): concurrent identical submissions share one
         # digest workspace — a live twin is answered, never swept from under.
         existing = workspace_root() / digest
-        if worker_state(existing) == "alive":
+        if worker_state(existing) in LIVE_STATES:
             return emit({
                 "outcome": "in-progress", "digest": digest,
                 "summary": "in-progress — a live worker already holds this exact "
