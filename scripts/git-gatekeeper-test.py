@@ -42,6 +42,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -491,6 +492,14 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("T7 --no-wait answers accepted with the digest",
           payload.get("outcome") == "accepted"
           and len(payload.get("digest", "")) == 64, payload)
+    # The digest is handed out with the machine it belongs to (ruled
+    # 2026-08-12). Workspaces are host-local and the fleet spans macOS and
+    # Ubuntu, so a digest carried elsewhere answers "unknown" for work
+    # proceeding normally. The absence replies name the host they searched;
+    # this one names the host the request came from.
+    check("T7 the accepted reply names the submitting host",
+          socket.gethostname() in payload.get("summary", "")
+          and socket.gethostname() in payload.get("next_action", ""), payload)
     nowait_digest = payload.get("digest", "")
     status_payload = {}
     deadline = time.time() + 60

@@ -1531,9 +1531,10 @@ def check_in(arguments) -> int:
         if not getattr(arguments, "no_wait", False):
             write_worker_identity(workspace)
         # The request record: written once, read by everything downstream.
+        submitting_host = socket.gethostname()
         (workspace / "request.json").write_text(
             json.dumps({**request, "digest": digest, "remote": remote,
-                        "host": socket.gethostname()}, indent=2),
+                        "host": submitting_host}, indent=2),
             encoding="utf-8",
         )
         # The declaration snapshot: the worker (and any resubmit-side rebuild)
@@ -1555,11 +1556,22 @@ def check_in(arguments) -> int:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             workspace = None  # ownership passed to the worker; do not sweep
+            # The digest is handed out with the machine it belongs to (ruled
+            # 2026-08-12). Workspaces are host-local — the worker, the state
+            # directory and the refusal record live on this host and nowhere
+            # else — and the fleet spans macOS and Ubuntu, so a digest carried
+            # to another machine answers "unknown" for work proceeding
+            # normally, and cancel there answers unknown-request while the
+            # worker runs on. The absence replies already say where they
+            # looked; this one now says where it came from.
             return emit({
                 "outcome": "accepted", "digest": digest,
                 "next_action": f"Collect the outcome with: git-gatekeeper.py "
-                               f"status {digest}",
-                "summary": f"accepted {digest}",
+                               f"status {digest} — run it on {submitting_host}, "
+                               f"the host this request was submitted from; its "
+                               f"workspace, worker and refusal record live "
+                               f"there and nowhere else.",
+                "summary": f"accepted {digest} on {submitting_host}",
             }, EXIT_SUCCESS)
 
         try:

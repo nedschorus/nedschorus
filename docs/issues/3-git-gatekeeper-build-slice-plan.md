@@ -287,9 +287,9 @@ stock macOS host; the two failures are environment artifacts, not code
 defects (Apple's git 2.39.5 below the 2.40 floor — see the version-floors
 entry — and `user.useConfigOnly` unset in the enclosing repository, which
 may be a setup step slice 5 assumes rather than performs). The audit's
-account-name casefold, the identity guard's one-writer half, and the
-named-phase seam with its cancel-truthfulness cases landed after this batch
-and took the suite to 213.
+account-name casefold, the identity guard's one-writer half, the named-phase
+seam with its cancel-truthfulness cases, and the accepted reply's host landed
+after this batch and took the suite to 214.
 
 These rulings were first recorded in a standalone document,
 `docs/issues/3-gatekeeper-review-fix-rulings-2026-08-12.md`, which existed
@@ -635,8 +635,9 @@ remains in git history at `4cadb46`.
   alongside: the suite's own git-version parse took the last token of `git
   version 2.39.5 (Apple Git-154)` and crashed the whole run on macOS
   before the floor could report.
-- APPLIED IN PART 2026-08-12 (`cb582d6`, `cacd3b9`) — **`status` and
-  `cancel` are host-local, and say so.** The workspace lives under the
+- APPLIED 2026-08-12 (`cb582d6`, `cacd3b9`) and 2026-08-13 (the accepted
+  reply, the specification correction) — **`status` and `cancel` are
+  host-local, and say so.** The workspace lives under the
   local machine's state directory, keyed by digest, and nothing is shared
   between hosts, while the fleet runs agents on more than one machine — so
   a `--no-wait` submission on one host leaves its worker and its record
@@ -658,11 +659,15 @@ remains in git history at `4cadb46`.
   Rejected: a shared workspace root on a network filesystem — its locking
   and partial-failure modes cost far more than the problem. Applied: the
   request record carries the host, and both absence replies scope
-  themselves to this host. **Not applied: the accepted reply and its next
-  action still name no host**, so a `--no-wait` digest is still handed out
-  without the machine it belongs to. Specification correction applied
-  alongside: the states section described the workspace as "discoverable
-  from the digest alone", which holds only on the host that created it.
+  themselves to this host. The accepted reply followed 2026-08-13: it reads
+  `accepted <digest> on <host>`, and its next action names the host to run
+  `status` on and why — the workspace, worker and refusal record live there
+  and nowhere else. One case pins both fields, red against the pre-fix
+  program. The specification correction was recorded as applied with the
+  fix batch but had not in fact been made; it is applied now — the states
+  section's "discoverable from the digest alone" holds only on the host
+  that created it, and the reply contract and procedure both carried the
+  hostless `accepted <digest>` form.
 - APPLIED 2026-08-12 (the cases, across the seven fix commits) and
   2026-08-13 (the phase seam and the cases needing it) — **The regression
   set, and the phase seam it needs.** The 162-case suite caught
