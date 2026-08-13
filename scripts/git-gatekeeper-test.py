@@ -40,6 +40,7 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -151,11 +152,19 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     # --- B3d: version floors ------------------------------------------------
     check("python floor is met", sys.version_info >= (3, 12), sys.version)
-    git_version = subprocess.run(
+    # The version is matched rather than positional: Apple's git reports
+    # "git version 2.39.5 (Apple Git-154)", whose last token is "Git-154)" —
+    # taking it crashed the whole suite on macOS before the floor could report
+    # (fixed 2026-08-12; the fleet runs macOS and Ubuntu, so a floor miss must
+    # fail as a case, not as a traceback).
+    git_version_output = subprocess.run(
         ["git", "--version"], capture_output=True, text=True, check=False
-    ).stdout.split()[-1]
+    ).stdout
+    git_version_match = re.search(r"(\d+)\.(\d+)(?:\.\d+)?", git_version_output)
     check("git floor is met (>= 2.40)",
-          tuple(int(part) for part in git_version.split(".")[:2]) >= (2, 40), git_version)
+          git_version_match is not None
+          and (int(git_version_match[1]), int(git_version_match[2])) >= (2, 40),
+          git_version_output.strip())
 
     # --- T2: the happy path, and its four success guarantees ---------------
     remote, work, base = make_fixture(workspace, "happy")
@@ -551,6 +560,232 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("T8 cancelling an abandoned workspace answers cancelled",
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
+
+    # A failed fetch is never read as absence (ruled 2026-08-12): status and
+    # cancel used to grep a stale origin/main and assert 'unknown' or
+    # 'cancelled — nothing reached main' for work that had reached it. The
+    # catalog already carries network-down, documented as safely resubmittable.
+    remote, work, base = make_fixture(workspace, "unreachable-remote")
+    git(["remote", "set-url", "origin", str(workspace / "no-such-remote.git")], work)
+    for subcommand in ("status", "cancel"):
+        code, payload = run_gatekeeper(
+            [subcommand, "1" * 64, "--repo", str(work)], state_home
+        )
+        check(f"{subcommand} answers network-down rather than asserting absence",
+              payload.get("error") == "network-down", payload)
+        check(f"{subcommand} exits 1 on network-down", code == 1, code)
+
+    # The advisory names real files (ruled 2026-08-12). Plain --porcelain
+    # collapses a wholly-new directory to one entry, so a declared new file
+    # inside one was reported as an undeclared change — the advisory named the
+    # caller's own work — while a genuinely forgotten file in a new directory
+    # was never named either. Untracked names are arbitrary, so quoting made the
+    # advisory report strings that were not paths.
+    remote, work, base = make_fixture(workspace, "advisory-shapes")
+    (work / "newdir").mkdir()
+    (work / "newdir" / "declared.txt").write_text("declared\n", encoding="utf-8")
+    (work / "forgotten-dir").mkdir()
+    (work / "forgotten-dir" / "forgotten.txt").write_text("forgotten\n",
+                                                          encoding="utf-8")
+    (work / "spaced name.txt").write_text("spaced\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["newdir/declared.txt"], "declare in a new dir"),
+        state_home,
+    )
+    advisory = payload.get("advisory", "")
+    check("the advisory does not name the caller's own declared new file",
+          "newdir" not in advisory, payload)
+    check("the advisory names a forgotten file inside a new directory",
+          "forgotten-dir/forgotten.txt" in advisory, payload)
+    check("the advisory reports an awkward name as a real path",
+          "spaced name.txt" in advisory and '\\"' not in advisory, payload)
+
+    # The worker-identity guard works on this platform (ruled 2026-08-12): it
+    # read /proc alone, so it returned "" for every process on macOS and the
+    # comparison was skipped — dead code on half a fleet that runs macOS and
+    # Ubuntu, with nothing announcing which behaviour a host had.
+    check("a real start time is captured on this platform",
+          gatekeeper.process_start_time(os.getpid()) not in ("", "0"),
+          gatekeeper.process_start_time(os.getpid()))
+    check("a start time carries no whitespace",
+          len(gatekeeper.process_start_time(os.getpid()).split()) == 1,
+          gatekeeper.process_start_time(os.getpid()))
+    recycled_digest = "9" * 64
+    recycled_workspace = state_home / "nedschorus-gatekeeper" / recycled_digest
+    recycled_workspace.mkdir(parents=True)
+    (recycled_workspace / "request.json").write_text("{}", encoding="utf-8")
+    # A live pid (this test's own) recorded against a start time that is not its
+    # own: the pid was recycled, so the worker it named is gone.
+    (recycled_workspace / "worker.pid").write_text(
+        f"{os.getpid()} not-the-start-time", encoding="utf-8"
+    )
+    code, payload = run_gatekeeper(["status", recycled_digest, "--repo", str(work)],
+                                   state_home)
+    check("a recycled pid does not masquerade as a live worker",
+          payload.get("outcome") == "abandoned", payload)
+
+    # The symlink boundary, both directions (ruled 2026-08-12, widening
+    # WALK-1). The shipped check tested only a declared path's final component,
+    # so a symlinked ANCESTOR read bytes from outside the repository; and the
+    # write side had no check at all, so a symlink carried in MAIN's tree was
+    # recreated in the candidate clone and the write followed it out. Both were
+    # demonstrated during the PR #49 review. The outside file's bytes are the
+    # load-bearing assertion: the reply alone looked like an ordinary io error.
+    remote, work, base = make_fixture(workspace, "symlink-boundary")
+    outside = workspace / "outside-every-repository"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("OUTSIDE CONTENT\n", encoding="utf-8")
+
+    (work / "esc").symlink_to(outside, target_is_directory=True)
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["esc/secret.txt"], "read through a link"),
+        state_home,
+    )
+    check("a symlinked ancestor refuses on the read side",
+          payload.get("error") == "malformed-field"
+          and "symlink" in payload.get("facts", ""), payload)
+    (work / "esc").unlink()
+
+    # main carries the link; the caller's copy is an ordinary file, so no check
+    # on the caller's worktree can see the problem.
+    seeded = workspace / "symlink-boundary-seed"
+    git(["clone", "--quiet", str(remote), str(seeded)], workspace)
+    git(["config", "user.name", "fixture"], seeded)
+    git(["config", "user.email", "fixture@nedschorus.invalid"], seeded)
+    (seeded / "docs").mkdir()
+    os.symlink(str(secret), str(seeded / "docs" / "link.txt"))
+    git(["add", "-A"], seeded)
+    git(["commit", "--quiet", "-m", "main carries a symlink"], seeded)
+    git(["push", "--quiet", "origin", "main"], seeded)
+    git(["pull", "--quiet"], work)
+    link_in_work = work / "docs" / "link.txt"
+    if link_in_work.is_symlink():
+        link_in_work.unlink()
+    link_in_work.write_text("DECLARED BY THE CALLER\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, None, ["docs/link.txt"], "write through main's link"),
+        state_home,
+    )
+    check("a symlink in main's tree refuses with its own named error",
+          payload.get("error") == "base-tree-symlink", payload)
+    check("the file outside every repository is untouched",
+          secret.read_text(encoding="utf-8") == "OUTSIDE CONTENT\n", payload)
+
+    # Death requires positive evidence (ruled 2026-08-12). An unreadable or
+    # absent worker.pid used to read as "dead", the strongest conclusion from
+    # the weakest evidence: status called a running request abandoned, and a
+    # twin submission deleted the live worker's clone and spawned a rival.
+    for torn_label, torn_bytes in (("an empty", ""), ("a garbage", "not-a-pid")):
+        torn_digest = ("a" if torn_label == "an empty" else "b") * 64
+        torn_workspace = state_home / "nedschorus-gatekeeper" / torn_digest
+        torn_workspace.mkdir(parents=True)
+        (torn_workspace / "request.json").write_text("{}", encoding="utf-8")
+        (torn_workspace / "worker.pid").write_text(torn_bytes, encoding="utf-8")
+        code, payload = run_gatekeeper(["status", torn_digest, "--repo", str(work)],
+                                       state_home)
+        check(f"{torn_label} worker.pid is not evidence of death",
+              payload.get("outcome") == "in-progress", payload)
+        check(f"{torn_label} worker.pid leaves the workspace intact",
+              torn_workspace.is_dir(), payload)
+
+    # The retained refusal record survives a status that lands mid-write, and is
+    # delivered once (ruled 2026-08-12): the record was written in place after
+    # its siblings were unlinked, so a status arriving in either window either
+    # reported "abandoned" for a refused request or replaced the reason with a
+    # generic io error and then swept it.
+    unreadable_digest = "c" * 64
+    unreadable_workspace = state_home / "nedschorus-gatekeeper" / unreadable_digest
+    unreadable_workspace.mkdir(parents=True)
+    (unreadable_workspace / "refusal.json").write_text("{half-written",
+                                                       encoding="utf-8")
+    code, payload = run_gatekeeper(["status", unreadable_digest, "--repo", str(work)],
+                                   state_home)
+    check("an unreadable refusal record is reported, not invented",
+          payload.get("error") == "workspace-io-error", payload)
+    check("an unreadable refusal record is retained, not swept",
+          unreadable_workspace.is_dir(), payload)
+
+    # Kill scope (ruled 2026-08-12): a recorded pid that does not lead its own
+    # process group is signalled alone. worker.pid is written above the
+    # --no-wait branch, so a waiting check-in records its own pid, whose group
+    # belongs to the invoking shell or harness — and cancel's group kill reached
+    # every process in it. Demonstrated during the PR #49 review by killing a
+    # launcher and an unrelated sibling alongside the check-in.
+    scope_digest = "d" * 64
+    scope_workspace = state_home / "nedschorus-gatekeeper" / scope_digest
+    scope_workspace.mkdir(parents=True)
+    (scope_workspace / "request.json").write_text("{}", encoding="utf-8")
+    # The launcher stands in for the caller's harness: its own session, holding
+    # a child whose pid is recorded as the worker. A group kill takes the
+    # launcher down with the child; a correctly scoped kill does not.
+    launcher = subprocess.Popen(
+        # The launcher reaps its child (child.wait()) before sleeping on, which
+        # is the production shape: a detached worker's parent exits at once, so
+        # the worker reparents to init and is reaped the moment it dies. Without
+        # the reap the killed child lingers as a zombie, and os.kill(pid, 0)
+        # succeeds on zombies — liveness would read "alive" forever.
+        [sys.executable, "-c",
+         "import subprocess, sys, time;"
+         "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+         "print(child.pid, flush=True);"
+         "child.wait();"
+         "time.sleep(60)"],
+        stdout=subprocess.PIPE, text=True, start_new_session=True,
+    )
+    try:
+        recorded_pid = int(launcher.stdout.readline().strip())
+        (scope_workspace / "worker.pid").write_text(f"{recorded_pid} 0",
+                                                    encoding="utf-8")
+        code, payload = run_gatekeeper(
+            ["cancel", scope_digest, "--repo", str(work)], state_home
+        )
+        check("cancel does not group-kill a pid that leads no group",
+              launcher.poll() is None, payload)
+        recorded_gone = False
+        for _ in range(50):
+            try:
+                os.kill(recorded_pid, 0)
+            except (ProcessLookupError, PermissionError):
+                recorded_gone = True
+                break
+            time.sleep(0.1)
+        check("cancel still signals the recorded process itself", recorded_gone,
+              payload)
+    finally:
+        launcher.kill()
+        launcher.wait(timeout=10)
+
+    # Path safety (ruled 2026-08-12): a caller-supplied digest never becomes a
+    # path. Joining an absolute argument discards the workspace root and '..'
+    # climbs out of it, so before the enumeration lookup `cancel` deleted the
+    # named directory and answered `cancelled`, and `status` read a foreign
+    # refusal record and then deleted it. The surviving-directory assertion is
+    # the load-bearing half: the reply alone looked correct in the absolute case
+    # only because the deletion had already happened.
+    for label, argument_builder in (
+        ("an absolute path", lambda victim: str(victim)),
+        ("a climbing path", lambda victim: f"../../{victim.name}"),
+    ):
+        for subcommand in ("status", "cancel"):
+            victim = workspace / f"victim-{subcommand}-{label.split()[1]}"
+            (victim / "nested").mkdir(parents=True)
+            (victim / "keep.txt").write_text("PRECIOUS\n", encoding="utf-8")
+            # A refusal record makes the status path reach its sweep, and the
+            # climbing form needs the root to exist for '..' to resolve.
+            (victim / "refusal.json").write_text('{"outcome": "planted"}',
+                                                 encoding="utf-8")
+            (state_home / "nedschorus-gatekeeper").mkdir(parents=True, exist_ok=True)
+            code, payload = run_gatekeeper(
+                [subcommand, argument_builder(victim), "--repo", str(work)], state_home
+            )
+            check(f"{subcommand} with {label} finds nothing",
+                  payload.get("outcome") in ("unknown", "unknown-request"), payload)
+            check(f"{subcommand} with {label} destroys nothing",
+                  victim.exists() and (victim / "keep.txt").is_file(), payload)
+            check(f"{subcommand} with {label} returns no foreign record",
+                  payload.get("error") != "planted"
+                  and payload.get("outcome") != "planted", payload)
 
     # The opportunistic expiry sweep (ruled 2026-08-10).
     old_stamp = time.time() - 31 * 24 * 3600
