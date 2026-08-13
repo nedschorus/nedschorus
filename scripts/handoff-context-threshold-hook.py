@@ -170,6 +170,9 @@ def main(argv=None) -> int:
         return 0  # already asked this session; do not nag every turn
 
     try:
+        # Nothing guarantees the directory exists this early in a session, and a
+        # marker that fails to write silently means the hook nags every turn.
+        HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
         fired_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
     except OSError:
         pass
