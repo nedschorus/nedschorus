@@ -814,6 +814,18 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("B3c audit answers protection-ok on the designed settings",
           payload.get("outcome") == "protection-ok" and code == 0, payload)
 
+    # GitHub stores the canonical login lowercase and account names are
+    # case-insensitive for identity, so the spelling difference alone is not
+    # drift. Pinned because the audit read it as drift until 2026-08-13 and
+    # answered protection-wrong against correctly configured protection.
+    cased = {**designed, "restrictions": {**designed["restrictions"],
+                                          "users": [{"login": "nedlern"}]}}
+    protection_file.write_text(json.dumps(cased), encoding="utf-8")
+    code, payload = run_gatekeeper(
+        ["audit", "--protection-file", str(protection_file)], state_home)
+    check("B3c audit answers protection-ok when the login differs only in case",
+          payload.get("outcome") == "protection-ok" and code == 0, payload)
+
     drifted = {
         "restrictions": {"users": [{"login": "NedLern"}, {"login": "intruder"}],
                          "teams": [], "apps": []},

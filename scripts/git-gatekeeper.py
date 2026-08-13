@@ -1292,6 +1292,15 @@ def cancel_request(arguments) -> int:
 # The contract the audit checks (spec § The credential and enforcement, LIVE
 # since 2026-07-21). The C3 amendment moves the pusher to the dedicated
 # account — update this set in the same commit that applies it.
+#
+# Spelled the human-readable way; GitHub stores the canonical login lowercase
+# ("nedlern") and treats account names as case-insensitive for identity, so the
+# comparison below casefolds both sides rather than this constant being
+# lowercased — a lowercase constant reads as a typo against the spelling the
+# design uses everywhere, and the next reader restores the case and the bug
+# with it. Case-insensitive, still whole-name: `NedLern` is a proper prefix of
+# `NedLerner` (the org's second owner), so the comparison stays set equality
+# over whole logins and never becomes a substring test.
 EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern"}
 
 
@@ -1353,7 +1362,8 @@ def compare_protection(protection: dict) -> list[str]:
         )
     else:
         users = sorted(u.get("login", "") for u in restrictions.get("users") or [])
-        if set(users) != EXPECTED_MAIN_PUSHER_ACCOUNTS:
+        if ({u.casefold() for u in users}
+                != {a.casefold() for a in EXPECTED_MAIN_PUSHER_ACCOUNTS}):
             problems.append(
                 f"the push restriction names {users or ['nobody']} instead of "
                 f"{sorted(EXPECTED_MAIN_PUSHER_ACCOUNTS)}"
