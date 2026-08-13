@@ -36,6 +36,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 15. Judgment terms without tests (covers the subject; substantial; reading stopping point)
     *processed 2026-08-12 → revised beyond the drafted proposal: the user flagged "existing artifact" as unbounded (any file grep can find) — the edit-over-file sentence now names the classes ("an existing issue or pair document") and carries the same-matter gloss; his follow-up question surfaced the same error at step 2's lead-in, now bounded ("Every artifact this skill routes"), adopting the terra-6/sol-8 findings declined at triage. "Substantial" stands (item 4's crossing sentence is its floor); the reading stopping point stays declined (ghi-info's reading list is the bound).*
 16. Unbuilt machinery — a permanent-truth pointer to the #46 build
+    *processed 2026-08-12 → revised: the machinery bullet gains "and built under nedschorus#46" — true before, during, and after the build, so an agent hitting a missing script resolves expected-gap vs breakage in one hop; an in-file "unbuilt" note stays rejected as staleness-bound. Items 5 and 7 already carry the gap's behavior (interim comment path; fall-through ladder).*
 17. Remainder: reader's-seat, body-file housekeeping (doctrine/home already resolved by item 8's cite line)
 
 ## Finding-to-item map
