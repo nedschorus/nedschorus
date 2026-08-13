@@ -1,5 +1,9 @@
 #!/bin/sh
-# launch-claude <name> [--no-attach] — reach the named agent on the agent box.
+# launch-claude-ubuntu <name> [--no-attach] — reach the named agent on the
+# Ubuntu agent box, from the user's Mac. Its twin, launch-claude-mac, runs the
+# same conventions locally on the Mac; the machine is in the name because the
+# two are otherwise indistinguishable at the call site, and picking the wrong
+# one is a real mistake to make.
 #
 # Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
 # type is the whole configuration. The agent's directory is
@@ -32,7 +36,7 @@ AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
 
 usage() {
-    echo "usage: launch-claude <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
     exit 2
 }
 
@@ -49,7 +53,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$AGENT_NAME" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
@@ -80,4 +84,4 @@ if [ "$ATTACH" = yes ]; then
         "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\""
 fi
 exec ssh "$AGENT_BOX" \
-    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude: $AGENT_NAME is already running (attach with: launch-claude $AGENT_NAME)'"
+    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: $AGENT_NAME is already running (attach with: launch-claude-ubuntu $AGENT_NAME)'"

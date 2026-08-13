@@ -2,6 +2,8 @@
 
 Pair document for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45). The issue carries state; this document carries the design, the walk's order, and the rulings as they land.
 
+**Naming, user-ruled 2026-08-13:** the launcher is `scripts/launch-claude-ubuntu`, renamed from the machine-silent `launch-claude`, and it gained a local twin, `scripts/launch-claude-mac`. Text below written before that date says `launch-claude` and means the Ubuntu launcher. The machine belongs in the name because the two launchers are otherwise indistinguishable at the call site, and the box-versus-Mac mistake is a real one to make.
+
 ## What the user asked for (2026-08-07)
 
 Type `launch-claude <name>` in iTerm2 and get that named agent. The agents themselves run on the Ubuntu box over SSH. If the agent is already running — because the iTerm2 window was closed — the same command reconnects to it rather than starting a second one.
