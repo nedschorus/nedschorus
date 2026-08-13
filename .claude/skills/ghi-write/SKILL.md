@@ -31,6 +31,6 @@ Before filing a new issue, editing an issue body, commenting on an issue, or dec
 - Edit: `gh issue edit <number> --repo nedschorus/nedschorus --body-file <file>`.
 - Close: after the body edit recording the outcome, `gh issue close <number> --repo nedschorus/nedschorus --reason "completed"` (or `"not planned"`, `"duplicate"`).
 - Comment (the two catalog events only): submit through the write tool `scripts/ghi-issue-write.py`'s comment verb naming the event kind; the write path denies plain `gh issue comment`. Until [nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46) builds the tool, plain `gh issue comment` naming the event kind is the interim path.
-- Compose bodies in a file and pass `--body-file`; an inline `--body` is easily mangled by shell quoting (backticks especially).
+- Compose bodies in a scratch file outside the repository and pass `--body-file`; an inline `--body` is easily mangled by shell quoting (backticks especially).
 - Queue routing: write the queue file under its destination directory, or add the `draft` label to the issue; the drain process is [nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24).
 - The machinery named here — ghi-info, `ghi-mirror/`, the write tool, the write path — is specified in `docs/issues/46-ghi-info-agent-design.md` and built under [nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46); the routing doctrine (queues, homes, the drain) is `docs/cross-project/nedschorus-founding-plan.md` § Project organization.

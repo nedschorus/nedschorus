@@ -38,6 +38,9 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 16. Unbuilt machinery — a permanent-truth pointer to the #46 build
     *processed 2026-08-12 → revised: the machinery bullet gains "and built under nedschorus#46" — true before, during, and after the build, so an agent hitting a missing script resolves expected-gap vs breakage in one hop; an in-file "unbuilt" note stays rejected as staleness-bound. Items 5 and 7 already carry the gap's behavior (interim comment path; fall-through ladder).*
 17. Remainder: reader's-seat, body-file housekeeping (doctrine/home already resolved by item 8's cite line)
+    *processed 2026-08-12 → split ruling: reader's-seat declined unchanged — the sentence's two operational clauses (full URLs outside, in-repo paths verified on main) produce the same body under either reading of the seat, which is motivation, not rule; the compose bullet adopted the housekeeping fix — "in a scratch file outside the repository" — closing the repo-litter case of a body file left under docs/ or committed.*
+
+Walk closed 2026-08-12, all 17 items processed; the eight reviewer reports in this directory are committed alongside this final mark.
 
 ## Finding-to-item map
 
