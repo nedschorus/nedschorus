@@ -1012,7 +1012,11 @@ def worker_state(workspace: Path) -> str:
     except PermissionError:
         pass  # alive under another user; still alive
     live_start = process_start_time(pid)
-    # "0" is the spawner's placeholder before the worker stamps itself.
+    # "" and "0" both mean the start time is unavailable — the file carries one
+    # token, or this platform answered neither /proc nor ps — and an unavailable
+    # value is not evidence, so the comparison is skipped rather than failed. No
+    # writer produces "0" deliberately since the placeholder was removed
+    # (2026-08-13); it survives here only as the one-token fallback's value.
     if recorded_start not in ("", "0") and live_start and recorded_start != live_start:
         return "dead"
     return "alive"
@@ -1119,18 +1123,17 @@ def run_worker(arguments) -> int:
     workspace = workspace_for(arguments.digest)
     if workspace is None:
         return EXIT_DEFECT
+    # The worker's first act (ruled 2026-08-12, applied 2026-08-13): it is the
+    # only writer of worker.pid in --no-wait mode, so there is nothing to yield
+    # to and no race to lose. The former loop waited for the file to exist and
+    # the spawner had already created it, so the loop returned at once and the
+    # two writes raced for the file.
+    write_worker_identity(workspace)
     record_path = workspace / "request.json"
     if not record_path.is_file():
         return EXIT_DEFECT
     request = json.loads(record_path.read_text(encoding="utf-8"))
     digest = request["digest"]
-
-    # Stamp identity, yielding briefly to the spawner's placeholder write so
-    # the exact start-time always wins the file.
-    deadline = time.time() + 2
-    while not (workspace / "worker.pid").is_file() and time.time() < deadline:
-        time.sleep(0.05)
-    write_worker_identity(workspace)
 
     pause = float(os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE", "0") or 0)
     if pause:  # test seam: holds the WORKING state open for cancel/liveness cases
@@ -1470,8 +1473,7 @@ def check_in(arguments) -> int:
         # two: a twin arriving inside it saw a directory with no pid file,
         # concluded the owner was dead, and deleted the live sibling's request
         # and clone — the exact case 4.1 exists to prevent. An exclusive mkdir
-        # cannot be raced, and the identity is stamped before anything else so
-        # the 'unknown' window is one rename wide.
+        # cannot be raced, so the claim needs no pid file to hold it.
         workspace = existing
         try:
             workspace.mkdir(parents=True)
@@ -1481,7 +1483,17 @@ def check_in(arguments) -> int:
                 "summary": "in-progress — another submission claimed this exact "
                            f"work first; collect the outcome with: status {digest}",
             }, EXIT_SUCCESS)
-        write_worker_identity(workspace)
+        # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13).
+        # In waiting mode the caller IS the worker, so it stamps itself here.
+        # In --no-wait mode nothing stamps until the detached worker's first
+        # act: the spawner used to write a "<pid> 0" placeholder after Popen
+        # and race the worker for the file, and a worker dying before its own
+        # stamp left that placeholder forever — the reader skips the
+        # start-time comparison on a placeholder, so that workspace's
+        # pid-reuse guard was off for good. The gap now reads as unknown,
+        # which every caller treats as alive.
+        if not getattr(arguments, "no_wait", False):
+            write_worker_identity(workspace)
         # The request record: written once, read by everything downstream.
         (workspace / "request.json").write_text(
             json.dumps({**request, "digest": digest, "remote": remote,
@@ -1505,9 +1517,6 @@ def check_in(arguments) -> int:
                 [sys.executable, str(Path(__file__).resolve()), "worker", digest],
                 start_new_session=True, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            (workspace / "worker.pid").write_text(
-                f"{spawned.pid} 0", encoding="utf-8"  # worker stamps exact identity
             )
             workspace = None  # ownership passed to the worker; do not sweep
             return emit({

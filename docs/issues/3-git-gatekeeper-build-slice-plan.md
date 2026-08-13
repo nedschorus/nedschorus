@@ -287,7 +287,8 @@ stock macOS host; the two failures are environment artifacts, not code
 defects (Apple's git 2.39.5 below the 2.40 floor — see the version-floors
 entry — and `user.useConfigOnly` unset in the enclosing repository, which
 may be a setup step slice 5 assumes rather than performs). The audit's
-account-name casefold landed after this batch and took the suite to 203.
+account-name casefold and the identity guard's one-writer half landed after
+this batch and took the suite to 205.
 
 These rulings were first recorded in a standalone document,
 `docs/issues/3-gatekeeper-review-fix-rulings-2026-08-12.md`, which existed
@@ -566,8 +567,9 @@ remains in git history at `4cadb46`.
   which files should be ignored rather than reported at all — is tracked
   separately as
   [nedschorus#50](https://github.com/nedschorus/nedschorus/issues/50).
-- APPLIED IN PART 2026-08-12 (`71d492e`) — **The worker-identity guard
-  works on macOS and Linux alike, and has one writer.** The design names a
+- APPLIED 2026-08-12 (`71d492e`, portable reader) and 2026-08-13 (one
+  writer) — **The worker-identity guard works on macOS and Linux alike,
+  and has one writer.** The design names a
   residual and its mitigation: a recycled process id could masquerade as a
   live worker, so slice 4 records the worker's start time beside its pid
   and `status` checks both. The code recorded it and three defects stopped
@@ -597,21 +599,28 @@ remains in git history at `4cadb46`.
   one whitespace-free token because `worker.pid` is `<pid> <start>` split
   on whitespace, so `Tue Aug 12 13:45:01 2026` would otherwise record
   `Tue` and never match again — the test asserts a real start time is
-  captured on the running platform and carries no whitespace. **Not
-  applied: the one-writer half.** `check_in` still writes the spawner
-  placeholder `<pid> 0` before launching
-  ([`scripts/git-gatekeeper.py:1509`](../../scripts/git-gatekeeper.py)),
-  the worker still yields to it with the wait-for-existence loop, and
-  `worker_state` still skips the comparison when the recorded start time
-  is `"0"`, so defects (2) and (3) stand. An oversight, not a deviation
-  ruled during application: the applying session proposed the one-writer
-  form itself and had it ruled, then at application fixed only the
-  start-time token that `ps` had broken, treated the spawner's placeholder
-  as fixed ground while doing so, and wrote its identity-guard case to
-  assert that the worker's stamp *beats* the placeholder — pinning the
-  happy-path outcome of the very race the ruling deleted. It committed
-  that batch noting it was behind schedule and reached its context-recycle
-  threshold three items later. The one-writer half remains to be applied.
+  captured on the running platform and carries no whitespace. The
+  one-writer half was missed at the time and applied 2026-08-13: `check_in`
+  no longer stamps in `--no-wait` mode, so the detached worker is the only
+  writer of `worker.pid` and writes it as its first act; the worker's
+  yield loop is gone, having waited for a file the spawner had already
+  created and so returned at once into the race it was meant to prevent.
+  The claim does not depend on the pid file — the exclusive `mkdir` holds
+  it (see the workspace-claim entry above) — so the gap before the worker
+  stamps reads as unknown, which every caller treats as alive. In waiting
+  mode the caller is the worker and still stamps itself, unchanged. Two
+  cases, both red against the pre-fix program, which answered `['<pid>',
+  '0']` to each: the pid file carries no `0` start field the instant the
+  spawner returns, and the worker's own stamp appears within the pause.
+  The second reproduced defect (2) directly — the placeholder had won the
+  race permanently in that run. Why it was missed, from the applying
+  session's record: it proposed the one-writer form itself and had it
+  ruled, then at application fixed only the start-time token that `ps` had
+  broken, treated the spawner's placeholder as fixed ground while doing
+  so, and wrote its identity-guard case to assert that the worker's stamp
+  *beats* the placeholder — pinning the happy-path outcome of the very
+  race the ruling deleted. It committed that batch noting it was behind
+  schedule and reached its context-recycle threshold three items later.
 - APPLIED 2026-08-12 (`cb582d6`) — **Version floors are met by upgrading
   hosts, not by lowering the floors.** The suite asserts Python ≥ 3.12 and
   git ≥ 2.40. A stock macOS host meets neither: its system `python3` is

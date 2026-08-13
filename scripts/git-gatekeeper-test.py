@@ -497,6 +497,35 @@ with tempfile.TemporaryDirectory() as workspace_name:
         capture_output=True, text=True, check=False, env=paused_environment)
     accepted = json.loads(completed.stdout)
     b4d_digest = accepted.get("digest", "")
+
+    # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13). check_in
+    # stamped "<pid> 0" immediately after Popen and then raced the worker for the
+    # file; a worker dying before its own stamp left that placeholder forever,
+    # and worker_state skips the start-time comparison on a placeholder, so the
+    # workspace's pid-reuse guard was off for good. Probed the instant the
+    # spawner returns, because that is when the placeholder existed and the
+    # detached worker had not yet booted far enough to overwrite it.
+    b4d_workspace = state_home / "nedschorus-gatekeeper" / b4d_digest
+    try:
+        spawn_tokens = (b4d_workspace / "worker.pid").read_text(
+            encoding="utf-8").split()
+    except OSError:
+        spawn_tokens = []
+    check("check_in writes no worker.pid placeholder in --no-wait mode",
+          len(spawn_tokens) < 2 or spawn_tokens[1] != "0", spawn_tokens)
+    stamp_deadline = time.time() + 10
+    stamped: list[str] = []
+    while time.time() < stamp_deadline and len(stamped) < 2:
+        try:
+            stamped = (b4d_workspace / "worker.pid").read_text(
+                encoding="utf-8").split()
+        except OSError:
+            stamped = []
+        if len(stamped) < 2:
+            time.sleep(0.05)
+    check("the detached worker stamps its own identity as its first act",
+          len(stamped) == 2 and stamped[1] not in ("", "0"), stamped)
+
     check("B4d the paused submission was accepted",
           accepted.get("outcome") == "accepted", accepted)
     code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
