@@ -40,6 +40,7 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -151,11 +152,19 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     # --- B3d: version floors ------------------------------------------------
     check("python floor is met", sys.version_info >= (3, 12), sys.version)
-    git_version = subprocess.run(
+    # The version is matched rather than positional: Apple's git reports
+    # "git version 2.39.5 (Apple Git-154)", whose last token is "Git-154)" —
+    # taking it crashed the whole suite on macOS before the floor could report
+    # (fixed 2026-08-12; the fleet runs macOS and Ubuntu, so a floor miss must
+    # fail as a case, not as a traceback).
+    git_version_output = subprocess.run(
         ["git", "--version"], capture_output=True, text=True, check=False
-    ).stdout.split()[-1]
+    ).stdout
+    git_version_match = re.search(r"(\d+)\.(\d+)(?:\.\d+)?", git_version_output)
     check("git floor is met (>= 2.40)",
-          tuple(int(part) for part in git_version.split(".")[:2]) >= (2, 40), git_version)
+          git_version_match is not None
+          and (int(git_version_match[1]), int(git_version_match[2])) >= (2, 40),
+          git_version_output.strip())
 
     # --- T2: the happy path, and its four success guarantees ---------------
     remote, work, base = make_fixture(workspace, "happy")
@@ -551,6 +560,37 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("T8 cancelling an abandoned workspace answers cancelled",
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
+
+    # Path safety (ruled 2026-08-12): a caller-supplied digest never becomes a
+    # path. Joining an absolute argument discards the workspace root and '..'
+    # climbs out of it, so before the enumeration lookup `cancel` deleted the
+    # named directory and answered `cancelled`, and `status` read a foreign
+    # refusal record and then deleted it. The surviving-directory assertion is
+    # the load-bearing half: the reply alone looked correct in the absolute case
+    # only because the deletion had already happened.
+    for label, argument_builder in (
+        ("an absolute path", lambda victim: str(victim)),
+        ("a climbing path", lambda victim: f"../../{victim.name}"),
+    ):
+        for subcommand in ("status", "cancel"):
+            victim = workspace / f"victim-{subcommand}-{label.split()[1]}"
+            (victim / "nested").mkdir(parents=True)
+            (victim / "keep.txt").write_text("PRECIOUS\n", encoding="utf-8")
+            # A refusal record makes the status path reach its sweep, and the
+            # climbing form needs the root to exist for '..' to resolve.
+            (victim / "refusal.json").write_text('{"outcome": "planted"}',
+                                                 encoding="utf-8")
+            (state_home / "nedschorus-gatekeeper").mkdir(parents=True, exist_ok=True)
+            code, payload = run_gatekeeper(
+                [subcommand, argument_builder(victim), "--repo", str(work)], state_home
+            )
+            check(f"{subcommand} with {label} finds nothing",
+                  payload.get("outcome") in ("unknown", "unknown-request"), payload)
+            check(f"{subcommand} with {label} destroys nothing",
+                  victim.exists() and (victim / "keep.txt").is_file(), payload)
+            check(f"{subcommand} with {label} returns no foreign record",
+                  payload.get("error") != "planted"
+                  and payload.get("outcome") != "planted", payload)
 
     # The opportunistic expiry sweep (ruled 2026-08-10).
     old_stamp = time.time() - 31 * 24 * 3600

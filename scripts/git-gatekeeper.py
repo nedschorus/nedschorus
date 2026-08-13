@@ -141,10 +141,32 @@ class AlreadyCheckedIn(Exception):
 
 
 def workspace_root() -> Path:
-    """B4a: outside every repository, discoverable from the digest alone."""
+    """B4a: outside every repository, discoverable from the digest alone —
+    on the host that created it (§ States; host locality ruled 2026-08-12)."""
     state_home = os.environ.get("XDG_STATE_HOME")
     base = Path(state_home) if state_home else Path.home() / ".local" / "state"
     return base / WORKSPACE_ROOT_NAME
+
+
+def workspace_for(digest: str) -> Path | None:
+    """The workspace a digest names, or None — found by enumeration, never by
+    joining the digest onto the root (ruled 2026-08-12).
+
+    `status` and `cancel` take their digest from the caller, and path arithmetic
+    on caller text escapes the root: an absolute argument discards the root
+    entirely, and `..` climbs out of it. `cancel` deleted the named directory
+    and answered `cancelled`; `status` returned a foreign refusal record as its
+    own reply and then deleted it. Matching a name against the entries the
+    program itself created cannot escape whatever the argument says, so the
+    property holds by construction rather than by filtering — which is why no
+    separate format check on the digest exists.
+    """
+    try:
+        entries = list(workspace_root().iterdir())
+    except OSError:
+        return None
+    return next((entry for entry in entries
+                 if entry.name == digest and entry.is_dir()), None)
 
 
 def emit(payload: dict, exit_code: int) -> int:
@@ -903,7 +925,9 @@ def run_worker(arguments) -> int:
     """The detached half of --no-wait. Detached means nobody is listening:
     outcomes land in history (success) or the B4d record (refusal), where
     status finds them. Never prints; the reply channel is the workspace."""
-    workspace = workspace_root() / arguments.digest
+    workspace = workspace_for(arguments.digest)
+    if workspace is None:
+        return EXIT_DEFECT
     record_path = workspace / "request.json"
     if not record_path.is_file():
         return EXIT_DEFECT
@@ -954,7 +978,13 @@ def status_query(arguments) -> int:
     if commit:
         return emit({"outcome": "checked-in", "digest": digest, "commit": commit,
                      "summary": f"checked-in {commit}"}, EXIT_SUCCESS)
-    workspace = workspace_root() / digest
+    workspace = workspace_for(digest)
+    if workspace is None:
+        return emit({"outcome": "unknown", "digest": digest,
+                     "summary": "unknown — no trace of this digest on this host; "
+                                "if it was submitted from another machine, ask "
+                                "there; otherwise submit it, submitting is "
+                                "always safe"}, EXIT_SUCCESS)
     record_path = workspace / "refusal.json"
     if record_path.is_file():
         try:
@@ -972,13 +1002,9 @@ def status_query(arguments) -> int:
         return emit({"outcome": "in-progress", "digest": digest,
                      "summary": "in-progress — a live worker holds this request; "
                                 "ask again shortly"}, EXIT_SUCCESS)
-    if state == "dead":
-        return emit({"outcome": "abandoned", "digest": digest,
-                     "summary": "abandoned — workspace present, worker dead; "
-                                "resubmit safely, the sweep is automatic"}, EXIT_SUCCESS)
-    return emit({"outcome": "unknown", "digest": digest,
-                 "summary": "unknown — no trace of this digest; submit it, "
-                            "submitting is always safe"}, EXIT_SUCCESS)
+    return emit({"outcome": "abandoned", "digest": digest,
+                 "summary": "abandoned — workspace present, worker dead; "
+                            "resubmit safely, the sweep is automatic"}, EXIT_SUCCESS)
 
 
 def cancel_request(arguments) -> int:
@@ -991,12 +1017,14 @@ def cancel_request(arguments) -> int:
                      "summary": f"too-late — already-checked-in {commit}; the remedy "
                                 "for a bad checked-in change is a revert through the "
                                 "same gate"}, EXIT_SUCCESS)
-    workspace = workspace_root() / digest
-    state = worker_state(workspace)
-    if state == "none":
+    workspace = workspace_for(digest)
+    if workspace is None:
         return emit({"outcome": "unknown-request", "digest": digest,
-                     "summary": "unknown-request — no trace of this digest"},
+                     "summary": "unknown-request — no trace of this digest on "
+                                "this host; a request submitted from another "
+                                "machine is cancelled there"},
                     EXIT_SUCCESS)
+    state = worker_state(workspace)
     if state == "alive":
         # WALK-4 (ruled 2026-08-12): kill the whole process group and WAIT —
         # a pid-only kill leaves an already-spawned git push child racing the
