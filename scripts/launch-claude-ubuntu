@@ -21,9 +21,9 @@
 # stops without handing off; the tmux session closes with it, so nothing
 # lingers. A second launch of a running name attaches instead of duplicating,
 # and the supervisor's own lock refuses a duplicate even if tmux is bypassed.
-# The one duplicate this cannot see is the same name launched on BOTH machines:
-# the two have separate locks and separate handoff files, so they would run as
-# two unrelated agents wearing one name. Keep each name on one machine.
+# Both protections are per-machine, as is every other thing an agent owns, so
+# the same name used on both machines is simply two unrelated agents — no
+# conflict, only a label you cannot tell apart in a listing spanning both.
 #
 # --no-attach creates the session without attaching this terminal (for
 # scripts and checks); attach later by running the plain form.
@@ -59,10 +59,10 @@ usage() {
     fi
     echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
     echo >&2
-    echo "Naming convention: end new agent names in -ubuntu here, -mac on the Mac, so" >&2
-    echo "one name never means two agents on two machines. The launcher does not add" >&2
-    echo "the suffix for you — the name you type is the whole configuration (#45)." >&2
-    echo "choirmaster predates the convention and keeps its name until it is migrated." >&2
+    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    echo "unrelated agents, not a conflict. Suffix names (-ubuntu, -mac) only if you want" >&2
+    echo "to tell them apart at a glance; nothing here requires it." >&2
     exit 2
 }
 
