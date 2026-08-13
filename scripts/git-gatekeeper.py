@@ -1216,11 +1216,19 @@ def status_query(arguments) -> int:
 
 
 def cancel_request(arguments) -> int:
-    """Outcomes, exactly four (spec § States, crashes, cancel, and errors)."""
+    """Outcomes, exactly five (spec § States, crashes, cancel, and errors):
+    too-late, cancelled from a live worker, cancelled from a dead one,
+    unknown-request, and cancel-failed (added 2026-08-12)."""
     digest = require_digest(arguments, "cancel")
     repository = resolve_repository(getattr(arguments, "repo", None))
     commit = fetch_and_find(repository, digest)
     if commit:
+        # This branch used to return before any cleanup, alone among cancel's
+        # endings, leaving the workspace of an already-checked-in request on
+        # disk until the day-old sweep (fixed 2026-08-12).
+        leftover = workspace_for(digest)
+        if leftover is not None:
+            shutil.rmtree(leftover, ignore_errors=True)
         return emit({"outcome": "too-late", "digest": digest, "commit": commit,
                      "summary": f"too-late — already-checked-in {commit}; the remedy "
                                 "for a bad checked-in change is a revert through the "
