@@ -561,6 +561,55 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
 
+    # The advisory names real files (ruled 2026-08-12). Plain --porcelain
+    # collapses a wholly-new directory to one entry, so a declared new file
+    # inside one was reported as an undeclared change — the advisory named the
+    # caller's own work — while a genuinely forgotten file in a new directory
+    # was never named either. Untracked names are arbitrary, so quoting made the
+    # advisory report strings that were not paths.
+    remote, work, base = make_fixture(workspace, "advisory-shapes")
+    (work / "newdir").mkdir()
+    (work / "newdir" / "declared.txt").write_text("declared\n", encoding="utf-8")
+    (work / "forgotten-dir").mkdir()
+    (work / "forgotten-dir" / "forgotten.txt").write_text("forgotten\n",
+                                                          encoding="utf-8")
+    (work / "spaced name.txt").write_text("spaced\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["newdir/declared.txt"], "declare in a new dir"),
+        state_home,
+    )
+    advisory = payload.get("advisory", "")
+    check("the advisory does not name the caller's own declared new file",
+          "newdir" not in advisory, payload)
+    check("the advisory names a forgotten file inside a new directory",
+          "forgotten-dir/forgotten.txt" in advisory, payload)
+    check("the advisory reports an awkward name as a real path",
+          "spaced name.txt" in advisory and '\\"' not in advisory, payload)
+
+    # The worker-identity guard works on this platform (ruled 2026-08-12): it
+    # read /proc alone, so it returned "" for every process on macOS and the
+    # comparison was skipped — dead code on half a fleet that runs macOS and
+    # Ubuntu, with nothing announcing which behaviour a host had.
+    check("a real start time is captured on this platform",
+          gatekeeper.process_start_time(os.getpid()) not in ("", "0"),
+          gatekeeper.process_start_time(os.getpid()))
+    check("a start time carries no whitespace",
+          len(gatekeeper.process_start_time(os.getpid()).split()) == 1,
+          gatekeeper.process_start_time(os.getpid()))
+    recycled_digest = "9" * 64
+    recycled_workspace = state_home / "nedschorus-gatekeeper" / recycled_digest
+    recycled_workspace.mkdir(parents=True)
+    (recycled_workspace / "request.json").write_text("{}", encoding="utf-8")
+    # A live pid (this test's own) recorded against a start time that is not its
+    # own: the pid was recycled, so the worker it named is gone.
+    (recycled_workspace / "worker.pid").write_text(
+        f"{os.getpid()} not-the-start-time", encoding="utf-8"
+    )
+    code, payload = run_gatekeeper(["status", recycled_digest, "--repo", str(work)],
+                                   state_home)
+    check("a recycled pid does not masquerade as a live worker",
+          payload.get("outcome") == "abandoned", payload)
+
     # The symlink boundary, both directions (ruled 2026-08-12, widening
     # WALK-1). The shipped check tested only a declared path's final component,
     # so a symlinked ANCESTOR read bytes from outside the repository; and the

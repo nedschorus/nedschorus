@@ -608,14 +608,25 @@ def undeclared_changes(repository: Path, declared: list[str]) -> list[str]:
     never blocks; the likeliest cause of a surprise here is a forgotten
     declaration, which is worth saying out loud.
     """
-    # Untracked files included (ruled 2026-08-12): a forgotten NEW file is
+    # Untracked files included (user-ruled 2026-08-11): a forgotten NEW file is
     # the advisory's likeliest target; .gitignore still hides scratch.
-    status = run_git(["status", "--porcelain"], cwd=repository, check=False)
+    #
+    # -z and -uall are the ruling's second half (2026-08-12). Plain --porcelain
+    # collapses a wholly-new directory to a single 'newdir/' entry, so declaring
+    # 'newdir/new.txt' produced "the working copy also differs at newdir/" —
+    # the advisory named the caller's own declared work and sent an agent after
+    # a change it had just made deliberately, while a genuinely forgotten file
+    # inside a new directory was never named either. And untracked names are
+    # arbitrary, unlike declared paths, which are screened: spaces and
+    # non-ASCII came back C-quoted, so the advisory reported a string that was
+    # not a path. -z is NUL-delimited and unquoted; -uall names the files.
+    status = run_git(["status", "--porcelain", "-z", "--untracked-files=all"],
+                     cwd=repository, check=False)
     if status.returncode != 0:
         return []
     others = []
-    for line in status.stdout.splitlines():
-        path = line[3:].strip()
+    for entry in status.stdout.split("\0"):
+        path = entry[3:]
         if path and path not in declared:
             others.append(path)
     return sorted(others)
@@ -884,7 +895,21 @@ def process_start_time(pid: int) -> str:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
         return stat.rsplit(")", 1)[1].split()[19]
     except (OSError, IndexError):
-        return ""
+        pass
+    # No /proc: ask ps (ruled 2026-08-12). The fleet runs agents on macOS and
+    # Ubuntu, and reading /proc alone made this return "" for every process on
+    # macOS — the recorded value fell back to the placeholder, the comparison
+    # was skipped, and the pid-reuse guard the specification credits to slice 4
+    # was dead code on half the fleet, with nothing announcing which behaviour a
+    # given host had.
+    started = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(pid)],
+        capture_output=True, text=True, check=False,
+    )
+    # One whitespace-free token: worker.pid is "<pid> <start>" split on
+    # whitespace, and ps prints "Tue Aug 12 13:45:01 2026", whose first word
+    # alone would be recorded and then never match.
+    return "_".join(started.stdout.split())
 
 
 def write_atomically(target: Path, content: str) -> None:
@@ -1476,8 +1501,9 @@ class TeachingArgumentParser(argparse.ArgumentParser):
         raise Refusal(
             "malformed-field", f"the command line is malformed: {message}",
             "Resubmit with a corrected invocation; the request grammar is in the "
-            "specification (docs/cross-project/git-gatekeeper-design.md) and in "
-            "--help.",
+            "specification (docs/cross-project/git-gatekeeper-design.md). "
+            "(--help is deliberately not cited here: it prints usage text, "
+            "not the JSON every other invocation returns.)",
         )
 
 
@@ -1511,7 +1537,12 @@ def build_parser() -> argparse.ArgumentParser:
         later.add_argument("--repo", default=None,
                            help="the repository whose history answers")
 
-    worker = commands.add_parser("worker", help="internal: the detached --no-wait worker")
+    # Hidden from --help (ruled 2026-08-12): `worker` is an internal re-entry
+    # the program makes into itself, not a caller-facing subcommand, and it
+    # prints nothing — its reply channel is the workspace. The caller-facing
+    # surface must match the caller-facing one-JSON-object contract, and the
+    # specification now names this and --help as its two exemptions.
+    worker = commands.add_parser("worker", help=argparse.SUPPRESS)
     worker.add_argument("digest")
 
     audit = commands.add_parser(
