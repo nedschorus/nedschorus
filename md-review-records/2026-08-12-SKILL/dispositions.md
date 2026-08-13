@@ -28,6 +28,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 11. The never-blocks absolutes (failed ask; ambiguity)
     *processed 2026-08-12 → revised: "never blocks" → "does not block" in step 1; the discriminator's trailing "; ambiguity never blocks the write" maxim deleted as restatement. User's reasoning recorded: CLAUDE.md counsels against absolutes and neither of us sees benefit in them except extraordinary cases — the reviewers were echoing the project's own rule.*
 12. The second-issue rule's missing boundary
+    *processed 2026-08-12 → revised: "Where an edit to the existing issue is sufficient, no second issue is filed; work that needs its own lifecycle — its own next action and its own closure — is a new issue, not an edit." The user struck the drafted "serves" as saying nothing ("say what you mean — an edit is sufficient"); the lifecycle clause defines insufficiency, ending the circularity; the "never" is gone; the edit-history parenthetical stands.*
 13. Generic section headings (What to do / How to do it)
 14. Zero-context tests vs CLAUDE.md's broader "usable"
 15. Judgment terms without tests (covers the subject; substantial; reading stopping point)
