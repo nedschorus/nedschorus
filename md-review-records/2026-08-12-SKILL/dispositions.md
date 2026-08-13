@@ -30,6 +30,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 12. The second-issue rule's missing boundary
     *processed 2026-08-12 → revised: "Where an edit to the existing issue is sufficient, no second issue is filed; work that needs its own lifecycle — its own next action and its own closure — is a new issue, not an edit." The user struck the drafted "serves" as saying nothing ("say what you mean — an edit is sufficient"); the lifecycle clause defines insufficiency, ending the circularity; the "never" is gone; the edit-history parenthetical stands.*
 13. Generic section headings (What to do / How to do it)
+    *processed 2026-08-12 → rejected, no change: the headings are the checklist template's fixed slots for the three questions every project skill answers; uniformity across skills outweighs per-file heading greppability, and skills are found by name and description. Side ruling, user-confirmed: the CLAUDE.md naming rule is not overreaching — its "likely to be grepped" qualifier already separates identity-bearing names from structural slots, and its use-the-existing-name clause endorses the template headings; no CLAUDE.md edit, revisit only if reviewer over-application recurs on the record.*
 14. Zero-context tests vs CLAUDE.md's broader "usable"
 15. Judgment terms without tests (covers the subject; substantial; reading stopping point)
 16. Unbuilt machinery — a permanent-truth pointer to the #46 build
