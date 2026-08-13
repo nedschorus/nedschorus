@@ -561,6 +561,56 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
 
+    # Kill scope (ruled 2026-08-12): a recorded pid that does not lead its own
+    # process group is signalled alone. worker.pid is written above the
+    # --no-wait branch, so a waiting check-in records its own pid, whose group
+    # belongs to the invoking shell or harness — and cancel's group kill reached
+    # every process in it. Demonstrated during the PR #49 review by killing a
+    # launcher and an unrelated sibling alongside the check-in.
+    scope_digest = "d" * 64
+    scope_workspace = state_home / "nedschorus-gatekeeper" / scope_digest
+    scope_workspace.mkdir(parents=True)
+    (scope_workspace / "request.json").write_text("{}", encoding="utf-8")
+    # The launcher stands in for the caller's harness: its own session, holding
+    # a child whose pid is recorded as the worker. A group kill takes the
+    # launcher down with the child; a correctly scoped kill does not.
+    launcher = subprocess.Popen(
+        # The launcher reaps its child (child.wait()) before sleeping on, which
+        # is the production shape: a detached worker's parent exits at once, so
+        # the worker reparents to init and is reaped the moment it dies. Without
+        # the reap the killed child lingers as a zombie, and os.kill(pid, 0)
+        # succeeds on zombies — liveness would read "alive" forever.
+        [sys.executable, "-c",
+         "import subprocess, sys, time;"
+         "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+         "print(child.pid, flush=True);"
+         "child.wait();"
+         "time.sleep(60)"],
+        stdout=subprocess.PIPE, text=True, start_new_session=True,
+    )
+    try:
+        recorded_pid = int(launcher.stdout.readline().strip())
+        (scope_workspace / "worker.pid").write_text(f"{recorded_pid} 0",
+                                                    encoding="utf-8")
+        code, payload = run_gatekeeper(
+            ["cancel", scope_digest, "--repo", str(work)], state_home
+        )
+        check("cancel does not group-kill a pid that leads no group",
+              launcher.poll() is None, payload)
+        recorded_gone = False
+        for _ in range(50):
+            try:
+                os.kill(recorded_pid, 0)
+            except (ProcessLookupError, PermissionError):
+                recorded_gone = True
+                break
+            time.sleep(0.1)
+        check("cancel still signals the recorded process itself", recorded_gone,
+              payload)
+    finally:
+        launcher.kill()
+        launcher.wait(timeout=10)
+
     # Path safety (ruled 2026-08-12): a caller-supplied digest never becomes a
     # path. Joining an absolute argument discards the workspace root and '..'
     # climbs out of it, so before the enumeration lookup `cancel` deleted the

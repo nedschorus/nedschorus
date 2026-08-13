@@ -838,6 +838,50 @@ def write_worker_identity(workspace: Path) -> None:
     )
 
 
+def signal_worker(pid: int, signal_number: int) -> None:
+    """Signal the worker's process group, or the process alone when it leads no
+    group (ruled 2026-08-12).
+
+    WALK-4 kills the group because a worker may already have spawned `git push`,
+    and a pid-only kill leaves that child racing the history query. But
+    `worker.pid` is written above the `--no-wait` branch, so a waiting check-in
+    records its *own* pid, and that process is not a session leader — its group
+    is the invoking shell's or harness's. Cancelling such a request signalled
+    every process in the caller's group: a launcher, an unrelated sibling, and
+    the check-in itself all died in the PR #49 review's demonstration.
+
+    The kernel answers whether this pid leads a group. A recorded "this one was
+    detached" flag would be exactly the data that goes stale, tears, or names a
+    recycled process.
+    """
+    try:
+        leads_own_group = os.getpgid(pid) == pid
+    except (OSError, ProcessLookupError, PermissionError):
+        leads_own_group = False  # cannot tell: never widen the blast radius
+    try:
+        if leads_own_group:
+            os.killpg(pid, signal_number)
+        else:
+            os.kill(pid, signal_number)
+    except (OSError, ProcessLookupError, PermissionError):
+        pass
+
+
+def worker_stopped(workspace: Path, seconds: float) -> bool:
+    """Wait up to `seconds` for the worker to stop; True if it did.
+
+    Monotonic, and each wait computes its own deadline: the post-SIGKILL loop
+    used to reuse the already-expired SIGTERM deadline, so a forward wall-clock
+    step skipped it entirely (fixed 2026-08-12).
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if worker_state(workspace) != "alive":
+            return True
+        time.sleep(0.1)
+    return worker_state(workspace) != "alive"
+
+
 def worker_state(workspace: Path) -> str:
     """'alive', 'dead', or 'none' — the whole state machine's oracle."""
     if not workspace.is_dir():
@@ -849,6 +893,12 @@ def worker_state(workspace: Path) -> str:
         return "dead"
     recorded_start = tokens[1] if len(tokens) > 1 else "0"
     try:
+        # Known limit, recorded rather than guarded (2026-08-12): os.kill(pid, 0)
+        # also succeeds for a zombie — a dead process its parent has not reaped.
+        # Unreachable for a real worker, whose parent exits immediately after
+        # spawning it, so the worker reparents to init and is reaped the moment
+        # it dies. A guard would need per-platform process-state reads for a
+        # case the design cannot produce.
         os.kill(pid, 0)
     except ProcessLookupError:
         return "dead"
@@ -1024,32 +1074,44 @@ def cancel_request(arguments) -> int:
                                 "this host; a request submitted from another "
                                 "machine is cancelled there"},
                     EXIT_SUCCESS)
-    state = worker_state(workspace)
-    if state == "alive":
-        # WALK-4 (ruled 2026-08-12): kill the whole process group and WAIT —
-        # a pid-only kill leaves an already-spawned git push child racing the
-        # history query below.
+    pid = None
+    if worker_state(workspace) == "alive":
+        # WALK-4 (ruled 2026-08-12): stop the worker and WAIT — a kill that does
+        # not wait leaves an already-spawned git push child racing the history
+        # query below. Scope ruled the same day: the group only when the
+        # recorded pid leads one (see signal_worker).
         try:
             pid = int((workspace / "worker.pid").read_text(encoding="utf-8").split()[0])
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except (OSError, ValueError, ProcessLookupError, PermissionError):
-            pass
-        deadline = time.time() + 10
-        while time.time() < deadline and worker_state(workspace) == "alive":
-            time.sleep(0.1)
-        if worker_state(workspace) == "alive":
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
-            except (OSError, ProcessLookupError, PermissionError):
-                pass
-            while time.time() < deadline + 5 and worker_state(workspace) == "alive":
-                time.sleep(0.1)
-        commit = fetch_and_find(repository, digest)
-        if commit:
-            shutil.rmtree(workspace, ignore_errors=True)
-            return emit({"outcome": "too-late", "digest": digest, "commit": commit,
-                         "summary": f"too-late — already-checked-in {commit}; the "
-                                    "push won the race"}, EXIT_SUCCESS)
+        except (OSError, ValueError, IndexError):
+            pid = None
+        if pid is not None:
+            signal_worker(pid, signal.SIGTERM)
+            if not worker_stopped(workspace, seconds=10):
+                signal_worker(pid, signal.SIGKILL)
+                worker_stopped(workspace, seconds=5)
+
+    # Every path leaves through this door (ruled 2026-08-12). The history
+    # re-check used to live inside the live-worker branch alone, so a worker
+    # that pushed and died was answered "cancelled — nothing reached main"
+    # while status reported the commit a second later; and nothing confirmed
+    # the kill, so a worker this user cannot signal produced the same false
+    # "cancelled" after fifteen seconds of trying. Both demonstrated.
+    commit = fetch_and_find(repository, digest)
+    if commit:
+        shutil.rmtree(workspace, ignore_errors=True)
+        return emit({"outcome": "too-late", "digest": digest, "commit": commit,
+                     "summary": f"too-late — already-checked-in {commit}; the "
+                                "push won the race"}, EXIT_SUCCESS)
+    if worker_state(workspace) == "alive":
+        return emit({"outcome": "cancel-failed", "digest": digest,
+                     "facts": f"worker {pid} is still alive after SIGTERM and "
+                              "SIGKILL",
+                     "next_action": f"Check status {digest} shortly; the worker "
+                                    "may still push. If it persists, the "
+                                    "workspace owner must kill it.",
+                     "summary": "cancel-failed — the worker outlived SIGKILL, so "
+                                "the workspace is left in place and the request "
+                                "may still reach main"}, EXIT_REFUSED)
     shutil.rmtree(workspace, ignore_errors=True)
     return emit({"outcome": "cancelled", "digest": digest,
                  "summary": "cancelled — the workspace is swept; nothing reached "
