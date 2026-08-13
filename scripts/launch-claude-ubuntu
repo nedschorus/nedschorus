@@ -58,6 +58,11 @@ usage() {
         echo "No agents are running on the box now (or it could not be reached)." >&2
     fi
     echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
+    echo >&2
+    echo "Naming convention: end new agent names in -ubuntu here, -mac on the Mac, so" >&2
+    echo "one name never means two agents on two machines. The launcher does not add" >&2
+    echo "the suffix for you — the name you type is the whole configuration (#45)." >&2
+    echo "choirmaster predates the convention and keeps its name until it is migrated." >&2
     exit 2
 }
 
