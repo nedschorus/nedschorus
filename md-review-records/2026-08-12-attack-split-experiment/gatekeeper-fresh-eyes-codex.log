@@ -1,0 +1,464 @@
+Reading additional input from stdin...
+OpenAI Codex v0.147.0
+--------
+[1mworkdir:[0m /tmp/fresh-eyes-cell-w1bv4llu
+[1mmodel:[0m gpt-5.6-sol
+[1mprovider:[0m openai
+[1mapproval:[0m never
+[1msandbox:[0m read-only
+[1mreasoning effort:[0m xhigh
+[1mreasoning summaries:[0m none
+[1msession id:[0m 019ff88b-f983-7f11-926f-b6cd61c0f22f
+--------
+[36muser[0m
+## Your assignment
+
+You are a senior systems designer given a problem, not a reviewer given a document. The review request contains a problem statement and goals for a system this project needs. An existing design for it exists, but you have deliberately not been given it, and you must not search for it — your entire value is independence. Do not hedge toward what "they probably did"; design what *you* would build.
+
+This project's taste, which should shape your sketch: simple to operate beats simple to build — more reliable, more autonomous, fewer or no human interventions, zero remembered human steps, mechanical guarantees over trained agent habit. Deterministic scripts are preferred over prompted agents everywhere variability adds nothing; a model gets only the judgment the task genuinely needs. Failures that can be contained — a backup to restore, a state to rebuild, a transaction to abort — are preferred over failures elaborately prevented.
+
+Produce four sections, nothing else:
+
+## 1. Your solution sketch
+
+The design you would build, at outline depth — components with one-line jobs, the states and data that flow between them, what is code and what (if anything) is model judgment, and how each failure you can foresee is handled or contained. Not an implementation; enough that an engineer could challenge it. Bound it at roughly two pages.
+
+## 2. The hard parts
+
+Ranked worry list: what you would prototype or test first, which parts fail at 2am and how anyone notices, which parts depend on facts you could not verify from the problem statement (name the experiment that would verify each).
+
+## 3. Late discoveries
+
+In systems of this class, what do builders usually discover late? Name the class-typical traps — the things that are cheap to handle if known at design time and expensive after — whether or not your own sketch already handles them. This section is the unknown-unknown hunt: cast wider than your sketch.
+
+## 4. Assumptions
+
+Every assumption you had to make because the problem statement did not say. Each becomes a question to the real design: it answered these somehow, and the answers may be load-bearing.
+
+Your report goes to a requesting agent that will diff it against the existing design. Where your sketch and the design agree, the design gains confidence; where they differ, the difference becomes a question; what appears in your worries and traps but nowhere in the design is the finding this attack exists to produce.
+
+---
+
+The review request follows: the problem statement is below. It is your complete input; do not read files or search for anything.
+
+# Problem statement: how changes reach main
+
+<!-- fresh-eyes attack input, written 2026-08-12 for the attack-split validation experiment: the problem and goals behind the git-gatekeeper design, stated without revealing any of that design's decisions. Environment facts an independent designer could learn by probing are included; design choices are not. -->
+
+## The situation
+
+A small fleet of AI coding agents plus one human owner (the boss) work in one GitHub repository. The agents — Claude and Codex CLI sessions on an Ubuntu box, with the boss also working from a Mac — produce most of the changes: code, documents, records. The main branch is the durable record every agent builds on; the boss reviews some work but cannot and does not want to review every change in real time. Agent sessions crash, lose their connections, get recycled mid-task, and sometimes run concurrently in the same repository.
+
+## The problem
+
+Design how a change reaches main safely with near-zero routine human intervention. The dangers, all observed or obviously live: an agent pushing broken or unchecked work to main; an agent committing to the wrong branch silently; two agents landing work concurrently and colliding; push credentials spreading until any agent can bypass any policy; a crashed agent leaving a half-finished landing behind; an agent that lost its connection unable to tell what happened to its request.
+
+## The goals
+
+- **Near-perfect autonomous operation.** Agents recover from their own failures — a crash, a lost reply, a duplicate submission — without a human untangling state.
+- **Whatever checks exist run against exactly the content that lands** — never a stale or drifted copy.
+- **A machine-readable durable record** of what landed and why, findable later without asking anyone.
+- **Failures teach.** When a landing is refused, the requester learns what was wrong and what to do next, in a form an agent can act on directly.
+- **Minimal standing infrastructure.** The project strongly prefers deterministic scripts invoked on demand over daemons, services, or prompted-agent intermediaries; git history is the preferred durable record over side files and logs.
+- **The boss can always intervene, and is never routinely required.**
+
+## Out of scope
+
+Deploying main anywhere (there is no production system yet). Multi-repository coordination.
+
+[35m[3mcodex[0m[0m
+## 1. Your solution sketch
+
+The system is a stateless, deterministic landing gate built from GitHub refs, pull requests, protected workflows, and atomic Git updates. Agents can propose arbitrary commits but possess no credential capable of updating `main`.
+
+### Components
+
+- **Task launcher:** Creates a unique clone or worktree and branch namespace for each agent session, preventing concurrent sessions from sharing an index or working tree.
+- **Submission client:** Packages a specific commit SHA, request ID, requester identity, and reason into an immutable landing envelope and opens or updates the corresponding pull request.
+- **Durable request inbox:** A pull request plus a gate-owned ref pins the submitted SHA while it is queued or being checked.
+- **Planner:** Reads the current `main`, the pinned request, and the policy from `main`; constructs the exact candidate merge commit.
+- **Verifier:** Runs the versioned check suite against that candidate on a clean, unprivileged runner.
+- **Publisher:** On a fresh runner, verifies the candidate, check outcome, and current `main`, then performs one compare-and-swap update of `main`.
+- **Reconciler:** A scheduled and event-triggered workflow finds nonterminal requests and resumes any missing attempt. It owns no database.
+- **Policy manifest:** Version-controlled deterministic rules specifying checks, timeouts, protected paths, toolchain images, and acceptable overrides.
+- **Receipt parser:** Reads structured trailers from first-parent history to answer what landed, from where, under which policy, and why.
+- **Boss override path:** Permits a signed, reasoned exception through the same publisher; an off-box administrative credential remains available for total gate failure.
+
+### Request and state model
+
+Every request has a globally unique `request_id`. The authoritative payload is:
+
+```text
+request_id
+requester identity and session
+submitted commit SHA
+human-readable intent
+structured change category
+creation time
+optional predecessor request
+```
+
+The submission client creates an empty envelope commit on top of the proposed change. Its commit message contains canonical, schema-validated metadata; its tree is identical to the proposed source tree. The client pushes it to a unique request branch and opens a PR. Intake copies the exact SHA to a gate-owned, deletion-protected ref. PR descriptions and comments are presentation, not authority.
+
+The state machine is:
+
+```text
+DRAFT → QUEUED → PLANNED → VERIFYING → READY → LANDED
+                   │           │          │
+                   └──────────→ REFUSED ←─┘
+                         or RETRYING
+```
+
+`CANCELLED` is also terminal. A request may have several attempts, keyed by:
+
+```text
+(request_id, source_sha, base_sha, policy_sha)
+```
+
+Repeating a submission with the same ID and payload returns the existing state. Reusing the ID with different content is a deterministic conflict, never an update in place.
+
+### Landing transaction
+
+1. The planner reads current `main` as base `B`, the pinned request head `H`, and the policy blob from `B`.
+2. It rejects malformed envelopes, missing objects, unauthorized control-plane changes, and unmergeable histories.
+3. It constructs candidate merge commit `C`, with first parent `B` and second parent `H`. Commit metadata is deterministic so recreating the same attempt produces the same SHA.
+4. `C` contains canonical trailers such as:
+
+```text
+Land-Request
+Land-Source
+Land-Base
+Land-Requester
+Land-Reason
+Gate-Policy
+Required-Checks
+Override-Authority, if any
+```
+
+5. A planning identity may publish `C` only to a candidate namespace. Server rules deny that identity access to `main`.
+6. The verifier checks out exactly `C` and runs the policy taken from `B`. Toolchains and actions are digest-pinned. Candidate code runs without repository secrets, write tokens, persistent workspaces, shared writable caches, or privileged container access.
+7. A fresh publisher job receives no result data produced by candidate code. It trusts only the platform’s verifier-job conclusion and planner outputs. It independently validates:
+   - the candidate SHA and parent SHAs;
+   - the request and policy tuple;
+   - successful completion of every required check;
+   - any required boss approval for protected paths;
+   - that current `main` is still exactly `B`.
+8. It atomically updates `main` from `B` to `C` using compare-and-swap semantics.
+9. If `main` moved, `C` is discarded as stale. A new candidate is constructed from the new base and all checks run again.
+10. After success, the PR is closed as landed and temporary refs become eligible for deterministic garbage collection.
+
+Thus, the exact commit checked is the commit published. No post-check rebasing, message editing, squash, or server-created merge is permitted.
+
+### Enforcement and credentials
+
+A repository ruleset denies direct update, force-push, and deletion of `main` to every agent identity. Only the publisher identity is admitted. The publisher receives a short-lived token only inside its protected job; that credential never exists on the shared Ubuntu host or in the verifier.
+
+Agent credentials are short-lived and limited to request branches, PRs, and status queries. Their spread is therefore contained: possession still cannot update `main`, change rulesets, mint publisher credentials, or approve protected-path changes.
+
+The gate workflow, policy, credential plumbing, action pins, and relevant ownership rules form the control plane. A proposed change to them requires explicit boss approval and is verified using the old trusted policy. Candidate-controlled workflows are never used as the gate. `pull_request_target`-style execution of submitted code is prohibited.
+
+The boss’s ordinary intervention is a structured override request naming the checks or rule being overridden and the reason. It still produces a normal candidate and receipt. A separate administrative credential on the Mac can repair rules or publish manually if GitHub automation is unusable; using it is an emergency operation recorded afterward, not a routine merge path.
+
+### Failure containment
+
+- **Wrong local branch:** Separate worktrees prevent shared-index damage. The gate lands a pinned SHA, not “whatever this branch now means.” Direct pushes to `main` fail server-side.
+- **Broken or unchecked work:** No successful verifier result for the candidate means the publisher cannot run.
+- **Merge conflict:** The request is refused with stable error codes, conflicting paths, observed base SHA, and an exact resubmission command.
+- **Concurrent landings:** Both may verify, but only one compare-and-swap succeeds. Every loser rebuilds on the new `main` and reruns checks.
+- **Agent crash:** Once intake pins the SHA, no client process is needed. The reconciler continues the request.
+- **Workflow crash:** Persistent refs and PR state identify the incomplete attempt. Reconciliation recreates or resumes it idempotently.
+- **Crash during publication:** A Git ref update is atomic. Recovery checks whether the request receipt is already in `main`; otherwise it retries.
+- **Lost reply:** `land status <request_id>` derives status from PRs, refs, attempts, and main history. Resubmission is safe.
+- **Duplicate execution:** Deterministic candidate IDs and atomic publication make duplicates harmless.
+- **Force-pushed or deleted source branch:** The gate-owned pinned ref remains authoritative.
+- **Flaky check:** The failure report distinguishes test failure, infrastructure failure, and timeout. Infrastructure failures retry automatically; test failures require a new request unless policy explicitly permits reproducible reruns.
+- **Malicious submitted code:** Verification has no useful credentials. Publisher and planner use fresh workspaces and never execute candidate files.
+- **GitHub outage or exhausted quota:** Requests remain queued and resume when the platform recovers. No partially published state exists.
+- **Bad landing discovered later:** Reversion is another normal landing request, generated mechanically from the recorded merge commit.
+- **Audit loss:** Each accepted transaction is self-describing in main’s immutable first-parent history. External workflow logs improve diagnosis but are not required to identify what landed and why.
+
+No model participates in admission, merging, failure classification, retries, or publication. Models create the proposed change and its explanation. The only non-deterministic judgment is the boss’s rare approval or override.
+
+## 2. The hard parts
+
+1. **Proving the credential boundary.** A nominally protected branch often has unexpected writers: administrators, GitHub Actions, installed Apps, deploy keys, merge APIs, or old tokens. Prototype this in a disposable repository and attempt direct push, force-push, deletion, API update, status forgery, workflow modification, and rule modification using every real identity. The test passes only if agents cannot produce a main update by any route.
+
+2. **Proving verifier-to-publisher isolation.** Submitted code will deliberately try to read secrets, inspect other processes, write workflow output files, poison caches, alter subsequent steps, exploit Git hooks or filters, and reach the Docker socket. Run an adversarial fixture containing each attack. Confirm that it can cause only verification failure, never publisher input or credential access.
+
+3. **Proving “checked SHA equals published SHA.”** Race two requests while recording every base, candidate, tree, and published object ID. Mutate PR metadata and source branches during verification. Crash immediately before and after ref updates. The invariant should be mechanically testable from the final Git graph.
+
+4. **Crash and duplicate recovery.** Kill each job after every externally visible operation; dispatch duplicate runs; delete the source branch; lose the client reply; and disable Actions temporarily. The same request must converge to one terminal result without manual cleanup.
+
+5. **GitHub control-plane semantics.** The problem statement does not establish whether the available GitHub plan and configuration can restrict environments, Apps, refs, approvals, and per-job tokens as required. Build the complete permission matrix in a test repository rather than relying on documentation or intuition.
+
+6. **Check fidelity and flakiness.** The gate can guarantee that checks ran, not that the checks are sufficient. Replay representative changes repeatedly on clean runners, including known-bad mutations. Measure false passes, nondeterminism, runtime, timeout behavior, and dependence on mutable network resources.
+
+7. **Queue behavior under contention.** Compare-and-swap is safe but may waste work or starve a large request when main changes frequently. Load-test realistic check durations and arrival rates. If retries become pathological, add a durable FIFO admission token with an expiry rather than weakening exact-content checking.
+
+8. **Policy evolution.** A queued request may span several versions of main and its policy. Test a policy change concurrently with ordinary requests. The intended rule is that every retry uses the policy from its current base and records that policy SHA.
+
+9. **Machine-readable audit stability.** Build the parser before launch. Exercise unusual commit messages, Unicode, long reasons, overrides, reverts, cherry-picks, duplicate source SHAs, and schema upgrades. If history cannot be parsed unambiguously, the receipt format is not finished.
+
+At 2am, ordinary failures appear as structured PR checks and comments and are retried automatically. A request exceeding an SLA becomes a `gate-stuck` issue or notification containing its state and last error. Repeated verifier infrastructure failures, reconciliation failures, permission changes, and inability to read or update `main` notify the boss. A complete GitHub outage cannot be reliably detected from GitHub itself; external outage notification is required only if that availability warrants another failure domain.
+
+## 3. Late discoveries
+
+- Branch protection has an overlooked bypass actor, and “administrators obey rules” was never enabled.
+- An agent can edit the workflow that judges its own change, or can invoke an existing privileged workflow with attacker-controlled inputs.
+- Repository or environment secrets are available to same-repository PR workflows even though fork behavior looked safe.
+- Self-hosted runners retain credentials, processes, containers, caches, or modified toolchains between requests.
+- A cache or artifact crosses the untrusted-verifier/publisher boundary and becomes an execution channel.
+- Third-party Actions, container tags, package indexes, or system packages are mutable, making yesterday’s passing check irreproducible.
+- “Same content” was interpreted as the same tree while a check actually depends on commit parents, commit message, author, timestamp, tags, or shallow-history depth.
+- Server-side squash, rebase, automatic branch update, or merge-message editing changes the object after checks.
+- Required status contexts can be forged by another workflow or App with checks permission.
+- A status belongs to the PR head rather than the synthesized merge result.
+- A source branch is force-pushed or deleted after intake; the underlying object later becomes unreachable.
+- Scheduled workflows are delayed or silently disabled because of inactivity, billing, quota, or repository configuration.
+- Concurrent retries are safe but create a CI storm; a long-running request starves indefinitely behind small changes.
+- “Retry flaky tests” gradually becomes a mechanism for accepting genuinely nondeterministic failures.
+- Test commands pass while modifying the working tree, generated files, lockfiles, or snapshots that are not part of the candidate.
+- Git LFS objects, submodules, external schemas, or downloaded fixtures are mutable even though the Git tree is fixed.
+- Linux and macOS disagree on case sensitivity, executable bits, symlinks, line endings, Unicode normalization, or generated output.
+- Stacked changes land out of order, duplicate one another, or depend on commits not included in the request.
+- Reverting a merge is not clean because later landings depend on it; “automatic rollback” needs dependency awareness.
+- Request IDs are reused, truncated, or copied between repositories; updated content is mistaken for an idempotent retry.
+- PR title, body, labels, approvals, or identity mapping remain mutable after checks and silently alter audit meaning.
+- Commit trailers allow ambiguous escaping, duplicate keys, oversized values, secrets, personal data, or schema collisions.
+- The audit parser assumes SHA-1 length, one merge strategy, or one receipt schema forever.
+- Protected-path rules miss an indirect control surface: dependency lockfiles, build scripts, code generators, CODEOWNERS, reusable workflows, or test configuration.
+- The emergency override becomes the convenient path and no longer receives equivalent receipts or retrospective scrutiny.
+- Shared-host agents can inspect each other’s environment, Git credential helpers, sockets, process arguments, or filesystem despite repository-level isolation.
+- GitHub API rate limits, Actions concurrency limits, storage retention, log truncation, or artifact expiry break recovery assumptions.
+- A passing change is semantically wrong because no deterministic check captured the requirement. The gate guarantees process integrity, not program correctness.
+
+## 4. Assumptions
+
+- Agents are not entitled to write `main` directly. Does the real design remove that permission from every token and API path?
+- The boss accepts rare approval for gate, policy, credential, and ownership changes. Which paths or settings require that approval?
+- GitHub Actions or an equivalent hosted executor is available. What executes the gate if it is not?
+- Clean, disposable verifier and publisher environments are available. Are any jobs self-hosted or workspace-reusing?
+- The repository can support distinct planner, verifier, reporter, and publisher permission boundaries. How are those boundaries enforced?
+- A protected publisher environment can be entered only by trusted default-branch workflow code. Has this been demonstrated adversarially?
+- Agents may be buggy or opportunistic, so submitted code is treated as hostile. Is the intended threat model weaker or stronger?
+- The shared Ubuntu host cannot safely hold a main-writing credential. Where are all current credentials stored and who can read them?
+- Agent branch credentials may leak without compromising main. Are their scopes genuinely limited, including rules, checks, workflows, and merge APIs?
+- Every task can use a separate clone or worktree. Are there tools that require a single shared working tree?
+- A specific commit SHA is the unit of submission. Does the real workflow instead treat a mutable branch or PR head as authoritative?
+- Merge commits are acceptable in main history. If squash or rebase is required, how is exact checked-object identity preserved?
+- An empty envelope commit is acceptable. If not, where does immutable request metadata live?
+- The request’s explanation is requester-supplied provenance, not independently verified truth. What does “why” need to mean for audit purposes?
+- Git history must retain accepted receipts; rejected-attempt diagnostics may remain in GitHub. Must refusals also survive independently of GitHub retention?
+- Checks can be expressed as deterministic commands with bounded resources. Which checks require external services, nondeterministic data, hardware, or model judgment?
+- The policy from the current base governs a retry. Should requests instead retain the policy that existed when first submitted?
+- Infrastructure failures may retry automatically, while genuine test failures require new immutable content or an explicit policy-approved rerun. How is flakiness classified?
+- Merge conflicts are refused rather than model-resolved. Is automatic conflict resolution expected?
+- Compare-and-swap retry cost is acceptable for a small fleet. What arrival rate and check duration define “small”?
+- GitHub retains PRs and gate-owned refs reliably enough for in-flight recovery. What retention and cleanup requirements apply?
+- Submodules, Git LFS, generated artifacts, and external dependencies are absent or can be pinned. Which of them exist?
+- Agents cannot alter repository rules, install Apps, approve protected changes, or mint privileged tokens. Has the complete actor matrix been enumerated?
+- The boss’s Mac credential is not accessible from the Ubuntu agent host. What is the recovery plan if that device or account is unavailable?
+- A GitHub-wide outage may pause landing without a secondary system. What recovery-time objective is required?
+- There is no production deployment coupled to main, as stated, so atomic Git publication is the only transaction boundary. Are any undocumented consumers triggered immediately by a main update?
+- Reverts may use the same gate and need not preempt it. Does the boss require an emergency priority lane?
+- Main history is not routinely rewritten. If rewriting is ever allowed, how are receipts and request identities preserved?
+
+[2mtokens used[0m
+17,756
+## 1. Your solution sketch
+
+The system is a stateless, deterministic landing gate built from GitHub refs, pull requests, protected workflows, and atomic Git updates. Agents can propose arbitrary commits but possess no credential capable of updating `main`.
+
+### Components
+
+- **Task launcher:** Creates a unique clone or worktree and branch namespace for each agent session, preventing concurrent sessions from sharing an index or working tree.
+- **Submission client:** Packages a specific commit SHA, request ID, requester identity, and reason into an immutable landing envelope and opens or updates the corresponding pull request.
+- **Durable request inbox:** A pull request plus a gate-owned ref pins the submitted SHA while it is queued or being checked.
+- **Planner:** Reads the current `main`, the pinned request, and the policy from `main`; constructs the exact candidate merge commit.
+- **Verifier:** Runs the versioned check suite against that candidate on a clean, unprivileged runner.
+- **Publisher:** On a fresh runner, verifies the candidate, check outcome, and current `main`, then performs one compare-and-swap update of `main`.
+- **Reconciler:** A scheduled and event-triggered workflow finds nonterminal requests and resumes any missing attempt. It owns no database.
+- **Policy manifest:** Version-controlled deterministic rules specifying checks, timeouts, protected paths, toolchain images, and acceptable overrides.
+- **Receipt parser:** Reads structured trailers from first-parent history to answer what landed, from where, under which policy, and why.
+- **Boss override path:** Permits a signed, reasoned exception through the same publisher; an off-box administrative credential remains available for total gate failure.
+
+### Request and state model
+
+Every request has a globally unique `request_id`. The authoritative payload is:
+
+```text
+request_id
+requester identity and session
+submitted commit SHA
+human-readable intent
+structured change category
+creation time
+optional predecessor request
+```
+
+The submission client creates an empty envelope commit on top of the proposed change. Its commit message contains canonical, schema-validated metadata; its tree is identical to the proposed source tree. The client pushes it to a unique request branch and opens a PR. Intake copies the exact SHA to a gate-owned, deletion-protected ref. PR descriptions and comments are presentation, not authority.
+
+The state machine is:
+
+```text
+DRAFT → QUEUED → PLANNED → VERIFYING → READY → LANDED
+                   │           │          │
+                   └──────────→ REFUSED ←─┘
+                         or RETRYING
+```
+
+`CANCELLED` is also terminal. A request may have several attempts, keyed by:
+
+```text
+(request_id, source_sha, base_sha, policy_sha)
+```
+
+Repeating a submission with the same ID and payload returns the existing state. Reusing the ID with different content is a deterministic conflict, never an update in place.
+
+### Landing transaction
+
+1. The planner reads current `main` as base `B`, the pinned request head `H`, and the policy blob from `B`.
+2. It rejects malformed envelopes, missing objects, unauthorized control-plane changes, and unmergeable histories.
+3. It constructs candidate merge commit `C`, with first parent `B` and second parent `H`. Commit metadata is deterministic so recreating the same attempt produces the same SHA.
+4. `C` contains canonical trailers such as:
+
+```text
+Land-Request
+Land-Source
+Land-Base
+Land-Requester
+Land-Reason
+Gate-Policy
+Required-Checks
+Override-Authority, if any
+```
+
+5. A planning identity may publish `C` only to a candidate namespace. Server rules deny that identity access to `main`.
+6. The verifier checks out exactly `C` and runs the policy taken from `B`. Toolchains and actions are digest-pinned. Candidate code runs without repository secrets, write tokens, persistent workspaces, shared writable caches, or privileged container access.
+7. A fresh publisher job receives no result data produced by candidate code. It trusts only the platform’s verifier-job conclusion and planner outputs. It independently validates:
+   - the candidate SHA and parent SHAs;
+   - the request and policy tuple;
+   - successful completion of every required check;
+   - any required boss approval for protected paths;
+   - that current `main` is still exactly `B`.
+8. It atomically updates `main` from `B` to `C` using compare-and-swap semantics.
+9. If `main` moved, `C` is discarded as stale. A new candidate is constructed from the new base and all checks run again.
+10. After success, the PR is closed as landed and temporary refs become eligible for deterministic garbage collection.
+
+Thus, the exact commit checked is the commit published. No post-check rebasing, message editing, squash, or server-created merge is permitted.
+
+### Enforcement and credentials
+
+A repository ruleset denies direct update, force-push, and deletion of `main` to every agent identity. Only the publisher identity is admitted. The publisher receives a short-lived token only inside its protected job; that credential never exists on the shared Ubuntu host or in the verifier.
+
+Agent credentials are short-lived and limited to request branches, PRs, and status queries. Their spread is therefore contained: possession still cannot update `main`, change rulesets, mint publisher credentials, or approve protected-path changes.
+
+The gate workflow, policy, credential plumbing, action pins, and relevant ownership rules form the control plane. A proposed change to them requires explicit boss approval and is verified using the old trusted policy. Candidate-controlled workflows are never used as the gate. `pull_request_target`-style execution of submitted code is prohibited.
+
+The boss’s ordinary intervention is a structured override request naming the checks or rule being overridden and the reason. It still produces a normal candidate and receipt. A separate administrative credential on the Mac can repair rules or publish manually if GitHub automation is unusable; using it is an emergency operation recorded afterward, not a routine merge path.
+
+### Failure containment
+
+- **Wrong local branch:** Separate worktrees prevent shared-index damage. The gate lands a pinned SHA, not “whatever this branch now means.” Direct pushes to `main` fail server-side.
+- **Broken or unchecked work:** No successful verifier result for the candidate means the publisher cannot run.
+- **Merge conflict:** The request is refused with stable error codes, conflicting paths, observed base SHA, and an exact resubmission command.
+- **Concurrent landings:** Both may verify, but only one compare-and-swap succeeds. Every loser rebuilds on the new `main` and reruns checks.
+- **Agent crash:** Once intake pins the SHA, no client process is needed. The reconciler continues the request.
+- **Workflow crash:** Persistent refs and PR state identify the incomplete attempt. Reconciliation recreates or resumes it idempotently.
+- **Crash during publication:** A Git ref update is atomic. Recovery checks whether the request receipt is already in `main`; otherwise it retries.
+- **Lost reply:** `land status <request_id>` derives status from PRs, refs, attempts, and main history. Resubmission is safe.
+- **Duplicate execution:** Deterministic candidate IDs and atomic publication make duplicates harmless.
+- **Force-pushed or deleted source branch:** The gate-owned pinned ref remains authoritative.
+- **Flaky check:** The failure report distinguishes test failure, infrastructure failure, and timeout. Infrastructure failures retry automatically; test failures require a new request unless policy explicitly permits reproducible reruns.
+- **Malicious submitted code:** Verification has no useful credentials. Publisher and planner use fresh workspaces and never execute candidate files.
+- **GitHub outage or exhausted quota:** Requests remain queued and resume when the platform recovers. No partially published state exists.
+- **Bad landing discovered later:** Reversion is another normal landing request, generated mechanically from the recorded merge commit.
+- **Audit loss:** Each accepted transaction is self-describing in main’s immutable first-parent history. External workflow logs improve diagnosis but are not required to identify what landed and why.
+
+No model participates in admission, merging, failure classification, retries, or publication. Models create the proposed change and its explanation. The only non-deterministic judgment is the boss’s rare approval or override.
+
+## 2. The hard parts
+
+1. **Proving the credential boundary.** A nominally protected branch often has unexpected writers: administrators, GitHub Actions, installed Apps, deploy keys, merge APIs, or old tokens. Prototype this in a disposable repository and attempt direct push, force-push, deletion, API update, status forgery, workflow modification, and rule modification using every real identity. The test passes only if agents cannot produce a main update by any route.
+
+2. **Proving verifier-to-publisher isolation.** Submitted code will deliberately try to read secrets, inspect other processes, write workflow output files, poison caches, alter subsequent steps, exploit Git hooks or filters, and reach the Docker socket. Run an adversarial fixture containing each attack. Confirm that it can cause only verification failure, never publisher input or credential access.
+
+3. **Proving “checked SHA equals published SHA.”** Race two requests while recording every base, candidate, tree, and published object ID. Mutate PR metadata and source branches during verification. Crash immediately before and after ref updates. The invariant should be mechanically testable from the final Git graph.
+
+4. **Crash and duplicate recovery.** Kill each job after every externally visible operation; dispatch duplicate runs; delete the source branch; lose the client reply; and disable Actions temporarily. The same request must converge to one terminal result without manual cleanup.
+
+5. **GitHub control-plane semantics.** The problem statement does not establish whether the available GitHub plan and configuration can restrict environments, Apps, refs, approvals, and per-job tokens as required. Build the complete permission matrix in a test repository rather than relying on documentation or intuition.
+
+6. **Check fidelity and flakiness.** The gate can guarantee that checks ran, not that the checks are sufficient. Replay representative changes repeatedly on clean runners, including known-bad mutations. Measure false passes, nondeterminism, runtime, timeout behavior, and dependence on mutable network resources.
+
+7. **Queue behavior under contention.** Compare-and-swap is safe but may waste work or starve a large request when main changes frequently. Load-test realistic check durations and arrival rates. If retries become pathological, add a durable FIFO admission token with an expiry rather than weakening exact-content checking.
+
+8. **Policy evolution.** A queued request may span several versions of main and its policy. Test a policy change concurrently with ordinary requests. The intended rule is that every retry uses the policy from its current base and records that policy SHA.
+
+9. **Machine-readable audit stability.** Build the parser before launch. Exercise unusual commit messages, Unicode, long reasons, overrides, reverts, cherry-picks, duplicate source SHAs, and schema upgrades. If history cannot be parsed unambiguously, the receipt format is not finished.
+
+At 2am, ordinary failures appear as structured PR checks and comments and are retried automatically. A request exceeding an SLA becomes a `gate-stuck` issue or notification containing its state and last error. Repeated verifier infrastructure failures, reconciliation failures, permission changes, and inability to read or update `main` notify the boss. A complete GitHub outage cannot be reliably detected from GitHub itself; external outage notification is required only if that availability warrants another failure domain.
+
+## 3. Late discoveries
+
+- Branch protection has an overlooked bypass actor, and “administrators obey rules” was never enabled.
+- An agent can edit the workflow that judges its own change, or can invoke an existing privileged workflow with attacker-controlled inputs.
+- Repository or environment secrets are available to same-repository PR workflows even though fork behavior looked safe.
+- Self-hosted runners retain credentials, processes, containers, caches, or modified toolchains between requests.
+- A cache or artifact crosses the untrusted-verifier/publisher boundary and becomes an execution channel.
+- Third-party Actions, container tags, package indexes, or system packages are mutable, making yesterday’s passing check irreproducible.
+- “Same content” was interpreted as the same tree while a check actually depends on commit parents, commit message, author, timestamp, tags, or shallow-history depth.
+- Server-side squash, rebase, automatic branch update, or merge-message editing changes the object after checks.
+- Required status contexts can be forged by another workflow or App with checks permission.
+- A status belongs to the PR head rather than the synthesized merge result.
+- A source branch is force-pushed or deleted after intake; the underlying object later becomes unreachable.
+- Scheduled workflows are delayed or silently disabled because of inactivity, billing, quota, or repository configuration.
+- Concurrent retries are safe but create a CI storm; a long-running request starves indefinitely behind small changes.
+- “Retry flaky tests” gradually becomes a mechanism for accepting genuinely nondeterministic failures.
+- Test commands pass while modifying the working tree, generated files, lockfiles, or snapshots that are not part of the candidate.
+- Git LFS objects, submodules, external schemas, or downloaded fixtures are mutable even though the Git tree is fixed.
+- Linux and macOS disagree on case sensitivity, executable bits, symlinks, line endings, Unicode normalization, or generated output.
+- Stacked changes land out of order, duplicate one another, or depend on commits not included in the request.
+- Reverting a merge is not clean because later landings depend on it; “automatic rollback” needs dependency awareness.
+- Request IDs are reused, truncated, or copied between repositories; updated content is mistaken for an idempotent retry.
+- PR title, body, labels, approvals, or identity mapping remain mutable after checks and silently alter audit meaning.
+- Commit trailers allow ambiguous escaping, duplicate keys, oversized values, secrets, personal data, or schema collisions.
+- The audit parser assumes SHA-1 length, one merge strategy, or one receipt schema forever.
+- Protected-path rules miss an indirect control surface: dependency lockfiles, build scripts, code generators, CODEOWNERS, reusable workflows, or test configuration.
+- The emergency override becomes the convenient path and no longer receives equivalent receipts or retrospective scrutiny.
+- Shared-host agents can inspect each other’s environment, Git credential helpers, sockets, process arguments, or filesystem despite repository-level isolation.
+- GitHub API rate limits, Actions concurrency limits, storage retention, log truncation, or artifact expiry break recovery assumptions.
+- A passing change is semantically wrong because no deterministic check captured the requirement. The gate guarantees process integrity, not program correctness.
+
+## 4. Assumptions
+
+- Agents are not entitled to write `main` directly. Does the real design remove that permission from every token and API path?
+- The boss accepts rare approval for gate, policy, credential, and ownership changes. Which paths or settings require that approval?
+- GitHub Actions or an equivalent hosted executor is available. What executes the gate if it is not?
+- Clean, disposable verifier and publisher environments are available. Are any jobs self-hosted or workspace-reusing?
+- The repository can support distinct planner, verifier, reporter, and publisher permission boundaries. How are those boundaries enforced?
+- A protected publisher environment can be entered only by trusted default-branch workflow code. Has this been demonstrated adversarially?
+- Agents may be buggy or opportunistic, so submitted code is treated as hostile. Is the intended threat model weaker or stronger?
+- The shared Ubuntu host cannot safely hold a main-writing credential. Where are all current credentials stored and who can read them?
+- Agent branch credentials may leak without compromising main. Are their scopes genuinely limited, including rules, checks, workflows, and merge APIs?
+- Every task can use a separate clone or worktree. Are there tools that require a single shared working tree?
+- A specific commit SHA is the unit of submission. Does the real workflow instead treat a mutable branch or PR head as authoritative?
+- Merge commits are acceptable in main history. If squash or rebase is required, how is exact checked-object identity preserved?
+- An empty envelope commit is acceptable. If not, where does immutable request metadata live?
+- The request’s explanation is requester-supplied provenance, not independently verified truth. What does “why” need to mean for audit purposes?
+- Git history must retain accepted receipts; rejected-attempt diagnostics may remain in GitHub. Must refusals also survive independently of GitHub retention?
+- Checks can be expressed as deterministic commands with bounded resources. Which checks require external services, nondeterministic data, hardware, or model judgment?
+- The policy from the current base governs a retry. Should requests instead retain the policy that existed when first submitted?
+- Infrastructure failures may retry automatically, while genuine test failures require new immutable content or an explicit policy-approved rerun. How is flakiness classified?
+- Merge conflicts are refused rather than model-resolved. Is automatic conflict resolution expected?
+- Compare-and-swap retry cost is acceptable for a small fleet. What arrival rate and check duration define “small”?
+- GitHub retains PRs and gate-owned refs reliably enough for in-flight recovery. What retention and cleanup requirements apply?
+- Submodules, Git LFS, generated artifacts, and external dependencies are absent or can be pinned. Which of them exist?
+- Agents cannot alter repository rules, install Apps, approve protected changes, or mint privileged tokens. Has the complete actor matrix been enumerated?
+- The boss’s Mac credential is not accessible from the Ubuntu agent host. What is the recovery plan if that device or account is unavailable?
+- A GitHub-wide outage may pause landing without a secondary system. What recovery-time objective is required?
+- There is no production deployment coupled to main, as stated, so atomic Git publication is the only transaction boundary. Are any undocumented consumers triggered immediately by a main update?
+- Reverts may use the same gate and need not preempt it. Does the boss require an emergency priority lane?
+- Main history is not routinely rewritten. If rewriting is ever allowed, how are receipts and request identities preserved?
+
+cell complete: /home/nedlern/agents/choirmaster/md-review-records/2026-08-12-attack-split-experiment/gatekeeper-fresh-eyes-codex.md

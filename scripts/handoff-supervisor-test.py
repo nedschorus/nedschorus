@@ -3,9 +3,10 @@
 
 Run: python3 scripts/handoff-supervisor-test.py
 Add --canary to also run the two live task-preseed canaries, which launch
-real headless sessions. Run those after every Claude Code upgrade: pre-seed
-rides undocumented harness state, and these two cases are what detect it
-breaking.
+real headless sessions. Pre-seed rides undocumented harness state; an
+upgrade breaking it is detected at the successor's ignition count-check
+(the queues are the backstop), and these two cases are the diagnosis to
+run when that fires.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -298,13 +299,17 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         Path("/tmp/dialog-0002.md"),
         {"written-at": recent, "next-step": "finish the supervisor"},
         4,
+        "queues — nc-queue: 3, oldest 001-stale-item.md",
     )
     check("ignition names the dialog path", "/tmp/dialog-0002.md" in prompt, prompt)
     check("ignition carries the elapsed line", "minutes ago" in prompt, prompt)
     check("ignition states the task count", "4 task(s)" in prompt, prompt)
     check("ignition carries the next step", "finish the supervisor" in prompt, prompt)
+    # The rot-visibility duty (#32): the successor reads the queue depths.
+    check("ignition carries the queue status", "oldest 001-stale-item.md" in prompt, prompt)
     prompt_without_step = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
     check("ignition survives a missing next-step", "continue from where that dialog ends" in prompt_without_step)
+    check("ignition omits an empty queue status", "Queue status" not in prompt_without_step)
 
     # --- Retention --------------------------------------------------------
     for generation in range(1, 6):

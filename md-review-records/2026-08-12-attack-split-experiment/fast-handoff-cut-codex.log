@@ -1,0 +1,848 @@
+Reading additional input from stdin...
+OpenAI Codex v0.147.0
+--------
+[1mworkdir:[0m /home/nedlern/agents/choirmaster
+[1mmodel:[0m gpt-5.6-sol
+[1mprovider:[0m openai
+[1mapproval:[0m never
+[1msandbox:[0m read-only
+[1mreasoning effort:[0m xhigh
+[1mreasoning summaries:[0m none
+[1msession id:[0m 019ff884-615a-7e60-b96e-86716b3cb9a1
+--------
+[36muser[0m
+## Your assignment
+
+You are the cut attack of the sanity-checker. You receive one or more MD files — a design, plan, skill, or instruction document, sometimes with companions. The review request names the document under review; anything else you receive is context for it. Read the documents you are given and the documents they link; write no files — your only output is the report described at the end. You do not edit the document under review. Your findings are design changes — a wrong one applied silently makes the design worse under a cleaner surface — so nothing you propose is applied directly: the requesting agent triages your findings and walks them with the user, and only accepted findings reach the document. Write every finding with enough quoted grounds that triage can verify it without re-deriving your work.
+
+Your single question is: **what here should not exist?** Components, steps, states, rules, fields, distinctions, whole mechanisms — your job is to find the ones whose absence would leave the system simpler, saner, and at least as reliable. You exist to counter the tendency of AIs to add complexity and rarely or never delete: flag machinery built for unlikely theoretical cases, second checks on working checks, and anything whose removal costs nothing real.
+
+The deepest cut removes the need, not the text: state the requirement a mechanism serves, and ask whether a different framing of that requirement makes the whole mechanism unnecessary. One framing move recurs enough to hunt by name — **containment**: when a failure can be made cheap to remedy (a backup to restore, a snapshot to roll back to, a container to rebuild, a transaction to abort), the machinery for *preventing* that failure can shrink or disappear. An unwanted file edit is not a disaster to prevent but a glitch remedied by restoring the copy.
+
+## Internal consistency is yours
+
+Contradictions are cut evidence. When a document states the same thing twice and the statements disagree — two mechanisms both described as *the* mechanism, two inventories that differ, a heading contradicted by its own body — the finding is usually not "fix the wording" but "one of these should not exist." Hunt: statements that cannot both be true; the same rule stated authoritatively in two places; status told differently in different sections.
+
+## Cut classes with a validated track record
+
+Hunt each explicitly:
+
+- **Detectors or outputs with no consumer** — something is computed, emitted, or recorded, and nothing and no one reads it (see the forcing-function interlock before concluding this). The real cost is the machinery that must read what was recorded and act on it; a detector whose output feeds no such machinery — and none planned — is a cut candidate even when detection sounds prudent.
+- **Duplicated normative homes** — the same rule stated authoritatively in two places, which will drift apart.
+- **Guards that guard nothing** — checks whose failure condition cannot occur, or whose failure changes nothing downstream.
+- **Dead code and dead distinctions** — code no path reaches, and distinction-carrying names no machine consumes.
+- **A broken mechanism reopens the Delete question** — when you find a mechanism broken, unwired, or incomplete (a dead trigger, an unreachable path, a promised name that doesn't exist), do not propose completing it first. Search the documents for what depends on it; if nothing named depends on it, deletion is the first candidate and repair the second. Either way, quote what you found or failed to find.
+
+## The interlocks
+
+These rules are what separate a sound cut from a reckless one. Every finding must survive all of them:
+
+- **Reject theoretical problems, and do not cut real protections against real problems.** An edge case earns machinery only when it has practical value to solve — but a mechanism answering a named, observed failure is not theoretical.
+- **Respect the roadmap.** A mechanism that will be needed at scale is not a valid deletion — building machinery while the system is still simple is this project's stated preference. With no forward plan in hand, a mechanism that looks premature is a question for the report, not a deletion.
+- **Forcing functions count as consumers.** Before declaring something unconsumed, ask who is *forced to decide* something because it exists. A required field whose value nothing parses may still be the feature.
+- **Operator cost is not builder cost.** A cut that reintroduces a recurring human step — a remembered deploy, a manual check — is not a simplification; it moves cost from build-time to forever.
+- **On unsolvable or open-ended problems**, cut complex near-solutions, keep the solved known parts, and note the unsolvable remainder explicitly.
+- **Flag collisions with recorded rulings; never re-litigate silently.** Look for "ruled"/"RULED" annotations and walk-order blocks as you read. When a finding contradicts a recorded ruling, say so plainly; you flag, you never rewrite a ruling or its record.
+
+## Priority order when cuts conflict
+
+1. **Simpler to operate** — more reliable, more autonomous, fewer or no user interventions; mechanical guarantees over trained agent habit; zero remembered human steps.
+2. **Simpler to understand** — the document easier to follow; the design easier to step through, with only necessary states.
+3. **Simpler to build or maintain** — welcome, but never at the expense of reliability or testability.
+
+## Report format
+
+Findings ordered deepest first — whole-mechanism removals before single-rule removals. For each:
+
+- **WHAT** — the precise cut.
+- **WHY** — argue from the document's own invariants, quoting the text you rely on (quoted, not paraphrased).
+- **LOST** — what is genuinely given up, and which priority pays for it; "nothing" is rarely true.
+- **CONSEQUENCES** — every sentence elsewhere in the documents, and every test described in them, that becomes false or stale if this cut lands.
+
+Refute your own candidates before reporting: for each, make the honest argument that the design is right as it stands, and report only the survivors. Close with a **leanness certification**: name what you examined and found already minimal. Certification must survive the replacement test — before certifying a mechanism lean, name the simplest existing thing that could deliver the same result; if such a thing exists, you have found a redundancy, not a leanness.
+
+## A worked example from this project's ruled history
+
+**Rejected cut:** deleting a required `--issue` field because "nothing reads the commit trailer it produces." The field is the feature: a check-in cannot proceed until the caller states an issue number or a deliberate `none`, so an explicit answer is mechanically forced. The forcing-function interlock exists because of this ruling.
+
+---
+
+Review request: the document under review is `md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md` — the fast-handoff design at its pre-gut revision (archived snapshot). Context documents:
+- .claude/skills/handoff/SKILL.md
+- docs/drafts/handoff-skill-draft.md
+
+These files are your complete document set: do not search for or read any other file, including documents they link. Where a finding depends on something you cannot read, say so plainly rather than chasing it.
+[35m[3mcodex[0m[0m
+I’ll inspect only the three named files, trace contradictions and unused machinery across them, and return a cut-only report with quoted grounds, losses, and all resulting stale text/tests.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "wc -l md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md .claude/skills/handoff/SKILL.md docs/drafts/handoff-skill-draft.md && sed -n '1,240p' md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md && sed -n '1,260p' .claude/skills/handoff/SKILL.md && sed -n '1,300p' docs/drafts/handoff-skill-draft.md"[0m in /home/nedlern/agents/choirmaster
+[32m succeeded in 0ms:[0m
+  145 md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md
+   12 .claude/skills/handoff/SKILL.md
+   43 docs/drafts/handoff-skill-draft.md
+  200 total
+---
+status: specification
+design-as-of: 2026-08-02
+---
+
+# Session recycling — the handoff system (specification)
+
+**Implementation status:** BUILT, walked, and trial-passed 2026-08-06 (see the build-status table and the live recycle trial below). Only the Stop-hook wiring into NC's settings remains, and it belongs to the seat move. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
+
+## The problem
+
+A fleet of interactive agents running with little attention. Recycle a session before its context gets heavy — the work is mostly sequential, so old turns are disposable — without the human typing into each pane. **Compaction is rejected** for this: it summarizes uniformly when value is non-uniform, and it is slow. **`--continue`/`--resume` are rejected**: they restore the context being shed. Every relaunch is a fresh session — new id, empty window, CLAUDE.md and hooks reloaded from disk.
+
+## Governing principles
+
+- **The conversation is the key context.** File and repo state live in the worktree and on main, fed continuously by commit-as-you-go and the queues — **git is the long-term record and the restore-after-problem source (boss-ruled 2026-08-02)**. Handoffs are operational, machine-local, disposable.
+- **The successor is not dumber than the predecessor.** Carry information, not interpretation: dialog goes verbatim; there is no distillation, so no drafting or correction ceremony.
+- **Gaps cost more than over-capture.** Dialog is small next to what a session reads and writes; over-capture is nearly free, which is what makes frequent recycling safe.
+- **Multi-machine flexibility is deliberately out of scope (boss-ruled 2026-08-02).** A machine migration is a project, not a handoff. Reopening trigger: multi-machine operation becoming an actual goal (the server-role precondition is tracked at [nedschorus#40](https://github.com/nedschorus/nedschorus/issues/40)).
+
+## The recycle cycle
+
+The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes its successor's opening prompt to a file and runs the writer, `scripts/handoff-write-and-check-supervisor.py`, which produces the handoff file. **The agent supplies only `next-step`; the writer fills every field a machine can compute (user-ruled 2026-08-06).** The earlier design had the agent hand-write all four fields, which asked it to find and read the previous handoff purely to do arithmetic, and left a silent failure open: the supervisor parses `key: value` lines, so a `next-step` containing a newline was truncated at its first line with no error. The writer collapses whitespace to one line, so that cannot happen. It also takes the next step as a FILE, not an argument — a shell mangles backticks and quotes inside an inline argument — and derives the counter from the higher of the previous handoff's value and the supervisor's consumed value, so a missing or stale handoff file cannot produce a counter the supervisor ignores.
+
+The fields:
+
+- `written-at:` — UTC timestamp (boss-ruled 2026-08-02; consumed by the ignition prompt's elapsed-time line).
+- ~~`read-starting-here:`~~ — **REMOVED 2026-08-06 (user-ruled): the retiring agent exercises no judgment over what its successor receives.** The extractor carries the tail of the conversation that clears a **2500-word floor** — roughly eighteen exchanges, sized against measured sessions — extended back to the nearest user prompt so the extract opens on a clean turn. The header states how many earlier turns were left behind, which makes reading further from the transcript an informed choice rather than a blind one. The 5-topics boundary rule, the "err long" hedge, and the boundary field all died with this ruling; `--boundary-quote` survives in the extractor as a manual override only.
+- `next-step:` — a clear and complete prompt telling the successor what its first action should be: an instruction to act on, not a summary of the session. Bounded by what the successor already has, since it reads the conversation tail before acting. **Every pointer carries a pin** — a file reference gives its path and commit SHA, a GitHub issue reference gives its repository and number — so the successor resolves what the writer meant rather than whatever the artifact says by read time. Text of record: `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06.
+- optional `dont-restart:` — the supervisor prompts `restart? y/n` instead of auto-relaunching (`y` launches, `n` exits the supervisor).
+- `restart-counter:` — the semaphore the supervisor watches, written by the writer as one above the highest value either the previous handoff file or the supervisor's state records. The supervisor records the last-consumed value in its own state file so it never refires on the same value (the consumed-marker).
+
+The **supervisor** (one per agent, a python program running in a console) then:
+
+1. Notices the counter change (or file mtime).
+2. **Kills the session.** Agents cannot exit themselves — `/clear` and `/exit` are unavailable to the agent, and self-SIGTERM trips the safety classifier (verified) — so the supervisor owns termination.
+3. **Extracts the dialog** (files-first: written to disk before anything else proceeds). The extractor derives the JSONL path from the session id the supervisor launched with — **ID-keyed lookup only**: the supervisor-known path is primary, a UUID search across the project directories is the recovery fallback, and latest-by-mtime is rejected (a second session in the same worktree makes it a race). It copies verbatim the user prompts and display messages from the boundary to EOF and appends the full-JSONL path as the need-more pointer.
+4. **Migrates tasks by pre-seed**: generates the successor UUID, copies `~/.claude/tasks/<old-uuid>/*.json` into `~/.claude/tasks/<new-uuid>/`, then launches `claude --session-id <new-uuid> "<ignition prompt>"`. Canaried 2026-08-02, v2.1.220: seeded tasks are read; new task ids allocate above the seeded max; no clobber. This rides undocumented harness internals — **re-run both canaries after every Claude Code upgrade**; the backstop if an upgrade breaks it is the queues (task-shaped work belongs in GHIs by the artifact rules).
+5. **Prints one automated queue-status line** — each queue's depth and oldest item, computed by script: the artifact-lifecycle rot-visibility duty riding every recycle at zero agent cost (full manual scrubs died with the committed tier; memory maintenance is the boss's drain per the #32 Q1 ruling).
+6. **Launches the successor with the ignition prompt**: the exact handoff path to read; the elapsed-time line ("this handoff was written N minutes/days ago — the longer the gap, the more will have changed since"); confirm N tasks visible (the pre-seed drift tripwire); then take the next step.
+7. **Local retention**: keeps the current and predecessor handoff + extract; deletes older.
+
+## Auto-trigger — read cost
+
+The supervisor's poll never touches the transcript: it stats the handoff file and stamps its heartbeat, nothing more. The transcript is read only by the Stop hook, once per turn boundary, and only from the end — the newest assistant record is all that matters, so the hook reads a 256KB tail and doubles the window until it finds that record. Measured on a 5.8MB transcript: 0.3ms, against 23ms for a whole-file parse, and the gap widens as a session grows because the tail read does not scale with file size.
+
+## Auto-trigger
+
+The statusline script receives `.context_window.remaining_percentage` on stdin at every refresh; one added line writes it to a side file. The Stop hook reads that file — Stop-hook stdin does not carry `context_window` (verified) — and triggers the `handoff` skill at the threshold (config, ~50% used).
+
+## Who starts the supervisor — self-registration, not discovery
+
+A supervisor watches exactly one agent, and **the agent starts it** when its handoff script finds none watching (user-asked 2026-08-06). Nothing scans the machine for sessions to supervise, and nothing needs to: the running session identifies itself from its own environment — `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`, both verified present 2026-08-06 — and passes those to the supervisor it starts, which adopts that one process. Two questions dissolve rather than being answered:
+
+- **Which sessions can be handed off?** Only ones carrying the `handoff` skill and this script, because only they ever call it. An agent without them never starts a supervisor, so no supervisor exists for it.
+- **What about subagents?** They do not run the skill, and their turn boundaries raise `SubagentStop` rather than `Stop`, so the threshold hook never fires for them.
+
+`AdoptedSession` gives the supervisor the same interface over a process id that `subprocess.Popen` gives over a process it launched — poll, terminate, kill, wait — so everything after the kill is the ordinary cycle, unchanged. A per-agent lock file (`<agent>-supervisor.lock`, holder process id recorded, stale locks reclaimed) refuses a second supervisor: two would each kill the session and each launch a successor.
+
+This also closes the bootstrap hole. Before adoption, a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself — which meant the founding boot below, and any agent a person started in a console, was permanently unrecyclable.
+
+Verified live 2026-08-06: a supervisor adopted a process it had not launched, killed it on the handoff, extracted the dialog, carried 50 task records, launched the successor with the full ignition prompt, and released its lock on exit. That check used a stub agent and verified process mechanics only.
+
+**Open question, attached to the seat move: where the successor's output goes in an interactive pane.** A supervisor the agent starts is detached, with its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching. Correct for a headless session; wrong for a console pane, where the successor would run invisibly. The recommendation is that panes run their supervisor directly — the supervisor is the parent, as the design has always assumed — leaving adoption as the bootstrap and recovery path it was built for. Settle this before the seat move rather than after.
+
+## The founding boot — the one committed handoff
+
+Choirmaster's first boot has no predecessor session and no supervisor. The founding handoff is written by the founding pair, committed as an ordinary file, and launched with the ruled prompt pattern (`claude "$(cat <path>)"` — the launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). After that boot, recycling owns everything. No standing committed-handoff machinery exists; a boss-called durable snapshot is an ordinary commit on request.
+
+## Build status (2026-08-06)
+
+Four of the five components are built, tested, and on main; the fifth is the skill text, which is instruction-class and lands after its walk.
+
+| Component | State |
+|---|---|
+| Extractor | BUILT — `scripts/handoff-extract-conversation.py`, 23-case suite (`…-test.py`), live-validated against a real transcript |
+| Supervisor | BUILT — `scripts/handoff-supervisor.py`, 24 offline cases plus both live pre-seed canaries green |
+| Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
+| Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
+| Writer | BUILT — `scripts/handoff-write-and-check-supervisor.py`, 27-case suite (`…-test.py`); added 2026-08-06 when the user ruled that the script does everything best done by script |
+| `handoff` skill | BUILT — `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06 (eight items, per-item dispositions in `docs/drafts/handoff-skill-draft.md`); executed cold by four trial generations, which handed off correctly from the drafted text |
+
+Not yet done: wiring the Stop hook into NC's own settings file, which belongs to the seat move rather than the code build. Every component is now built, tested, and walked.
+
+## The live recycle trial — PASSED 2026-08-06
+
+A headless Opus agent (`claude -p`, no subagents) seeded with 100 essay topics turned them into 50 tasks and wrote ~1000-word essays one per turn, so context filled from its own output. Four generations ran; three auto-triggered recycles happened with no human input. All four pass criteria met:
+
+| Criterion | Result |
+|---|---|
+| Sessions recycle without the user typing | 3 recycles: generations 0→1→2→3, each an auto-triggered handoff, kill, extract, task carry, relaunch |
+| Each successor reports the expected task count | Generation 1 opened "50 tasks are visible — count confirmed"; every generation confirmed before working |
+| The task list drains across generations | 14 essays written by four sessions sharing one carried task store, tasks marked completed in order |
+| The dialog files hold the real conversation | `essayist-dialog-000N.md` carry the ignition prompt, the count confirmation, the essay summaries, and the threshold-hook moment |
+
+What the trial proved that no unit test could:
+
+- **Exit-as-handoff is the headless norm, and the supervisor now reads it correctly.** Every one of the three recycles arrived as a process exit, not as a file change observed while running. Before the fix (`wait_for_handoff` returning None on exit before checking the file) the trial would have stopped at the first handoff.
+- **A raised threshold mid-run does not disturb the cycle.** The threshold was 5.5% for generations 0–2 and 8% for generation 3; recycling behaved identically, confirming the mechanism is threshold-independent.
+- **The clean-stop branch works.** With no pending tasks left, the final session exited without writing a handoff and the supervisor printed "session ended without a handoff; supervisor stopping" and exited 0 — the terminal branch the exit-handling fix also touches.
+- **A successor challenges inconsistent state rather than proceeding.** To reach the drain condition without writing 36 more essays, task records were closed directly on disk. The generation-3 agent reported the discrepancy unprompted: 50 tasks read completed while `essays/` held 14 files. The carried dialog gave it enough context to notice, which is the behavior the ignition prompt's count-check exists to produce.
+
+Trial-only scaffolding, not part of the system: a driver Stop hook produced one-essay-per-turn boundaries (an agent told to finish everything in one turn never reaches a Stop boundary, so the threshold hook could never fire), and the sandbox ran outside NC so essay churn stayed out of the repository.
+
+## Components (the build)
+
+1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
+2. **The `handoff` skill** — writes `next-step` per the content rule, runs the writer, waits for the supervisor (boundary judgment removed 2026-08-06; the extractor's word-floor tail decides what carries).
+2a. **`handoff-write-and-check-supervisor.py`** — the writer: stamps the timestamp, derives the restart counter, collapses the next step to one line, writes the handoff file atomically, then reports whether a supervisor is watching and what that means for the agent. Refuses an empty next step rather than booting a successor with no instruction. The liveness report lives here rather than in a second command because the two are one decision — a handoff nobody is watching must not stop the agent working, and an agent that runs only the first half of a two-step procedure would stop anyway (user-ruled 2026-08-06: the skill runs one script that does everything best done by script).
+3. **The statusline relay + Stop hook** — the auto-trigger.
+4. **The supervisor** — watch, kill, extract, pre-seed, queue-status line, launch; consumed-marker state; the `dont-restart` y/n gate.
+5. **The ignition prompt template** — path, elapsed-time line, task count, next step.
+
+## Verified facts (2026-07-21 – 2026-08-02, Claude Code v2.1.220)
+
+| Fact | Source |
+|------|--------|
+| `claude "<prompt>"` fires the prompt as the first interactive turn, in-band (dialog-safe) | canary |
+| `--allowedTools` on the launch silently prevents the positional prompt from firing — never combine them in a launcher | canary (2×2) |
+| An agent cannot `/clear` or `/exit` itself; self-SIGTERM trips the safety classifier (exit 143) | canary |
+| Statusline stdin carries `.context_window.remaining_percentage`; Stop-hook stdin does not | probe |
+| A headless (`claude -p`) session NEVER runs the status line, so the relay file is never written and a statusline-only auto-trigger cannot fire there | probe 2026-08-06 |
+| Every assistant transcript record carries `message.usage` (input + cache-read + cache-creation tokens = that request's prompt size) and `message.model`; context used is therefore computable from the transcript alone, in any session | probe 2026-08-06 |
+| Context windows: Fable 5, Opus 5, Sonnet 5, and the Opus 4.x line are 1M; Haiku 4.5 is 200K (source: the claude-api reference skill, read 2026-08-06 — not inferred) | reference |
+| Tasks are `<N>.json` under `~/.claude/tasks/<session-id>/`; the dir is created lazily; `--session-id <uuid>` forces the id; pre-seed canaries 1 and 2 passed | probe/canary |
+| A task record's `id` is a STRING, and `blocks`/`blockedBy` arrays are present; a record with an integer id is dropped by TaskList while still counting toward the next allocated id — so a schema-wrong pre-seed looks half-successful | canary 2026-08-06 |
+| `--continue` keeps the prior session id | boss-measured 2026-07-21 |
+| A context clear mints a new session id; the session id is in the environment | measured |
+| A fresh subagent's context floor is CLAUDE.md + prompt | measured |
+| JSONL extraction of a closed session yields readable dialog | measured |
+
+## Tests
+
+- **Extractor**: the four tolerance fixtures (partial tail; malformed line skipped and counted; oversized line bounded; subagent turns dropped as deliberate classification), boundary-quote start, line-count mode, cross-directory ID search, empty/unparseable refusal.
+- **Supervisor**: semaphore init and consumed-marker (no refire after relaunch), `dont-restart` y/n paths, kill → extract → launch ordering (files-first verified), local retention old+new, task pre-seed as executable canaries (re-run per upgrade), ignition prompt contains path + elapsed-time line + task count.
+- **Trigger**: threshold crossing fires the skill exactly once.
+
+## Known holes
+
+- Pre-seed rides undocumented harness state; bounded by the ignition count-check and the per-upgrade canaries; the queues are the backstop.
+- Very-long-session material can predate the boundary window and every durable store; bounded by commit-as-you-go and the full-JSONL pointer.
+- ~~The 5-topics boundary is the retiring agent's judgment~~ — closed 2026-08-06: the boundary is mechanical (a 2500-word tail), so this hole no longer exists. What remains is the floor's size itself: a session whose live thread runs longer than 2500 words hands over a partial thread, bounded by the header's left-behind count and the transcript pointer.
+- A `dont-restart` handoff reaching a supervisor with no terminal cannot be answered. Closed 2026-08-06: the supervisor takes the non-relaunch branch rather than calling `input()`, which would raise EOFError before the consumed counter was recorded and leave the next supervisor re-firing on a stale handoff.
+- A supervisor restarting after a crash used to relaunch the session id in its state file. Closed 2026-08-06: a fresh start always mints a new id, since reusing one would launch against an existing transcript, and — if the supervisor died while its agent kept running — put two processes on one session id. Adoption is how a running session is picked back up.
+- The supervisor is a per-agent console process; if it dies, recycling stops until relaunched. Detectable since 2026-08-06 (user-asked): the supervisor stamps `last_poll_at` into its state file every ten seconds while watching, and `handoff-supervisor.py --check --agent <name>` reports liveness (exit 0 alive, 1 not). Both consumers use it — the skill checks before it stops working, so a dead supervisor yields a plain report to the user rather than a session hung forever waiting to be killed; the threshold hook stays silent when nothing is watching, so it cannot ask for a handoff nobody will act on.
+---
+name: handoff
+description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+---
+
+# handoff
+
+## What to do
+
+1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
+3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+# handoff skill — the walk record (LANDED 2026-08-06)
+
+**Superseded as a proposal.** The walked text is live at `.claude/skills/handoff/SKILL.md`; that file is the text of record, and this one is kept only for the per-item dispositions below, which say what was ruled and why. Edit the skill, not this.
+
+The mechanics live in the code — `scripts/handoff-write-and-check-supervisor.py`, `scripts/handoff-supervisor.py`, `scripts/handoff-extract-conversation.py` — so the skill text does not restate them.
+
+## Walk order (opened 2026-08-06, new-vp session 5b66b6d0)
+
+1. Purpose and the bar the text is judged by
+   *processed 2026-08-06 → accepted (purpose item; no capture)*
+2. The description — the trigger
+   *processed 2026-08-06 → REVISED then approved. Replaced with the user's "everything except one piece" framing; the trigger is now an observable system message rather than a self-assessed context level (an agent cannot see its own context percentage, so the old phrasing was a judgment call dressed as a condition); file mechanics dropped from the description so the always-in-context text cannot compete with the body; the near-miss negative clause declined — both triggers are observable events, so an agent working on the handoff system receives neither, and speculative rules are not added.*
+3. When Used
+   *processed 2026-08-06 → DELETED entirely (user): agents are not expected to self-trigger, so a body section restating the trigger has no reader. Its other two facts were already carried where they act — step 3 says stop working and wait for the supervisor, and How to do it says the dialog is carried for you. A proposed fold about tasks carrying over was withdrawn: nothing in this skill asks the agent to touch its tasks, and mentioning them would invite that. The body now opens on What to do.*
+4. What to do, step 1 — writing next-step
+   *processed 2026-08-06 → REVISED then approved (user-authored text). "Clear and complete" replaces the draft's bare instruction, bounded by what the successor already has: it reads the last few thousand words of the conversation before acting. Pinning is now two observable cases — a file reference carries path and commit SHA, a GitHub issue reference carries repository and number. Dropped: the don't-restate-a-durable-store rule (the context bound covers it) and the pre-correct-misreadings rule (general good writing, not project-unique). "GHI" expanded to "GitHub issue" per floor line 4's standard-SDLC-terms rule, though a cold probe confirmed agents understand the shorthand.*
+5. What to do, step 2 — the handoff file and its fields
+   *processed 2026-08-06 → REVISED then approved. The user ruled that the script fills every scriptable field; the design had never said so — it assigned all four fields to the agent and listed no writer among its five components. `scripts/handoff-write-and-check-supervisor.py` now stamps the timestamp, derives the counter, writes the file, and reports supervisor liveness; the skill's steps 2 and 3 collapse to one command plus following what it reports. This also closed a silent defect: the supervisor parses `key: value` lines, so a next-step containing a newline was truncated at its first line with no error, and the newly approved "clear and complete" wording made that more likely. The writer collapses whitespace to one line (user-ruled), takes the prompt as a file so a shell cannot mangle backticks, and derives the counter from the higher of the previous file's value and the supervisor's consumed value so a stale file cannot produce a counter the supervisor ignores. 27 cases green.*
+6. What to do, step 3 — the supervisor liveness check
+   *processed 2026-08-06 → REVISED then approved. The two-command procedure collapsed into one: the script reports, the agent obeys. The user then asked why the script does not simply start a supervisor when none is watching, which closed the bootstrap hole — a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself. The script now starts an adopting supervisor, so step 3's branches are found-or-started (stop and wait) versus could-not-start (keep working and tell the user). Self-registration, not discovery: the session identifies itself from its own environment, so nothing scans for supervisable sessions, and subagents — which never run the skill and raise SubagentStop rather than Stop — are excluded structurally. One input remains unscriptable until NC has an agent-naming convention: the agent's own name.*
+7. How to do it — path, counter, the never-summarize rule
+   *processed 2026-08-06 → DELETED entirely, with one sentence folded into step 1. The path and --handoff-dir paragraph became the script's business once the agent stopped writing the file. The never-paste/never-summarize paragraph carried two absolutes against floor line 6, and its last clause restated approved step 1 more weakly. What survived is the live risk — "clear and complete" licenses a longer prompt, so an agent could write a session summary instead of an instruction — restated positively as what the output IS, per the authoring checklist's finding that a positive recipe beats a prohibition. The skill is now a description and three numbered steps, with no trailing prose.*
+8. Ratification: the threshold-hook instruction deletion landed this session
+   *processed 2026-08-06 → REVISED then approved. The fired message is now exactly "Run the handoff skill now." The user cut the whole remainder: the used-percentage and threshold report (informational, changes nothing the agent does), the procedure clause, and the reassurance sentence. The procedure clause had gone stale twice in one day — once when boundary judgment was removed, once when the writer took over the fields — which is what a second copy of a procedure does. Its test case, which asserted the percentage appeared, was replaced by an exact-match assertion so re-adding any procedure text fails the suite.*
+
+Everything below the line is the proposed skill file, verbatim.
+
+---
+
+```
+---
+name: handoff
+description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+---
+
+# handoff
+
+## What to do
+
+1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
+3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+```
+
+[35m[3mcodex[0m[0m
+The strongest cut seam is already visible: the design describes two context-threshold data paths, while its own verified facts make one of them redundant and less capable. I’m now checking each candidate against the recorded rulings and enumerating every dependent sentence and test before including it.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'nl -ba md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md && nl -ba .claude/skills/handoff/SKILL.md && nl -ba docs/drafts/handoff-skill-draft.md'[0m in /home/nedlern/agents/choirmaster
+[32m succeeded in 0ms:[0m
+     1	---
+     2	status: specification
+     3	design-as-of: 2026-08-02
+     4	---
+     5	
+     6	# Session recycling — the handoff system (specification)
+     7	
+     8	**Implementation status:** BUILT, walked, and trial-passed 2026-08-06 (see the build-status table and the live recycle trial below). Only the Stop-hook wiring into NC's settings remains, and it belongs to the seat move. This 2026-08-02 revision supersedes the 2026-07-22/24 fast-handoff design after the boss-walked reconciliation with the session-recycling design (boss + app-session agent, 2026-08-01). The superseded machinery — the numbered committed series and its retention rule, the read state table and stamps, the drafting subagent and correction pass, the scrub modes, the committed task export, the privacy-scan stage — is recoverable at `git show e178e67:docs/cross-project/fast-handoff-design.md`; what survives of it is folded below. The file keeps its historical name; the skill is named `handoff`.
+     9	
+    10	## The problem
+    11	
+    12	A fleet of interactive agents running with little attention. Recycle a session before its context gets heavy — the work is mostly sequential, so old turns are disposable — without the human typing into each pane. **Compaction is rejected** for this: it summarizes uniformly when value is non-uniform, and it is slow. **`--continue`/`--resume` are rejected**: they restore the context being shed. Every relaunch is a fresh session — new id, empty window, CLAUDE.md and hooks reloaded from disk.
+    13	
+    14	## Governing principles
+    15	
+    16	- **The conversation is the key context.** File and repo state live in the worktree and on main, fed continuously by commit-as-you-go and the queues — **git is the long-term record and the restore-after-problem source (boss-ruled 2026-08-02)**. Handoffs are operational, machine-local, disposable.
+    17	- **The successor is not dumber than the predecessor.** Carry information, not interpretation: dialog goes verbatim; there is no distillation, so no drafting or correction ceremony.
+    18	- **Gaps cost more than over-capture.** Dialog is small next to what a session reads and writes; over-capture is nearly free, which is what makes frequent recycling safe.
+    19	- **Multi-machine flexibility is deliberately out of scope (boss-ruled 2026-08-02).** A machine migration is a project, not a handoff. Reopening trigger: multi-machine operation becoming an actual goal (the server-role precondition is tracked at [nedschorus#40](https://github.com/nedschorus/nedschorus/issues/40)).
+    20	
+    21	## The recycle cycle
+    22	
+    23	The retiring agent — via the `handoff` skill, boss-invoked or auto-triggered — writes its successor's opening prompt to a file and runs the writer, `scripts/handoff-write-and-check-supervisor.py`, which produces the handoff file. **The agent supplies only `next-step`; the writer fills every field a machine can compute (user-ruled 2026-08-06).** The earlier design had the agent hand-write all four fields, which asked it to find and read the previous handoff purely to do arithmetic, and left a silent failure open: the supervisor parses `key: value` lines, so a `next-step` containing a newline was truncated at its first line with no error. The writer collapses whitespace to one line, so that cannot happen. It also takes the next step as a FILE, not an argument — a shell mangles backticks and quotes inside an inline argument — and derives the counter from the higher of the previous handoff's value and the supervisor's consumed value, so a missing or stale handoff file cannot produce a counter the supervisor ignores.
+    24	
+    25	The fields:
+    26	
+    27	- `written-at:` — UTC timestamp (boss-ruled 2026-08-02; consumed by the ignition prompt's elapsed-time line).
+    28	- ~~`read-starting-here:`~~ — **REMOVED 2026-08-06 (user-ruled): the retiring agent exercises no judgment over what its successor receives.** The extractor carries the tail of the conversation that clears a **2500-word floor** — roughly eighteen exchanges, sized against measured sessions — extended back to the nearest user prompt so the extract opens on a clean turn. The header states how many earlier turns were left behind, which makes reading further from the transcript an informed choice rather than a blind one. The 5-topics boundary rule, the "err long" hedge, and the boundary field all died with this ruling; `--boundary-quote` survives in the extractor as a manual override only.
+    29	- `next-step:` — a clear and complete prompt telling the successor what its first action should be: an instruction to act on, not a summary of the session. Bounded by what the successor already has, since it reads the conversation tail before acting. **Every pointer carries a pin** — a file reference gives its path and commit SHA, a GitHub issue reference gives its repository and number — so the successor resolves what the writer meant rather than whatever the artifact says by read time. Text of record: `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06.
+    30	- optional `dont-restart:` — the supervisor prompts `restart? y/n` instead of auto-relaunching (`y` launches, `n` exits the supervisor).
+    31	- `restart-counter:` — the semaphore the supervisor watches, written by the writer as one above the highest value either the previous handoff file or the supervisor's state records. The supervisor records the last-consumed value in its own state file so it never refires on the same value (the consumed-marker).
+    32	
+    33	The **supervisor** (one per agent, a python program running in a console) then:
+    34	
+    35	1. Notices the counter change (or file mtime).
+    36	2. **Kills the session.** Agents cannot exit themselves — `/clear` and `/exit` are unavailable to the agent, and self-SIGTERM trips the safety classifier (verified) — so the supervisor owns termination.
+    37	3. **Extracts the dialog** (files-first: written to disk before anything else proceeds). The extractor derives the JSONL path from the session id the supervisor launched with — **ID-keyed lookup only**: the supervisor-known path is primary, a UUID search across the project directories is the recovery fallback, and latest-by-mtime is rejected (a second session in the same worktree makes it a race). It copies verbatim the user prompts and display messages from the boundary to EOF and appends the full-JSONL path as the need-more pointer.
+    38	4. **Migrates tasks by pre-seed**: generates the successor UUID, copies `~/.claude/tasks/<old-uuid>/*.json` into `~/.claude/tasks/<new-uuid>/`, then launches `claude --session-id <new-uuid> "<ignition prompt>"`. Canaried 2026-08-02, v2.1.220: seeded tasks are read; new task ids allocate above the seeded max; no clobber. This rides undocumented harness internals — **re-run both canaries after every Claude Code upgrade**; the backstop if an upgrade breaks it is the queues (task-shaped work belongs in GHIs by the artifact rules).
+    39	5. **Prints one automated queue-status line** — each queue's depth and oldest item, computed by script: the artifact-lifecycle rot-visibility duty riding every recycle at zero agent cost (full manual scrubs died with the committed tier; memory maintenance is the boss's drain per the #32 Q1 ruling).
+    40	6. **Launches the successor with the ignition prompt**: the exact handoff path to read; the elapsed-time line ("this handoff was written N minutes/days ago — the longer the gap, the more will have changed since"); confirm N tasks visible (the pre-seed drift tripwire); then take the next step.
+    41	7. **Local retention**: keeps the current and predecessor handoff + extract; deletes older.
+    42	
+    43	## Auto-trigger — read cost
+    44	
+    45	The supervisor's poll never touches the transcript: it stats the handoff file and stamps its heartbeat, nothing more. The transcript is read only by the Stop hook, once per turn boundary, and only from the end — the newest assistant record is all that matters, so the hook reads a 256KB tail and doubles the window until it finds that record. Measured on a 5.8MB transcript: 0.3ms, against 23ms for a whole-file parse, and the gap widens as a session grows because the tail read does not scale with file size.
+    46	
+    47	## Auto-trigger
+    48	
+    49	The statusline script receives `.context_window.remaining_percentage` on stdin at every refresh; one added line writes it to a side file. The Stop hook reads that file — Stop-hook stdin does not carry `context_window` (verified) — and triggers the `handoff` skill at the threshold (config, ~50% used).
+    50	
+    51	## Who starts the supervisor — self-registration, not discovery
+    52	
+    53	A supervisor watches exactly one agent, and **the agent starts it** when its handoff script finds none watching (user-asked 2026-08-06). Nothing scans the machine for sessions to supervise, and nothing needs to: the running session identifies itself from its own environment — `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID`, both verified present 2026-08-06 — and passes those to the supervisor it starts, which adopts that one process. Two questions dissolve rather than being answered:
+    54	
+    55	- **Which sessions can be handed off?** Only ones carrying the `handoff` skill and this script, because only they ever call it. An agent without them never starts a supervisor, so no supervisor exists for it.
+    56	- **What about subagents?** They do not run the skill, and their turn boundaries raise `SubagentStop` rather than `Stop`, so the threshold hook never fires for them.
+    57	
+    58	`AdoptedSession` gives the supervisor the same interface over a process id that `subprocess.Popen` gives over a process it launched — poll, terminate, kill, wait — so everything after the kill is the ordinary cycle, unchanged. A per-agent lock file (`<agent>-supervisor.lock`, holder process id recorded, stale locks reclaimed) refuses a second supervisor: two would each kill the session and each launch a successor.
+    59	
+    60	This also closes the bootstrap hole. Before adoption, a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself — which meant the founding boot below, and any agent a person started in a console, was permanently unrecyclable.
+    61	
+    62	Verified live 2026-08-06: a supervisor adopted a process it had not launched, killed it on the handoff, extracted the dialog, carried 50 task records, launched the successor with the full ignition prompt, and released its lock on exit. That check used a stub agent and verified process mechanics only.
+    63	
+    64	**Open question, attached to the seat move: where the successor's output goes in an interactive pane.** A supervisor the agent starts is detached, with its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching. Correct for a headless session; wrong for a console pane, where the successor would run invisibly. The recommendation is that panes run their supervisor directly — the supervisor is the parent, as the design has always assumed — leaving adoption as the bootstrap and recovery path it was built for. Settle this before the seat move rather than after.
+    65	
+    66	## The founding boot — the one committed handoff
+    67	
+    68	Choirmaster's first boot has no predecessor session and no supervisor. The founding handoff is written by the founding pair, committed as an ordinary file, and launched with the ruled prompt pattern (`claude "$(cat <path>)"` — the launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). After that boot, recycling owns everything. No standing committed-handoff machinery exists; a boss-called durable snapshot is an ordinary commit on request.
+    69	
+    70	## Build status (2026-08-06)
+    71	
+    72	Four of the five components are built, tested, and on main; the fifth is the skill text, which is instruction-class and lands after its walk.
+    73	
+    74	| Component | State |
+    75	|---|---|
+    76	| Extractor | BUILT — `scripts/handoff-extract-conversation.py`, 23-case suite (`…-test.py`), live-validated against a real transcript |
+    77	| Supervisor | BUILT — `scripts/handoff-supervisor.py`, 24 offline cases plus both live pre-seed canaries green |
+    78	| Auto-trigger | BUILT — `scripts/handoff-statusline-context-relay.py` + `scripts/handoff-context-threshold-hook.py`, 14-case suite |
+    79	| Ignition prompt | BUILT — `build_ignition_prompt` in the supervisor: dialog path, elapsed-time line, task count, next step |
+    80	| Writer | BUILT — `scripts/handoff-write-and-check-supervisor.py`, 27-case suite (`…-test.py`); added 2026-08-06 when the user ruled that the script does everything best done by script |
+    81	| `handoff` skill | BUILT — `.claude/skills/handoff/SKILL.md`, walked and landed 2026-08-06 (eight items, per-item dispositions in `docs/drafts/handoff-skill-draft.md`); executed cold by four trial generations, which handed off correctly from the drafted text |
+    82	
+    83	Not yet done: wiring the Stop hook into NC's own settings file, which belongs to the seat move rather than the code build. Every component is now built, tested, and walked.
+    84	
+    85	## The live recycle trial — PASSED 2026-08-06
+    86	
+    87	A headless Opus agent (`claude -p`, no subagents) seeded with 100 essay topics turned them into 50 tasks and wrote ~1000-word essays one per turn, so context filled from its own output. Four generations ran; three auto-triggered recycles happened with no human input. All four pass criteria met:
+    88	
+    89	| Criterion | Result |
+    90	|---|---|
+    91	| Sessions recycle without the user typing | 3 recycles: generations 0→1→2→3, each an auto-triggered handoff, kill, extract, task carry, relaunch |
+    92	| Each successor reports the expected task count | Generation 1 opened "50 tasks are visible — count confirmed"; every generation confirmed before working |
+    93	| The task list drains across generations | 14 essays written by four sessions sharing one carried task store, tasks marked completed in order |
+    94	| The dialog files hold the real conversation | `essayist-dialog-000N.md` carry the ignition prompt, the count confirmation, the essay summaries, and the threshold-hook moment |
+    95	
+    96	What the trial proved that no unit test could:
+    97	
+    98	- **Exit-as-handoff is the headless norm, and the supervisor now reads it correctly.** Every one of the three recycles arrived as a process exit, not as a file change observed while running. Before the fix (`wait_for_handoff` returning None on exit before checking the file) the trial would have stopped at the first handoff.
+    99	- **A raised threshold mid-run does not disturb the cycle.** The threshold was 5.5% for generations 0–2 and 8% for generation 3; recycling behaved identically, confirming the mechanism is threshold-independent.
+   100	- **The clean-stop branch works.** With no pending tasks left, the final session exited without writing a handoff and the supervisor printed "session ended without a handoff; supervisor stopping" and exited 0 — the terminal branch the exit-handling fix also touches.
+   101	- **A successor challenges inconsistent state rather than proceeding.** To reach the drain condition without writing 36 more essays, task records were closed directly on disk. The generation-3 agent reported the discrepancy unprompted: 50 tasks read completed while `essays/` held 14 files. The carried dialog gave it enough context to notice, which is the behavior the ignition prompt's count-check exists to produce.
+   102	
+   103	Trial-only scaffolding, not part of the system: a driver Stop hook produced one-essay-per-turn boundaries (an agent told to finish everything in one turn never reaches a Stop boundary, so the threshold hook could never fire), and the sandbox ran outside NC so essay churn stayed out of the repository.
+   104	
+   105	## Components (the build)
+   106	
+   107	1. **`extract_convo.py`** — the extractor: boundary-quote mode (recycling) and line-count mode (dead-session recovery, printed to stdout); two voices verbatim, noise dropped (tool dumps, thinking fragments, scheduled-prompt turns, subagent turns). Parser tolerances, all preserved from the founding spec: a partial last record is skipped, not fatal; a malformed line is skipped and counted, the count named in the output; per-line size is bounded so one oversized record cannot defeat the extraction; ID-keyed JSONL lookup with the UUID-search fallback.
+   108	2. **The `handoff` skill** — writes `next-step` per the content rule, runs the writer, waits for the supervisor (boundary judgment removed 2026-08-06; the extractor's word-floor tail decides what carries).
+   109	2a. **`handoff-write-and-check-supervisor.py`** — the writer: stamps the timestamp, derives the restart counter, collapses the next step to one line, writes the handoff file atomically, then reports whether a supervisor is watching and what that means for the agent. Refuses an empty next step rather than booting a successor with no instruction. The liveness report lives here rather than in a second command because the two are one decision — a handoff nobody is watching must not stop the agent working, and an agent that runs only the first half of a two-step procedure would stop anyway (user-ruled 2026-08-06: the skill runs one script that does everything best done by script).
+   110	3. **The statusline relay + Stop hook** — the auto-trigger.
+   111	4. **The supervisor** — watch, kill, extract, pre-seed, queue-status line, launch; consumed-marker state; the `dont-restart` y/n gate.
+   112	5. **The ignition prompt template** — path, elapsed-time line, task count, next step.
+   113	
+   114	## Verified facts (2026-07-21 – 2026-08-02, Claude Code v2.1.220)
+   115	
+   116	| Fact | Source |
+   117	|------|--------|
+   118	| `claude "<prompt>"` fires the prompt as the first interactive turn, in-band (dialog-safe) | canary |
+   119	| `--allowedTools` on the launch silently prevents the positional prompt from firing — never combine them in a launcher | canary (2×2) |
+   120	| An agent cannot `/clear` or `/exit` itself; self-SIGTERM trips the safety classifier (exit 143) | canary |
+   121	| Statusline stdin carries `.context_window.remaining_percentage`; Stop-hook stdin does not | probe |
+   122	| A headless (`claude -p`) session NEVER runs the status line, so the relay file is never written and a statusline-only auto-trigger cannot fire there | probe 2026-08-06 |
+   123	| Every assistant transcript record carries `message.usage` (input + cache-read + cache-creation tokens = that request's prompt size) and `message.model`; context used is therefore computable from the transcript alone, in any session | probe 2026-08-06 |
+   124	| Context windows: Fable 5, Opus 5, Sonnet 5, and the Opus 4.x line are 1M; Haiku 4.5 is 200K (source: the claude-api reference skill, read 2026-08-06 — not inferred) | reference |
+   125	| Tasks are `<N>.json` under `~/.claude/tasks/<session-id>/`; the dir is created lazily; `--session-id <uuid>` forces the id; pre-seed canaries 1 and 2 passed | probe/canary |
+   126	| A task record's `id` is a STRING, and `blocks`/`blockedBy` arrays are present; a record with an integer id is dropped by TaskList while still counting toward the next allocated id — so a schema-wrong pre-seed looks half-successful | canary 2026-08-06 |
+   127	| `--continue` keeps the prior session id | boss-measured 2026-07-21 |
+   128	| A context clear mints a new session id; the session id is in the environment | measured |
+   129	| A fresh subagent's context floor is CLAUDE.md + prompt | measured |
+   130	| JSONL extraction of a closed session yields readable dialog | measured |
+   131	
+   132	## Tests
+   133	
+   134	- **Extractor**: the four tolerance fixtures (partial tail; malformed line skipped and counted; oversized line bounded; subagent turns dropped as deliberate classification), boundary-quote start, line-count mode, cross-directory ID search, empty/unparseable refusal.
+   135	- **Supervisor**: semaphore init and consumed-marker (no refire after relaunch), `dont-restart` y/n paths, kill → extract → launch ordering (files-first verified), local retention old+new, task pre-seed as executable canaries (re-run per upgrade), ignition prompt contains path + elapsed-time line + task count.
+   136	- **Trigger**: threshold crossing fires the skill exactly once.
+   137	
+   138	## Known holes
+   139	
+   140	- Pre-seed rides undocumented harness state; bounded by the ignition count-check and the per-upgrade canaries; the queues are the backstop.
+   141	- Very-long-session material can predate the boundary window and every durable store; bounded by commit-as-you-go and the full-JSONL pointer.
+   142	- ~~The 5-topics boundary is the retiring agent's judgment~~ — closed 2026-08-06: the boundary is mechanical (a 2500-word tail), so this hole no longer exists. What remains is the floor's size itself: a session whose live thread runs longer than 2500 words hands over a partial thread, bounded by the header's left-behind count and the transcript pointer.
+   143	- A `dont-restart` handoff reaching a supervisor with no terminal cannot be answered. Closed 2026-08-06: the supervisor takes the non-relaunch branch rather than calling `input()`, which would raise EOFError before the consumed counter was recorded and leave the next supervisor re-firing on a stale handoff.
+   144	- A supervisor restarting after a crash used to relaunch the session id in its state file. Closed 2026-08-06: a fresh start always mints a new id, since reusing one would launch against an existing transcript, and — if the supervisor died while its agent kept running — put two processes on one session id. Adoption is how a running session is picked back up.
+   145	- The supervisor is a per-agent console process; if it dies, recycling stops until relaunched. Detectable since 2026-08-06 (user-asked): the supervisor stamps `last_poll_at` into its state file every ten seconds while watching, and `handoff-supervisor.py --check --agent <name>` reports liveness (exit 0 alive, 1 not). Both consumers use it — the skill checks before it stops working, so a dead supervisor yields a plain report to the user rather than a session hung forever waiting to be killed; the threshold hook stays silent when nothing is watching, so it cannot ask for a handoff nobody will act on.
+     1	---
+     2	name: handoff
+     3	description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+     4	---
+     5	
+     6	# handoff
+     7	
+     8	## What to do
+     9	
+    10	1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+    11	2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
+    12	3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+     1	# handoff skill — the walk record (LANDED 2026-08-06)
+     2	
+     3	**Superseded as a proposal.** The walked text is live at `.claude/skills/handoff/SKILL.md`; that file is the text of record, and this one is kept only for the per-item dispositions below, which say what was ruled and why. Edit the skill, not this.
+     4	
+     5	The mechanics live in the code — `scripts/handoff-write-and-check-supervisor.py`, `scripts/handoff-supervisor.py`, `scripts/handoff-extract-conversation.py` — so the skill text does not restate them.
+     6	
+     7	## Walk order (opened 2026-08-06, new-vp session 5b66b6d0)
+     8	
+     9	1. Purpose and the bar the text is judged by
+    10	   *processed 2026-08-06 → accepted (purpose item; no capture)*
+    11	2. The description — the trigger
+    12	   *processed 2026-08-06 → REVISED then approved. Replaced with the user's "everything except one piece" framing; the trigger is now an observable system message rather than a self-assessed context level (an agent cannot see its own context percentage, so the old phrasing was a judgment call dressed as a condition); file mechanics dropped from the description so the always-in-context text cannot compete with the body; the near-miss negative clause declined — both triggers are observable events, so an agent working on the handoff system receives neither, and speculative rules are not added.*
+    13	3. When Used
+    14	   *processed 2026-08-06 → DELETED entirely (user): agents are not expected to self-trigger, so a body section restating the trigger has no reader. Its other two facts were already carried where they act — step 3 says stop working and wait for the supervisor, and How to do it says the dialog is carried for you. A proposed fold about tasks carrying over was withdrawn: nothing in this skill asks the agent to touch its tasks, and mentioning them would invite that. The body now opens on What to do.*
+    15	4. What to do, step 1 — writing next-step
+    16	   *processed 2026-08-06 → REVISED then approved (user-authored text). "Clear and complete" replaces the draft's bare instruction, bounded by what the successor already has: it reads the last few thousand words of the conversation before acting. Pinning is now two observable cases — a file reference carries path and commit SHA, a GitHub issue reference carries repository and number. Dropped: the don't-restate-a-durable-store rule (the context bound covers it) and the pre-correct-misreadings rule (general good writing, not project-unique). "GHI" expanded to "GitHub issue" per floor line 4's standard-SDLC-terms rule, though a cold probe confirmed agents understand the shorthand.*
+    17	5. What to do, step 2 — the handoff file and its fields
+    18	   *processed 2026-08-06 → REVISED then approved. The user ruled that the script fills every scriptable field; the design had never said so — it assigned all four fields to the agent and listed no writer among its five components. `scripts/handoff-write-and-check-supervisor.py` now stamps the timestamp, derives the counter, writes the file, and reports supervisor liveness; the skill's steps 2 and 3 collapse to one command plus following what it reports. This also closed a silent defect: the supervisor parses `key: value` lines, so a next-step containing a newline was truncated at its first line with no error, and the newly approved "clear and complete" wording made that more likely. The writer collapses whitespace to one line (user-ruled), takes the prompt as a file so a shell cannot mangle backticks, and derives the counter from the higher of the previous file's value and the supervisor's consumed value so a stale file cannot produce a counter the supervisor ignores. 27 cases green.*
+    19	6. What to do, step 3 — the supervisor liveness check
+    20	   *processed 2026-08-06 → REVISED then approved. The two-command procedure collapsed into one: the script reports, the agent obeys. The user then asked why the script does not simply start a supervisor when none is watching, which closed the bootstrap hole — a session started by hand could never recycle, because a supervisor could only terminate a process it had launched itself. The script now starts an adopting supervisor, so step 3's branches are found-or-started (stop and wait) versus could-not-start (keep working and tell the user). Self-registration, not discovery: the session identifies itself from its own environment, so nothing scans for supervisable sessions, and subagents — which never run the skill and raise SubagentStop rather than Stop — are excluded structurally. One input remains unscriptable until NC has an agent-naming convention: the agent's own name.*
+    21	7. How to do it — path, counter, the never-summarize rule
+    22	   *processed 2026-08-06 → DELETED entirely, with one sentence folded into step 1. The path and --handoff-dir paragraph became the script's business once the agent stopped writing the file. The never-paste/never-summarize paragraph carried two absolutes against floor line 6, and its last clause restated approved step 1 more weakly. What survived is the live risk — "clear and complete" licenses a longer prompt, so an agent could write a session summary instead of an instruction — restated positively as what the output IS, per the authoring checklist's finding that a positive recipe beats a prohibition. The skill is now a description and three numbered steps, with no trailing prose.*
+    23	8. Ratification: the threshold-hook instruction deletion landed this session
+    24	   *processed 2026-08-06 → REVISED then approved. The fired message is now exactly "Run the handoff skill now." The user cut the whole remainder: the used-percentage and threshold report (informational, changes nothing the agent does), the procedure clause, and the reassurance sentence. The procedure clause had gone stale twice in one day — once when boundary judgment was removed, once when the writer took over the fields — which is what a second copy of a procedure does. Its test case, which asserted the percentage appeared, was replaced by an exact-match assertion so re-adding any procedure text fails the suite.*
+    25	
+    26	Everything below the line is the proposed skill file, verbatim.
+    27	
+    28	---
+    29	
+    30	```
+    31	---
+    32	name: handoff
+    33	description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+    34	---
+    35	
+    36	# handoff
+    37	
+    38	## What to do
+    39	
+    40	1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+    41	2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
+    42	3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+    43	```
+
+[35m[3mcodex[0m[0m
+# Cut report
+
+Scope was limited to the three supplied files. I did not follow the GitHub, historical-git, or other document references; where a ruling’s underlying record is unavailable, I rely only on its quoted description here.
+
+## 1. Remove task pre-seeding and its validation subsystem
+
+**WHAT** — Delete cross-session copying of `~/.claude/tasks/<session-id>`, the successor task-count prompt, schema probes, and mandatory post-upgrade canaries. Restore task-shaped work from the durable queues instead.
+
+**WHY** — The design declares that durable state already lives elsewhere:
+
+> “git is the long-term record and the restore-after-problem source” and “Handoffs are operational, machine-local, disposable.” ([design:16](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:16))
+
+It then admits that task pre-seeding:
+
+> “rides undocumented harness internals” and requires “re-run both canaries after every Claude Code upgrade,” while “the backstop if an upgrade breaks it is the queues (task-shaped work belongs in GHIs by the artifact rules).” ([design:38](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:38))
+
+That is a containment case: loss of an undocumented task cache is recoverable from the declared durable task store. Making the fallback the normal path removes an upgrade-sensitive subsystem and a recurring operator obligation.
+
+The strongest defense is the live trial, which proved that “four sessions sharing one carried task store” could drain work ([design:93](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:93)). But that proves the version-specific hack worked once; it does not justify maintaining duplicate task authorities indefinitely.
+
+**LOST** — Exact ephemeral TaskList IDs, status, and dependency arrays are no longer preserved. Successors may need to reconstruct a local execution breakdown from GitHub issues. If real task-shaped work is intentionally allowed to exist only in TaskList, contrary to the quoted artifact rule, reject this cut. Otherwise priority 1 gains: operation no longer depends on undocumented storage or upgrade canaries.
+
+This also presses against the user-approved description that the program gives the successor “everything except one piece” ([skill:3](/home/nedlern/agents/choirmaster/.claude/skills/handoff/SKILL.md:3)); that phrase would need narrowing. The walk record explicitly declined promising task carry in the skill, however, because “nothing in this skill asks the agent to touch its tasks” ([walk record:14](/home/nedlern/agents/choirmaster/docs/drafts/handoff-skill-draft.md:14)).
+
+**CONSEQUENCES** —
+
+- Delete recycle step 4 and the task-count clause in step 6 ([design:38](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:38), [design:40](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:40)).
+- The adoption trial’s “carried 50 task records” claim becomes historical evidence for a removed feature ([design:62](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:62)).
+- Remove pre-seed canaries and task count from the Supervisor and Ignition build rows ([design:77](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:77)).
+- The task-dependent trial setup, criteria, and inconsistency check cease to validate the surviving design ([design:87](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:87), [design:91](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:91), [design:100](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:100)).
+- Remove `pre-seed` and `task count` from the duplicate component inventory ([design:111](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:111)).
+- Remove both task-storage/schema facts ([design:125](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:125)).
+- Delete the pre-seed canaries and ignition task-count assertion from the Supervisor tests ([design:135](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:135)).
+- Delete the pre-seed known hole ([design:140](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:140)).
+
+## 2. Remove the statusline relay and side file
+
+**WHAT** — Have the Stop hook compute threshold state from the newest assistant transcript record it already reads. Delete `handoff-statusline-context-relay.py` and its side file.
+
+**WHY** — Two mechanisms are both presented as the auto-trigger’s data source:
+
+> “The transcript is read only by the Stop hook… the newest assistant record is all that matters.” ([design:45](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:45))
+
+versus:
+
+> “The statusline script receives `.context_window.remaining_percentage`… [and] writes it to a side file. The Stop hook reads that file.” ([design:49](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:49))
+
+The verified facts decide which should survive:
+
+> “A headless (`claude -p`) session NEVER runs the status line, so the relay file is never written” ([design:122](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:122))
+
+and:
+
+> “context used is therefore computable from the transcript alone, in any session.” ([design:123](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:123))
+
+The relay is the less capable duplicate.
+
+**LOST** — Interactive sessions lose a directly supplied percentage and instead depend on the model-to-context-window mapping. That mapping must remain current. In exchange, one path works for both interactive and headless sessions and removes stale-side-file failure.
+
+**CONSEQUENCES** —
+
+- Replace the entire side-file Auto-trigger paragraph ([design:49](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:49)).
+- Remove the relay script from the Auto-trigger build row; its stated 14-case suite count will change ([design:78](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:78)).
+- “The statusline relay + Stop hook” becomes “the Stop hook” ([design:110](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:110)).
+- The statusline/Stop-stdin fact becomes unused rationale, and the relay-file fact becomes historical deletion evidence ([design:121](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:121)).
+- The described test “threshold crossing fires the skill exactly once” remains valid; only undisclosed relay-specific cases behind the 14-case count become stale.
+
+## 3. Remove the supervisor’s post-termination `restart? y/n` prompt
+
+**WHAT** — Make `--dont-restart` a definitive “capture and do not relaunch” instruction. If consultation is requested, the retiring agent obtains the answer before writing the handoff. Delete the supervisor’s interactive prompt and its terminal-dependent semantics.
+
+**WHY** — The nominal rule says:
+
+> “the supervisor prompts `restart? y/n` instead of auto-relaunching.” ([design:30](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:30))
+
+But the current headless behavior is already different:
+
+> “the supervisor takes the non-relaunch branch rather than calling `input()`.” ([design:143](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:143))
+
+And an agent-started supervisor is detached, so its output goes to a log rather than the watched terminal ([design:64](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:64)). Consultation after killing the only conversational agent is therefore unreliable precisely on the bootstrap path.
+
+This collides with the walked and approved live skill text, which says to add the flag “when the user asked to be consulted before a relaunch” ([skill:11](/home/nedlern/agents/choirmaster/.claude/skills/handoff/SKILL.md:11)). It requires a new ruling, not a silent rewrite.
+
+**LOST** — In a supervisor-parent terminal, the user loses the chance to decide after capture but before launch. They instead decide immediately beforehand. This costs nothing on automatic handoffs and adds no recurring human step; consultation was already explicitly requested.
+
+**CONSEQUENCES** —
+
+- Rewrite the `dont-restart` field definition as a definitive no-relaunch flag ([design:30](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:30)).
+- Delete “the `dont-restart` y/n gate” from the component inventory ([design:111](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:111)).
+- Replace the `dont-restart` y/n tests with one definitive non-relaunch path ([design:135](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:135)).
+- Delete the closed EOF/prompt hole ([design:143](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:143)).
+- Change live skill step 2. The superseded walk record should remain historical, but the new ruling must explicitly supersede its approved wording ([walk record:41](/home/nedlern/agents/choirmaster/docs/drafts/handoff-skill-draft.md:41)).
+
+## 4. Remove the queue-status line
+
+**WHAT** — Delete queue depth/oldest-item computation and printing from every recycle.
+
+**WHY** — The design only says the supervisor:
+
+> “Prints one automated queue-status line” for “rot-visibility.” ([design:39](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:39))
+
+The ignition prompt does not include it, the skill does not require anyone to inspect it, and no test asserts a reaction. On the detached path it is written to the supervisor log ([design:64](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:64)). Nothing is forced to decide or act.
+
+The only recorded ownership says “memory maintenance is the boss’s drain per the #32 Q1 ruling,” which argues for the existing drain—not a second passive detector. I could not inspect that linked ruling under the supplied-file constraint; if it specifically mandates recycle-time output, this finding collides with it.
+
+**LOST** — A watching human loses incidental queue telemetry. The queues and their boss-owned drain remain. No recurring manual replacement should be introduced.
+
+**CONSEQUENCES** —
+
+- Delete recycle step 5 ([design:39](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:39)).
+- Remove `queue-status line` from the supervisor synopsis ([design:111](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:111)).
+- No described test covers this output.
+
+## 5. Remove `--boundary-quote`
+
+**WHAT** — Delete the extractor’s manual boundary-quote interface and its test. Keep the mechanical word-floor mode for recycling and line-count mode for the separately named dead-session recovery use.
+
+**WHY** — The user ruling removed retiring-agent boundary judgment:
+
+> “the retiring agent exercises no judgment over what its successor receives” and the “boundary field” died. ([design:28](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:28))
+
+Yet the same sentence preserves `--boundary-quote` as “a manual override only,” while the later component inventory contradictorily calls it “boundary-quote mode (recycling)” ([design:107](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:107)). No cycle step or skill invokes it. Its only concrete consumer is its own test.
+
+The simplest existing replacement for manual recovery is the retained line-count mode plus the full-JSONL pointer.
+
+**LOST** — An operator loses exact semantic-boundary selection by quoted text and must select by line count or inspect the JSONL. This is builder-maintenance simplification at the cost of a rare manual convenience.
+
+**CONSEQUENCES** —
+
+- Delete the final `--boundary-quote` clause from the field description ([design:28](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:28)).
+- Remove boundary-quote mode from the extractor synopsis ([design:107](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:107)).
+- Delete the `boundary-quote start` extractor test ([design:134](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:134)).
+
+## 6. Retain only the current handoff and extract
+
+**WHAT** — Delete the rule retaining a predecessor pair. When the next handoff is safely written, remove the previously current pair.
+
+**WHY** — The governing rule calls handoffs “machine-local, disposable” and identifies git as the restore source ([design:16](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:16)). Each extract also contains the full JSONL pointer ([design:37](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:37)). Nothing reads the extra predecessor pair.
+
+The writer’s counter calculation still has the current handoff and the supervisor’s consumed state; it does not require the one-before-current artifact.
+
+**LOST** — One convenient generation of forensic material. The underlying transcript and git history remain, so failure is contained rather than prevented through duplicate retention.
+
+**CONSEQUENCES** —
+
+- Change “keeps the current and predecessor” to current only ([design:41](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:41)).
+- Replace the “local retention old+new” supervisor test with current-only cleanup ([design:135](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:135)).
+
+## 7. Delete the second component inventory and stale component count
+
+**WHAT** — Use the recycle cycle plus build-status table as the sole component/status homes. Delete “Components (the build)” as a second inventory and delete “Four of the five components…” Unique surviving invariants should live where they act, not in another inventory.
+
+**WHY** — The status introduction says “Four of the five components” and that the skill still needs to land ([design:72](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:72)); the immediately following table has six rows, marks the skill built, and concludes:
+
+> “Every component is now built, tested, and walked.” ([design:83](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:83))
+
+The later inventory introduces further drift: it names `extract_convo.py`, while the build table names `scripts/handoff-extract-conversation.py`, and it assigns boundary-quote mode to recycling despite the earlier mechanical-floor ruling. This is exactly the failure mode the walk record identified when it cut a second procedural copy because it “had gone stale twice in one day” ([walk record:24](/home/nedlern/agents/choirmaster/docs/drafts/handoff-skill-draft.md:24)).
+
+**LOST** — A compact synopsis. Unique constraints currently stranded there—atomic writer output, empty-next-step refusal, noise classifications, and parser tolerances—must be deliberately promoted to the cycle or tests if they remain normative. Priority 2 pays for this cut: one inventory is easier to understand and cannot disagree with itself.
+
+**CONSEQUENCES** —
+
+- Delete the stale status sentence at line 72.
+- Delete the complete second inventory ([design:105](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:105)).
+- No test description becomes false merely from removing the duplicate home. Tests affected by substantive cuts are already enumerated above.
+
+## Leanness certification
+
+I examined and found these mechanisms already minimal after the cuts above:
+
+- **Supervisor-owned kill/extract/relaunch:** the simpler replacement—agent self-exit—is explicitly unavailable, while `--resume` restores the context being shed.
+- **Verbatim mechanical conversation tail:** compaction loses non-uniform value, carrying the whole session defeats recycling, and human boundary judgment was already removed. The full-JSONL pointer is the smallest containment for an undersized tail.
+- **Single writer command with a next-step file:** direct field writing caused a demonstrated newline-truncation defect; inline arguments mangle shell content; splitting liveness into another command recreates an agent procedure that can be partially executed.
+- **Restart counter plus consumed marker:** mtime alone cannot distinguish an already-consumed handoff after restart. The marker has an explicit exactly-once consumer and test.
+- **ID-keyed transcript lookup:** latest-by-mtime has a named two-session race; the UUID key is the simplest discriminator available.
+- **Supervisor liveness check and per-agent lock:** the skill and threshold hook both consume liveness, while the lock prevents the concrete double-kill/double-launch failure. Replacing either with a remembered human check would worsen operation.
+- **The live skill’s core shape:** “write only the successor’s first action, run one script, obey its result” is already the smallest procedure that preserves the one genuinely non-computable input.
+[2mtokens used[0m
+54,153
+# Cut report
+
+Scope was limited to the three supplied files. I did not follow the GitHub, historical-git, or other document references; where a ruling’s underlying record is unavailable, I rely only on its quoted description here.
+
+## 1. Remove task pre-seeding and its validation subsystem
+
+**WHAT** — Delete cross-session copying of `~/.claude/tasks/<session-id>`, the successor task-count prompt, schema probes, and mandatory post-upgrade canaries. Restore task-shaped work from the durable queues instead.
+
+**WHY** — The design declares that durable state already lives elsewhere:
+
+> “git is the long-term record and the restore-after-problem source” and “Handoffs are operational, machine-local, disposable.” ([design:16](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:16))
+
+It then admits that task pre-seeding:
+
+> “rides undocumented harness internals” and requires “re-run both canaries after every Claude Code upgrade,” while “the backstop if an upgrade breaks it is the queues (task-shaped work belongs in GHIs by the artifact rules).” ([design:38](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:38))
+
+That is a containment case: loss of an undocumented task cache is recoverable from the declared durable task store. Making the fallback the normal path removes an upgrade-sensitive subsystem and a recurring operator obligation.
+
+The strongest defense is the live trial, which proved that “four sessions sharing one carried task store” could drain work ([design:93](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:93)). But that proves the version-specific hack worked once; it does not justify maintaining duplicate task authorities indefinitely.
+
+**LOST** — Exact ephemeral TaskList IDs, status, and dependency arrays are no longer preserved. Successors may need to reconstruct a local execution breakdown from GitHub issues. If real task-shaped work is intentionally allowed to exist only in TaskList, contrary to the quoted artifact rule, reject this cut. Otherwise priority 1 gains: operation no longer depends on undocumented storage or upgrade canaries.
+
+This also presses against the user-approved description that the program gives the successor “everything except one piece” ([skill:3](/home/nedlern/agents/choirmaster/.claude/skills/handoff/SKILL.md:3)); that phrase would need narrowing. The walk record explicitly declined promising task carry in the skill, however, because “nothing in this skill asks the agent to touch its tasks” ([walk record:14](/home/nedlern/agents/choirmaster/docs/drafts/handoff-skill-draft.md:14)).
+
+**CONSEQUENCES** —
+
+- Delete recycle step 4 and the task-count clause in step 6 ([design:38](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:38), [design:40](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:40)).
+- The adoption trial’s “carried 50 task records” claim becomes historical evidence for a removed feature ([design:62](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:62)).
+- Remove pre-seed canaries and task count from the Supervisor and Ignition build rows ([design:77](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:77)).
+- The task-dependent trial setup, criteria, and inconsistency check cease to validate the surviving design ([design:87](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:87), [design:91](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:91), [design:100](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:100)).
+- Remove `pre-seed` and `task count` from the duplicate component inventory ([design:111](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:111)).
+- Remove both task-storage/schema facts ([design:125](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:125)).
+- Delete the pre-seed canaries and ignition task-count assertion from the Supervisor tests ([design:135](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:135)).
+- Delete the pre-seed known hole ([design:140](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:140)).
+
+## 2. Remove the statusline relay and side file
+
+**WHAT** — Have the Stop hook compute threshold state from the newest assistant transcript record it already reads. Delete `handoff-statusline-context-relay.py` and its side file.
+
+**WHY** — Two mechanisms are both presented as the auto-trigger’s data source:
+
+> “The transcript is read only by the Stop hook… the newest assistant record is all that matters.” ([design:45](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:45))
+
+versus:
+
+> “The statusline script receives `.context_window.remaining_percentage`… [and] writes it to a side file. The Stop hook reads that file.” ([design:49](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:49))
+
+The verified facts decide which should survive:
+
+> “A headless (`claude -p`) session NEVER runs the status line, so the relay file is never written” ([design:122](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:122))
+
+and:
+
+> “context used is therefore computable from the transcript alone, in any session.” ([design:123](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:123))
+
+The relay is the less capable duplicate.
+
+**LOST** — Interactive sessions lose a directly supplied percentage and instead depend on the model-to-context-window mapping. That mapping must remain current. In exchange, one path works for both interactive and headless sessions and removes stale-side-file failure.
+
+**CONSEQUENCES** —
+
+- Replace the entire side-file Auto-trigger paragraph ([design:49](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:49)).
+- Remove the relay script from the Auto-trigger build row; its stated 14-case suite count will change ([design:78](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:78)).
+- “The statusline relay + Stop hook” becomes “the Stop hook” ([design:110](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:110)).
+- The statusline/Stop-stdin fact becomes unused rationale, and the relay-file fact becomes historical deletion evidence ([design:121](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:121)).
+- The described test “threshold crossing fires the skill exactly once” remains valid; only undisclosed relay-specific cases behind the 14-case count become stale.
+
+## 3. Remove the supervisor’s post-termination `restart? y/n` prompt
+
+**WHAT** — Make `--dont-restart` a definitive “capture and do not relaunch” instruction. If consultation is requested, the retiring agent obtains the answer before writing the handoff. Delete the supervisor’s interactive prompt and its terminal-dependent semantics.
+
+**WHY** — The nominal rule says:
+
+> “the supervisor prompts `restart? y/n` instead of auto-relaunching.” ([design:30](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:30))
+
+But the current headless behavior is already different:
+
+> “the supervisor takes the non-relaunch branch rather than calling `input()`.” ([design:143](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:143))
+
+And an agent-started supervisor is detached, so its output goes to a log rather than the watched terminal ([design:64](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:64)). Consultation after killing the only conversational agent is therefore unreliable precisely on the bootstrap path.
+
+This collides with the walked and approved live skill text, which says to add the flag “when the user asked to be consulted before a relaunch” ([skill:11](/home/nedlern/agents/choirmaster/.claude/skills/handoff/SKILL.md:11)). It requires a new ruling, not a silent rewrite.
+
+**LOST** — In a supervisor-parent terminal, the user loses the chance to decide after capture but before launch. They instead decide immediately beforehand. This costs nothing on automatic handoffs and adds no recurring human step; consultation was already explicitly requested.
+
+**CONSEQUENCES** —
+
+- Rewrite the `dont-restart` field definition as a definitive no-relaunch flag ([design:30](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:30)).
+- Delete “the `dont-restart` y/n gate” from the component inventory ([design:111](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:111)).
+- Replace the `dont-restart` y/n tests with one definitive non-relaunch path ([design:135](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:135)).
+- Delete the closed EOF/prompt hole ([design:143](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:143)).
+- Change live skill step 2. The superseded walk record should remain historical, but the new ruling must explicitly supersede its approved wording ([walk record:41](/home/nedlern/agents/choirmaster/docs/drafts/handoff-skill-draft.md:41)).
+
+## 4. Remove the queue-status line
+
+**WHAT** — Delete queue depth/oldest-item computation and printing from every recycle.
+
+**WHY** — The design only says the supervisor:
+
+> “Prints one automated queue-status line” for “rot-visibility.” ([design:39](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:39))
+
+The ignition prompt does not include it, the skill does not require anyone to inspect it, and no test asserts a reaction. On the detached path it is written to the supervisor log ([design:64](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:64)). Nothing is forced to decide or act.
+
+The only recorded ownership says “memory maintenance is the boss’s drain per the #32 Q1 ruling,” which argues for the existing drain—not a second passive detector. I could not inspect that linked ruling under the supplied-file constraint; if it specifically mandates recycle-time output, this finding collides with it.
+
+**LOST** — A watching human loses incidental queue telemetry. The queues and their boss-owned drain remain. No recurring manual replacement should be introduced.
+
+**CONSEQUENCES** —
+
+- Delete recycle step 5 ([design:39](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:39)).
+- Remove `queue-status line` from the supervisor synopsis ([design:111](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:111)).
+- No described test covers this output.
+
+## 5. Remove `--boundary-quote`
+
+**WHAT** — Delete the extractor’s manual boundary-quote interface and its test. Keep the mechanical word-floor mode for recycling and line-count mode for the separately named dead-session recovery use.
+
+**WHY** — The user ruling removed retiring-agent boundary judgment:
+
+> “the retiring agent exercises no judgment over what its successor receives” and the “boundary field” died. ([design:28](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:28))
+
+Yet the same sentence preserves `--boundary-quote` as “a manual override only,” while the later component inventory contradictorily calls it “boundary-quote mode (recycling)” ([design:107](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:107)). No cycle step or skill invokes it. Its only concrete consumer is its own test.
+
+The simplest existing replacement for manual recovery is the retained line-count mode plus the full-JSONL pointer.
+
+**LOST** — An operator loses exact semantic-boundary selection by quoted text and must select by line count or inspect the JSONL. This is builder-maintenance simplification at the cost of a rare manual convenience.
+
+**CONSEQUENCES** —
+
+- Delete the final `--boundary-quote` clause from the field description ([design:28](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:28)).
+- Remove boundary-quote mode from the extractor synopsis ([design:107](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:107)).
+- Delete the `boundary-quote start` extractor test ([design:134](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:134)).
+
+## 6. Retain only the current handoff and extract
+
+**WHAT** — Delete the rule retaining a predecessor pair. When the next handoff is safely written, remove the previously current pair.
+
+**WHY** — The governing rule calls handoffs “machine-local, disposable” and identifies git as the restore source ([design:16](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:16)). Each extract also contains the full JSONL pointer ([design:37](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:37)). Nothing reads the extra predecessor pair.
+
+The writer’s counter calculation still has the current handoff and the supervisor’s consumed state; it does not require the one-before-current artifact.
+
+**LOST** — One convenient generation of forensic material. The underlying transcript and git history remain, so failure is contained rather than prevented through duplicate retention.
+
+**CONSEQUENCES** —
+
+- Change “keeps the current and predecessor” to current only ([design:41](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:41)).
+- Replace the “local retention old+new” supervisor test with current-only cleanup ([design:135](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:135)).
+
+## 7. Delete the second component inventory and stale component count
+
+**WHAT** — Use the recycle cycle plus build-status table as the sole component/status homes. Delete “Components (the build)” as a second inventory and delete “Four of the five components…” Unique surviving invariants should live where they act, not in another inventory.
+
+**WHY** — The status introduction says “Four of the five components” and that the skill still needs to land ([design:72](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:72)); the immediately following table has six rows, marks the skill built, and concludes:
+
+> “Every component is now built, tested, and walked.” ([design:83](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:83))
+
+The later inventory introduces further drift: it names `extract_convo.py`, while the build table names `scripts/handoff-extract-conversation.py`, and it assigns boundary-quote mode to recycling despite the earlier mechanical-floor ruling. This is exactly the failure mode the walk record identified when it cut a second procedural copy because it “had gone stale twice in one day” ([walk record:24](/home/nedlern/agents/choirmaster/docs/drafts/handoff-skill-draft.md:24)).
+
+**LOST** — A compact synopsis. Unique constraints currently stranded there—atomic writer output, empty-next-step refusal, noise classifications, and parser tolerances—must be deliberately promoted to the cycle or tests if they remain normative. Priority 2 pays for this cut: one inventory is easier to understand and cannot disagree with itself.
+
+**CONSEQUENCES** —
+
+- Delete the stale status sentence at line 72.
+- Delete the complete second inventory ([design:105](/home/nedlern/agents/choirmaster/md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md:105)).
+- No test description becomes false merely from removing the duplicate home. Tests affected by substantive cuts are already enumerated above.
+
+## Leanness certification
+
+I examined and found these mechanisms already minimal after the cuts above:
+
+- **Supervisor-owned kill/extract/relaunch:** the simpler replacement—agent self-exit—is explicitly unavailable, while `--resume` restores the context being shed.
+- **Verbatim mechanical conversation tail:** compaction loses non-uniform value, carrying the whole session defeats recycling, and human boundary judgment was already removed. The full-JSONL pointer is the smallest containment for an undersized tail.
+- **Single writer command with a next-step file:** direct field writing caused a demonstrated newline-truncation defect; inline arguments mangle shell content; splitting liveness into another command recreates an agent procedure that can be partially executed.
+- **Restart counter plus consumed marker:** mtime alone cannot distinguish an already-consumed handoff after restart. The marker has an explicit exactly-once consumer and test.
+- **ID-keyed transcript lookup:** latest-by-mtime has a named two-session race; the UUID key is the simplest discriminator available.
+- **Supervisor liveness check and per-agent lock:** the skill and threshold hook both consume liveness, while the lock prevents the concrete double-kill/double-launch failure. Replacing either with a remembered human check would worsen operation.
+- **The live skill’s core shape:** “write only the successor’s first action, run one script, obey its result” is already the smallest procedure that preserves the one genuinely non-computable input.
+cell complete: /home/nedlern/agents/choirmaster/md-review-records/2026-08-12-attack-split-experiment/fast-handoff-cut-codex.md
