@@ -3,7 +3,7 @@
      reading the four codex-*.md reports, the current spec, the current
      program (post-151e046), and dispositions.md's ruled record; verified by
      choirmaster with spot-checks (FIX-1, FIX-2 confirmed against the file
-     and compute_digest respectively). Walk pending: the WALK items and the
+     and compute_digest respectively). Walk complete 2026-08-12 (see Walk order, below): the WALK items and the
      FIX batch below await the user's rulings — marks land here. -->
 
 # Codex-leg triage — md-review of git-gatekeeper-design.md (2026-08-11)
