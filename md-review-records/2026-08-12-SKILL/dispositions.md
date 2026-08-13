@@ -23,6 +23,7 @@ Eight reviews in this directory (4 restate, 4 defect-hunt; claude opus/sonnet, c
 9. "Every artifact is either final at its home…" — reviewers misread "final"; propose dropping the word (doctrine meaning preserved)
    *processed 2026-08-12 → revised as proposed: the skill's lead-in reads "either at its home or in a named queue with a drain" — the address meaning of the founding plan's artifact-lifecycle rule, minus the word all four hunts read as content-finality (which made an open issue look excluded by the binary). The founding plan's fuller verbatim sentence stays untouched.*
 10. Factual micro-fixes: backtick claim overbroad; `--limit` on the gh search rung; `duplicate` close reason; "before filing" → "before submitting"; "from the issue alone" gets "(the body plus what it cites)" — capture of the 2026-08-12 walk-item-7 ruling that lives only in a commit message
+    *processed 2026-08-12 → revised, all five applied as proposed.*
 11. Declined findings, presented for pull-back: the never-blocks absolutes, second-issue rule, skill heading structure, zero-context three-test specialization, reader's-seat, reading stopping-point, body-file housekeeping, remaining missing-script findings (the ruled #46 gap)
 
 ## Finding-to-item map
