@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for git-gatekeeper.py, slices 1 to 3.
+"""Tests for git-gatekeeper.py, slices 1 to 5.
 
 Run: python3 scripts/git-gatekeeper-test.py
 
@@ -19,8 +19,13 @@ Coverage, against the specification's acceptance-test index:
   T4  concurrent check-ins: the winner is unaware, the loser integrates
   T5  a real conflict refuses, naming the paths, the commits and the fix
   T6  sustained head movement ends at the retry cap, never a spin
-  plus the `unbuilt-option` boundary,
-  B2's trailer round-trip, and B3d's version floors.
+  T7  the worker lifecycle: --no-wait accepted, every status outcome
+      (checked-in / in-progress / abandoned / unknown / the B4d record)
+  T8  cancel: all four branches, group-kill-and-wait for a live worker
+  B3c the branch-protection audit: all three outcomes (ok and wrong via
+      the --protection-file seam; audit-failed with gh off the PATH)
+  plus the 4.1 live-twin in-progress answer, the expiry sweep, the repo
+  git-config pins, B2's trailer round-trip, and B3d's version floors.
   (T10 retired 2026-08-10 with the `imports` subcommand; the trailer's
   exactness stays covered by the import happy path and B2's round-trip.
   The base is computed by the program since the same ruling, so no --base
@@ -35,10 +40,12 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("git-gatekeeper.py")
@@ -145,11 +152,19 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     # --- B3d: version floors ------------------------------------------------
     check("python floor is met", sys.version_info >= (3, 12), sys.version)
-    git_version = subprocess.run(
+    # The version is matched rather than positional: Apple's git reports
+    # "git version 2.39.5 (Apple Git-154)", whose last token is "Git-154)" —
+    # taking it crashed the whole suite on macOS before the floor could report
+    # (fixed 2026-08-12; the fleet runs macOS and Ubuntu, so a floor miss must
+    # fail as a case, not as a traceback).
+    git_version_output = subprocess.run(
         ["git", "--version"], capture_output=True, text=True, check=False
-    ).stdout.split()[-1]
+    ).stdout
+    git_version_match = re.search(r"(\d+)\.(\d+)(?:\.\d+)?", git_version_output)
     check("git floor is met (>= 2.40)",
-          tuple(int(part) for part in git_version.split(".")[:2]) >= (2, 40), git_version)
+          git_version_match is not None
+          and (int(git_version_match[1]), int(git_version_match[2])) >= (2, 40),
+          git_version_output.strip())
 
     # --- T2: the happy path, and its four success guarantees ---------------
     remote, work, base = make_fixture(workspace, "happy")
@@ -208,6 +223,15 @@ with tempfile.TemporaryDirectory() as workspace_name:
     )
     check("T3 changed content digests fresh", fresh_digest != payload["digest"])
 
+    # Framing regression (2026-08-12): a crafted single file whose bytes
+    # embed the tag sequence must not collide with the two-file request it
+    # imitates — the length prefixes keep them apart.
+    crafted_one = {"a": b"x\x00path\x00b\x00content\x00y"}
+    plain_two = {"a": b"x", "b": b"y"}
+    check("T3 crafted content cannot collide two different requests",
+          gatekeeper.compute_digest(base, crafted_one, "none")
+          != gatekeeper.compute_digest(base, plain_two, "none"))
+
     # --- T9: the advisory ---------------------------------------------------
     remote, work, base = make_fixture(workspace, "advisory")
     (work / "README.md").write_text("seed\ndeclared\n", encoding="utf-8")
@@ -220,6 +244,16 @@ with tempfile.TemporaryDirectory() as workspace_name:
           "keep.txt" in payload.get("advisory", ""), payload)
     check("T9 the undeclared path did not reach main",
           git(["show", "main:keep.txt"], remote).stdout == "untouched\n")
+
+    git(["checkout", "--quiet", "--", "."], work)  # drop the advisory props
+    git(["pull", "--quiet"], work)  # refresh past the first check-in
+    (work / "brand-new.txt").write_text("forgotten new file\n", encoding="utf-8")
+    (work / "README.md").write_text("seed\ndeclared\nagain\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["README.md"], "declare again"), state_home
+    )
+    check("T9 the advisory names an untracked (new) file",
+          "brand-new.txt" in payload.get("advisory", ""), payload)
 
     # --- T4: the loser integrates over the newer commits --------------------
     # A request whose base is behind main exercises the identical code path as
@@ -409,18 +443,416 @@ with tempfile.TemporaryDirectory() as workspace_name:
           not (state_home / "nedschorus-gatekeeper").exists()
           or not any((state_home / "nedschorus-gatekeeper").iterdir()))
 
-    # --- the slice boundary is a named refusal, never a crash --------------
-    for label, arguments in (
-        ("--no-wait", base_request(work, remote, base, ["README.md"]) + ["--no-wait"]),
-        ("status", ["status", "deadbeef"]),
-        ("cancel", ["cancel", "deadbeef"]),
+    # --- slice 4: the worker lifecycle (T7, T8) -----------------------------
+    remote, work, base = make_fixture(workspace, "nowait")
+    (work / "README.md").write_text("seed\nasync change\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["README.md"], "async change") + ["--no-wait"],
+        state_home,
+    )
+    check("T7 --no-wait answers accepted with the digest",
+          payload.get("outcome") == "accepted"
+          and len(payload.get("digest", "")) == 64, payload)
+    nowait_digest = payload.get("digest", "")
+    status_payload = {}
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        code, status_payload = run_gatekeeper(
+            ["status", nowait_digest, "--repo", str(work)], state_home)
+        if status_payload.get("outcome") == "checked-in":
+            break
+        time.sleep(0.3)
+    check("T7 status reaches checked-in after a no-wait submission",
+          status_payload.get("outcome") == "checked-in", status_payload)
+    check("T7 the async change is on main",
+          git(["show", "main:README.md"], remote).stdout == "seed\nasync change\n")
+    check("T7 the worker swept its workspace on success",
+          not (state_home / "nedschorus-gatekeeper" / nowait_digest).exists())
+    code, payload = run_gatekeeper(["cancel", nowait_digest, "--repo", str(work)],
+                                   state_home)
+    check("T8 cancel after the push answers too-late",
+          payload.get("outcome") == "too-late" and payload.get("commit"), payload)
+    code, payload = run_gatekeeper(["cancel", "0" * 64, "--repo", str(work)], state_home)
+    check("T8 cancelling an unknown digest answers unknown-request",
+          payload.get("outcome") == "unknown-request", payload)
+    code, payload = run_gatekeeper(["status", "0" * 64, "--repo", str(work)], state_home)
+    check("T7 status on an unknown digest answers unknown",
+          payload.get("outcome") == "unknown", payload)
+
+    # B4d + liveness: a paused worker holds WORKING open; a rival then makes
+    # its eventual push a real conflict, retained as the refusal record.
+    remote, work, base = make_fixture(workspace, "b4d")
+    rival = workspace / "b4d-rival"
+    git(["clone", "--quiet", str(remote), str(rival)], workspace)
+    git(["config", "user.name", "rival"], rival)
+    git(["config", "user.email", "rival@nedschorus.invalid"], rival)
+    (work / "README.md").write_text("seed\nours\n", encoding="utf-8")
+    paused_environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                          "GATEKEEPER_TEST_WORKER_PAUSE": "3"}
+    paused_environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH),
+         *base_request(work, remote, base, ["README.md"], "will conflict"),
+         "--no-wait"],
+        capture_output=True, text=True, check=False, env=paused_environment)
+    accepted = json.loads(completed.stdout)
+    b4d_digest = accepted.get("digest", "")
+    check("B4d the paused submission was accepted",
+          accepted.get("outcome") == "accepted", accepted)
+    code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
+                                   state_home)
+    check("T7 status reports in-progress while the worker lives",
+          payload.get("outcome") == "in-progress", payload)
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["README.md"], "will conflict"), state_home)
+    check("a live twin submission answers in-progress, never swept (4.1)",
+          payload.get("outcome") == "in-progress", payload)
+    (rival / "README.md").write_text("seed\ntheirs\n", encoding="utf-8")
+    git(["add", "-A"], rival)
+    git(["commit", "--quiet", "-m", "rival changes the very same path"], rival)
+    git(["push", "--quiet", "origin", "main"], rival)
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
+                                       state_home)
+        if payload.get("outcome") != "in-progress":
+            break
+        time.sleep(0.3)
+    check("B4d status returns the retained conflict refusal",
+          payload.get("error") == "conflict", payload)
+    check("B4d the retained refusal exits 1", code == 1, code)
+    code, payload = run_gatekeeper(["status", b4d_digest, "--repo", str(work)],
+                                   state_home)
+    check("B4d the record is returned once, then swept (second status: unknown)",
+          payload.get("outcome") == "unknown", payload)
+
+    # T8: cancelling a live worker — group kill, wait, history arbitrates.
+    remote, work, base = make_fixture(workspace, "cancelrun")
+    (work / "README.md").write_text("seed\nnever lands\n", encoding="utf-8")
+    long_pause = {**paused_environment, "GATEKEEPER_TEST_WORKER_PAUSE": "30"}
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH),
+         *base_request(work, remote, base, ["README.md"], "to be cancelled"),
+         "--no-wait"],
+        capture_output=True, text=True, check=False, env=long_pause)
+    cancel_digest = json.loads(completed.stdout).get("digest", "")
+    code, payload = run_gatekeeper(["cancel", cancel_digest, "--repo", str(work)],
+                                   state_home)
+    check("T8 cancelling a live worker answers cancelled",
+          payload.get("outcome") == "cancelled", payload)
+    check("T8 the cancelled work never reached main",
+          git(["show", "main:README.md"], remote).stdout == "seed\n")
+    check("T8 the cancelled workspace is swept",
+          not (state_home / "nedschorus-gatekeeper" / cancel_digest).exists())
+
+    # T7: the abandoned state, and cancel's fourth branch.
+    fake_digest = "f" * 64
+    fake_workspace = state_home / "nedschorus-gatekeeper" / fake_digest
+    fake_workspace.mkdir(parents=True)
+    (fake_workspace / "request.json").write_text("{}", encoding="utf-8")
+    (fake_workspace / "worker.pid").write_text("999999 0", encoding="utf-8")
+    code, payload = run_gatekeeper(["status", fake_digest, "--repo", str(work)],
+                                   state_home)
+    check("T7 a dead-worker workspace reports abandoned",
+          payload.get("outcome") == "abandoned", payload)
+    code, payload = run_gatekeeper(["cancel", fake_digest, "--repo", str(work)],
+                                   state_home)
+    check("T8 cancelling an abandoned workspace answers cancelled",
+          payload.get("outcome") == "cancelled", payload)
+    check("T8 the abandoned workspace is swept", not fake_workspace.exists())
+
+    # A failed fetch is never read as absence (ruled 2026-08-12): status and
+    # cancel used to grep a stale origin/main and assert 'unknown' or
+    # 'cancelled — nothing reached main' for work that had reached it. The
+    # catalog already carries network-down, documented as safely resubmittable.
+    remote, work, base = make_fixture(workspace, "unreachable-remote")
+    git(["remote", "set-url", "origin", str(workspace / "no-such-remote.git")], work)
+    for subcommand in ("status", "cancel"):
+        code, payload = run_gatekeeper(
+            [subcommand, "1" * 64, "--repo", str(work)], state_home
+        )
+        check(f"{subcommand} answers network-down rather than asserting absence",
+              payload.get("error") == "network-down", payload)
+        check(f"{subcommand} exits 1 on network-down", code == 1, code)
+
+    # The advisory names real files (ruled 2026-08-12). Plain --porcelain
+    # collapses a wholly-new directory to one entry, so a declared new file
+    # inside one was reported as an undeclared change — the advisory named the
+    # caller's own work — while a genuinely forgotten file in a new directory
+    # was never named either. Untracked names are arbitrary, so quoting made the
+    # advisory report strings that were not paths.
+    remote, work, base = make_fixture(workspace, "advisory-shapes")
+    (work / "newdir").mkdir()
+    (work / "newdir" / "declared.txt").write_text("declared\n", encoding="utf-8")
+    (work / "forgotten-dir").mkdir()
+    (work / "forgotten-dir" / "forgotten.txt").write_text("forgotten\n",
+                                                          encoding="utf-8")
+    (work / "spaced name.txt").write_text("spaced\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["newdir/declared.txt"], "declare in a new dir"),
+        state_home,
+    )
+    advisory = payload.get("advisory", "")
+    check("the advisory does not name the caller's own declared new file",
+          "newdir" not in advisory, payload)
+    check("the advisory names a forgotten file inside a new directory",
+          "forgotten-dir/forgotten.txt" in advisory, payload)
+    check("the advisory reports an awkward name as a real path",
+          "spaced name.txt" in advisory and '\\"' not in advisory, payload)
+
+    # The worker-identity guard works on this platform (ruled 2026-08-12): it
+    # read /proc alone, so it returned "" for every process on macOS and the
+    # comparison was skipped — dead code on half a fleet that runs macOS and
+    # Ubuntu, with nothing announcing which behaviour a host had.
+    check("a real start time is captured on this platform",
+          gatekeeper.process_start_time(os.getpid()) not in ("", "0"),
+          gatekeeper.process_start_time(os.getpid()))
+    check("a start time carries no whitespace",
+          len(gatekeeper.process_start_time(os.getpid()).split()) == 1,
+          gatekeeper.process_start_time(os.getpid()))
+    recycled_digest = "9" * 64
+    recycled_workspace = state_home / "nedschorus-gatekeeper" / recycled_digest
+    recycled_workspace.mkdir(parents=True)
+    (recycled_workspace / "request.json").write_text("{}", encoding="utf-8")
+    # A live pid (this test's own) recorded against a start time that is not its
+    # own: the pid was recycled, so the worker it named is gone.
+    (recycled_workspace / "worker.pid").write_text(
+        f"{os.getpid()} not-the-start-time", encoding="utf-8"
+    )
+    code, payload = run_gatekeeper(["status", recycled_digest, "--repo", str(work)],
+                                   state_home)
+    check("a recycled pid does not masquerade as a live worker",
+          payload.get("outcome") == "abandoned", payload)
+
+    # The symlink boundary, both directions (ruled 2026-08-12, widening
+    # WALK-1). The shipped check tested only a declared path's final component,
+    # so a symlinked ANCESTOR read bytes from outside the repository; and the
+    # write side had no check at all, so a symlink carried in MAIN's tree was
+    # recreated in the candidate clone and the write followed it out. Both were
+    # demonstrated during the PR #49 review. The outside file's bytes are the
+    # load-bearing assertion: the reply alone looked like an ordinary io error.
+    remote, work, base = make_fixture(workspace, "symlink-boundary")
+    outside = workspace / "outside-every-repository"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("OUTSIDE CONTENT\n", encoding="utf-8")
+
+    (work / "esc").symlink_to(outside, target_is_directory=True)
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["esc/secret.txt"], "read through a link"),
+        state_home,
+    )
+    check("a symlinked ancestor refuses on the read side",
+          payload.get("error") == "malformed-field"
+          and "symlink" in payload.get("facts", ""), payload)
+    (work / "esc").unlink()
+
+    # main carries the link; the caller's copy is an ordinary file, so no check
+    # on the caller's worktree can see the problem.
+    seeded = workspace / "symlink-boundary-seed"
+    git(["clone", "--quiet", str(remote), str(seeded)], workspace)
+    git(["config", "user.name", "fixture"], seeded)
+    git(["config", "user.email", "fixture@nedschorus.invalid"], seeded)
+    (seeded / "docs").mkdir()
+    os.symlink(str(secret), str(seeded / "docs" / "link.txt"))
+    git(["add", "-A"], seeded)
+    git(["commit", "--quiet", "-m", "main carries a symlink"], seeded)
+    git(["push", "--quiet", "origin", "main"], seeded)
+    git(["pull", "--quiet"], work)
+    link_in_work = work / "docs" / "link.txt"
+    if link_in_work.is_symlink():
+        link_in_work.unlink()
+    link_in_work.write_text("DECLARED BY THE CALLER\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, None, ["docs/link.txt"], "write through main's link"),
+        state_home,
+    )
+    check("a symlink in main's tree refuses with its own named error",
+          payload.get("error") == "base-tree-symlink", payload)
+    check("the file outside every repository is untouched",
+          secret.read_text(encoding="utf-8") == "OUTSIDE CONTENT\n", payload)
+
+    # Death requires positive evidence (ruled 2026-08-12). An unreadable or
+    # absent worker.pid used to read as "dead", the strongest conclusion from
+    # the weakest evidence: status called a running request abandoned, and a
+    # twin submission deleted the live worker's clone and spawned a rival.
+    for torn_label, torn_bytes in (("an empty", ""), ("a garbage", "not-a-pid")):
+        torn_digest = ("a" if torn_label == "an empty" else "b") * 64
+        torn_workspace = state_home / "nedschorus-gatekeeper" / torn_digest
+        torn_workspace.mkdir(parents=True)
+        (torn_workspace / "request.json").write_text("{}", encoding="utf-8")
+        (torn_workspace / "worker.pid").write_text(torn_bytes, encoding="utf-8")
+        code, payload = run_gatekeeper(["status", torn_digest, "--repo", str(work)],
+                                       state_home)
+        check(f"{torn_label} worker.pid is not evidence of death",
+              payload.get("outcome") == "in-progress", payload)
+        check(f"{torn_label} worker.pid leaves the workspace intact",
+              torn_workspace.is_dir(), payload)
+
+    # The retained refusal record survives a status that lands mid-write, and is
+    # delivered once (ruled 2026-08-12): the record was written in place after
+    # its siblings were unlinked, so a status arriving in either window either
+    # reported "abandoned" for a refused request or replaced the reason with a
+    # generic io error and then swept it.
+    unreadable_digest = "c" * 64
+    unreadable_workspace = state_home / "nedschorus-gatekeeper" / unreadable_digest
+    unreadable_workspace.mkdir(parents=True)
+    (unreadable_workspace / "refusal.json").write_text("{half-written",
+                                                       encoding="utf-8")
+    code, payload = run_gatekeeper(["status", unreadable_digest, "--repo", str(work)],
+                                   state_home)
+    check("an unreadable refusal record is reported, not invented",
+          payload.get("error") == "workspace-io-error", payload)
+    check("an unreadable refusal record is retained, not swept",
+          unreadable_workspace.is_dir(), payload)
+
+    # Kill scope (ruled 2026-08-12): a recorded pid that does not lead its own
+    # process group is signalled alone. worker.pid is written above the
+    # --no-wait branch, so a waiting check-in records its own pid, whose group
+    # belongs to the invoking shell or harness — and cancel's group kill reached
+    # every process in it. Demonstrated during the PR #49 review by killing a
+    # launcher and an unrelated sibling alongside the check-in.
+    scope_digest = "d" * 64
+    scope_workspace = state_home / "nedschorus-gatekeeper" / scope_digest
+    scope_workspace.mkdir(parents=True)
+    (scope_workspace / "request.json").write_text("{}", encoding="utf-8")
+    # The launcher stands in for the caller's harness: its own session, holding
+    # a child whose pid is recorded as the worker. A group kill takes the
+    # launcher down with the child; a correctly scoped kill does not.
+    launcher = subprocess.Popen(
+        # The launcher reaps its child (child.wait()) before sleeping on, which
+        # is the production shape: a detached worker's parent exits at once, so
+        # the worker reparents to init and is reaped the moment it dies. Without
+        # the reap the killed child lingers as a zombie, and os.kill(pid, 0)
+        # succeeds on zombies — liveness would read "alive" forever.
+        [sys.executable, "-c",
+         "import subprocess, sys, time;"
+         "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+         "print(child.pid, flush=True);"
+         "child.wait();"
+         "time.sleep(60)"],
+        stdout=subprocess.PIPE, text=True, start_new_session=True,
+    )
+    try:
+        recorded_pid = int(launcher.stdout.readline().strip())
+        (scope_workspace / "worker.pid").write_text(f"{recorded_pid} 0",
+                                                    encoding="utf-8")
+        code, payload = run_gatekeeper(
+            ["cancel", scope_digest, "--repo", str(work)], state_home
+        )
+        check("cancel does not group-kill a pid that leads no group",
+              launcher.poll() is None, payload)
+        recorded_gone = False
+        for _ in range(50):
+            try:
+                os.kill(recorded_pid, 0)
+            except (ProcessLookupError, PermissionError):
+                recorded_gone = True
+                break
+            time.sleep(0.1)
+        check("cancel still signals the recorded process itself", recorded_gone,
+              payload)
+    finally:
+        launcher.kill()
+        launcher.wait(timeout=10)
+
+    # Path safety (ruled 2026-08-12): a caller-supplied digest never becomes a
+    # path. Joining an absolute argument discards the workspace root and '..'
+    # climbs out of it, so before the enumeration lookup `cancel` deleted the
+    # named directory and answered `cancelled`, and `status` read a foreign
+    # refusal record and then deleted it. The surviving-directory assertion is
+    # the load-bearing half: the reply alone looked correct in the absolute case
+    # only because the deletion had already happened.
+    for label, argument_builder in (
+        ("an absolute path", lambda victim: str(victim)),
+        ("a climbing path", lambda victim: f"../../{victim.name}"),
     ):
-        code, payload = run_gatekeeper(arguments, state_home)
-        check(f"unbuilt {label} refuses by name",
-              payload.get("error") == "unbuilt-option", payload)
-        check(f"unbuilt {label} exits 1, not 2 — a boundary is not a defect", code == 1, code)
-        check(f"unbuilt {label} names the slice that builds it",
-              "slice" in payload.get("next_action", ""), payload)
+        for subcommand in ("status", "cancel"):
+            victim = workspace / f"victim-{subcommand}-{label.split()[1]}"
+            (victim / "nested").mkdir(parents=True)
+            (victim / "keep.txt").write_text("PRECIOUS\n", encoding="utf-8")
+            # A refusal record makes the status path reach its sweep, and the
+            # climbing form needs the root to exist for '..' to resolve.
+            (victim / "refusal.json").write_text('{"outcome": "planted"}',
+                                                 encoding="utf-8")
+            (state_home / "nedschorus-gatekeeper").mkdir(parents=True, exist_ok=True)
+            code, payload = run_gatekeeper(
+                [subcommand, argument_builder(victim), "--repo", str(work)], state_home
+            )
+            check(f"{subcommand} with {label} finds nothing",
+                  payload.get("outcome") in ("unknown", "unknown-request"), payload)
+            check(f"{subcommand} with {label} destroys nothing",
+                  victim.exists() and (victim / "keep.txt").is_file(), payload)
+            check(f"{subcommand} with {label} returns no foreign record",
+                  payload.get("error") != "planted"
+                  and payload.get("outcome") != "planted", payload)
+
+    # The opportunistic expiry sweep (ruled 2026-08-10).
+    old_stamp = time.time() - 31 * 24 * 3600
+    aged_record = state_home / "nedschorus-gatekeeper" / ("e" * 64)
+    aged_record.mkdir(parents=True)
+    (aged_record / "refusal.json").write_text("{}", encoding="utf-8")
+    os.utime(aged_record, (old_stamp, old_stamp))
+    aged_scratch = state_home / "nedschorus-gatekeeper" / "screening-stale"
+    aged_scratch.mkdir()
+    os.utime(aged_scratch, (old_stamp, old_stamp))
+    run_gatekeeper(["status", "0" * 64, "--repo", str(work)], state_home)
+    check("the sweep clears a 31-day-old refusal record", not aged_record.exists())
+    check("the sweep clears stale screening scratch", not aged_scratch.exists())
+
+    # --- slice 5: the branch-protection audit (B3c's three outcomes) --------
+    designed = {
+        "restrictions": {"users": [{"login": "NedLern"}], "teams": [], "apps": []},
+        "enforce_admins": {"enabled": True},
+        "allow_force_pushes": {"enabled": False},
+        "allow_deletions": {"enabled": False},
+    }
+    protection_file = workspace / "protection.json"
+    protection_file.write_text(json.dumps(designed), encoding="utf-8")
+    code, payload = run_gatekeeper(
+        ["audit", "--protection-file", str(protection_file)], state_home)
+    check("B3c audit answers protection-ok on the designed settings",
+          payload.get("outcome") == "protection-ok" and code == 0, payload)
+
+    drifted = {
+        "restrictions": {"users": [{"login": "NedLern"}, {"login": "intruder"}],
+                         "teams": [], "apps": []},
+        "enforce_admins": {"enabled": False},
+        "allow_force_pushes": {"enabled": True},
+        "allow_deletions": {"enabled": False},
+    }
+    protection_file.write_text(json.dumps(drifted), encoding="utf-8")
+    code, payload = run_gatekeeper(
+        ["audit", "--protection-file", str(protection_file)], state_home)
+    check("B3c audit answers protection-wrong on drifted settings",
+          payload.get("outcome") == "protection-wrong" and code == 1, payload)
+    audit_facts = payload.get("facts", "")
+    check("B3c protection-wrong names every differing setting",
+          "intruder" in audit_facts and "enforce-admins" in audit_facts
+          and "force-push" in audit_facts, audit_facts)
+
+    no_gh_environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                         "PATH": str(workspace / "empty-path")}
+    no_gh_environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "audit",
+         "--repo-slug", "nedschorus/nedschorus"],
+        capture_output=True, text=True, check=False, env=no_gh_environment,
+    )
+    audit_payload = json.loads(completed.stdout)
+    check("B3c audit without gh answers audit-failed, never a silent skip",
+          audit_payload.get("outcome") == "audit-failed"
+          and completed.returncode == 1, audit_payload)
+
+    # --- slice 5: the repo git-config pins ----------------------------------
+    enclosing = SCRIPT_PATH.parent.parent
+    for key in ("user.name", "user.email"):
+        pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
+        check(f"slice 5 pins {key} in the enclosing repository", bool(pinned), key)
+    use_config_only = git(["config", "user.useConfigOnly"], enclosing,
+                          check_result=False).stdout.strip()
+    check("slice 5 pins user.useConfigOnly=true", use_config_only == "true",
+          use_config_only or "(unset)")
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.
@@ -431,6 +863,29 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("an unrecognised --import value is a malformed field",
           payload.get("error") == "malformed-field", payload)
     check("an unrecognised --import value exits 1", code == 1, code)
+
+    # A declared symlink refuses (ruled 2026-08-12): the gate reads
+    # regular-file bytes and does not follow links.
+    (work / "linked.txt").symlink_to(work / "README.md")
+    code, payload = run_gatekeeper(base_request(work, remote, base, ["linked.txt"]),
+                                   state_home)
+    check("a declared symlink refuses as malformed-field",
+          payload.get("error") == "malformed-field"
+          and "symlink" in payload.get("facts", ""), payload)
+    check("a declared symlink exits 1", code == 1, code)
+
+    # Command-line-form errors join the JSON contract (ruled 2026-08-11):
+    # argparse-level mistakes refuse like any malformed field, exit 1 —
+    # never usage text with the defect code.
+    for cli_label, cli_arguments in (
+        ("an unknown flag", base_request(work, remote, base, ["README.md"]) + ["--bogus"]),
+        ("a missing required field", ["check-in", "--files", "README.md"]),
+        ("no subcommand at all", []),
+    ):
+        code, payload = run_gatekeeper(cli_arguments, state_home)
+        check(f"{cli_label} refuses as malformed-field JSON",
+              payload.get("error") == "malformed-field", payload)
+        check(f"{cli_label} exits 1, not the defect code", code == 1, code)
 
     # --- deletions and additions, since the happy path only modified -------
     remote, work, base = make_fixture(workspace, "addremove")
@@ -494,8 +949,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
         check("the documented git-log view finds the import trailer",
               imported_commit[:7] in listed or imported_commit in listed, listed)
         code, payload = run_gatekeeper(["imports"], state_home)
-        check("the deleted imports subcommand is gone (argparse rejects it)",
-              payload.get("outcome") == "UNPARSEABLE" and code != 0, payload)
+        check("the deleted imports subcommand refuses as a malformed command line",
+              payload.get("error") == "malformed-field" and code == 1, payload)
 
     # --- T11: every import error class -------------------------------------
     # Every import defect refuses as the one code import-invalid (four codes

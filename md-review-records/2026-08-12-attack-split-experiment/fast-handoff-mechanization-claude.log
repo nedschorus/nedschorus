@@ -1,0 +1,2 @@
+[0m[31mIgnoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/home/nedlern/Projects/nedschorus"].hasTrustDialogAccepted: true in /home/nedlern/.claude.json.[0m
+cell complete: /home/nedlern/agents/choirmaster/md-review-records/2026-08-12-attack-split-experiment/fast-handoff-mechanization-claude.md

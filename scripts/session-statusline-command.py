@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
-"""Print the status line, and relay the context percentage to a side file.
-
-The handoff system's auto-trigger, half one (specification:
-docs/cross-project/fast-handoff-design.md). The status line is the only
-harness surface that receives `context_window.remaining_percentage`; a Stop
-hook's stdin does not carry it. So this script does two jobs at once: it
-prints the status line the user sees, and it writes the percentage where
-handoff-context-threshold-hook.py can read it.
+"""Print the status line.
 
 Wire it as the statusLine command in settings.json. The harness pipes one
 JSON object on stdin at every refresh.
 
-The relay file lives beside the session's other machine-local state:
-  ~/.claude/handoffs/<session-id>-context.json
+(Until 2026-08-12 this script was also half of the handoff auto-trigger,
+relaying the context percentage to a side file for the Stop hook — cut when
+the hook moved to reading the transcript, which covers every session type;
+see handoff-context-threshold-hook.py.)
 
 A malformed or unexpected payload never breaks the status line: the script
 prints what it can and exits 0, because a broken status line is worse than
-a missed relay, and the next refresh is a second away. Every field below is
-optional in that same spirit — a payload missing one drops that segment
-rather than failing.
+none, and the next refresh is a second away. Every field below is optional
+in that same spirit — a payload missing one drops that segment rather than
+failing.
 
 The visible line, left to right (user-walked 2026-08-08):
 
@@ -59,8 +54,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-RELAY_DIRECTORY = Path.home() / ".claude" / "handoffs"
-
 SEPARATOR = " │ "
 
 RESET = "\033[00m"
@@ -79,10 +72,6 @@ TIGHT_REMAINING_PERCENT = 25.0
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 SECONDS_PER_DAY = 86400
-
-
-def relay_path_for(session_id: str) -> Path:
-    return RELAY_DIRECTORY / f"{session_id}-context.json"
 
 
 def colored(text: str, color: str) -> str:
@@ -233,20 +222,6 @@ def status_line_text(payload: dict) -> str:
     return SEPARATOR.join(segment for segment in segments if segment)
 
 
-def write_relay(payload: dict) -> None:
-    """Record the context percentage for the Stop hook to read."""
-    session_id = payload.get("session_id")
-    remaining = payload.get("context_window", {}).get("remaining_percentage")
-    if not session_id or not isinstance(remaining, (int, float)):
-        return
-
-    RELAY_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    relay_path_for(session_id).write_text(
-        json.dumps({"session_id": session_id, "remaining_percentage": remaining}),
-        encoding="utf-8",
-    )
-
-
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -254,11 +229,6 @@ def main() -> int:
             payload = {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         payload = {}
-
-    try:
-        write_relay(payload)
-    except OSError:
-        pass  # a failed relay must never cost the user their status line
 
     try:
         print(status_line_text(payload))

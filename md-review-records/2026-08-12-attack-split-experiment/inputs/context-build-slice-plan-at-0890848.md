@@ -35,10 +35,10 @@ main through the program.** Everything that does not serve that goes later.
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
 | 1 **BUILT 2026-08-08** | Synchronous check-in end to end: screening → candidate → commit → push | T1, T2, T3, T9 | the manual merge lane, on the happy path |
-| 2 **BUILT 2026-08-08** | The entry checkpoint: `--import` (the `imports` query was built here, then deleted by user ruling 2026-08-10 — `git log --grep` is the view) | T11 (T10 retired) | hand-recorded legacy imports |
+| 2 **BUILT 2026-08-08** | The entry checkpoint: `--import` and the `imports` query | T10, T11 | hand-recorded legacy imports |
 | 3 **BUILT 2026-08-09** | Concurrency: loser integrates over newer commits, real conflict refuses, retry cap | T4, T5, T6 | slice 1's `main-moved` refusal |
-| 4 **BUILT 2026-08-12** | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery, the expiry sweep | T7, T8 | slice 1's `unbuilt-option` refusal |
-| 5 **BUILT 2026-08-12** | Enforcement surfaces: branch-protection audit (`audit` subcommand + the session-recycle ride in the fast-handoff writer), repo git config pins, the CLAUDE.md workflow line (user-walked 2026-08-12) (trailer-absence audit deleted, user-ruled 2026-08-10) | B3c | the founding-window "boss watches every landing" guard |
+| 4 | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery | T7, T8 | slice 1's `unbuilt-option` refusal |
+| 5 | Enforcement surfaces: trailer-absence audit, branch-protection audit, repo git config, CLAUDE.md workflow lines | T12, B3c | the founding-window "boss watches every landing" guard |
 
 Not in any of the five, and deliberately so: the review-evidence check for
 the instruction-file class
@@ -48,13 +48,6 @@ in-session tamper guard
 ([`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py))
 covers the same surface today. It becomes slice 6 when that format is
 designed.
-
-User-ruled 2026-08-10: slice 6 is now a scheduled prerequisite of
-activating the privileged lane. The deployed, root-owned gatekeeper copy
-(C2 as amended) upgrades itself from main, which is safe only once the
-gatekeeper's own source is in the instruction-file class with the evidence
-check enforcing walked approval. Sequence: slices 4 and 5, then the
-approval-evidence format design, then slice 6, then the credential work.
 
 ### Why the boundaries fall here
 
@@ -73,12 +66,9 @@ approval-evidence format design, then slice 6, then the credential work.
   yet.** `--no-wait`, the detached worker, `status`, and `cancel` all exist
   for a caller who does not want to block. In version 1 the pipeline is
   screening plus construction plus a push; waiting is cheap.
-- **The audit is detection, not gating.** It catches the configuration
-  residual (protection drifting from the design; an owner credential
-  editing protection). Useful, but it protects a lane that does not exist
-  until slice 1 ships. (Its former sibling, the trailer-absence history
-  scan, was deleted by user ruling 2026-08-10 — see the spec's
-  enforcement section.)
+- **The audits are detection, not gating.** They catch the cooperative
+  residual (an agent pushing raw, an owner editing protection). Useful, but
+  they protect a lane that does not exist until slice 1 ships.
 
 ## Slice 1 — synchronous check-in, end to end
 
@@ -123,8 +113,7 @@ In scope:
 Out of scope, each with the slice that takes it: `--import` (2), `imports`
 (2), automatic integration over a moved main (3), `conflict` and
 `main-moving-too-fast` (3), `--no-wait` and the detached worker (4),
-`status` (4), `cancel` (4), the refusal record B4d (4), the
-branch-protection audit (5),
+`status` (4), `cancel` (4), the refusal record B4d (4), both audits (5),
 repo git config (5), CLAUDE.md workflow lines (5), review evidence (6).
 
 **Tests** — `scripts/git-gatekeeper-test.py`, matching the convention
@@ -150,111 +139,26 @@ Required by the rewrite policy (founding plan § Standing decisions): every
 piece of work that touches legacy material classifies the legacy features
 it touches. Two facts bound this slice's table.
 
-First, the classification's one home is the specification's § Relationship
-to the legacy design, which performed it at design time in the four-class
-vocabulary — this plan inherits those dispositions by pointer rather than
-restating them (deduplicated 2026-08-10; a table restating that section
-lived here until then, provenance in git history). Slice-landing notes
-unique to this plan: the CLAUDE.md workflow rules and the git-config pins
-land in slice 5. Second — verified 2026-08-07 — **the legacy checkout does
-not exist on this box.** `~/Projects/nedlern` is absent; only
-`~/Projects/nedschorus` is present. Slice 1 therefore reads no legacy
-material at all, and its classification is inherited, not fresh. No
-consider-feature entries, so nothing goes to `legacy-feature-queue/`.
+First, the specification already performed this classification at design
+time (§ Relationship to the legacy design); the table below restates those
+dispositions in the four-class vocabulary rather than re-deciding them.
+Second — verified 2026-08-07 — **the legacy checkout does not exist on this
+box.** `~/Projects/nedlern` is absent; only `~/Projects/nedschorus` is
+present. Slice 1 therefore reads no legacy material at all, and its
+classification is inherited, not fresh.
 
-## Program follow-ups from the 2026-08-09 md-review
+| Legacy feature (`git-clean-slate-plan.md`, legacy `docs/working/proposed/`) | Class | Record |
+|---|---|---|
+| Workflow rules expressed as CLAUDE.md documentation | update-feature | Kept as documentation only, never enforcement — a Python program does not read CLAUDE.md, and different machines carry different copies. Lands in slice 5. |
+| Protection-as-lock | update-feature | Reduced from many-writer protection to one credential behind one program. Live since 2026-07-21. |
+| Three GitHub Apps | remove-feature | Multi-writer machinery; NC has one writer. |
+| Credential helper | remove-feature | Serves per-agent credentials, which NC does not issue. |
+| Per-agent branches | remove-feature | Ordinary changes use no branches. |
+| PR pipeline for ordinary work | remove-feature | Replaced by the single gate; PRs are not the ordinary path. |
+| Parking states | remove-feature | The four-state model has no parking; a stalled request is resubmitted, not parked. |
+| Minimal repo git config (`user.name`, `user.email`, `useConfigOnly`) | preserve-feature | Contract preserved, values re-derived and stated in the specification, not imported. Test-pinned in slice 5. |
 
-Rulings from the user's review of the revised spec (records:
-`md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
-spec text.
-
-Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports`
-deletion, the base absorption, and the catalog collapse below.
-Applied 2026-08-12 (suite then 150 cases green): the symlink refusal, the
-parser-contract wrap, the untracked-files advisory, and the digest
-length-prefix reframing. Slice 4 itself BUILT later the same day (suite
-162 green): the worker lifecycle landed with all four of its ruled build
-notes — the 30-day expiry sweep (plus stale screening scratch and
-day-old dead-worker leftovers), the liveness check before the resubmit
-sweep, process-group kill-and-wait for cancel, and the worker start-time
-recorded beside its pid (Codex FIX-2 — the tag-only framing was
-collidable by crafted content; every component is now length-prefixed) — plus one
-stray the sweep exposed: the program's `unsafe-path` code, which the spec's
-catalog never listed, folded into `malformed-field` under the same
-collapse principle. The refusal-text quality pass ran the same day over
-the final catalog: every refusal site meets the user's bar (facts name
-the offending path/field and embed what the program holds — stderr,
-intervening commits, the current tip; next actions are verb-first and
-specific); no entry needed a user judgment call. Still pending, slice-4
-scope by design: the expiry sweep and the liveness check.
-
-- **Refusal-text quality pass** (user-ruled 2026-08-10). The bar, in the
-  user's words: a refused check-in gets "the best, most useful and
-  actionable refusal text that can be reliably generated." Sweep every
-  error-catalog entry against three questions: (1) does the text say what
-  happened, in the caller's terms; (2) does it name the exact next action,
-  not a category of action; (3) does it include every fact the program
-  already holds that the caller would otherwise have to dig up — the
-  offending path, the conflicting commit id, the expected form of a missing
-  argument. "Already holds" is the limit: no speculative investigation
-  beyond what the check-in computed. Entries whose text needs a judgment
-  call go to the user rather than being decided silently. Runs alongside
-  slice 4.
-- APPLIED 2026-08-12 with slice 4 — **Refusal-record expiry**
-  (user-ruled 2026-08-10). Every gatekeeper
-  invocation first sweeps retained `--no-wait` refusal records older than
-  30 days — opportunistic, no daemon. Slice 4 work: it lands with the
-  machinery that creates the records.
-- APPLIED 2026-08-12 — **Advisory sees untracked files** (user-ruled
-  2026-08-11, Codex-leg WALK-3): drop `--untracked-files=no` from the advisory's status call so
-  a forgotten new file — its likeliest target — is named; ignored files
-  stay hidden, and the advisory still never blocks. One test case; apply
-  with the Codex-leg fix batch.
-- APPLIED 2026-08-12 — **Parser-layer errors join the JSON contract**
-  (user-ruled 2026-08-11, Codex-leg WALK-2): wrap argparse so command-line-form errors — unknown
-  flag, missing argument, unknown subcommand — emit the `malformed-field`
-  teaching refusal as JSON with exit 1, quoting argparse's complaint in
-  facts, instead of usage text with exit 2 (the defect code). Test cases
-  for each shape; apply with the Codex-leg fix batch.
-- APPLIED 2026-08-12 — **Refuse symlinked declared paths** (user-ruled
-  2026-08-11, Codex-leg WALK-1): a declared path that is itself a symlink refuses
-  `malformed-field` — `Path.is_file()` follows links, so today a
-  symlink-to-file passes and its target's bytes (possibly outside the
-  repository) would be read as declared content. One lstat check plus one
-  test case; apply with the Codex-leg fix batch.
-- APPLIED 2026-08-12 with slice 4 — **Cancel kills the process group and
-  waits** (user-ruled 2026-08-11, Codex-leg WALK-4): killing only the recorded worker pid leaves an
-  already-spawned `git push` child running, so `cancelled` could be
-  answered while the push lands moments later. Slice 4 builds cancel as:
-  process-group kill, wait for exit, then the history query. Lands with
-  the cancel machinery it corrects.
-- APPLIED 2026-08-12 with slice 4 — **Liveness check before the resubmit
-  sweep** (md-review finding HG31, noted 2026-08-11). Concurrent identical submissions share one digest and
-  therefore one workspace; before sweeping a leftover workspace, test
-  whether its recorded worker is alive — alive answers `in-progress`
-  instead of sweeping the ground from under a running twin. Slice 4 work:
-  lands with the worker lifecycle it protects.
-- **Collapse the refusal catalog in the built program** (user-ruled
-  2026-08-10): delete the unreachable `empty-change` branch (dead code —
-  the first unchanged path refuses first) and its catalog entry; fold
-  `missing-message` into `malformed-field`; merge the four import codes
-  into `import-invalid`. Teaching text and facts keep every distinction.
-  Matching test-assertion edits across T1/T11. Apply after the review
-  walk closes, together with the other program follow-ups.
-- **Absorb the base into the program** (user-ruled 2026-08-10): drop the
-  `--base` field from the contract; the program computes
-  `git merge-base HEAD origin/main`, after a fetch, in the caller's
-  checkout. Retire `unknown-base` / `base-not-on-main`. Rework against
-  built code: screening resolves the base after `resolve_repository`;
-  T1's base cases delete; T3/T4/T5 fixtures set the caller's HEAD instead
-  of passing `--base`. Apply after the review walk closes.
-- **Delete the `imports` subcommand from the built program** (user-ruled
-  2026-08-10): the parser entry, `imports_table`, `parse_import_trailers`,
-  the per-call scratch clone, and T10's test cases. The `--import` trailer
-  machinery and T11's screening stay. The view is
-  `git log origin/main --grep "Gatekeeper-import:"`, documented in the
-  spec. Apply after the review walk closes; suite must stay green minus
-  the retired cases.
+No consider-feature entries, so nothing goes to `legacy-feature-queue/`.
 
 ## Design points this plan settles
 

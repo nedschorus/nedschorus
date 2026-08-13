@@ -172,6 +172,26 @@ def start_adopting_supervisor(agent: str, handoff_directory: Path):
     return True, f"started a supervisor for session {session_id} (its log is {log_path})"
 
 
+def run_branch_protection_audit() -> str:
+    """Slice 5's ruled anchor (2026-08-12): the branch-protection audit rides
+    each session recycle. One line, never blocking — an unreadable wall is a
+    named finding, and a broken audit must never break a handoff."""
+    if os.environ.get("HANDOFF_SKIP_PROTECTION_AUDIT"):
+        return "branch-protection audit: skipped (HANDOFF_SKIP_PROTECTION_AUDIT set)"
+    gatekeeper_path = Path(__file__).with_name("git-gatekeeper.py")
+    if not gatekeeper_path.is_file():
+        return "branch-protection audit: audit-failed — no gatekeeper beside this script"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(gatekeeper_path), "audit"],
+            capture_output=True, text=True, check=False, timeout=45,
+        )
+        payload = json.loads(completed.stdout)
+        return f"branch-protection audit: {payload.get('summary', completed.stdout.strip())}"
+    except Exception as error:  # noqa: BLE001 - the audit never blocks a handoff
+        return f"branch-protection audit: audit-failed — {type(error).__name__}: {error}"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Write the handoff file that retires this session.",
@@ -211,6 +231,7 @@ def main(argv=None) -> int:
     counter = next_restart_counter(handoff_path, state_path)
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart)
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")
+    print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
     alive, explanation = supervisor.supervisor_liveness(state_path)
     if alive:

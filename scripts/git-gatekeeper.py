@@ -6,7 +6,8 @@ Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-git-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
-Slices 1 to 3 of five are built. For each request the program does exactly
+Slices 1 to 5 of five are built (slice 5's CLAUDE.md workflow lines land
+separately, walked with the user). For each request the program does exactly
 one of two things — checks the work in, or refuses and teaches the fix. On
 success four things are true: the change is on main, the checks ran against
 exactly the content pushed, the commit's trailers carry the whole
@@ -29,12 +30,20 @@ touched the same path, re-applying would mean choosing whose version survives,
 so the request is refused as `conflict` instead: the program never guesses at
 an author's intent.
 
-Not yet built, and which slice takes it: --no-wait, the detached worker,
-status and cancel (4); the branch-protection audit (5). Reaching one of
-those is a named refusal,
-`unbuilt-option`, never an unnamed ending and never a crash — exit code 2 is
-reserved for a defect in this program, so an argument parser rejection must
-not be how a caller learns a slice boundary.
+Slice 4 (built 2026-08-12): --no-wait detaches a worker into its own
+session (process group), whose outcome lands in history on success or as
+the retained B4d refusal record on refusal; status answers checked-in /
+in-progress / abandoned / the retained record (once, then swept) / unknown;
+cancel kills the worker's whole process group, waits, then lets history
+arbitrate — four outcomes. Every invocation opportunistically sweeps stale
+workspaces (30-day refusal records, day-old screening scratch and
+dead-worker leftovers). Slice 5 (built 2026-08-12): the branch-protection
+audit — `audit` reads main's live protection via gh and answers B3c's three
+outcomes, protection-ok / protection-wrong (facts naming every differing
+setting) / audit-failed (gh missing, unauthenticated, API error — a loud
+finding, never a silent skip); it rides each session recycle via the
+fast-handoff writer. Exit code 2 stays reserved for a defect in this
+program; the parser layer refuses malformed command lines as JSON, exit 1.
 
 The entry checkpoint's guarantee is that the record cannot lag the system: an
 import is declared as a triple, validated against the legacy repository at
@@ -76,9 +85,12 @@ import json
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 WORKSPACE_ROOT_NAME = "nedschorus-gatekeeper"
@@ -99,6 +111,11 @@ MAX_INTEGRATION_ROUNDS = 5
 EXIT_SUCCESS = 0
 EXIT_REFUSED = 1
 EXIT_DEFECT = 2
+
+# 'unknown' — an unreadable or absent worker.pid — is treated as live
+# everywhere except the age-gated sweep (ruled 2026-08-12, see worker_state):
+# a workspace is never destroyed on the strength of a file we could not read.
+LIVE_STATES = ("alive", "unknown")
 
 
 class Refusal(Exception):
@@ -130,10 +147,32 @@ class AlreadyCheckedIn(Exception):
 
 
 def workspace_root() -> Path:
-    """B4a: outside every repository, discoverable from the digest alone."""
+    """B4a: outside every repository, discoverable from the digest alone —
+    on the host that created it (§ States; host locality ruled 2026-08-12)."""
     state_home = os.environ.get("XDG_STATE_HOME")
     base = Path(state_home) if state_home else Path.home() / ".local" / "state"
     return base / WORKSPACE_ROOT_NAME
+
+
+def workspace_for(digest: str) -> Path | None:
+    """The workspace a digest names, or None — found by enumeration, never by
+    joining the digest onto the root (ruled 2026-08-12).
+
+    `status` and `cancel` take their digest from the caller, and path arithmetic
+    on caller text escapes the root: an absolute argument discards the root
+    entirely, and `..` climbs out of it. `cancel` deleted the named directory
+    and answered `cancelled`; `status` returned a foreign refusal record as its
+    own reply and then deleted it. Matching a name against the entries the
+    program itself created cannot escape whatever the argument says, so the
+    property holds by construction rather than by filtering — which is why no
+    separate format check on the digest exists.
+    """
+    try:
+        entries = list(workspace_root().iterdir())
+    except OSError:
+        return None
+    return next((entry for entry in entries
+                 if entry.name == digest and entry.is_dir()), None)
 
 
 def emit(payload: dict, exit_code: int) -> int:
@@ -363,13 +402,6 @@ def screen_form(arguments) -> dict:
             "carries the runtime but not the model, so the caller declares it.",
         )
 
-    if getattr(arguments, "no_wait", False):
-        raise Refusal(
-            "unbuilt-option", "--no-wait is not built in this version",
-            "Resubmit with --wait. The detached worker, status and cancel arrive "
-            "together in slice 4 of the git-gatekeeper build (nedschorus#3).",
-        )
-
     paths = screen_paths(arguments.files)
     import_declaration = screen_import(arguments, paths)
 
@@ -418,6 +450,58 @@ def compute_base(repository: Path) -> str:
     return base
 
 
+def refuse_symlinked_component(root: Path, path: str, side: str) -> None:
+    """No component of a declared path may be a symlink, on either side of the
+    comparison (ruled 2026-08-12, widening WALK-1 of 2026-08-11).
+
+    WALK-1 was applied as one lstat on the declared path's final component, and
+    the specification's rationale — "a link's target can live outside the
+    repository, and the security boundary does not follow it" — was delivered in
+    neither direction.
+
+    Reading: with `esc` a symlink to a directory outside the repository,
+    declaring `esc/secret.txt` passed every screen, because the leaf is a
+    regular file reached *through* the link; its bytes were read from outside
+    and checked in to main.
+
+    Writing: the candidate commit is built by checking out main and writing
+    declared bytes over it, so a symlink carried in **main's own tree** was
+    recreated in the clone and the write followed it out of the repository — a
+    file outside every repository was overwritten with the caller's content, and
+    the caller's own worktree is innocent in that case, so no check on the
+    caller's files can catch it.
+
+    Containment (`resolve()` inside the root) is deliberately not used as the
+    primary form: on its own it would reverse WALK-1, since a symlink whose
+    target sits inside the repository passes containment while the ruling
+    refuses it.
+    """
+    current = root
+    for part in Path(path).parts:
+        current = current / part
+        if not current.is_symlink():
+            continue
+        if side == "worktree":
+            raise Refusal(
+                "malformed-field",
+                f"the declared path {path!r} passes through a symlink at "
+                f"{current.relative_to(root).as_posix()!r}",
+                "Resubmit naming regular files only, with no symlinked directory "
+                "on the way: the gate reads regular-file bytes and does not "
+                "follow links (ruled 2026-08-11, widened 2026-08-12).",
+            )
+        raise Refusal(
+            "base-tree-symlink",
+            f"main carries a symlink at "
+            f"{current.relative_to(root).as_posix()!r}, on the way to the declared "
+            f"path {path!r}",
+            "Nothing to resubmit: the link is on main, not in your checkout, and "
+            "writing through it would place your bytes outside the repository. "
+            "Ask whoever maintains that path on main to replace the link with a "
+            "regular file, then check the work in.",
+        )
+
+
 def read_worktree_content(
     repository: Path, paths: list[str], import_declaration: dict | None = None
 ) -> dict[str, bytes | None]:
@@ -434,6 +518,7 @@ def read_worktree_content(
         if path == import_destination:
             continue
         candidate = repository / path
+        refuse_symlinked_component(repository, path, side="worktree")
         if candidate.is_file():
             content[path] = candidate.read_bytes()
         elif candidate.exists():
@@ -496,18 +581,24 @@ def compute_digest(base: str, worktree: dict[str, bytes | None], import_declarat
     metadata still deduplicates — which is what makes resubmission safe.
     """
     digest = hashlib.sha256()
-    digest.update(base.encode("utf-8"))
+
+    def frame(tag: bytes, content: bytes) -> None:
+        # Length-prefixed under a NUL-framed tag (2026-08-12): tag-only
+        # framing was collidable — one file whose bytes contained the tag
+        # sequence serialized identically to two files (Codex finding G25).
+        digest.update(b"\x00" + tag + b"\x00")
+        digest.update(str(len(content)).encode("ascii") + b":")
+        digest.update(content)
+
+    frame(b"base", base.encode("utf-8"))
     for path in sorted(worktree):
-        digest.update(b"\x00path\x00")
-        digest.update(path.encode("utf-8"))
+        frame(b"path", path.encode("utf-8"))
         content = worktree[path]
         if content is None:
-            digest.update(b"\x00deleted\x00")
+            frame(b"deleted", b"")
         else:
-            digest.update(b"\x00content\x00")
-            digest.update(content)
-    digest.update(b"\x00import\x00")
-    digest.update(import_declaration.encode("utf-8"))
+            frame(b"content", content)
+    frame(b"import", import_declaration.encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -518,12 +609,25 @@ def undeclared_changes(repository: Path, declared: list[str]) -> list[str]:
     never blocks; the likeliest cause of a surprise here is a forgotten
     declaration, which is worth saying out loud.
     """
-    status = run_git(["status", "--porcelain", "--untracked-files=no"], cwd=repository, check=False)
+    # Untracked files included (user-ruled 2026-08-11): a forgotten NEW file is
+    # the advisory's likeliest target; .gitignore still hides scratch.
+    #
+    # -z and -uall are the ruling's second half (2026-08-12). Plain --porcelain
+    # collapses a wholly-new directory to a single 'newdir/' entry, so declaring
+    # 'newdir/new.txt' produced "the working copy also differs at newdir/" —
+    # the advisory named the caller's own declared work and sent an agent after
+    # a change it had just made deliberately, while a genuinely forgotten file
+    # inside a new directory was never named either. And untracked names are
+    # arbitrary, unlike declared paths, which are screened: spaces and
+    # non-ASCII came back C-quoted, so the advisory reported a string that was
+    # not a path. -z is NUL-delimited and unquoted; -uall names the files.
+    status = run_git(["status", "--porcelain", "-z", "--untracked-files=all"],
+                     cwd=repository, check=False)
     if status.returncode != 0:
         return []
     others = []
-    for line in status.stdout.splitlines():
-        path = line[3:].strip()
+    for entry in status.stdout.split("\0"):
+        path = entry[3:]
         if path and path not in declared:
             others.append(path)
     return sorted(others)
@@ -632,6 +736,10 @@ def build_candidate(
     run_git(["checkout", "--quiet", "-B", CANDIDATE_BRANCH, target or request["base"]], cwd=clone)
 
     for path in request["paths"]:
+        # The base tree gets the same check as the caller's worktree (ruled
+        # 2026-08-12): checkout recreates any symlink main carries, and the
+        # write below would follow it out of the repository.
+        refuse_symlinked_component(clone, path, side="base")
         target = clone / path
         content = worktree[path]
         if content is None:
@@ -765,6 +873,543 @@ def integrate_and_push(
     )
 
 
+
+
+# --- The worker lifecycle (slice 4) -----------------------------------------
+# The caller's process is the worker in --wait mode; --no-wait detaches one.
+# Everything here rests on the same invariant as crash recovery: the atomic
+# push is the only durable effect, so every state question is answered from
+# history plus what the workspace holds.
+
+STALE_SCREENING_SECONDS = 24 * 60 * 60
+STALE_WORKSPACE_SECONDS = 24 * 60 * 60
+REFUSAL_RECORD_RETENTION_SECONDS = 30 * 24 * 60 * 60
+
+
+def process_start_time(pid: int) -> str:
+    """The /proc start-time of a pid (clock ticks since boot); '' unreadable.
+
+    3.13: a recycled pid can masquerade as a live worker; the start-time
+    unmasks it. Linux-specific by design — this box is the gate's home.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        pass
+    # No /proc: ask ps (ruled 2026-08-12). The fleet runs agents on macOS and
+    # Ubuntu, and reading /proc alone made this return "" for every process on
+    # macOS — the recorded value fell back to the placeholder, the comparison
+    # was skipped, and the pid-reuse guard the specification credits to slice 4
+    # was dead code on half the fleet, with nothing announcing which behaviour a
+    # given host had.
+    started = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(pid)],
+        capture_output=True, text=True, check=False,
+    )
+    # One whitespace-free token: worker.pid is "<pid> <start>" split on
+    # whitespace, and ps prints "Tue Aug 12 13:45:01 2026", whose first word
+    # alone would be recorded and then never match.
+    return "_".join(started.stdout.split())
+
+
+def write_atomically(target: Path, content: str) -> None:
+    """Write through a temporary sibling and rename into place (ruled
+    2026-08-12).
+
+    Every writer of `worker.pid` and of the retained refusal record used to
+    truncate in place, and every reader treated an unreadable file as proof the
+    worker was dead. Between those lay a window in which the file was empty on
+    disk while the worker was alive: `status` answered `abandoned`, and a twin
+    submission deleted the live worker's clone and spawned a rival on the same
+    digest. A rename is atomic, so a reader sees the old contents or the new and
+    never nothing.
+    """
+    temporary = target.with_name(f".{target.name}.writing")
+    temporary.write_text(content, encoding="utf-8")
+    os.replace(temporary, target)
+
+
+def write_worker_identity(workspace: Path) -> None:
+    pid = os.getpid()
+    write_atomically(workspace / "worker.pid", f"{pid} {process_start_time(pid)}")
+
+
+def signal_worker(pid: int, signal_number: int) -> None:
+    """Signal the worker's process group, or the process alone when it leads no
+    group (ruled 2026-08-12).
+
+    WALK-4 kills the group because a worker may already have spawned `git push`,
+    and a pid-only kill leaves that child racing the history query. But
+    `worker.pid` is written above the `--no-wait` branch, so a waiting check-in
+    records its *own* pid, and that process is not a session leader — its group
+    is the invoking shell's or harness's. Cancelling such a request signalled
+    every process in the caller's group: a launcher, an unrelated sibling, and
+    the check-in itself all died in the PR #49 review's demonstration.
+
+    The kernel answers whether this pid leads a group. A recorded "this one was
+    detached" flag would be exactly the data that goes stale, tears, or names a
+    recycled process.
+    """
+    try:
+        leads_own_group = os.getpgid(pid) == pid
+    except (OSError, ProcessLookupError, PermissionError):
+        leads_own_group = False  # cannot tell: never widen the blast radius
+    try:
+        if leads_own_group:
+            os.killpg(pid, signal_number)
+        else:
+            os.kill(pid, signal_number)
+    except (OSError, ProcessLookupError, PermissionError):
+        pass
+
+
+def worker_stopped(workspace: Path, seconds: float) -> bool:
+    """Wait up to `seconds` for the worker to stop; True if it did.
+
+    Monotonic, and each wait computes its own deadline: the post-SIGKILL loop
+    used to reuse the already-expired SIGTERM deadline, so a forward wall-clock
+    step skipped it entirely (fixed 2026-08-12).
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if worker_state(workspace) not in LIVE_STATES:
+            return True
+        time.sleep(0.1)
+    return worker_state(workspace) not in LIVE_STATES
+
+
+def worker_state(workspace: Path) -> str:
+    """'alive', 'dead', 'unknown', or 'none' — the whole state machine's oracle.
+
+    Death requires positive evidence (ruled 2026-08-12). An unreadable or absent
+    `worker.pid` used to return 'dead', which is the strongest conclusion drawn
+    from the weakest evidence: it let a twin delete a live worker's clone and
+    let `status` report a running request as abandoned. It now returns
+    'unknown', which every caller treats as live, because the asymmetry is
+    decisive — guessing alive wrongly leaves a directory the aged sweep collects
+    later, while guessing dead wrongly destroys work in flight and loses its
+    reason silently.
+    """
+    if not workspace.is_dir():
+        return "none"
+    try:
+        tokens = (workspace / "worker.pid").read_text(encoding="utf-8").split()
+        pid = int(tokens[0])
+    except (OSError, ValueError, IndexError):
+        return "unknown"
+    recorded_start = tokens[1] if len(tokens) > 1 else "0"
+    try:
+        # Known limit, recorded rather than guarded (2026-08-12): os.kill(pid, 0)
+        # also succeeds for a zombie — a dead process its parent has not reaped.
+        # Unreachable for a real worker, whose parent exits immediately after
+        # spawning it, so the worker reparents to init and is reaped the moment
+        # it dies. A guard would need per-platform process-state reads for a
+        # case the design cannot produce.
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "dead"
+    except PermissionError:
+        pass  # alive under another user; still alive
+    live_start = process_start_time(pid)
+    # "0" is the spawner's placeholder before the worker stamps itself.
+    if recorded_start not in ("", "0") and live_start and recorded_start != live_start:
+        return "dead"
+    return "alive"
+
+
+def sweep_stale_workspaces() -> None:
+    """Opportunistic housekeeping at every invocation (ruled 2026-08-10):
+    refusal records older than 30 days, screening scratch and dead-worker
+    workspaces older than a day. Never blocks, never reports — a caller
+    whose record aged out resubmits, the same recovery as every lost reason.
+    """
+    try:
+        entries = list(workspace_root().iterdir())
+    except OSError:
+        return
+    now = time.time()
+    for entry in entries:
+        try:
+            age = now - entry.stat().st_mtime
+            if entry.name.startswith("screening-"):
+                if age > STALE_SCREENING_SECONDS:
+                    shutil.rmtree(entry, ignore_errors=True)
+                continue
+            if not entry.is_dir():
+                continue
+            if (entry / "refusal.json").is_file():
+                if age > REFUSAL_RECORD_RETENTION_SECONDS:
+                    shutil.rmtree(entry, ignore_errors=True)
+                continue
+            # Age-gated, so a transient 'unknown' (the moment between a
+            # workspace being created and its worker stamping itself) is
+            # never collected, while a day-old one still is.
+            if age > STALE_WORKSPACE_SECONDS and worker_state(entry) in ("dead", "unknown"):
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def retain_refusal_record(workspace: Path, digest: str, refusal: Refusal) -> None:
+    """B4d: a refused --no-wait request keeps its workspace holding just the
+    JSON refusal record; status returns it once, then sweeps."""
+    for entry in ("candidate", "declared"):
+        shutil.rmtree(workspace / entry, ignore_errors=True)
+    # The record is written before anything else is removed, and atomically
+    # (ruled 2026-08-12). The old order unlinked worker.pid and request.json
+    # first, so a status arriving in that gap saw no record and no worker and
+    # answered "abandoned — resubmit safely" for a request that had in fact
+    # refused with a real reason; and the in-place write left an instant where
+    # the file existed but was empty, which status read as unparseable, replaced
+    # with a generic workspace-io-error, and then swept — destroying the only
+    # copy of the reason. Never demolish the old state before the new state
+    # exists.
+    write_atomically(workspace / "refusal.json", json.dumps({
+        "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
+        "next_action": refusal.next_action, "digest": digest,
+        "summary": f"refused: {refusal.error} — {refusal.facts}",
+    }))
+    (workspace / "worker.pid").unlink(missing_ok=True)
+    (workspace / "request.json").unlink(missing_ok=True)
+
+
+def require_digest(arguments, command: str) -> str:
+    digest = getattr(arguments, "digest", None)
+    if not digest:
+        raise Refusal(
+            "malformed-field", f"{command} needs the request digest",
+            f"Resubmit as: git-gatekeeper.py {command} <digest> — the digest is "
+            "in the reply of the submission being asked about.",
+        )
+    return digest
+
+
+def fetch_and_find(repository: Path, digest: str) -> str | None:
+    """The commit this digest reached main as, or None — never a guess.
+
+    The fetch failure is NOT swallowed here (ruled 2026-08-12). A stale
+    origin/main made `cancel` assert 'nothing reached main' while the commit sat
+    on the remote, and `status` answer 'unknown — submit it' for work already
+    checked in: both are asserted facts resting on a question that was never
+    asked. `network-down` is already in the catalog and already documented as
+    safely resubmittable.
+
+    Deliberately different from the base computation, where a failed fetch stays
+    tolerated: there it degrades to a staler base which the behind-main
+    integration absorbs, while here it decides whether the answer is true.
+    """
+    fetched = run_git(["fetch", "--quiet", "origin", MAIN_BRANCH],
+                      cwd=repository, check=False)
+    if fetched.returncode != 0:
+        raise Refusal(
+            "network-down",
+            f"main could not be fetched, so whether this work reached it is "
+            f"unknown: {fetched.stderr.strip() or 'no stderr'}",
+            "Ask again once the remote is reachable; resubmitting is always safe, "
+            "and a request that did reach main answers already-checked-in.",
+        )
+    return find_existing_check_in(repository, digest)
+
+
+def run_worker(arguments) -> int:
+    """The detached half of --no-wait. Detached means nobody is listening:
+    outcomes land in history (success) or the B4d record (refusal), where
+    status finds them. Never prints; the reply channel is the workspace."""
+    workspace = workspace_for(arguments.digest)
+    if workspace is None:
+        return EXIT_DEFECT
+    record_path = workspace / "request.json"
+    if not record_path.is_file():
+        return EXIT_DEFECT
+    request = json.loads(record_path.read_text(encoding="utf-8"))
+    digest = request["digest"]
+
+    # Stamp identity, yielding briefly to the spawner's placeholder write so
+    # the exact start-time always wins the file.
+    deadline = time.time() + 2
+    while not (workspace / "worker.pid").is_file() and time.time() < deadline:
+        time.sleep(0.05)
+    write_worker_identity(workspace)
+
+    pause = float(os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE", "0") or 0)
+    if pause:  # test seam: holds the WORKING state open for cancel/liveness cases
+        time.sleep(pause)
+
+    worktree: dict[str, bytes | None] = {}
+    for path, change in request["changes"].items():
+        worktree[path] = (
+            None if change == "deleted"
+            else (workspace / "declared" / path).read_bytes()
+        )
+    clone = workspace / "candidate"
+    try:
+        try:
+            integrate_and_push(clone, request, worktree, digest)
+        except AlreadyCheckedIn:
+            pass
+        shutil.rmtree(workspace, ignore_errors=True)
+        return EXIT_SUCCESS
+    except Refusal as refusal:
+        retain_refusal_record(workspace, digest, refusal)
+        return EXIT_REFUSED
+    except Exception as defect:  # noqa: BLE001 - the record is the defect channel here
+        retain_refusal_record(workspace, digest, Refusal(
+            "program-defect", f"{type(defect).__name__}: {defect}",
+            "Report this against nedschorus#3; it is a bug in the gatekeeper, "
+            "not a problem with the request.",
+        ))
+        return EXIT_DEFECT
+
+
+def status_query(arguments) -> int:
+    digest = require_digest(arguments, "status")
+    repository = resolve_repository(getattr(arguments, "repo", None))
+    commit = fetch_and_find(repository, digest)
+    if commit:
+        return emit({"outcome": "checked-in", "digest": digest, "commit": commit,
+                     "summary": f"checked-in {commit}"}, EXIT_SUCCESS)
+    workspace = workspace_for(digest)
+    if workspace is None:
+        return emit({"outcome": "unknown", "digest": digest,
+                     "summary": "unknown — no trace of this digest on this host; "
+                                "if it was submitted from another machine, ask "
+                                "there; otherwise submit it, submitting is "
+                                "always safe"}, EXIT_SUCCESS)
+    record_path = workspace / "refusal.json"
+    if record_path.is_file():
+        # B4d's "returned once, then swept" is enforced by the filesystem
+        # (ruled 2026-08-12): the record is claimed with an atomic rename, so of
+        # two concurrent status calls exactly one wins it — before, both
+        # received the full record.
+        claimed = workspace / "refusal.claimed.json"
+        try:
+            os.replace(record_path, claimed)
+        except OSError:
+            claimed = record_path  # lost the claim, or cannot rename: read in place
+        try:
+            payload = json.loads(claimed.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # An unreadable record is unknown, not spent: it is left in place
+            # for a retry rather than swept (ruled 2026-08-12). Sweeping here
+            # destroyed the caller's only copy of the reason whenever a status
+            # landed mid-write.
+            return emit({"outcome": "refused", "error": "workspace-io-error",
+                         "facts": "the retained refusal record could not be read; "
+                                  "it is left in place",
+                         "next_action": f"Ask again with: git-gatekeeper.py status "
+                                        f"{digest} — if it stays unreadable, resubmit "
+                                        "the work; resubmitting is always safe.",
+                         "digest": digest,
+                         "summary": "refused: workspace-io-error — record unreadable, "
+                                    "retained"}, EXIT_REFUSED)
+        shutil.rmtree(workspace, ignore_errors=True)  # returned once, then swept (B4d)
+        return emit(payload, EXIT_REFUSED)
+    state = worker_state(workspace)
+    if state in LIVE_STATES:
+        return emit({"outcome": "in-progress", "digest": digest,
+                     "summary": "in-progress — a live worker holds this request; "
+                                "ask again shortly"}, EXIT_SUCCESS)
+    return emit({"outcome": "abandoned", "digest": digest,
+                 "summary": "abandoned — workspace present, worker dead; "
+                            "resubmit safely, the sweep is automatic"}, EXIT_SUCCESS)
+
+
+def cancel_request(arguments) -> int:
+    """Outcomes, exactly five (spec § States, crashes, cancel, and errors):
+    too-late, cancelled from a live worker, cancelled from a dead one,
+    unknown-request, and cancel-failed (added 2026-08-12)."""
+    digest = require_digest(arguments, "cancel")
+    repository = resolve_repository(getattr(arguments, "repo", None))
+    commit = fetch_and_find(repository, digest)
+    if commit:
+        # This branch used to return before any cleanup, alone among cancel's
+        # endings, leaving the workspace of an already-checked-in request on
+        # disk until the day-old sweep (fixed 2026-08-12).
+        leftover = workspace_for(digest)
+        if leftover is not None:
+            shutil.rmtree(leftover, ignore_errors=True)
+        return emit({"outcome": "too-late", "digest": digest, "commit": commit,
+                     "summary": f"too-late — already-checked-in {commit}; the remedy "
+                                "for a bad checked-in change is a revert through the "
+                                "same gate"}, EXIT_SUCCESS)
+    workspace = workspace_for(digest)
+    if workspace is None:
+        return emit({"outcome": "unknown-request", "digest": digest,
+                     "summary": "unknown-request — no trace of this digest on "
+                                "this host; a request submitted from another "
+                                "machine is cancelled there"},
+                    EXIT_SUCCESS)
+    pid = None
+    if worker_state(workspace) in LIVE_STATES:
+        # WALK-4 (ruled 2026-08-12): stop the worker and WAIT — a kill that does
+        # not wait leaves an already-spawned git push child racing the history
+        # query below. Scope ruled the same day: the group only when the
+        # recorded pid leads one (see signal_worker).
+        try:
+            pid = int((workspace / "worker.pid").read_text(encoding="utf-8").split()[0])
+        except (OSError, ValueError, IndexError):
+            pid = None
+        if pid is not None:
+            signal_worker(pid, signal.SIGTERM)
+            if not worker_stopped(workspace, seconds=10):
+                signal_worker(pid, signal.SIGKILL)
+                worker_stopped(workspace, seconds=5)
+
+    # Every path leaves through this door (ruled 2026-08-12). The history
+    # re-check used to live inside the live-worker branch alone, so a worker
+    # that pushed and died was answered "cancelled — nothing reached main"
+    # while status reported the commit a second later; and nothing confirmed
+    # the kill, so a worker this user cannot signal produced the same false
+    # "cancelled" after fifteen seconds of trying. Both demonstrated.
+    commit = fetch_and_find(repository, digest)
+    if commit:
+        shutil.rmtree(workspace, ignore_errors=True)
+        return emit({"outcome": "too-late", "digest": digest, "commit": commit,
+                     "summary": f"too-late — already-checked-in {commit}; the "
+                                "push won the race"}, EXIT_SUCCESS)
+    if worker_state(workspace) in LIVE_STATES:
+        return emit({"outcome": "cancel-failed", "digest": digest,
+                     "facts": f"worker {pid} is still alive after SIGTERM and "
+                              "SIGKILL",
+                     "next_action": f"Check status {digest} shortly; the worker "
+                                    "may still push. If it persists, the "
+                                    "workspace owner must kill it.",
+                     "summary": "cancel-failed — the worker outlived SIGKILL, so "
+                                "the workspace is left in place and the request "
+                                "may still reach main"}, EXIT_REFUSED)
+    shutil.rmtree(workspace, ignore_errors=True)
+    return emit({"outcome": "cancelled", "digest": digest,
+                 "summary": "cancelled — the workspace is swept; nothing reached "
+                            "main"}, EXIT_SUCCESS)
+
+
+# --- The branch-protection audit (slice 5) ----------------------------------
+# B3c: three named outcomes — protection-ok / protection-wrong / audit-failed
+# — failing loudly as its own outcome, never a silent skip into green. Rides
+# each session recycle (ruled 2026-08-12) via the fast-handoff writer.
+
+# The contract the audit checks (spec § The credential and enforcement, LIVE
+# since 2026-07-21). The C3 amendment moves the pusher to the dedicated
+# account — update this set in the same commit that applies it.
+EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern"}
+
+
+def derive_repo_slug(repository: Path) -> str:
+    remote = run_git(["remote", "get-url", "origin"], cwd=repository, check=False)
+    url = remote.stdout.strip()
+    match = re.search(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$", url)
+    if remote.returncode != 0 or not match:
+        raise Refusal(
+            "audit-failed", f"the origin remote {url!r} is not a GitHub repository",
+            "Run the audit from a checkout whose origin is on github.com, or pass "
+            "--repo-slug owner/repo.",
+        )
+    return match.group(1)
+
+
+def fetch_branch_protection(repo_slug: str) -> dict:
+    try:
+        completed = subprocess.run(
+            ["gh", "api", f"repos/{repo_slug}/branches/{MAIN_BRANCH}/protection"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+    except FileNotFoundError:
+        raise Refusal(
+            "audit-failed", "gh is not installed on this box",
+            "Install and authenticate the GitHub CLI, then re-run the audit.",
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise Refusal(
+            "audit-failed", "the GitHub API did not answer within 30 seconds",
+            "Re-run the audit; this failure is safe to retry.",
+        ) from None
+    if completed.returncode != 0:
+        raise Refusal(
+            "audit-failed",
+            f"reading protection for {repo_slug} failed: "
+            f"{completed.stderr.strip() or completed.stdout.strip() or 'no detail'}",
+            "Authenticate gh with an account that can read branch protection, or "
+            "fix the network, then re-run. An unreadable wall is a finding, never "
+            "a silent skip into green.",
+        )
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        raise Refusal(
+            "audit-failed", "the protection reply was not JSON",
+            "Re-run the audit; if this repeats, gh or the API changed shape.",
+        ) from None
+
+
+def compare_protection(protection: dict) -> list[str]:
+    """Every way the live settings differ from the design, in plain words."""
+    problems: list[str] = []
+    restrictions = protection.get("restrictions")
+    if not restrictions:
+        problems.append(
+            "no push restriction exists; the design restricts main pushes to "
+            f"exactly {sorted(EXPECTED_MAIN_PUSHER_ACCOUNTS)}"
+        )
+    else:
+        users = sorted(u.get("login", "") for u in restrictions.get("users") or [])
+        if set(users) != EXPECTED_MAIN_PUSHER_ACCOUNTS:
+            problems.append(
+                f"the push restriction names {users or ['nobody']} instead of "
+                f"{sorted(EXPECTED_MAIN_PUSHER_ACCOUNTS)}"
+            )
+        for group in ("teams", "apps"):
+            granted = [entry.get("slug") or entry.get("name", "")
+                       for entry in restrictions.get(group) or []]
+            if granted:
+                problems.append(f"the push restriction grants {group} {granted}; "
+                                "the design grants none")
+    if not (protection.get("enforce_admins") or {}).get("enabled"):
+        problems.append("enforce-admins is off; the design requires it on")
+    if (protection.get("allow_force_pushes") or {}).get("enabled"):
+        problems.append("force-push is allowed; the design blocks it")
+    if (protection.get("allow_deletions") or {}).get("enabled"):
+        problems.append("branch deletion is allowed; the design blocks it")
+    return problems
+
+
+def audit_branch_protection(arguments) -> int:
+    try:
+        if arguments.protection_file:  # test seam, C7 class: replaces only the fetch
+            try:
+                protection = json.loads(
+                    Path(arguments.protection_file).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise Refusal(
+                    "audit-failed",
+                    f"the protection settings could not be read: {error}",
+                    "Re-run once the settings source is readable.",
+                ) from None
+        else:
+            slug = arguments.repo_slug or derive_repo_slug(
+                resolve_repository(arguments.repo))
+            protection = fetch_branch_protection(slug)
+    except Refusal as failure:
+        return emit({
+            "outcome": "audit-failed", "facts": failure.facts,
+            "next_action": failure.next_action,
+            "summary": f"audit-failed — {failure.facts}",
+        }, EXIT_REFUSED)
+    problems = compare_protection(protection)
+    if problems:
+        return emit({
+            "outcome": "protection-wrong", "facts": "; ".join(problems),
+            "next_action": "Restore the settings named in facts to the design's "
+                           "values (an org-owner act — the user's alone), then "
+                           "re-run the audit.",
+            "summary": f"protection-wrong — {'; '.join(problems)}",
+        }, EXIT_REFUSED)
+    return emit({
+        "outcome": "protection-ok",
+        "summary": "protection-ok — main's live protection matches the design",
+    }, EXIT_SUCCESS)
+
+
 def check_in(arguments) -> int:
     request = screen_form(arguments)
     repository = resolve_repository(arguments.repo)
@@ -799,17 +1444,68 @@ def check_in(arguments) -> int:
                 "summary": f"already-checked-in {already}",
             }, EXIT_SUCCESS)
 
+        # 4.1 (ruled 2026-08-10): concurrent identical submissions share one
+        # digest workspace — a live twin is answered, never swept from under.
+        existing = workspace_root() / digest
+        if worker_state(existing) in LIVE_STATES:
+            return emit({
+                "outcome": "in-progress", "digest": digest,
+                "summary": "in-progress — a live worker already holds this exact "
+                           f"work; collect the outcome with: status {digest}",
+            }, EXIT_SUCCESS)
+        shutil.rmtree(existing, ignore_errors=True)
+
+        # The claim IS the creation (ruled 2026-08-12). Testing whether the
+        # workspace was occupied and then creating it left a gap between the
+        # two: a twin arriving inside it saw a directory with no pid file,
+        # concluded the owner was dead, and deleted the live sibling's request
+        # and clone — the exact case 4.1 exists to prevent. An exclusive mkdir
+        # cannot be raced, and the identity is stamped before anything else so
+        # the 'unknown' window is one rename wide.
+        workspace = existing
+        try:
+            workspace.mkdir(parents=True)
+        except FileExistsError:
+            return emit({
+                "outcome": "in-progress", "digest": digest,
+                "summary": "in-progress — another submission claimed this exact "
+                           f"work first; collect the outcome with: status {digest}",
+            }, EXIT_SUCCESS)
+        write_worker_identity(workspace)
         # The request record: written once, read by everything downstream.
-        workspace = workspace_root() / digest
-        shutil.rmtree(workspace, ignore_errors=True)
-        workspace.mkdir(parents=True, exist_ok=True)
         (workspace / "request.json").write_text(
-            json.dumps({**request, "digest": digest, "remote": remote}, indent=2),
+            json.dumps({**request, "digest": digest, "remote": remote,
+                        "host": socket.gethostname()}, indent=2),
             encoding="utf-8",
         )
-        (workspace / "worker.pid").write_text(str(os.getpid()), encoding="utf-8")
+        # The declaration snapshot: the worker (and any resubmit-side rebuild)
+        # reads declared bytes from here, never from the caller's live
+        # worktree, whose state at worker time is nobody's promise (B4c).
+        for declared_path, declared_content in worktree.items():
+            if declared_content is None:
+                continue
+            snapshot = workspace / "declared" / declared_path
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.write_bytes(declared_content)
         shutil.move(str(clone), str(workspace / "candidate"))
         clone = workspace / "candidate"
+
+        if getattr(arguments, "no_wait", False):
+            spawned = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "worker", digest],
+                start_new_session=True, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            (workspace / "worker.pid").write_text(
+                f"{spawned.pid} 0", encoding="utf-8"  # worker stamps exact identity
+            )
+            workspace = None  # ownership passed to the worker; do not sweep
+            return emit({
+                "outcome": "accepted", "digest": digest,
+                "next_action": f"Collect the outcome with: git-gatekeeper.py "
+                               f"status {digest}",
+                "summary": f"accepted {digest}",
+            }, EXIT_SUCCESS)
 
         try:
             commit, integrated_over = integrate_and_push(clone, request, worktree, digest)
@@ -839,17 +1535,26 @@ def check_in(arguments) -> int:
             shutil.rmtree(workspace, ignore_errors=True)
 
 
-def unbuilt_command(name: str, slice_number: int) -> int:
-    raise Refusal(
-        "unbuilt-option", f"the {name} command is not built in this version",
-        f"Nothing to do: {name} arrives in slice {slice_number} of the git-gatekeeper "
-        "build (nedschorus#3). Until then, resubmit the work itself with check-in — "
-        "resubmitting is always safe.",
-    )
+class TeachingArgumentParser(argparse.ArgumentParser):
+    """Command-line-form errors join the JSON contract (user-ruled 2026-08-11).
+
+    argparse's default is usage text on stderr and exit 2 — the defect code.
+    A caller's typo is not a gatekeeper defect: it refuses like every other
+    malformed field, teaching form intact, exit 1.
+    """
+
+    def error(self, message):
+        raise Refusal(
+            "malformed-field", f"the command line is malformed: {message}",
+            "Resubmit with a corrected invocation; the request grammar is in the "
+            "specification (docs/cross-project/git-gatekeeper-design.md). "
+            "(--help is deliberately not cited here: it prints usage text, "
+            "not the JSON every other invocation returns.)",
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = TeachingArgumentParser(
         prog="git-gatekeeper.py", description="The single check-in gate for nedschorus.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -873,19 +1578,44 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--no-wait", dest="no_wait", action="store_true")
 
     for name in ("status", "cancel"):
-        later = commands.add_parser(name, help=f"{name} a request (slice 4)")
+        later = commands.add_parser(name, help=f"{name} a request by digest")
         later.add_argument("digest", nargs="?", default=None)
+        later.add_argument("--repo", default=None,
+                           help="the repository whose history answers")
+
+    # Hidden from --help (ruled 2026-08-12): `worker` is an internal re-entry
+    # the program makes into itself, not a caller-facing subcommand, and it
+    # prints nothing — its reply channel is the workspace. The caller-facing
+    # surface must match the caller-facing one-JSON-object contract, and the
+    # specification now names this and --help as its two exemptions.
+    worker = commands.add_parser("worker", help=argparse.SUPPRESS)
+    worker.add_argument("digest")
+
+    audit = commands.add_parser(
+        "audit", help="check main's live branch protection against the design (B3c)")
+    audit.add_argument("--repo", default=None,
+                       help="checkout whose origin names the repository")
+    audit.add_argument("--repo-slug", default=None, metavar="OWNER/REPO")
+    audit.add_argument("--protection-file", default=None, metavar="JSON",
+                       help="test seam: read settings from a file instead of gh")
 
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    arguments = parser.parse_args(argv)
     try:
+        arguments = parser.parse_args(argv)
+        sweep_stale_workspaces()
         if arguments.command == "check-in":
             return check_in(arguments)
-        return unbuilt_command(arguments.command, 4)
+        if arguments.command == "status":
+            return status_query(arguments)
+        if arguments.command == "cancel":
+            return cancel_request(arguments)
+        if arguments.command == "audit":
+            return audit_branch_protection(arguments)
+        return run_worker(arguments)
     except Refusal as refusal:
         return emit({
             "outcome": "refused", "error": refusal.error, "facts": refusal.facts,
