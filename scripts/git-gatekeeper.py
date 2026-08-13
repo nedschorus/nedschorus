@@ -449,6 +449,58 @@ def compute_base(repository: Path) -> str:
     return base
 
 
+def refuse_symlinked_component(root: Path, path: str, side: str) -> None:
+    """No component of a declared path may be a symlink, on either side of the
+    comparison (ruled 2026-08-12, widening WALK-1 of 2026-08-11).
+
+    WALK-1 was applied as one lstat on the declared path's final component, and
+    the specification's rationale — "a link's target can live outside the
+    repository, and the security boundary does not follow it" — was delivered in
+    neither direction.
+
+    Reading: with `esc` a symlink to a directory outside the repository,
+    declaring `esc/secret.txt` passed every screen, because the leaf is a
+    regular file reached *through* the link; its bytes were read from outside
+    and checked in to main.
+
+    Writing: the candidate commit is built by checking out main and writing
+    declared bytes over it, so a symlink carried in **main's own tree** was
+    recreated in the clone and the write followed it out of the repository — a
+    file outside every repository was overwritten with the caller's content, and
+    the caller's own worktree is innocent in that case, so no check on the
+    caller's files can catch it.
+
+    Containment (`resolve()` inside the root) is deliberately not used as the
+    primary form: on its own it would reverse WALK-1, since a symlink whose
+    target sits inside the repository passes containment while the ruling
+    refuses it.
+    """
+    current = root
+    for part in Path(path).parts:
+        current = current / part
+        if not current.is_symlink():
+            continue
+        if side == "worktree":
+            raise Refusal(
+                "malformed-field",
+                f"the declared path {path!r} passes through a symlink at "
+                f"{current.relative_to(root).as_posix()!r}",
+                "Resubmit naming regular files only, with no symlinked directory "
+                "on the way: the gate reads regular-file bytes and does not "
+                "follow links (ruled 2026-08-11, widened 2026-08-12).",
+            )
+        raise Refusal(
+            "base-tree-symlink",
+            f"main carries a symlink at "
+            f"{current.relative_to(root).as_posix()!r}, on the way to the declared "
+            f"path {path!r}",
+            "Nothing to resubmit: the link is on main, not in your checkout, and "
+            "writing through it would place your bytes outside the repository. "
+            "Ask whoever maintains that path on main to replace the link with a "
+            "regular file, then check the work in.",
+        )
+
+
 def read_worktree_content(
     repository: Path, paths: list[str], import_declaration: dict | None = None
 ) -> dict[str, bytes | None]:
@@ -465,12 +517,7 @@ def read_worktree_content(
         if path == import_destination:
             continue
         candidate = repository / path
-        if candidate.is_symlink():
-            raise Refusal(
-                "malformed-field", f"the path {path!r} is a symlink",
-                "Resubmit naming regular files only: the gate reads regular-file "
-                "bytes and does not follow links (ruled 2026-08-12).",
-            )
+        refuse_symlinked_component(repository, path, side="worktree")
         if candidate.is_file():
             content[path] = candidate.read_bytes()
         elif candidate.exists():
@@ -677,6 +724,10 @@ def build_candidate(
     run_git(["checkout", "--quiet", "-B", CANDIDATE_BRANCH, target or request["base"]], cwd=clone)
 
     for path in request["paths"]:
+        # The base tree gets the same check as the caller's worktree (ruled
+        # 2026-08-12): checkout recreates any symlink main carries, and the
+        # write below would follow it out of the repository.
+        refuse_symlinked_component(clone, path, side="base")
         target = clone / path
         content = worktree[path]
         if content is None:

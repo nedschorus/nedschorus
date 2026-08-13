@@ -561,6 +561,54 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("outcome") == "cancelled", payload)
     check("T8 the abandoned workspace is swept", not fake_workspace.exists())
 
+    # The symlink boundary, both directions (ruled 2026-08-12, widening
+    # WALK-1). The shipped check tested only a declared path's final component,
+    # so a symlinked ANCESTOR read bytes from outside the repository; and the
+    # write side had no check at all, so a symlink carried in MAIN's tree was
+    # recreated in the candidate clone and the write followed it out. Both were
+    # demonstrated during the PR #49 review. The outside file's bytes are the
+    # load-bearing assertion: the reply alone looked like an ordinary io error.
+    remote, work, base = make_fixture(workspace, "symlink-boundary")
+    outside = workspace / "outside-every-repository"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("OUTSIDE CONTENT\n", encoding="utf-8")
+
+    (work / "esc").symlink_to(outside, target_is_directory=True)
+    code, payload = run_gatekeeper(
+        base_request(work, remote, base, ["esc/secret.txt"], "read through a link"),
+        state_home,
+    )
+    check("a symlinked ancestor refuses on the read side",
+          payload.get("error") == "malformed-field"
+          and "symlink" in payload.get("facts", ""), payload)
+    (work / "esc").unlink()
+
+    # main carries the link; the caller's copy is an ordinary file, so no check
+    # on the caller's worktree can see the problem.
+    seeded = workspace / "symlink-boundary-seed"
+    git(["clone", "--quiet", str(remote), str(seeded)], workspace)
+    git(["config", "user.name", "fixture"], seeded)
+    git(["config", "user.email", "fixture@nedschorus.invalid"], seeded)
+    (seeded / "docs").mkdir()
+    os.symlink(str(secret), str(seeded / "docs" / "link.txt"))
+    git(["add", "-A"], seeded)
+    git(["commit", "--quiet", "-m", "main carries a symlink"], seeded)
+    git(["push", "--quiet", "origin", "main"], seeded)
+    git(["pull", "--quiet"], work)
+    link_in_work = work / "docs" / "link.txt"
+    if link_in_work.is_symlink():
+        link_in_work.unlink()
+    link_in_work.write_text("DECLARED BY THE CALLER\n", encoding="utf-8")
+    code, payload = run_gatekeeper(
+        base_request(work, remote, None, ["docs/link.txt"], "write through main's link"),
+        state_home,
+    )
+    check("a symlink in main's tree refuses with its own named error",
+          payload.get("error") == "base-tree-symlink", payload)
+    check("the file outside every repository is untouched",
+          secret.read_text(encoding="utf-8") == "OUTSIDE CONTENT\n", payload)
+
     # Death requires positive evidence (ruled 2026-08-12). An unreadable or
     # absent worker.pid used to read as "dead", the strongest conclusion from
     # the weakest evidence: status called a running request abandoned, and a
