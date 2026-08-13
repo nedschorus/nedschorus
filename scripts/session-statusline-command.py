@@ -48,6 +48,11 @@ Payload fields are those of Claude Code 2.1.220 and 2.1.226, read from the
 binary's status line builder rather than from documentation.
 """
 
+# The Mac this project is driven from ships only Python 3.9, where the
+# `X | None` annotations below are a TypeError at import time — which no
+# amount of payload tolerance survives, because it fires before main() runs.
+from __future__ import annotations
+
 import json
 import os
 import sys
