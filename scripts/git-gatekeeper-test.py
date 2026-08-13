@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for git-gatekeeper.py, slices 1 to 4.
+"""Tests for git-gatekeeper.py, slices 1 to 5.
 
 Run: python3 scripts/git-gatekeeper-test.py
 
@@ -22,8 +22,10 @@ Coverage, against the specification's acceptance-test index:
   T7  the worker lifecycle: --no-wait accepted, every status outcome
       (checked-in / in-progress / abandoned / unknown / the B4d record)
   T8  cancel: all four branches, group-kill-and-wait for a live worker
-  plus the 4.1 live-twin in-progress answer, the expiry sweep,
-  B2's trailer round-trip, and B3d's version floors.
+  B3c the branch-protection audit: all three outcomes (ok and wrong via
+      the --protection-file seam; audit-failed with gh off the PATH)
+  plus the 4.1 live-twin in-progress answer, the expiry sweep, the repo
+  git-config pins, B2's trailer round-trip, and B3d's version floors.
   (T10 retired 2026-08-10 with the `imports` subcommand; the trailer's
   exactness stays covered by the import happy path and B2's round-trip.
   The base is computed by the program since the same ruling, so no --base
@@ -562,6 +564,60 @@ with tempfile.TemporaryDirectory() as workspace_name:
     run_gatekeeper(["status", "0" * 64, "--repo", str(work)], state_home)
     check("the sweep clears a 31-day-old refusal record", not aged_record.exists())
     check("the sweep clears stale screening scratch", not aged_scratch.exists())
+
+    # --- slice 5: the branch-protection audit (B3c's three outcomes) --------
+    designed = {
+        "restrictions": {"users": [{"login": "NedLern"}], "teams": [], "apps": []},
+        "enforce_admins": {"enabled": True},
+        "allow_force_pushes": {"enabled": False},
+        "allow_deletions": {"enabled": False},
+    }
+    protection_file = workspace / "protection.json"
+    protection_file.write_text(json.dumps(designed), encoding="utf-8")
+    code, payload = run_gatekeeper(
+        ["audit", "--protection-file", str(protection_file)], state_home)
+    check("B3c audit answers protection-ok on the designed settings",
+          payload.get("outcome") == "protection-ok" and code == 0, payload)
+
+    drifted = {
+        "restrictions": {"users": [{"login": "NedLern"}, {"login": "intruder"}],
+                         "teams": [], "apps": []},
+        "enforce_admins": {"enabled": False},
+        "allow_force_pushes": {"enabled": True},
+        "allow_deletions": {"enabled": False},
+    }
+    protection_file.write_text(json.dumps(drifted), encoding="utf-8")
+    code, payload = run_gatekeeper(
+        ["audit", "--protection-file", str(protection_file)], state_home)
+    check("B3c audit answers protection-wrong on drifted settings",
+          payload.get("outcome") == "protection-wrong" and code == 1, payload)
+    audit_facts = payload.get("facts", "")
+    check("B3c protection-wrong names every differing setting",
+          "intruder" in audit_facts and "enforce-admins" in audit_facts
+          and "force-push" in audit_facts, audit_facts)
+
+    no_gh_environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                         "PATH": str(workspace / "empty-path")}
+    no_gh_environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "audit",
+         "--repo-slug", "nedschorus/nedschorus"],
+        capture_output=True, text=True, check=False, env=no_gh_environment,
+    )
+    audit_payload = json.loads(completed.stdout)
+    check("B3c audit without gh answers audit-failed, never a silent skip",
+          audit_payload.get("outcome") == "audit-failed"
+          and completed.returncode == 1, audit_payload)
+
+    # --- slice 5: the repo git-config pins ----------------------------------
+    enclosing = SCRIPT_PATH.parent.parent
+    for key in ("user.name", "user.email"):
+        pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
+        check(f"slice 5 pins {key} in the enclosing repository", bool(pinned), key)
+    use_config_only = git(["config", "user.useConfigOnly"], enclosing,
+                          check_result=False).stdout.strip()
+    check("slice 5 pins user.useConfigOnly=true", use_config_only == "true",
+          use_config_only or "(unset)")
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.

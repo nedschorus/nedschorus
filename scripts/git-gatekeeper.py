@@ -6,7 +6,8 @@ Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-git-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
-Slices 1 to 4 of five are built. For each request the program does exactly
+Slices 1 to 5 of five are built (slice 5's CLAUDE.md workflow lines land
+separately, walked with the user). For each request the program does exactly
 one of two things — checks the work in, or refuses and teaches the fix. On
 success four things are true: the change is on main, the checks ran against
 exactly the content pushed, the commit's trailers carry the whole
@@ -36,9 +37,13 @@ in-progress / abandoned / the retained record (once, then swept) / unknown;
 cancel kills the worker's whole process group, waits, then lets history
 arbitrate — four outcomes. Every invocation opportunistically sweeps stale
 workspaces (30-day refusal records, day-old screening scratch and
-dead-worker leftovers). Not yet built: the branch-protection audit
-(slice 5). Exit code 2 stays reserved for a defect in this program; the
-parser layer refuses malformed command lines as JSON, exit 1.
+dead-worker leftovers). Slice 5 (built 2026-08-12): the branch-protection
+audit — `audit` reads main's live protection via gh and answers B3c's three
+outcomes, protection-ok / protection-wrong (facts naming every differing
+setting) / audit-failed (gh missing, unauthenticated, API error — a loud
+finding, never a silent skip); it rides each session recycle via the
+fast-handoff writer. Exit code 2 stays reserved for a defect in this
+program; the parser layer refuses malformed command lines as JSON, exit 1.
 
 The entry checkpoint's guarantee is that the record cannot lag the system: an
 import is declared as a triple, validated against the legacy repository at
@@ -1023,6 +1028,132 @@ def cancel_request(arguments) -> int:
                             "main"}, EXIT_SUCCESS)
 
 
+# --- The branch-protection audit (slice 5) ----------------------------------
+# B3c: three named outcomes — protection-ok / protection-wrong / audit-failed
+# — failing loudly as its own outcome, never a silent skip into green. Rides
+# each session recycle (ruled 2026-08-12) via the fast-handoff writer.
+
+# The contract the audit checks (spec § The credential and enforcement, LIVE
+# since 2026-07-21). The C3 amendment moves the pusher to the dedicated
+# account — update this set in the same commit that applies it.
+EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern"}
+
+
+def derive_repo_slug(repository: Path) -> str:
+    remote = run_git(["remote", "get-url", "origin"], cwd=repository, check=False)
+    url = remote.stdout.strip()
+    match = re.search(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$", url)
+    if remote.returncode != 0 or not match:
+        raise Refusal(
+            "audit-failed", f"the origin remote {url!r} is not a GitHub repository",
+            "Run the audit from a checkout whose origin is on github.com, or pass "
+            "--repo-slug owner/repo.",
+        )
+    return match.group(1)
+
+
+def fetch_branch_protection(repo_slug: str) -> dict:
+    try:
+        completed = subprocess.run(
+            ["gh", "api", f"repos/{repo_slug}/branches/{MAIN_BRANCH}/protection"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+    except FileNotFoundError:
+        raise Refusal(
+            "audit-failed", "gh is not installed on this box",
+            "Install and authenticate the GitHub CLI, then re-run the audit.",
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise Refusal(
+            "audit-failed", "the GitHub API did not answer within 30 seconds",
+            "Re-run the audit; this failure is safe to retry.",
+        ) from None
+    if completed.returncode != 0:
+        raise Refusal(
+            "audit-failed",
+            f"reading protection for {repo_slug} failed: "
+            f"{completed.stderr.strip() or completed.stdout.strip() or 'no detail'}",
+            "Authenticate gh with an account that can read branch protection, or "
+            "fix the network, then re-run. An unreadable wall is a finding, never "
+            "a silent skip into green.",
+        )
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        raise Refusal(
+            "audit-failed", "the protection reply was not JSON",
+            "Re-run the audit; if this repeats, gh or the API changed shape.",
+        ) from None
+
+
+def compare_protection(protection: dict) -> list[str]:
+    """Every way the live settings differ from the design, in plain words."""
+    problems: list[str] = []
+    restrictions = protection.get("restrictions")
+    if not restrictions:
+        problems.append(
+            "no push restriction exists; the design restricts main pushes to "
+            f"exactly {sorted(EXPECTED_MAIN_PUSHER_ACCOUNTS)}"
+        )
+    else:
+        users = sorted(u.get("login", "") for u in restrictions.get("users") or [])
+        if set(users) != EXPECTED_MAIN_PUSHER_ACCOUNTS:
+            problems.append(
+                f"the push restriction names {users or ['nobody']} instead of "
+                f"{sorted(EXPECTED_MAIN_PUSHER_ACCOUNTS)}"
+            )
+        for group in ("teams", "apps"):
+            granted = [entry.get("slug") or entry.get("name", "")
+                       for entry in restrictions.get(group) or []]
+            if granted:
+                problems.append(f"the push restriction grants {group} {granted}; "
+                                "the design grants none")
+    if not (protection.get("enforce_admins") or {}).get("enabled"):
+        problems.append("enforce-admins is off; the design requires it on")
+    if (protection.get("allow_force_pushes") or {}).get("enabled"):
+        problems.append("force-push is allowed; the design blocks it")
+    if (protection.get("allow_deletions") or {}).get("enabled"):
+        problems.append("branch deletion is allowed; the design blocks it")
+    return problems
+
+
+def audit_branch_protection(arguments) -> int:
+    try:
+        if arguments.protection_file:  # test seam, C7 class: replaces only the fetch
+            try:
+                protection = json.loads(
+                    Path(arguments.protection_file).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise Refusal(
+                    "audit-failed",
+                    f"the protection settings could not be read: {error}",
+                    "Re-run once the settings source is readable.",
+                ) from None
+        else:
+            slug = arguments.repo_slug or derive_repo_slug(
+                resolve_repository(arguments.repo))
+            protection = fetch_branch_protection(slug)
+    except Refusal as failure:
+        return emit({
+            "outcome": "audit-failed", "facts": failure.facts,
+            "next_action": failure.next_action,
+            "summary": f"audit-failed — {failure.facts}",
+        }, EXIT_REFUSED)
+    problems = compare_protection(protection)
+    if problems:
+        return emit({
+            "outcome": "protection-wrong", "facts": "; ".join(problems),
+            "next_action": "Restore the settings named in facts to the design's "
+                           "values (an org-owner act — the user's alone), then "
+                           "re-run the audit.",
+            "summary": f"protection-wrong — {'; '.join(problems)}",
+        }, EXIT_REFUSED)
+    return emit({
+        "outcome": "protection-ok",
+        "summary": "protection-ok — main's live protection matches the design",
+    }, EXIT_SUCCESS)
+
+
 def check_in(arguments) -> int:
     request = screen_form(arguments)
     repository = resolve_repository(arguments.repo)
@@ -1183,6 +1314,14 @@ def build_parser() -> argparse.ArgumentParser:
     worker = commands.add_parser("worker", help="internal: the detached --no-wait worker")
     worker.add_argument("digest")
 
+    audit = commands.add_parser(
+        "audit", help="check main's live branch protection against the design (B3c)")
+    audit.add_argument("--repo", default=None,
+                       help="checkout whose origin names the repository")
+    audit.add_argument("--repo-slug", default=None, metavar="OWNER/REPO")
+    audit.add_argument("--protection-file", default=None, metavar="JSON",
+                       help="test seam: read settings from a file instead of gh")
+
     return parser
 
 
@@ -1197,6 +1336,8 @@ def main(argv: list[str] | None = None) -> int:
             return status_query(arguments)
         if arguments.command == "cancel":
             return cancel_request(arguments)
+        if arguments.command == "audit":
+            return audit_branch_protection(arguments)
         return run_worker(arguments)
     except Refusal as refusal:
         return emit({

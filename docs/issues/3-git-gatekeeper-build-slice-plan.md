@@ -38,7 +38,7 @@ main through the program.** Everything that does not serve that goes later.
 | 2 **BUILT 2026-08-08** | The entry checkpoint: `--import` (the `imports` query was built here, then deleted by user ruling 2026-08-10 — `git log --grep` is the view) | T11 (T10 retired) | hand-recorded legacy imports |
 | 3 **BUILT 2026-08-09** | Concurrency: loser integrates over newer commits, real conflict refuses, retry cap | T4, T5, T6 | slice 1's `main-moved` refusal |
 | 4 **BUILT 2026-08-12** | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery, the expiry sweep | T7, T8 | slice 1's `unbuilt-option` refusal |
-| 5 | Enforcement surfaces: branch-protection audit, repo git config, CLAUDE.md workflow lines (trailer-absence audit deleted, user-ruled 2026-08-10) | B3c | the founding-window "boss watches every landing" guard |
+| 5 **BUILT 2026-08-12** | Enforcement surfaces: branch-protection audit (`audit` subcommand + the session-recycle ride in the fast-handoff writer), repo git config pins, the CLAUDE.md workflow line (user-walked 2026-08-12) (trailer-absence audit deleted, user-ruled 2026-08-10) | B3c | the founding-window "boss watches every landing" guard |
 
 Not in any of the five, and deliberately so: the review-evidence check for
 the instruction-file class

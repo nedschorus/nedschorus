@@ -45,6 +45,7 @@ def run_writer(workspace: Path, next_step_text: str, *extra_arguments):
         key: value for key, value in os.environ.items()
         if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
     }
+    scrubbed_environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"  # offline tests never call GitHub
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "tester",
          "--next-step-file", str(next_step_path), "--handoff-dir", str(workspace),
