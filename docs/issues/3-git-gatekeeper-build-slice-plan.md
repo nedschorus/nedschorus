@@ -634,7 +634,13 @@ remains in git history at `4cadb46`.
   ruling directs — nothing in the program changed — with one repair
   alongside: the suite's own git-version parse took the last token of `git
   version 2.39.5 (Apple Git-154)` and crashed the whole run on macOS
-  before the floor could report.
+  before the floor could report. The ruling was then carried out on the
+  Mac host 2026-08-13: `brew install git` put 2.55.0 ahead of Apple's
+  2.39.5 on PATH and the git-floor case went green, leaving
+  `user.useConfigOnly` as the suite's only failing case there. Python was
+  already satisfied by an explicitly-invoked `python3.13`; the system
+  `python3` remains 3.9.6, which matters for any caller that runs the
+  program as plain `python3` rather than naming the interpreter.
 - APPLIED 2026-08-12 (`cb582d6`, `cacd3b9`) and 2026-08-13 (the accepted
   reply, the specification correction) — **`status` and `cancel` are
   host-local, and say so.** The workspace lives under the
