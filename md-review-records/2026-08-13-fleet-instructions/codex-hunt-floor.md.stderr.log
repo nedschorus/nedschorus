@@ -19,3 +19,2969 @@ For each flag: quote the exact phrase or sentence, and explain what is wrong, wh
 
 [35m[3mcodex[0m[0m
 I’ll inspect the checkout instructions and the target document (including its frontmatter and any explicitly referenced paths), then report only document-order findings with confidence labels and a “clean sections” line. I’ll make no edits.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "pwd && rg --files -g 'CLAUDE.md' -g 'AGENTS.md' -g '"'!node_modules'"' -g '"'!vendor'"' . && echo '---TARGET---' && sed -n '1,260p' docs/agents/fleet-instructions.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+./CLAUDE.md
+---TARGET---
+# `fleet` — seat instructions
+
+Your pile: **the machinery that runs agents** — launchers, handoffs, session isolation, and the tooling around keeping several agents straight. Read [the seat model](agent-seat-model.md) first; you own that model's implementation.
+
+## Your open PR
+
+**[PR #57](https://github.com/nedschorus/nedschorus/pull/57)**, branch `launch-claude-machine-named-launchers`, awaiting the Mac-side review seat. It carries: `scripts/launch-claude` renamed to `launch-claude-ubuntu` plus a new `launch-claude-mac` twin (both teach on the no-name case and list running agents); `docs/cross-project/fleet-machine-paths-and-checkouts.md`, the two-machine path reference; the supervisor's branch sync; the session riders; the fleet work inventory; and these seat briefs. **Nothing else should touch those files until it merges.**
+
+## The state of the machinery
+
+- **Launchers** (`scripts/launch-claude-{ubuntu,mac}`): attach-or-create by tmux session name, agent home at `~/agents/<name>`, identity from a `CLAUDE.local.md` there, the handoff supervisor inside. The name typed is the whole configuration — no roster ([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)).
+- **The supervisor** (`scripts/handoff-supervisor.py`): launches each session, recycles on every handoff, exits when its agent stops without one. Since 2026-08-13 it **syncs the agent's branch with main before each launch** — fetch, then fast-forward only when the tree is clean and strictly behind; otherwise report and change nothing. It never merges (a conflicted merge waiting for an unwoken agent is worse than being behind) and never runs on the adoption path (changing files under a live agent is the one forbidden act).
+- **The recycle trigger** (`scripts/handoff-context-threshold-hook.py`): a Stop hook firing at 50% context, wired into project settings 2026-08-12.
+- **Guards**: `.claude/hooks/instruction-file-guard.py` blocks edits to CLAUDE.md and `.claude/` machinery without the user's walked approval, consumed through a `.walk-approved` marker.
+
+## Your queue
+
+`docs/issues/queue/45-session-seat-and-isolation-riders.md` holds five ideas discussed and deliberately not built, each with its reasoning. **Read it before proposing any of them** — in particular, rider 1's obvious detection method (a `/proc` scan for two live sessions in one directory) was tried and **proved unreliable**: an attached session's process reports the directory the attach command was typed in, not the directory the session works in. Solve detection before building that guard.
+
+Issues: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#50](https://github.com/nedschorus/nedschorus/issues/50) (worktree file hygiene), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (turn/steer equivalents), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console insertion, stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (mutual oversight, watch-your-back). PR #52 (fast-handoff findings applied) is adjacent — coordinate with `sanity-checker`, which shepherds it.
+
+## Session-management facts, verified 2026-08-13 on Claude Code 2.1.231
+
+Expensive to learn, easy to lose:
+
+- **Job ids are not session ids.** `claude attach <id>` wants the 8-character job id (directory names under `~/.claude/jobs/`), not the session UUID.
+- **`claude agents`** opens agent view: `Space` peeks without attaching, `Ctrl+R` renames, `Ctrl+T` pins against the ~1-hour idle reap, `Ctrl+X` stops, `Ctrl+S` groups by directory — which makes the shared-directory hazard visible.
+- It lists **only the machine it runs on**; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
+- **No side-by-side view exists.** Simultaneous views mean one terminal per session.
+- **Process uptime is not idle time.** A session showing 23 hours of `etime` may have been active a minute ago; check its transcript's modification time under `~/.claude/projects/`.
+- Non-interactive SSH shells did not see `~/.local/bin` until `~/.bashrc` was fixed on 2026-08-13 to export PATH above its non-interactive early-return.
+
+## Your standing invariant
+
+**Two live sessions must never share a working directory.** Forks inherit the parent's directory along with its conversation; background jobs inherit the launching session's cwd. `EnterWorktree` relocates a running session correctly — the gap is the trigger, not the capability.
+
+## First action
+
+Check whether PR #57 has merged. If it has, verify the renamed launchers work from the Mac and tell the user. If not, report its status and ask which rider he wants next — noting that rider 1 is blocked on solving detection.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "echo '---CLAUDE---' && sed -n '1,320p' CLAUDE.md && echo '---TARGET-LENGTH---' && wc -l docs/agents/fleet-instructions.md && echo '---TARGET-REST---' && sed -n '261,620p' docs/agents/fleet-instructions.md && echo '---EXPLICIT-PATHS---' && rg -n -o '"'`[''^`]*'"\\.(md|py|sh|local\\.md)["'^`]*`|'"\\[["'^]]+'"\\]\\(["'^)]*'"\\.(md|py|sh|local\\.md)["'^)]*'"\\)' docs/agents/fleet-instructions.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+---CLAUDE---
+# nedschorus
+
+- The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: modify anything there or execute its code.
+- Use standard SDLC terms.
+- Write durable artifacts — committed files, issue bodies, commit messages — for a reader with zero context: the subject identifiable, the why stated, usable without the conversation that produced it.
+- When writing instructions, absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously.
+- When creating or inventing names, for directories, file names, globals, functions, classes, scripts, section headings, and other names likely to be grepped, use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
+- How a change reaches main: the git-gatekeeper (`scripts/git-gatekeeper.py check-in` — specification: `docs/cross-project/git-gatekeeper-design.md`) is the permanent path — one program, one credential, one door; agents never push to main. Until its credential work lands (activation waits on build slice 6), the gate is dormant and the interim lane applies: commit to the working branch, push it, and the user's Mac-side agent reviews and merges. In-flight work answers to `status <digest>` and `cancel <digest>`; `audit` checks main's live protection against the design.
+- Before saving or proposing a memory, check whether it is actually a task — something to do, removed when done. If so make it a task, not a memory; memory holds durable facts and every memory write requires the user's approval.
+---TARGET-LENGTH---
+39 docs/agents/fleet-instructions.md
+---TARGET-REST---
+---EXPLICIT-PATHS---
+3:[the seat model](agent-seat-model.md)
+7:`docs/cross-project/fleet-machine-paths-and-checkouts.md`
+11:`CLAUDE.local.md`
+12:`scripts/handoff-supervisor.py`
+13:`scripts/handoff-context-threshold-hook.py`
+14:`.claude/hooks/instruction-file-guard.py`
+18:`docs/issues/queue/45-session-seat-and-isolation-riders.md`
+
+[35m[3mcodex[0m[0m
+The target is 39 lines and the checkout has one governing file, `CLAUDE.md`. I’m now reading every local path the target names explicitly—including the seat model, queue note, launchers, supervisor, hook, and guard—so findings can distinguish an actual defect from a defined cross-reference.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'for p in docs/agents/agent-seat-model.md docs/cross-project/fleet-machine-paths-and-checkouts.md docs/issues/queue/45-session-seat-and-isolation-riders.md scripts/launch-claude-ubuntu scripts/launch-claude-mac scripts/handoff-supervisor.py scripts/handoff-context-threshold-hook.py .claude/hooks/instruction-file-guard.py; do if test -f "$p"; then printf '"'\\n--- %s (%s lines) ---\\n' \""'$p" "$(wc -l < "$p")"; sed -n '"'1,500p' \""'$p"; else printf '"'\\n--- MISSING %s ---\\n' \""'$p"; fi; done'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+
+--- docs/agents/agent-seat-model.md (107 lines) ---
+# The agent seat model
+
+How work on the Ubuntu box is divided among named agents, and why it is divided that way. Ruled by the user 2026-08-13, after a day in which parallel sessions accumulated faster than anyone tracked them. The per-seat briefs live beside this file as `docs/agents/<seat>-instructions.md`; every agent reads its own brief, and this file is the shared background behind all of them.
+
+## The words this model uses
+
+Defined here because the briefs use them as if established, and an agent reading one cold has nowhere else to look.
+
+- **Seat** — a named, long-lived agent identity: a name, a home directory (`~/agents/<seat>`), its own git branch, and a brief. A seat is *occupied* by a session and outlives any one session. One place the word is used loosely and deliberately: the **Mac-side agent**, which reviews branches and merges them to `main`, is the user's own agent on his Mac and is not one of the seats defined here.
+- **Session** — one running conversation. Sessions end and are replaced; the seat persists.
+- **Supervisor** — `scripts/handoff-supervisor.py`, the process that launches a seat's session, replaces it when it hands off, and exits when its agent stops without handing off. One supervisor per seat, holding a lock that refuses a second.
+- **Recycle** — the supervisor replacing a session with a fresh one, carrying the handoff forward. Triggered when the agent writes a handoff, usually because the `Stop` hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
+- **Handoff** — `~/.claude/handoffs/<seat>-handoff.md`, written by a session for its successor. Machine-local, never committed. Its companion `~/.claude/handoffs/<seat>-dialog-NNNN.md` holds that session's conversation tail, which a successor reads when it needs the discussion rather than the conclusion.
+- **Pile** — the body of related work a seat owns. A subject area with shared context, not an ordered queue: the tasks in it are named by the seat's brief, not enumerated as a list to work through in order.
+- **Brief** — `docs/agents/<seat>-instructions.md`. What a seat's occupant reads to learn its job. Briefs vary in shape; read yours for what it says.
+- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the repository root, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
+- **Instruction-class** — files that tell agents how to behave: `CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/`. They change only with walked approval.
+- **Slice** — one numbered increment of a build plan, built and landed on its own.
+- **C-numbers** (`C1`, `C3`, `C7`…) — identifiers of the git-gatekeeper's credential rulings, defined in `docs/cross-project/git-gatekeeper-design.md` § The credential and enforcement. Meaningful only inside that document.
+
+## The grouping rule
+
+**Group tasks by shared context, not by workload.** The test for whether two tasks belong to one seat: *does doing the first make the agent smarter about the second?* If yes, same seat. If no, separate seats — even when that leaves a seat idle.
+
+The user's reasoning, which this model serves:
+
+- An agent with focused context is smarter than one carrying unrelated history. Confusion is the expensive failure.
+- **An idle seat costs almost nothing** — no tokens, no attention — so never merge two unrelated piles to keep a seat busy. It is not literally free: an unretired seat holds a directory and a branch, and retiring it later takes the steps below. That cost is small and one-time.
+- The natural unit of work is a series of related tasks; at the end of one, the agent writes a handoff and the session is replaced, so the next series starts on a clean context.
+- Seats are resumed weeks later, so a name must say what the seat is for without opening anything.
+
+`sidebar` is the deliberate exception to the grouping rule: it holds no pile at all and answers whatever is asked, precisely so that off-topic questions never land in a seat whose context they would pollute.
+
+## The seats
+
+Seven are defined. Each row's brief is the authority on what that seat owns.
+
+| Seat | What it owns | Brief |
+|---|---|---|
+| `gatekeeper` | the remaining work to activate the git-gatekeeper: the walked-approval evidence format, build slice 6, then the credential work | `gatekeeper-instructions.md` |
+| `sanity-checker` | review quality — the sanity-checker reviewer (a prompt that proposes simplifications, `docs/drafts/sanity-checker-prompt-draft.md`) and whether it joins the eight-cell md-review grid run by `scripts/md-review-grid.py` | `sanity-checker-instructions.md` |
+| `skill-builder` | the seven proposed skills queued as issues #17–#23, and the queue-drain procedure that empties the project's queues ([#24](https://github.com/nedschorus/nedschorus/issues/24)) | `skill-builder-instructions.md` |
+| `ghi` | GitHub-issue knowledge and tooling: ghi-info ([#46](https://github.com/nedschorus/nedschorus/issues/46)), run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)), the reference-integrity checker ([#42](https://github.com/nedschorus/nedschorus/issues/42)) | `ghi-instructions.md` |
+| `fleet` | session and agent machinery: the launchers, the handoff supervisor, seat isolation | `fleet-instructions.md` |
+| `doctrine` | how the project should work: what it preserves ([#32](https://github.com/nedschorus/nedschorus/issues/32)), instruction delivery ([#30](https://github.com/nedschorus/nedschorus/issues/30)), the research bundles | `doctrine-instructions.md` |
+| `sidebar` | nothing — the spare, for off-topic questions | `sidebar-instructions.md` |
+
+**A naming caution, unresolved:** these are one-word names, which the project's own rule in `CLAUDE.md` warns against for anything likely to be grepped — and `gatekeeper` collides with the git-gatekeeper program it works on, so `~/agents/gatekeeper` reads as the program's home. The names stand until the user rules otherwise; when searching, prefer the full path (`docs/agents/gatekeeper-instructions.md`) over the bare word.
+
+## How many run
+
+Two or three at a time is the working pattern; **five is the ceiling the user set**. Four is allowed and unusual — if you find yourself launching a fourth, it is worth asking whether one of the running seats is finished.
+
+## When a seat's work is done
+
+A seat's pile is finished when everything in it that an *agent* can do is done, and what remains has been handed to the user with the groundwork prepared. Several piles end in an act only he can perform — creating a GitHub account, applying branch protection, approving an instruction-class change — so a seat whose completion is defined as "the outcome happened" can never finish, and an agent with no completion criterion either invents adjacent work or stalls waiting for an event it cannot observe.
+
+Each brief states its own criterion. The shared shape: **land what you can, prepare what you cannot, tell the user exactly what is left and whose it is, write a handoff, and stop.** Stopping is a legitimate ending.
+
+## The two ways a seat ends
+
+They are different, and confusing them loses work.
+
+**Paused** — the seat's current series is done and nobody is using it. Exit the session. Its handoff, home directory and branch all stay exactly as they are, which is what makes the seat resumable weeks later: relaunching the same name boots from that handoff. This is the ordinary ending, and it needs no cleanup.
+
+**Retired** — the name is being freed or repurposed. Three steps, in order:
+
+1. **Stop the stream first.** A running seat writes a fresh handoff at every recycle, so archiving while its supervisor is alive only clears the file until the next one. Exit the session and confirm no supervisor remains.
+2. **Archive the handoff**, do not delete it — these files are machine-local and not in git, so a delete is unrecoverable. Rename it `~/.claude/handoffs/<seat>-handoff-retired-YYYY-MM-DD.md`. If that name already exists, append `-2`, `-3`; never rename onto an existing archive.
+3. **Release the home and the branch.** `git worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch separately with `git branch -d <seat>` if the name is to be reused, since removing a worktree leaves its branch behind. A seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
+
+`choirmaster` is the live case: the founding seat, whose work has been redistributed into the seats above. Its 2026-08-12 handoff was archived on 2026-08-13 so a future agent of that name starts fresh, and the user intends to reuse the name for a coordinating seat later. Until he does, no `choirmaster` seat is defined by this model.
+
+## Why there is no master agent
+
+Considered and declined 2026-08-13. A coordinating seat has nothing to do while the user chooses which seats run, and the evidence is `choirmaster` itself: created to direct, it drifted into being an ordinary topic thread. Revisit if seats ever need to hand work to each other without the user in the loop — which today they cannot, since a seat's only channel to another seat is through him.
+
+## Filing new work
+
+Put a new task in the seat whose existing context makes it cheapest — not the emptiest seat. If it fits none of them, it is either a question for `sidebar`, answered and forgotten, or the seed of a new pile, which is the user's decision rather than a default.
+
+## Launching a seat
+
+From the **Mac**, using the Mac's own checkout of this repository:
+
+```
+~/Projects/nedschorus/scripts/launch-claude-ubuntu <seat> \
+    --first-prompt-file /home/nedlern/Projects/nedschorus/docs/agents/seat-first-prompt.md
+```
+
+The script runs on the Mac and reaches the box over SSH. The `--first-prompt-file` path is a **box-side** path, because the supervisor reads that file on the box. One generic file serves every seat: the agent learns its own name from its working directory, so nothing needs substituting.
+
+Three things about that command worth knowing before you rely on it:
+
+- **It is attach-or-create.** Running the name again attaches to the live session rather than starting a second one — and in that case `--first-prompt-file` does nothing, because there is no new session to seed. To exit a seat, exit the session inside it (`/exit`); to leave it running, detach from tmux (`Ctrl-b d`).
+- **A handoff outranks the first-prompt file.** If `~/.claude/handoffs/<seat>-handoff.md` exists, the supervisor boots from it; `--first-prompt-file` seeds only a session that has no handoff waiting, which in practice means a seat's very first launch. To seed a seat from another thread's context deliberately, copy that thread's handoff into the seat's name before launching.
+- **A session that ends without writing a handoff leaves nothing behind.** The next launch of that name starts from the first-prompt file as if new. That is why a seat being paused should hand off first, and why the handoff — not the session — is the thing that carries a seat's thread.
+
+The launcher creates the seat's home as a checkout on its own branch **before the session starts**, because project settings — the status line, the recycle hook, the instruction-file guard — are read from `.claude/` in the working directory at session start, and an agent booted into a bare directory runs without any of them.
+
+## What separate branches do and do not protect
+
+Each seat works on its own branch, and git permits a branch in only one worktree at a time. That is what normally keeps two seats from editing the same files or racing each other's pushes, and it is a check rather than a guarantee: `git worktree add --force` overrides it, a separate clone of the repository is invisible to it, and two seats editing the same file on different branches simply defer their collision to the merge.
+
+It protects nothing outside git. `~/.claude/handoffs/`, the job scratch directories, and the tmux server are shared machine-local state that every seat writes. Two seats using the same *name* would collide there regardless of branches — which is why one name means one seat.
+
+**Nothing that matters is left only in a session.** Work belongs in commits and pushes; decisions belong in the governing documents and issues. The exception is the handoff, which is durable, machine-local, never pushed, and the one artifact that makes a paused seat resumable — so a seat exited without one loses its thread even though its committed work is safe.
+
+--- docs/cross-project/fleet-machine-paths-and-checkouts.md (73 lines) ---
+---
+status: reference
+verified-as-of: 2026-08-13
+---
+
+# Fleet machine paths and checkouts
+
+Where every working copy, agent home, and handoff file lives on each machine of the nedschorus fleet, and which commands run where. Written because the fleet spans two machines that carry the same relative paths over different clones: on 2026-08-12 a `git pull` intended for the Ubuntu checkout ran on the Mac instead, leaving the box stale for hours while everyone believed it current. Naming the machine is not pedantry here; it is the difference between a command working and silently working somewhere else.
+
+The user-level instruction file on the box (`/home/nedlern/.claude/CLAUDE.md`) carries the short form of this rule for every session; this document is the full map behind it.
+
+## The two machines
+
+The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedschorus, its own Claude credentials, and its own agent state. Nothing but git branches crosses between them, and only when pushed — worktrees, handoff files, locks, and credentials are per-machine and never travel.
+
+The box is the default home for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. The Mac is also the review-and-merge seat: branch protection admits only `NedLern`, so merges to `main` happen from the Mac.
+
+## Three kinds of checkout, one repository
+
+All working copies on a machine are the same repository viewed at different branches, sharing one object store through git worktrees. **Git allows a branch to be checked out in only one worktree at a time**, which is the mechanism that keeps parallel agents from editing one branch's files: git refuses before they get the chance.
+
+1. **The main checkout** — the machine's primary working copy, parked on `main`. This is what `git pull` updates, and what a session reads for the live `.claude/` machinery (hooks, settings). A stale main checkout means stale hooks, which is how the instruction-file guard's worktree bug outlived its fix by a day.
+2. **Agent homes** — one permanent directory per named long-lived agent, each on that agent's own branch. Created by the launchers (as a plain directory) and made a checkout deliberately with `git worktree add` when the agent works on the repository.
+3. **Task worktrees** — disposable, one per background job that edits files, each on its own branch, created by the harness when a session isolates itself and removed when the job ends. Their value leaves as pushed commits; the directory afterwards is litter.
+
+## Ubuntu — `ned-box`, user `nedlern`
+
+Verified 2026-08-13.
+
+| What | Full path | Branch |
+|---|---|---|
+| Main checkout | `/home/nedlern/Projects/nedschorus` | `main` |
+| Agent home — the founding seat | `/home/nedlern/agents/choirmaster` | `choirmaster` |
+| Agent homes — general | `/home/nedlern/agents/<name>` | per agent |
+| Task worktrees | `/home/nedlern/Projects/nedschorus/.claude/worktrees/<name>` | per job |
+| Handoff files | `/home/nedlern/.claude/handoffs/<agent>-handoff.md` | — |
+| User-level instructions | `/home/nedlern/.claude/CLAUDE.md` | — |
+| Auto-memory | `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory/` | — |
+| Legacy reference system | `/home/nedlern/Projects/nedlern` | **absent on this box** |
+
+The legacy checkout's absence is expected and safe: the git-gatekeeper's `--import` machinery refuses `import-invalid` ("not a readable git repository") until one exists, which is a named refusal rather than a failure. Clone it only when an import is actually needed.
+
+## Mac — user `el`
+
+The checkout path is pinned by the repository's own tests (`scripts/handoff-extract-conversation-test.py`); the remaining rows follow the same conventions and have not been inspected from the box.
+
+| What | Full path |
+|---|---|
+| Main checkout | `/Users/el/Projects/nedschorus` |
+| Agent homes | `/Users/el/agents/<name>` |
+| Task worktrees | `/Users/el/Projects/nedschorus/.claude/worktrees/<name>` |
+| Handoff files | `/Users/el/.claude/handoffs/<agent>-handoff.md` |
+
+## Commands, and the machine each runs on
+
+| Goal | Type it on | Command |
+|---|---|---|
+| Reach a named agent on the box | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu <name>` |
+| Run a named agent on the Mac | Mac | `/Users/el/Projects/nedschorus/scripts/launch-claude-mac <name>` |
+| List agents running on a machine | either | run the matching launcher with no name |
+| See every checkout and its branch | either | `git -C ~/Projects/nedschorus worktree list` |
+| Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` |
+| Clear stale worktree registrations | either | `git -C ~/Projects/nedschorus worktree prune` |
+
+Both launchers are attach-or-create: running a name that is already up attaches to that agent rather than starting a second copy. Within one machine, duplicate agents are impossible three ways — tmux attaches by session name, the supervisor holds an exclusive per-agent lock (reclaimed if its holder died), and an agent's home directory is derived from its name rather than chosen. Across machines nothing is shared, so the same name on both is simply two unrelated agents: no conflict, only a label that cannot be told apart in a listing spanning both. Suffix names (`-mac`, `-ubuntu`) if you want them distinguishable at a glance; nothing requires it.
+
+## What crosses between machines, and what does not
+
+**Crosses:** git branches, once pushed, and through them every committed file. That is also the one real cross-machine collision surface — two clones pushing the same branch name fight over one remote ref, whatever the agents are called.
+
+**Does not cross:** worktrees and their directories, agent homes, handoff files, supervisor locks, tmux sessions, Claude credentials (each machine authenticates separately), and anything uncommitted. A pull on one machine tells the other nothing.
+
+**A consequence worth remembering:** pulling the main checkout does not update agent homes or task worktrees, because each sits on its own branch. After a merge to `main`, the main checkout needs its own pull, and any long-lived agent branch needs `main` merged into it before that agent sees the change.
+
+--- docs/issues/queue/45-session-seat-and-isolation-riders.md (43 lines) ---
+# Session seat and isolation riders
+
+Queued for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents, launch and reattach). Raised in conversation 2026-08-13 while untangling why several sessions on the box were hard to tell apart and one had forked into another's checkout. Each item below was discussed and left undone deliberately — none is in flight.
+
+## 1. A guard that enforces one live session per directory
+
+**The invariant:** two live sessions must never share a working directory. Forks are the common road to breaking it — a fork inherits the parent's directory along with its conversation — and a background job launched from a session inherits the same cwd, which is what made several jobs look like duplicates in `~/agents/choirmaster`.
+
+**The proposal:** a PreToolUse hook on `Edit|Write` that refuses when another live Claude process shares this session's working directory, teaching the fix — "another session is live here; call `EnterWorktree` first". Reads and searches stay unblocked; they never collide. **Detection is the open problem, and the obvious method does not work.** A `/proc` scan comparing each Claude process's `cwd` was the first proposal; it was tried 2026-08-13 and found unreliable — an *attached* background session's process reports the directory the `claude attach` command was typed in, not the directory the session actually works in, so real duplicates hide and viewer windows masquerade as sessions. A working detector needs the session's own view of its working directory (its transcript records it, and the session itself answers correctly when asked), not the process table. Resolve this before building the hook: a guard whose detection is wrong is worse than none, because it teaches the wrong lesson at the wrong moment.
+
+**Why this shape:** `EnterWorktree` already relocates a running session correctly, so capability is not the gap — the trigger is. A SessionStart warning was considered and judged weaker: it advises, where the PreToolUse form blocks. The project already runs this exact pattern in `.claude/hooks/instruction-file-guard.py`.
+
+**Cost/caveat:** needs an entry in `.claude/settings.json` (instruction-class, so it lands through the user's walk), and a PreToolUse hook runs for every session on the machine, so a defect in it is felt everywhere.
+
+## 2. A `--directory` flag for the launchers
+
+`scripts/launch-claude-ubuntu` and `scripts/launch-claude-mac` place every agent in `<agents-root>/<name>` by convention and accept no directory argument, so a seat cannot adopt an existing worktree. That makes "promote this background thread to a visible tmux seat" harder than it needs to be. Roughly ten lines per launcher.
+
+Weakened, though not eliminated, by a fact discovered the same day: `claude attach <job-id>` already opens a background session in a terminal, so a seat is not the only route to visibility.
+
+## 3. A CLAUDE.md rule: background jobs push their own branch
+
+Several sessions pushing to one shared agent branch produced the `Merge remote-tracking branch 'origin/choirmaster' into choirmaster` commits in that branch's history, and a non-fast-forward rejection that cost a rebase mid-task. One branch per session removes the class: git already refuses one branch in two worktrees, so the discipline only has to cover which branch a session pushes.
+
+Instruction-class text, so it lands through the user's walk.
+
+## 4. md-review the fleet paths reference
+
+`docs/cross-project/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the md-review skill's stated target. Not yet reviewed.
+
+## 5. Migrating `choirmaster` to a machine-suffixed name
+
+Considered and deferred. The two machines share no agent state, so the same name on both is two unrelated agents rather than a conflict — the suffix buys legibility in a listing that spans machines, nothing more. Migrating the live seat means `git worktree move`, renaming its handoff files, and a restart, which is disruptive to a working agent for a cosmetic gain. Revisit only if a cross-machine listing becomes a routine view.
+
+## Session-management facts worth keeping (verified 2026-08-13, Claude Code 2.1.231)
+
+Not riders, but hard-won and easy to lose:
+
+- **Job ids are not session ids.** `claude attach <id>` takes the 8-character job id (the directory names under `~/.claude/jobs/`), not the session UUID. Attaching by session id fails with "No job matching".
+- **`claude agents`** opens the agent view: every session grouped by state, `Space` peeks without attaching, `Ctrl+R` renames, `Ctrl+T` pins against the ~1-hour idle reap, `Ctrl+X` stops. `Ctrl+S` groups by *directory*, which makes the shared-directory hazard visible.
+- **It must run on the machine whose sessions you want.** Typed on the Mac it lists the Mac's jobs; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
+- **No side-by-side view exists** in the harness. Simultaneous views mean one terminal (or tmux window) per session.
+- **Process uptime is not idle time.** A session showing 23 hours of `etime` may have been active a minute ago; the honest staleness check is the modification time of its transcript under `~/.claude/projects/<project>/<session-id>.jsonl`.
+
+--- scripts/launch-claude-ubuntu (138 lines) ---
+#!/bin/sh
+# launch-claude-ubuntu <name> [--no-attach] — reach the named agent on the
+# Ubuntu agent box, from the user's Mac. Its twin, launch-claude-mac, runs the
+# same conventions locally on the Mac; the machine is in the name because the
+# two are otherwise indistinguishable at the call site, and picking the wrong
+# one is a real mistake to make.
+#
+# Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
+# type is the whole configuration. The agent's directory is
+# $NEDSCHORUS_AGENTS_ROOT/<name> on the box (default ~/agents/<name>), created
+# on first use. A CLAUDE.local.md in that directory supplies the agent's
+# identity; without one the agent is generic and the name is just a label.
+# choirmaster is not registered anywhere — founding step 6 puts real content in
+# its directory, and this script treats it like any other name.
+#
+# Attach-or-create comes from tmux on the box: `tmux new-session -A` attaches
+# to the session named <name> when it exists and creates it when it does not,
+# so a closed iTerm2 window never orphans an agent — type the same command to
+# reconnect. Inside the session runs the handoff supervisor, which launches
+# the claude session, recycles it on every handoff, and exits when its agent
+# stops without handing off; the tmux session closes with it, so nothing
+# lingers. A second launch of a running name attaches instead of duplicating,
+# and the supervisor's own lock refuses a duplicate even if tmux is bypassed.
+# Both protections are per-machine, as is every other thing an agent owns, so
+# the same name used on both machines is simply two unrelated agents — no
+# conflict, only a label you cannot tell apart in a listing spanning both.
+#
+# --no-attach creates the session without attaching this terminal (for
+# scripts and checks); attach later by running the plain form.
+#
+# Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedschorus.
+
+set -eu
+
+# AGENTS_ROOT is a BOX-side path. The default's ~ is expanded by the box's
+# shell (it rides unquoted in the remote command), so keep the root free of
+# spaces; agent names are charset-checked below for the same reason.
+AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
+AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
+
+# The no-name case is the common mistake, so it teaches rather than scolds:
+# what a name is for, and which agents are up on the box right now to pick from
+# or avoid colliding with. The listing costs one SSH round trip and happens
+# only on this error path, never on a launch.
+usage() {
+    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    echo >&2
+    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    echo "tmux session on the box, the home directory ($AGENTS_ROOT/<name>), and the" >&2
+    echo "agent's handoff files. Running a name that is already up ATTACHES to that" >&2
+    echo "agent — you cannot start a second copy of one." >&2
+    echo >&2
+    running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
+        'tmux list-sessions -F "#{session_name}" 2>/dev/null' 2>/dev/null | tr '\n' ' ')
+    if [ -n "$running" ]; then
+        echo "Agents running on the box now: $running" >&2
+    else
+        echo "No agents are running on the box now (or it could not be reached)." >&2
+    fi
+    echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
+    echo >&2
+    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    echo "unrelated agents, not a conflict. Suffix names (-ubuntu, -mac) only if you want" >&2
+    echo "to tell them apart at a glance; nothing here requires it." >&2
+    exit 2
+}
+
+[ $# -ge 1 ] || usage
+AGENT_NAME="$1"
+shift
+ATTACH=yes
+FIRST_PROMPT_FILE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        (--no-attach) ATTACH=no; shift ;;
+        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a box-side path}"; shift 2 ;;
+        (*) usage ;;
+    esac
+done
+case "$AGENT_NAME" in
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
+esac
+
+AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
+SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
+--agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+
+# A first-prompt file (box-side path) seeds only the FIRST session — used for
+# the founding boot, where the committed handoff is the prompt. The supervisor
+# reads the file itself, so its content never rides through shell quoting.
+# After the first recycle the ordinary ignition prompt takes over.
+if [ -n "$FIRST_PROMPT_FILE" ]; then
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+fi
+
+# Pre-trust the agent directory on the box: a fresh directory otherwise stops
+# at Claude's one-time folder-trust dialog, which a detached launch can never
+# answer and an attached one should not have to.
+PREPARE_COMMAND="mkdir -p $AGENT_DIRECTORY && python3 -c 'import json,os,sys; \
+p=os.path.expanduser(\"~/.claude.json\"); \
+d=json.load(open(p)) if os.path.exists(p) else {}; \
+t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
+d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
+json.dump(d,open(p,\"w\"),indent=2)' $AGENT_DIRECTORY"
+
+# The agent's home must be a CHECKOUT before the session starts, not after.
+# Project settings — the status line, the recycle Stop hook, the
+# instruction-file guard — are read from .claude/ inside the working
+# directory at session start, so an agent booted into a bare directory runs
+# with none of them, and fixing its own home later cannot retrofit the
+# session it is already in (observed 2026-08-14: a seat launched into an
+# empty ~/agents/gatekeeper had no status line and no hooks). Skipped when
+# the home is already a checkout, so relaunches are untouched; a branch that
+# already exists is reused rather than recreated, since git allows a branch
+# in only one worktree at a time.
+PREPARE_COMMAND="$PREPARE_COMMAND && \
+if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
+  git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
+  git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY -b '$AGENT_NAME' origin/main 2>/dev/null \
+  || git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY '$AGENT_NAME' \
+  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings'; \
+fi"
+
+# tmux tells the terminal the session name, so an iTerm2 tab reads
+# "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
+# server each launch: it is a global option, harmless to repeat.
+PREPARE_COMMAND="$PREPARE_COMMAND; \
+tmux set-option -g set-titles on 2>/dev/null; \
+tmux set-option -g set-titles-string '#S' 2>/dev/null; true"
+
+if [ "$ATTACH" = yes ]; then
+    exec ssh -t "$AGENT_BOX" \
+        "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\""
+fi
+exec ssh "$AGENT_BOX" \
+    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: $AGENT_NAME is already running (attach with: launch-claude-ubuntu $AGENT_NAME)'"
+
+--- scripts/launch-claude-mac (149 lines) ---
+#!/bin/sh
+# launch-claude-mac <name> [--no-attach] — reach the named agent ON THIS MAC.
+#
+# The local twin of launch-claude-ubuntu, sharing every convention and none of
+# the SSH: the name you type is the whole configuration, the agent's directory
+# is $NEDSCHORUS_AGENTS_ROOT/<name> (default ~/agents/<name>), created on first
+# use, and a CLAUDE.local.md in that directory supplies the agent's identity —
+# without one the agent is generic and the name is just a label.
+#
+# Which twin to type: the Ubuntu box is the default home for agent work (more
+# memory, CPU and bandwidth, and it does not compete with the user's machine).
+# Use THIS script only for work that must run where the user sits — anything
+# needing the Mac's browser session, its keychain, its GUI, or files that live
+# only on it. The machine is in both names because the choice is a real one and
+# the wrong pick is easy to make.
+#
+# Attach-or-create comes from tmux: `new-session -A` attaches to the session
+# named <name> when it exists and creates it when it does not, so a closed
+# terminal window never orphans an agent — type the same command to reconnect.
+# Inside the session runs the handoff supervisor, which launches the claude
+# session, recycles it on every handoff, and exits when its agent stops without
+# handing off; the tmux session closes with it, so nothing lingers. A second
+# launch of a running name attaches instead of duplicating, and the supervisor
+# holds a per-agent lock that refuses a second copy even if tmux is bypassed.
+# Both protections are per-machine, as is every other thing an agent owns, so
+# the same name used on both machines is simply two unrelated agents — no
+# conflict, only a label you cannot tell apart in a listing spanning both.
+#
+# --no-attach creates the session without attaching this terminal (for scripts
+# and checks); attach later by running the plain form.
+#
+# Requires on this Mac: tmux, python3, and claude on the PATH.
+
+set -eu
+
+AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
+
+# The supervisor is this script's sibling, so the checkout location is never
+# configured and never wrong — wherever this script was run from IS the
+# checkout it belongs to.
+SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
+SUPERVISOR="$SCRIPT_DIRECTORY/handoff-supervisor.py"
+
+# The no-name case is the common mistake, so it teaches rather than scolds:
+# what a name is for, and which agents are running right now to pick from or
+# avoid colliding with.
+usage() {
+    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+    echo >&2
+    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    echo "tmux session, the home directory ($AGENTS_ROOT/<name>), and the agent's handoff" >&2
+    echo "files. Running a name that is already up ATTACHES to that agent — you cannot" >&2
+    echo "start a second copy of one." >&2
+    echo >&2
+    running=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')
+    if [ -n "$running" ]; then
+        echo "Agents running on this Mac now: $running" >&2
+    else
+        echo "No agents are running on this Mac now." >&2
+    fi
+    echo "(Agents on the Ubuntu box are separate: launch-claude-ubuntu.)" >&2
+    echo >&2
+    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    echo "unrelated agents, not a conflict. Suffix names (-mac, -ubuntu) only if you want" >&2
+    echo "to tell them apart at a glance; nothing here requires it." >&2
+    exit 2
+}
+
+[ $# -ge 1 ] || usage
+AGENT_NAME="$1"
+shift
+ATTACH=yes
+FIRST_PROMPT_FILE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        (--no-attach) ATTACH=no; shift ;;
+        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a path}"; shift 2 ;;
+        (*) usage ;;
+    esac
+done
+case "$AGENT_NAME" in
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
+esac
+
+# Every prerequisite is checked before anything is created, and each failure
+# names its own fix: a launcher that half-starts an agent is worse than one
+# that refuses.
+command -v tmux >/dev/null 2>&1 || {
+    echo "launch-claude-mac: tmux is not installed on this Mac — install it (brew install tmux) and re-run" >&2
+    exit 2
+}
+command -v claude >/dev/null 2>&1 || {
+    echo "launch-claude-mac: claude is not on the PATH — install Claude Code on this Mac and re-run" >&2
+    exit 2
+}
+[ -f "$SUPERVISOR" ] || {
+    echo "launch-claude-mac: no handoff-supervisor.py beside this script ($SUPERVISOR) — run the copy inside a nedschorus checkout" >&2
+    exit 2
+}
+
+AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
+mkdir -p "$AGENT_DIRECTORY"
+
+# Pre-trust the agent directory: a fresh directory otherwise stops at Claude's
+# one-time folder-trust dialog, which a detached launch can never answer and an
+# attached one should not have to.
+python3 -c 'import json,os,sys
+path = os.path.expanduser("~/.claude.json")
+settings = json.load(open(path)) if os.path.exists(path) else {}
+target = os.path.abspath(os.path.expanduser(sys.argv[1]))
+settings.setdefault("projects", {}).setdefault(target, {})["hasTrustDialogAccepted"] = True
+json.dump(settings, open(path, "w"), indent=2)' "$AGENT_DIRECTORY"
+
+# The agent's home must be a CHECKOUT before the session starts, not after:
+# project settings — status line, the recycle Stop hook, the instruction-file
+# guard — are read from .claude/ inside the working directory at session
+# start, so an agent booted into a bare directory runs with none of them, and
+# fixing its own home later cannot retrofit the session it is already in.
+# Skipped when the home is already a checkout; an existing branch is reused,
+# since git allows a branch in only one worktree at a time.
+REPOSITORY=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
+if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
+    git -C "$REPOSITORY" fetch --quiet origin || true
+    git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" -b "$AGENT_NAME" origin/main 2>/dev/null \
+        || git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" "$AGENT_NAME" \
+        || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
+fi
+
+# tmux tells the terminal the session name, so the tab reads the seat's name
+# rather than the command that happened to start it. Global option, harmless
+# to repeat on each launch.
+tmux set-option -g set-titles on 2>/dev/null || true
+tmux set-option -g set-titles-string '#S' 2>/dev/null || true
+
+SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+
+# A first-prompt file seeds only the FIRST session. The supervisor reads the
+# file itself, so its content never rides through shell quoting.
+if [ -n "$FIRST_PROMPT_FILE" ]; then
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+fi
+
+if [ "$ATTACH" = yes ]; then
+    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND"
+fi
+tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" 2>/dev/null \
+    || echo "launch-claude-mac: $AGENT_NAME is already running (attach with: launch-claude-mac $AGENT_NAME)"
+
+--- scripts/handoff-supervisor.py (676 lines) ---
+#!/usr/bin/env python3
+"""Run one agent session and recycle it when it writes a handoff.
+
+The handoff system's supervisor (specification:
+docs/cross-project/fast-handoff-design.md). One supervisor per agent, run in
+that agent's console. It owns the whole recycle cycle because an agent
+cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
+trips the safety classifier.
+
+The cycle, per recycle:
+  1. Watch the handoff file for a restart-counter above the last consumed.
+  2. Kill the running session.
+  3. Extract its dialog to disk before anything else proceeds.
+  4. Copy the retiring session's tasks into the successor's task directory.
+  5. Print one queue-status line.
+  6. Launch the successor with the ignition prompt.
+  7. Keep the current and previous handoff and extract; delete older ones.
+
+The handoff file the agent writes (simple `key: value` lines):
+  written-at:      UTC timestamp, ISO 8601
+  next-step:       the first action the successor takes
+  restart-counter: predecessor's counter plus one
+  dont-restart:    optional; any value makes the supervisor ask before relaunching
+
+How much dialog to carry is not among them: the extractor takes the tail that
+clears its word floor, so the retiring agent exercises no judgment over what
+its successor receives.
+
+Never pass --allowedTools on the launch: it silently swallows the positional
+prompt, so the successor would boot with no instructions at all.
+
+Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+TASKS_ROOT = Path.home() / ".claude" / "tasks"
+EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+HANDOFF_POLL_SECONDS = 2.0
+GENERATIONS_KEPT = 2
+
+# The supervisor stamps its state file while polling so anyone can ask whether
+# a supervisor is still watching. Without this an agent can write a handoff,
+# stop working, and wait forever on a supervisor that died — a hang that looks
+# like obedience. Stamped on an interval rather than every poll to keep the
+# write rate low; treated as dead at several times that interval, so a slow
+# machine does not read as a corpse.
+HEARTBEAT_INTERVAL_SECONDS = 10.0
+HEARTBEAT_STALE_SECONDS = 60.0
+
+
+def parse_handoff_file(handoff_path: Path) -> dict:
+    """Read the agent-written handoff into a dict of its `key: value` lines."""
+    fields = {}
+    for line in handoff_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip().lower()
+        if key not in fields:  # first occurrence wins; later prose cannot overwrite a field
+            fields[key] = value.strip()
+    return fields
+
+
+def read_supervisor_state(state_path: Path) -> dict:
+    if not state_path.is_file():
+        return {"consumed_counter": None, "session_id": None, "generation": 0}
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        print("handoff-supervisor: unreadable state file; starting fresh", file=sys.stderr)
+        return {"consumed_counter": None, "session_id": None, "generation": 0}
+
+
+def write_supervisor_state(state_path: Path, state: dict) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def stamp_heartbeat(state_path: Path, state: dict) -> None:
+    """Record that a supervisor is alive and watching, right now."""
+    state["last_poll_at"] = datetime.now(timezone.utc).isoformat()
+    write_supervisor_state(state_path, state)
+
+
+def supervisor_liveness(state_path: Path):
+    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    if not state_path.is_file():
+        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
+
+    state = read_supervisor_state(state_path)
+    stamped = state.get("last_poll_at")
+    if not stamped:
+        return False, "supervisor state carries no heartbeat — it is from an older build or never polled"
+
+    try:
+        last_poll = datetime.fromisoformat(stamped)
+    except ValueError:
+        return False, f"unreadable heartbeat: {stamped!r}"
+
+    age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
+    if age_seconds > HEARTBEAT_STALE_SECONDS:
+        return False, f"last heartbeat was {age_seconds:.0f}s ago — no supervisor is watching"
+    return True, f"supervisor alive, last heartbeat {age_seconds:.0f}s ago"
+
+
+def counter_from(fields: dict):
+    raw = fields.get("restart-counter")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def elapsed_phrase(written_at: str) -> str:
+    """Describe how stale a handoff is, for the ignition prompt."""
+    try:
+        written = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return "written at an unrecorded time — treat every pointer in it as possibly stale"
+
+    minutes = (datetime.now(timezone.utc) - written).total_seconds() / 60
+    if minutes < 90:
+        amount = f"{int(minutes)} minutes"
+    elif minutes < 60 * 48:
+        amount = f"{int(minutes / 60)} hours"
+    else:
+        amount = f"{int(minutes / 60 / 24)} days"
+    return f"written {amount} ago — the longer the gap, the more will have changed since"
+
+
+def task_count_for(session_id: str) -> int:
+    directory = TASKS_ROOT / session_id
+    return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
+
+
+def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
+    """Copy task records into the successor's directory before it boots.
+
+    Rides undocumented harness state: tasks are <N>.json files under
+    ~/.claude/tasks/<session-id>/, and a session started with an explicit id
+    reads whatever is already there. An upgrade breaking this is detected at
+    the successor's ignition count-check, with the queues as the backstop
+    (per-upgrade canary re-runs were dropped as a remembered duty,
+    user-ruled 2026-08-12); the canaries in handoff-supervisor-test.py
+    (--canary) diagnose it when that fires.
+    """
+    source = TASKS_ROOT / retiring_session_id
+    if not source.is_dir():
+        return 0
+    destination = TASKS_ROOT / successor_session_id
+    destination.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for task_file in sorted(source.glob("*.json")):
+        shutil.copy2(task_file, destination / task_file.name)
+        copied += 1
+    return copied
+
+
+def queue_status_line(working_directory: Path) -> str:
+    """Report each queue's depth and oldest item, so rot stays visible."""
+    reports = []
+    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/wiki/queue", "legacy-feature-queue"):
+        directory = working_directory / queue_directory
+        if not directory.is_dir():
+            continue
+        entries = sorted(
+            item for item in directory.glob("*.md") if item.name.lower() != "readme.md"
+        )
+        if not entries:
+            reports.append(f"{queue_directory}: empty")
+            continue
+        oldest = min(entries, key=lambda item: item.name)
+        reports.append(f"{queue_directory}: {len(entries)}, oldest {oldest.name}")
+    return "queues — " + ("; ".join(reports) if reports else "none found")
+
+
+def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
+    """Write the retiring session's dialog to disk. Returns True on success.
+
+    No boundary is passed: the extractor carries the tail that clears its word
+    floor, so nothing here depends on a judgment the retiring agent made.
+    """
+    result = subprocess.run(
+        [
+            sys.executable, str(EXTRACTOR_PATH),
+            "--session-id", session_id,
+            "--cd", str(working_directory),
+            "--output", str(output_path),
+        ],
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
+                          queue_status: str = "") -> str:
+    next_step = handoff_fields.get("next-step", "").strip()
+    elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
+    lines = [
+        f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
+        f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
+    ]
+    if queue_status:
+        # The rot-visibility duty (#32): the successor is the one reader every
+        # supervisor mode has — a detached supervisor's console is a log file.
+        lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
+    if next_step:
+        lines.append(f"Then take the next step: {next_step}")
+    else:
+        lines.append("Then continue from where that dialog ends.")
+    return " ".join(lines)
+
+
+def prune_old_generations(directory: Path, stem: str) -> None:
+    """Keep the newest GENERATIONS_KEPT files of one family; delete older."""
+    generations = sorted(directory.glob(f"{stem}-*.md"), key=lambda item: item.name)
+    for stale in generations[:-GENERATIONS_KEPT]:
+        stale.unlink()
+
+
+def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
+    """Run git in the agent's directory; never raise, whatever goes wrong."""
+    try:
+        return subprocess.run(
+            ["git", *arguments], cwd=str(working_directory),
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+
+
+def sync_working_branch_with_main(working_directory: Path) -> str:
+    """Bring the agent's branch to main before a session starts. One line back.
+
+    Ruled 2026-08-13. An agent's home sits on its own branch only because git
+    refuses one branch in two worktrees — nobody chose a long-lived personal
+    branch, and left alone it drifts from main until someone merges by hand.
+    Syncing here, between sessions, is the one safe moment: the previous
+    session has exited and the next has not started, so no agent is holding a
+    mental model of the tree.
+
+    Deliberately conservative — it only ever fast-forwards:
+
+    * uncommitted work, a failed fetch, no origin/main, or a branch carrying
+      commits main does not have: report and change nothing;
+    * strictly behind main with a clean tree: fast-forward.
+
+    Never a merge, because a conflicted merge left in the tree before the agent
+    wakes is worse than being behind: the branch counts go in the report and
+    the agent, which can judge, decides. Callers must not run this against a
+    LIVE session's directory — see supervise_sessions, which syncs only on the
+    launch path and never on adoption.
+    """
+    toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
+    if toplevel.returncode != 0:
+        return "branch sync: not a git checkout, nothing to sync"
+
+    fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
+    fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
+
+    if run_git_here(["rev-parse", "--verify", "--quiet", "origin/main"],
+                    working_directory, timeout=15).returncode != 0:
+        return f"branch sync: no origin/main to sync with{fetch_note}"
+
+    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"],
+                          working_directory, timeout=15).stdout.strip() or "HEAD"
+
+    dirty = run_git_here(["status", "--porcelain"], working_directory, timeout=30).stdout.strip()
+    if dirty:
+        return (f"branch sync: {branch} left as is — {len(dirty.splitlines())} uncommitted "
+                f"path(s) in the tree{fetch_note}")
+
+    if run_git_here(["merge-base", "--is-ancestor", "origin/main", "HEAD"],
+                    working_directory, timeout=15).returncode == 0:
+        ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+                             working_directory, timeout=30).stdout.strip() or "?"
+        if ahead == "0":
+            return f"branch sync: {branch} is current with main{fetch_note}"
+        return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+                f"it — nothing to pull{fetch_note}")
+
+    if run_git_here(["merge-base", "--is-ancestor", "HEAD", "origin/main"],
+                    working_directory, timeout=15).returncode == 0:
+        merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+        if merged.returncode != 0:
+            return (f"branch sync: {branch} could not fast-forward: "
+                    f"{merged.stderr.strip() or 'no detail'}{fetch_note}")
+        tip = run_git_here(["rev-parse", "--short", "HEAD"],
+                           working_directory, timeout=15).stdout.strip()
+        return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+
+    ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+                         working_directory, timeout=30).stdout.strip() or "?"
+    behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
+                          working_directory, timeout=30).stdout.strip() or "?"
+    return (f"branch sync: {branch} is {ahead} ahead of main and {behind} behind — merge when "
+            f"ready (git merge origin/main){fetch_note}")
+
+
+def launch_agent_session(agent_command: str, session_id: str, working_directory: Path, prompt: str):
+    """Start one interactive session, inheriting this console's terminal."""
+    return subprocess.Popen(
+        [agent_command, "--session-id", session_id, prompt],
+        cwd=str(working_directory),
+    )
+
+
+class AdoptedSession:
+    """A session this supervisor did not launch, identified by process id.
+
+    A supervisor normally owns the process it started and can terminate it
+    through that handle. A session started by hand — the founding boot, or any
+    agent a person launched in a console — has no such owner, so it can never
+    recycle. Adoption closes that: the agent's own handoff script starts a
+    supervisor and tells it which process to watch, and everything after the
+    kill is identical to the ordinary cycle.
+    """
+
+    def __init__(self, session_id: str, process_id: int):
+        self.session_id = session_id
+        self.process_id = process_id
+
+    def poll(self):
+        """Return None while the process is alive, 0 once it is gone."""
+        try:
+            os.kill(self.process_id, 0)
+        except ProcessLookupError:
+            return 0
+        except PermissionError:
+            return None  # alive, owned by someone else
+        return None
+
+    def terminate(self):
+        try:
+            os.kill(self.process_id, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    def kill(self):
+        try:
+            os.kill(self.process_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def wait(self, timeout=None):
+        """Block until the process is gone, or raise once the timeout passes."""
+        deadline = time.monotonic() + (timeout if timeout is not None else 0)
+        while self.poll() is None:
+            if timeout is not None and time.monotonic() > deadline:
+                raise subprocess.TimeoutExpired(f"pid {self.process_id}", timeout)
+            time.sleep(0.2)
+        return 0
+
+
+def claim_supervisor_lock(lock_path: Path) -> bool:
+    """Take the one-supervisor-per-agent lock, or report it already held.
+
+    Two supervisors on one agent would each kill the session and each launch a
+    successor, so the second must not start. A lock left by a supervisor that
+    died is reclaimed: the recorded process id is checked before the lock is
+    believed.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            holder = int(lock_path.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            holder = None
+        if holder is not None and holder != os.getpid():
+            try:
+                os.kill(holder, 0)
+                return False  # a live supervisor already holds this agent
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return False
+        lock_path.unlink(missing_ok=True)  # the holder is gone; reclaim it
+        return claim_supervisor_lock(lock_path)
+    os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))
+    os.close(descriptor)
+    return True
+
+
+def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
+    """Block until the agent writes a new handoff, or the session exits.
+
+    Returns the handoff fields when a counter above `consumed_counter`
+    appears, or None if the session ended on its own without writing one.
+    Stamps the heartbeat while it waits, so the watched agent can tell a
+    live supervisor from a dead one.
+
+    The exit check must not preempt the file check: a headless session exits
+    when its turn ends, so its handoff arrives AS a process exit — the file
+    was written during the turn, before the exit was observable. Exit with a
+    new counter on disk is a handoff; exit without one is abandonment.
+    """
+    last_stamp = 0.0
+    while True:
+        exited = process.poll() is not None
+
+        if time.monotonic() - last_stamp >= HEARTBEAT_INTERVAL_SECONDS:
+            stamp_heartbeat(state_path, state)
+            last_stamp = time.monotonic()
+
+        if handoff_path.is_file():
+            fields = parse_handoff_file(handoff_path)
+            counter = counter_from(fields)
+            if counter is not None and (consumed_counter is None or counter > consumed_counter):
+                return fields
+
+        if exited:
+            return None
+
+        time.sleep(HANDOFF_POLL_SECONDS)
+
+
+def stop_session(process) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        print("handoff-supervisor: session ignored terminate; killing", file=sys.stderr)
+        process.kill()
+        process.wait()
+
+
+@dataclass
+class SupervisorSettings:
+    """Everything one supervisor needs, resolved from the command line."""
+
+    agent: str
+    working_directory: Path
+    handoff_directory: Path
+    agent_command: str
+    first_prompt: str
+    # A real annotation, not a string: this module is loaded by importlib in the
+    # threshold hook and the tests, where a forward reference cannot resolve.
+    adopted_session: Optional[AdoptedSession] = None
+
+    @property
+    def handoff_path(self) -> Path:
+        return self.handoff_directory / f"{self.agent}-handoff.md"
+
+    @property
+    def state_path(self) -> Path:
+        return self.handoff_directory / f"{self.agent}-supervisor-state.json"
+
+    @property
+    def lock_path(self) -> Path:
+        return self.handoff_directory / f"{self.agent}-supervisor.lock"
+
+
+def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
+                            handoff_fields: dict, generation: int):
+    """Extract, archive, prune, and build the successor's launch.
+
+    Returns (successor_session_id, ignition_prompt), or (None, None) when
+    extraction failed and relaunching would lose the dialog.
+    """
+    extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
+    extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
+    if not extracted:
+        print(
+            "handoff-supervisor: extraction failed; not relaunching "
+            "(the transcript is intact — recover by hand)",
+            file=sys.stderr,
+        )
+        return None, None
+
+    shutil.copy2(
+        settings.handoff_path,
+        settings.handoff_directory / f"{settings.agent}-handoff-{generation:04d}.md",
+    )
+    prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
+    prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
+
+    queue_status = queue_status_line(settings.working_directory)
+    print(f"handoff-supervisor: {queue_status}")
+
+    successor_session_id = str(uuid.uuid4())
+    copied = preseed_tasks(retiring_session_id, successor_session_id)
+    print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
+
+--- scripts/handoff-context-threshold-hook.py (185 lines) ---
+#!/usr/bin/env python3
+"""Tell a session to write its handoff once context runs low.
+
+The handoff system's auto-trigger (specification:
+docs/cross-project/fast-handoff-design.md). Wire it as a Stop hook in
+settings.json; it runs at every turn boundary.
+
+Stop-hook stdin does not carry the context window, so the used share is
+computed from the session's own transcript: every assistant record carries
+the model and the token usage of the request that produced it. That works
+in every session type, headless included — a statusline-relay fallback was
+cut 2026-08-12 because its only remaining trigger was a session whose first
+turn had not completed, a moment the threshold cannot be crossed. A
+supervisor-liveness gate (silent unless --agent's supervisor was alive) was
+cut the same day: since self-registration (2026-08-06) a firing with no
+supervisor watching starts an adopting one, so silence only ever turned a
+dead supervisor into a permanent stall.
+
+When the used share reaches the threshold, the hook emits a system message
+telling the agent to run the handoff skill; the supervisor takes over from
+there. Below the threshold it stays silent.
+
+It fires ONCE per session: after firing it records the fact in the handoff
+directory, so the reminder does not repeat at every subsequent turn while
+the agent is composing the handoff.
+
+Threshold: --threshold-used-percentage, default 50.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
+
+# Context window per model, so a percentage can be computed from the transcript
+# alone — the status line is an interactive-only surface, and headless sessions
+# never run it. Prefix-matched against the model id each assistant record
+# carries. A model absent from this table falls back to the default; the table
+# is worth re-checking when a new model ships, since a wrong window silently
+# scales the threshold rather than failing.
+CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX = {
+    "claude-fable-5": 1_000_000,
+    "claude-mythos-5": 1_000_000,
+    "claude-opus-5": 1_000_000,
+    "claude-opus-4": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+}
+DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
+
+# How much of the transcript's tail to read when looking for the newest
+# assistant record. Sized to clear a few large tool-result records; the read
+# doubles from here when that is not enough.
+FIRST_TAIL_READ_BYTES = 256 * 1024
+
+# The skill carries the whole procedure. A hook message that restated any of it
+# would be a second copy going stale on its own schedule, which this one did
+# twice in a day: once when boundary judgment was removed, once when the writer
+# took over the fields.
+HANDOFF_INSTRUCTION = "Run the handoff skill now."
+
+
+def hook_payload_from_stdin() -> dict:
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def context_window_for(model: str) -> int:
+    """Return the model's context window in tokens."""
+    for prefix, window in CONTEXT_WINDOW_TOKENS_BY_MODEL_PREFIX.items():
+        if model.startswith(prefix):
+            return window
+    return DEFAULT_CONTEXT_WINDOW_TOKENS
+
+
+def newest_assistant_message(path: Path):
+    """Return the newest assistant record's message, reading from the end.
+
+    Only the last request's usage matters, so the file is read backwards in
+    chunks rather than parsed front to back — a transcript grows all session,
+    and this hook runs at every turn boundary. The window doubles until the
+    record is found or the whole file has been read, so a run of oversized
+    tool-result records cannot hide it.
+    """
+    file_size = path.stat().st_size
+    window = FIRST_TAIL_READ_BYTES
+
+    while True:
+        with path.open("rb") as handle:
+            start = max(0, file_size - window)
+            handle.seek(start)
+            chunk = handle.read()
+
+        lines = chunk.split(b"\n")
+        if start > 0:
+            lines = lines[1:]  # the first line is a fragment of an earlier record
+
+        for raw_line in reversed(lines):
+            if not raw_line.strip():
+                continue
+            try:
+                record = json.loads(raw_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if record.get("type") != "assistant":
+                continue
+            message = record.get("message", {})
+            if message.get("usage"):
+                return message
+
+        if start == 0:
+            return None  # whole file read, no assistant record with usage
+        window *= 2
+
+
+def context_used_percentage_from_transcript(transcript_path: str):
+    """Return the session's used-context share, read from its transcript.
+
+    Every assistant record carries both the model and the
+    usage of the request that produced it; the newest record's input plus
+    cached tokens is what the model last had in front of it, and the model id
+    gives the window to divide by.
+    """
+    if not transcript_path:
+        return None
+    path = Path(transcript_path).expanduser()
+    if not path.is_file():
+        return None
+
+    try:
+        message = newest_assistant_message(path)
+    except OSError:
+        return None
+    if message is None:
+        return None
+
+    usage = message["usage"]
+    used_tokens = sum(
+        usage.get(field, 0) or 0
+        for field in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    )
+    return 100.0 * used_tokens / context_window_for(message.get("model", ""))
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
+    parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
+    arguments = parser.parse_args(argv)
+
+    payload = hook_payload_from_stdin()
+    session_id = payload.get("session_id", "")
+    if not session_id:
+        return 0  # no session to reason about; stay silent
+
+    # Every session has a transcript, headless included; before the first
+    # assistant turn completes there is nothing to measure and nothing near
+    # the threshold either, so None simply stays silent.
+    used = context_used_percentage_from_transcript(payload.get("transcript_path", ""))
+    if used is None or used < arguments.threshold_used_percentage:
+        return 0  # nothing measurable yet, or still plenty of room
+
+    fired_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-asked"
+    if fired_marker.exists():
+        return 0  # already asked this session; do not nag every turn
+
+    try:
+        fired_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+    print(
+        HANDOFF_INSTRUCTION,
+        file=sys.stderr,
+    )
+    return 2  # exit 2 surfaces stderr to the agent as a system message
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+--- .claude/hooks/instruction-file-guard.py (104 lines) ---
+#!/usr/bin/env python3
+"""Soft block on modifying instruction files (user-walked 2026-08-07, nedschorus#45).
+
+Wired as a PreToolUse hook on Edit, Write, and NotebookEdit. Instruction
+files — CLAUDE.md, per-agent CLAUDE.local.md identity files, and everything
+under .claude/ — change only through the user's walk. Agents predictably try
+to improve them (observed repeatedly in the legacy fleet); a path-scoped rule
+cannot stop that (rules are context, not enforcement, and file creation
+never triggers them — probed 2026-08-07), so the block lives at the tool
+call, where it also catches creation.
+
+Soft block, not a wall: the deny message teaches the sanctioned path and
+names the override. An edit the user has already approved passes once by
+writing the user's exact approval words into .walk-approved at the
+repository root; the marker is consumed by the passing call. The override is
+deliberately self-serve — the audit value is the visible, quoted approval in
+the marker and the transcript, not tamper-proofing.
+
+.claude/ is in the protected set as self-protection: this hook's own wiring
+lives in .claude/settings.json, and an unguarded settings file is a guard an
+agent can delete.
+
+The harness's auto-memory under ~/.claude/projects/ is deliberately inside the
+protected set (user-ruled 2026-08-11): every memory entry is user-reviewed.
+Other harness state (transcripts, handoffs) carries no review requirement — a
+carve-out is added when a real harness write trips this guard, not in advance.
+Two exist, each added that way: `.claude/worktrees/` (an agent's isolated
+checkout) and `.claude/jobs/` (a background job's scratch directory, which the
+harness hands out for temporary files and deletes with the job).
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
+PROTECTED_DIRECTORY = ".claude"
+APPROVAL_MARKER_NAME = ".walk-approved"
+
+DENY_MESSAGE = (
+    "Before modifying {path}, get the user's approval on your change: instruction files "
+    "(CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only "
+    "through the user's walk, however clearly the edit would help. State the proposed "
+    "change to the user and walk it with him. If he has already approved this exact "
+    "change, quote his exact approval words into {marker} at the repository root, then "
+    "resubmit your write or edit — the marker is consumed by the one call it approves."
+)
+
+
+def project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def is_protected(file_path: str) -> bool:
+    path = Path(file_path)
+    if path.name in PROTECTED_BASENAMES:
+        return True
+    parts = path.resolve().parts
+    for index, part in enumerate(parts):
+        if part == PROTECTED_DIRECTORY:
+            if index + 1 < len(parts) and parts[index + 1] in ("worktrees", "jobs"):
+                # A worktree checkout's home under .claude/worktrees/, or a
+                # background job's scratch directory under .claude/jobs/<id>/tmp
+                # — both are working space the harness hands out, not machinery
+                # that instructs anybody. The jobs carve-out was added 2026-08-13
+                # after a real write tripped the guard, which is the condition
+                # this file's docstring sets for adding one.
+                continue
+            return True
+    return False
+
+
+def consume_approval_marker(marker_path: Path) -> bool:
+    """One approved change passes; the marker is spent by the call it approves."""
+    try:
+        content = marker_path.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return False
+    if not content:
+        return False
+    marker_path.unlink(missing_ok=True)
+    return True
+
+
+def main() -> int:
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not file_path or not is_protected(file_path):
+        return 0
+
+    marker_path = project_root() / APPROVAL_MARKER_NAME
+    if consume_approval_marker(marker_path):
+        return 0
+
+    print(DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'nl -ba docs/agents/fleet-instructions.md'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	# `fleet` — seat instructions
+     2	
+     3	Your pile: **the machinery that runs agents** — launchers, handoffs, session isolation, and the tooling around keeping several agents straight. Read [the seat model](agent-seat-model.md) first; you own that model's implementation.
+     4	
+     5	## Your open PR
+     6	
+     7	**[PR #57](https://github.com/nedschorus/nedschorus/pull/57)**, branch `launch-claude-machine-named-launchers`, awaiting the Mac-side review seat. It carries: `scripts/launch-claude` renamed to `launch-claude-ubuntu` plus a new `launch-claude-mac` twin (both teach on the no-name case and list running agents); `docs/cross-project/fleet-machine-paths-and-checkouts.md`, the two-machine path reference; the supervisor's branch sync; the session riders; the fleet work inventory; and these seat briefs. **Nothing else should touch those files until it merges.**
+     8	
+     9	## The state of the machinery
+    10	
+    11	- **Launchers** (`scripts/launch-claude-{ubuntu,mac}`): attach-or-create by tmux session name, agent home at `~/agents/<name>`, identity from a `CLAUDE.local.md` there, the handoff supervisor inside. The name typed is the whole configuration — no roster ([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)).
+    12	- **The supervisor** (`scripts/handoff-supervisor.py`): launches each session, recycles on every handoff, exits when its agent stops without one. Since 2026-08-13 it **syncs the agent's branch with main before each launch** — fetch, then fast-forward only when the tree is clean and strictly behind; otherwise report and change nothing. It never merges (a conflicted merge waiting for an unwoken agent is worse than being behind) and never runs on the adoption path (changing files under a live agent is the one forbidden act).
+    13	- **The recycle trigger** (`scripts/handoff-context-threshold-hook.py`): a Stop hook firing at 50% context, wired into project settings 2026-08-12.
+    14	- **Guards**: `.claude/hooks/instruction-file-guard.py` blocks edits to CLAUDE.md and `.claude/` machinery without the user's walked approval, consumed through a `.walk-approved` marker.
+    15	
+    16	## Your queue
+    17	
+    18	`docs/issues/queue/45-session-seat-and-isolation-riders.md` holds five ideas discussed and deliberately not built, each with its reasoning. **Read it before proposing any of them** — in particular, rider 1's obvious detection method (a `/proc` scan for two live sessions in one directory) was tried and **proved unreliable**: an attached session's process reports the directory the attach command was typed in, not the directory the session works in. Solve detection before building that guard.
+    19	
+    20	Issues: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#50](https://github.com/nedschorus/nedschorus/issues/50) (worktree file hygiene), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (turn/steer equivalents), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console insertion, stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (mutual oversight, watch-your-back). PR #52 (fast-handoff findings applied) is adjacent — coordinate with `sanity-checker`, which shepherds it.
+    21	
+    22	## Session-management facts, verified 2026-08-13 on Claude Code 2.1.231
+    23	
+    24	Expensive to learn, easy to lose:
+    25	
+    26	- **Job ids are not session ids.** `claude attach <id>` wants the 8-character job id (directory names under `~/.claude/jobs/`), not the session UUID.
+    27	- **`claude agents`** opens agent view: `Space` peeks without attaching, `Ctrl+R` renames, `Ctrl+T` pins against the ~1-hour idle reap, `Ctrl+X` stops, `Ctrl+S` groups by directory — which makes the shared-directory hazard visible.
+    28	- It lists **only the machine it runs on**; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
+    29	- **No side-by-side view exists.** Simultaneous views mean one terminal per session.
+    30	- **Process uptime is not idle time.** A session showing 23 hours of `etime` may have been active a minute ago; check its transcript's modification time under `~/.claude/projects/`.
+    31	- Non-interactive SSH shells did not see `~/.local/bin` until `~/.bashrc` was fixed on 2026-08-13 to export PATH above its non-interactive early-return.
+    32	
+    33	## Your standing invariant
+    34	
+    35	**Two live sessions must never share a working directory.** Forks inherit the parent's directory along with its conversation; background jobs inherit the launching session's cwd. `EnterWorktree` relocates a running session correctly — the gap is the trigger, not the capability.
+    36	
+    37	## First action
+    38	
+    39	Check whether PR #57 has merged. If it has, verify the renamed launchers work from the Mac and tell the user. If not, report its status and ask which rider he wants next — noting that rider 1 is blocked on solving detection.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'for p in scripts/launch-claude-ubuntu scripts/launch-claude-mac scripts/handoff-supervisor.py docs/issues/queue/45-session-seat-and-isolation-riders.md; do echo "--- $p ---"; wc -l "$p"; done'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+--- scripts/launch-claude-ubuntu ---
+138 scripts/launch-claude-ubuntu
+--- scripts/launch-claude-mac ---
+149 scripts/launch-claude-mac
+--- scripts/handoff-supervisor.py ---
+676 scripts/handoff-supervisor.py
+--- docs/issues/queue/45-session-seat-and-isolation-riders.md ---
+43 docs/issues/queue/45-session-seat-and-isolation-riders.md
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/launch-claude-ubuntu && echo '--- launch-claude-mac ---' && nl -ba scripts/launch-claude-mac && echo '--- queue ---' && nl -ba docs/issues/queue/45-session-seat-and-isolation-riders.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	#!/bin/sh
+     2	# launch-claude-ubuntu <name> [--no-attach] — reach the named agent on the
+     3	# Ubuntu agent box, from the user's Mac. Its twin, launch-claude-mac, runs the
+     4	# same conventions locally on the Mac; the machine is in the name because the
+     5	# two are otherwise indistinguishable at the call site, and picking the wrong
+     6	# one is a real mistake to make.
+     7	#
+     8	# Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
+     9	# type is the whole configuration. The agent's directory is
+    10	# $NEDSCHORUS_AGENTS_ROOT/<name> on the box (default ~/agents/<name>), created
+    11	# on first use. A CLAUDE.local.md in that directory supplies the agent's
+    12	# identity; without one the agent is generic and the name is just a label.
+    13	# choirmaster is not registered anywhere — founding step 6 puts real content in
+    14	# its directory, and this script treats it like any other name.
+    15	#
+    16	# Attach-or-create comes from tmux on the box: `tmux new-session -A` attaches
+    17	# to the session named <name> when it exists and creates it when it does not,
+    18	# so a closed iTerm2 window never orphans an agent — type the same command to
+    19	# reconnect. Inside the session runs the handoff supervisor, which launches
+    20	# the claude session, recycles it on every handoff, and exits when its agent
+    21	# stops without handing off; the tmux session closes with it, so nothing
+    22	# lingers. A second launch of a running name attaches instead of duplicating,
+    23	# and the supervisor's own lock refuses a duplicate even if tmux is bypassed.
+    24	# Both protections are per-machine, as is every other thing an agent owns, so
+    25	# the same name used on both machines is simply two unrelated agents — no
+    26	# conflict, only a label you cannot tell apart in a listing spanning both.
+    27	#
+    28	# --no-attach creates the session without attaching this terminal (for
+    29	# scripts and checks); attach later by running the plain form.
+    30	#
+    31	# Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedschorus.
+    32	
+    33	set -eu
+    34	
+    35	# AGENTS_ROOT is a BOX-side path. The default's ~ is expanded by the box's
+    36	# shell (it rides unquoted in the remote command), so keep the root free of
+    37	# spaces; agent names are charset-checked below for the same reason.
+    38	AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
+    39	AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
+    40	
+    41	# The no-name case is the common mistake, so it teaches rather than scolds:
+    42	# what a name is for, and which agents are up on the box right now to pick from
+    43	# or avoid colliding with. The listing costs one SSH round trip and happens
+    44	# only on this error path, never on a launch.
+    45	usage() {
+    46	    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    47	    echo >&2
+    48	    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    49	    echo "tmux session on the box, the home directory ($AGENTS_ROOT/<name>), and the" >&2
+    50	    echo "agent's handoff files. Running a name that is already up ATTACHES to that" >&2
+    51	    echo "agent — you cannot start a second copy of one." >&2
+    52	    echo >&2
+    53	    running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
+    54	        'tmux list-sessions -F "#{session_name}" 2>/dev/null' 2>/dev/null | tr '\n' ' ')
+    55	    if [ -n "$running" ]; then
+    56	        echo "Agents running on the box now: $running" >&2
+    57	    else
+    58	        echo "No agents are running on the box now (or it could not be reached)." >&2
+    59	    fi
+    60	    echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
+    61	    echo >&2
+    62	    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    63	    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    64	    echo "unrelated agents, not a conflict. Suffix names (-ubuntu, -mac) only if you want" >&2
+    65	    echo "to tell them apart at a glance; nothing here requires it." >&2
+    66	    exit 2
+    67	}
+    68	
+    69	[ $# -ge 1 ] || usage
+    70	AGENT_NAME="$1"
+    71	shift
+    72	ATTACH=yes
+    73	FIRST_PROMPT_FILE=""
+    74	while [ $# -gt 0 ]; do
+    75	    case "$1" in
+    76	        (--no-attach) ATTACH=no; shift ;;
+    77	        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a box-side path}"; shift 2 ;;
+    78	        (*) usage ;;
+    79	    esac
+    80	done
+    81	case "$AGENT_NAME" in
+    82	    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    83	esac
+    84	
+    85	AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
+    86	SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+    87	python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
+    88	--agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+    89	
+    90	# A first-prompt file (box-side path) seeds only the FIRST session — used for
+    91	# the founding boot, where the committed handoff is the prompt. The supervisor
+    92	# reads the file itself, so its content never rides through shell quoting.
+    93	# After the first recycle the ordinary ignition prompt takes over.
+    94	if [ -n "$FIRST_PROMPT_FILE" ]; then
+    95	    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+    96	fi
+    97	
+    98	# Pre-trust the agent directory on the box: a fresh directory otherwise stops
+    99	# at Claude's one-time folder-trust dialog, which a detached launch can never
+   100	# answer and an attached one should not have to.
+   101	PREPARE_COMMAND="mkdir -p $AGENT_DIRECTORY && python3 -c 'import json,os,sys; \
+   102	p=os.path.expanduser(\"~/.claude.json\"); \
+   103	d=json.load(open(p)) if os.path.exists(p) else {}; \
+   104	t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
+   105	d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
+   106	json.dump(d,open(p,\"w\"),indent=2)' $AGENT_DIRECTORY"
+   107	
+   108	# The agent's home must be a CHECKOUT before the session starts, not after.
+   109	# Project settings — the status line, the recycle Stop hook, the
+   110	# instruction-file guard — are read from .claude/ inside the working
+   111	# directory at session start, so an agent booted into a bare directory runs
+   112	# with none of them, and fixing its own home later cannot retrofit the
+   113	# session it is already in (observed 2026-08-14: a seat launched into an
+   114	# empty ~/agents/gatekeeper had no status line and no hooks). Skipped when
+   115	# the home is already a checkout, so relaunches are untouched; a branch that
+   116	# already exists is reused rather than recreated, since git allows a branch
+   117	# in only one worktree at a time.
+   118	PREPARE_COMMAND="$PREPARE_COMMAND && \
+   119	if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
+   120	  git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
+   121	  git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY -b '$AGENT_NAME' origin/main 2>/dev/null \
+   122	  || git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY '$AGENT_NAME' \
+   123	  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings'; \
+   124	fi"
+   125	
+   126	# tmux tells the terminal the session name, so an iTerm2 tab reads
+   127	# "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
+   128	# server each launch: it is a global option, harmless to repeat.
+   129	PREPARE_COMMAND="$PREPARE_COMMAND; \
+   130	tmux set-option -g set-titles on 2>/dev/null; \
+   131	tmux set-option -g set-titles-string '#S' 2>/dev/null; true"
+   132	
+   133	if [ "$ATTACH" = yes ]; then
+   134	    exec ssh -t "$AGENT_BOX" \
+   135	        "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\""
+   136	fi
+   137	exec ssh "$AGENT_BOX" \
+   138	    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: $AGENT_NAME is already running (attach with: launch-claude-ubuntu $AGENT_NAME)'"
+--- launch-claude-mac ---
+     1	#!/bin/sh
+     2	# launch-claude-mac <name> [--no-attach] — reach the named agent ON THIS MAC.
+     3	#
+     4	# The local twin of launch-claude-ubuntu, sharing every convention and none of
+     5	# the SSH: the name you type is the whole configuration, the agent's directory
+     6	# is $NEDSCHORUS_AGENTS_ROOT/<name> (default ~/agents/<name>), created on first
+     7	# use, and a CLAUDE.local.md in that directory supplies the agent's identity —
+     8	# without one the agent is generic and the name is just a label.
+     9	#
+    10	# Which twin to type: the Ubuntu box is the default home for agent work (more
+    11	# memory, CPU and bandwidth, and it does not compete with the user's machine).
+    12	# Use THIS script only for work that must run where the user sits — anything
+    13	# needing the Mac's browser session, its keychain, its GUI, or files that live
+    14	# only on it. The machine is in both names because the choice is a real one and
+    15	# the wrong pick is easy to make.
+    16	#
+    17	# Attach-or-create comes from tmux: `new-session -A` attaches to the session
+    18	# named <name> when it exists and creates it when it does not, so a closed
+    19	# terminal window never orphans an agent — type the same command to reconnect.
+    20	# Inside the session runs the handoff supervisor, which launches the claude
+    21	# session, recycles it on every handoff, and exits when its agent stops without
+    22	# handing off; the tmux session closes with it, so nothing lingers. A second
+    23	# launch of a running name attaches instead of duplicating, and the supervisor
+    24	# holds a per-agent lock that refuses a second copy even if tmux is bypassed.
+    25	# Both protections are per-machine, as is every other thing an agent owns, so
+    26	# the same name used on both machines is simply two unrelated agents — no
+    27	# conflict, only a label you cannot tell apart in a listing spanning both.
+    28	#
+    29	# --no-attach creates the session without attaching this terminal (for scripts
+    30	# and checks); attach later by running the plain form.
+    31	#
+    32	# Requires on this Mac: tmux, python3, and claude on the PATH.
+    33	
+    34	set -eu
+    35	
+    36	AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
+    37	
+    38	# The supervisor is this script's sibling, so the checkout location is never
+    39	# configured and never wrong — wherever this script was run from IS the
+    40	# checkout it belongs to.
+    41	SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
+    42	SUPERVISOR="$SCRIPT_DIRECTORY/handoff-supervisor.py"
+    43	
+    44	# The no-name case is the common mistake, so it teaches rather than scolds:
+    45	# what a name is for, and which agents are running right now to pick from or
+    46	# avoid colliding with.
+    47	usage() {
+    48	    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+    49	    echo >&2
+    50	    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    51	    echo "tmux session, the home directory ($AGENTS_ROOT/<name>), and the agent's handoff" >&2
+    52	    echo "files. Running a name that is already up ATTACHES to that agent — you cannot" >&2
+    53	    echo "start a second copy of one." >&2
+    54	    echo >&2
+    55	    running=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')
+    56	    if [ -n "$running" ]; then
+    57	        echo "Agents running on this Mac now: $running" >&2
+    58	    else
+    59	        echo "No agents are running on this Mac now." >&2
+    60	    fi
+    61	    echo "(Agents on the Ubuntu box are separate: launch-claude-ubuntu.)" >&2
+    62	    echo >&2
+    63	    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    64	    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    65	    echo "unrelated agents, not a conflict. Suffix names (-mac, -ubuntu) only if you want" >&2
+    66	    echo "to tell them apart at a glance; nothing here requires it." >&2
+    67	    exit 2
+    68	}
+    69	
+    70	[ $# -ge 1 ] || usage
+    71	AGENT_NAME="$1"
+    72	shift
+    73	ATTACH=yes
+    74	FIRST_PROMPT_FILE=""
+    75	while [ $# -gt 0 ]; do
+    76	    case "$1" in
+    77	        (--no-attach) ATTACH=no; shift ;;
+    78	        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a path}"; shift 2 ;;
+    79	        (*) usage ;;
+    80	    esac
+    81	done
+    82	case "$AGENT_NAME" in
+    83	    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    84	esac
+    85	
+    86	# Every prerequisite is checked before anything is created, and each failure
+    87	# names its own fix: a launcher that half-starts an agent is worse than one
+    88	# that refuses.
+    89	command -v tmux >/dev/null 2>&1 || {
+    90	    echo "launch-claude-mac: tmux is not installed on this Mac — install it (brew install tmux) and re-run" >&2
+    91	    exit 2
+    92	}
+    93	command -v claude >/dev/null 2>&1 || {
+    94	    echo "launch-claude-mac: claude is not on the PATH — install Claude Code on this Mac and re-run" >&2
+    95	    exit 2
+    96	}
+    97	[ -f "$SUPERVISOR" ] || {
+    98	    echo "launch-claude-mac: no handoff-supervisor.py beside this script ($SUPERVISOR) — run the copy inside a nedschorus checkout" >&2
+    99	    exit 2
+   100	}
+   101	
+   102	AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
+   103	mkdir -p "$AGENT_DIRECTORY"
+   104	
+   105	# Pre-trust the agent directory: a fresh directory otherwise stops at Claude's
+   106	# one-time folder-trust dialog, which a detached launch can never answer and an
+   107	# attached one should not have to.
+   108	python3 -c 'import json,os,sys
+   109	path = os.path.expanduser("~/.claude.json")
+   110	settings = json.load(open(path)) if os.path.exists(path) else {}
+   111	target = os.path.abspath(os.path.expanduser(sys.argv[1]))
+   112	settings.setdefault("projects", {}).setdefault(target, {})["hasTrustDialogAccepted"] = True
+   113	json.dump(settings, open(path, "w"), indent=2)' "$AGENT_DIRECTORY"
+   114	
+   115	# The agent's home must be a CHECKOUT before the session starts, not after:
+   116	# project settings — status line, the recycle Stop hook, the instruction-file
+   117	# guard — are read from .claude/ inside the working directory at session
+   118	# start, so an agent booted into a bare directory runs with none of them, and
+   119	# fixing its own home later cannot retrofit the session it is already in.
+   120	# Skipped when the home is already a checkout; an existing branch is reused,
+   121	# since git allows a branch in only one worktree at a time.
+   122	REPOSITORY=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
+   123	if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
+   124	    git -C "$REPOSITORY" fetch --quiet origin || true
+   125	    git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" -b "$AGENT_NAME" origin/main 2>/dev/null \
+   126	        || git -C "$REPOSITORY" worktree add "$AGENT_DIRECTORY" "$AGENT_NAME" \
+   127	        || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
+   128	fi
+   129	
+   130	# tmux tells the terminal the session name, so the tab reads the seat's name
+   131	# rather than the command that happened to start it. Global option, harmless
+   132	# to repeat on each launch.
+   133	tmux set-option -g set-titles on 2>/dev/null || true
+   134	tmux set-option -g set-titles-string '#S' 2>/dev/null || true
+   135	
+   136	SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+   137	python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+   138	
+   139	# A first-prompt file seeds only the FIRST session. The supervisor reads the
+   140	# file itself, so its content never rides through shell quoting.
+   141	if [ -n "$FIRST_PROMPT_FILE" ]; then
+   142	    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+   143	fi
+   144	
+   145	if [ "$ATTACH" = yes ]; then
+   146	    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND"
+   147	fi
+   148	tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" 2>/dev/null \
+   149	    || echo "launch-claude-mac: $AGENT_NAME is already running (attach with: launch-claude-mac $AGENT_NAME)"
+--- queue ---
+     1	# Session seat and isolation riders
+     2	
+     3	Queued for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents, launch and reattach). Raised in conversation 2026-08-13 while untangling why several sessions on the box were hard to tell apart and one had forked into another's checkout. Each item below was discussed and left undone deliberately — none is in flight.
+     4	
+     5	## 1. A guard that enforces one live session per directory
+     6	
+     7	**The invariant:** two live sessions must never share a working directory. Forks are the common road to breaking it — a fork inherits the parent's directory along with its conversation — and a background job launched from a session inherits the same cwd, which is what made several jobs look like duplicates in `~/agents/choirmaster`.
+     8	
+     9	**The proposal:** a PreToolUse hook on `Edit|Write` that refuses when another live Claude process shares this session's working directory, teaching the fix — "another session is live here; call `EnterWorktree` first". Reads and searches stay unblocked; they never collide. **Detection is the open problem, and the obvious method does not work.** A `/proc` scan comparing each Claude process's `cwd` was the first proposal; it was tried 2026-08-13 and found unreliable — an *attached* background session's process reports the directory the `claude attach` command was typed in, not the directory the session actually works in, so real duplicates hide and viewer windows masquerade as sessions. A working detector needs the session's own view of its working directory (its transcript records it, and the session itself answers correctly when asked), not the process table. Resolve this before building the hook: a guard whose detection is wrong is worse than none, because it teaches the wrong lesson at the wrong moment.
+    10	
+    11	**Why this shape:** `EnterWorktree` already relocates a running session correctly, so capability is not the gap — the trigger is. A SessionStart warning was considered and judged weaker: it advises, where the PreToolUse form blocks. The project already runs this exact pattern in `.claude/hooks/instruction-file-guard.py`.
+    12	
+    13	**Cost/caveat:** needs an entry in `.claude/settings.json` (instruction-class, so it lands through the user's walk), and a PreToolUse hook runs for every session on the machine, so a defect in it is felt everywhere.
+    14	
+    15	## 2. A `--directory` flag for the launchers
+    16	
+    17	`scripts/launch-claude-ubuntu` and `scripts/launch-claude-mac` place every agent in `<agents-root>/<name>` by convention and accept no directory argument, so a seat cannot adopt an existing worktree. That makes "promote this background thread to a visible tmux seat" harder than it needs to be. Roughly ten lines per launcher.
+    18	
+    19	Weakened, though not eliminated, by a fact discovered the same day: `claude attach <job-id>` already opens a background session in a terminal, so a seat is not the only route to visibility.
+    20	
+    21	## 3. A CLAUDE.md rule: background jobs push their own branch
+    22	
+    23	Several sessions pushing to one shared agent branch produced the `Merge remote-tracking branch 'origin/choirmaster' into choirmaster` commits in that branch's history, and a non-fast-forward rejection that cost a rebase mid-task. One branch per session removes the class: git already refuses one branch in two worktrees, so the discipline only has to cover which branch a session pushes.
+    24	
+    25	Instruction-class text, so it lands through the user's walk.
+    26	
+    27	## 4. md-review the fleet paths reference
+    28	
+    29	`docs/cross-project/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the md-review skill's stated target. Not yet reviewed.
+    30	
+    31	## 5. Migrating `choirmaster` to a machine-suffixed name
+    32	
+    33	Considered and deferred. The two machines share no agent state, so the same name on both is two unrelated agents rather than a conflict — the suffix buys legibility in a listing that spans machines, nothing more. Migrating the live seat means `git worktree move`, renaming its handoff files, and a restart, which is disruptive to a working agent for a cosmetic gain. Revisit only if a cross-machine listing becomes a routine view.
+    34	
+    35	## Session-management facts worth keeping (verified 2026-08-13, Claude Code 2.1.231)
+    36	
+    37	Not riders, but hard-won and easy to lose:
+    38	
+    39	- **Job ids are not session ids.** `claude attach <id>` takes the 8-character job id (the directory names under `~/.claude/jobs/`), not the session UUID. Attaching by session id fails with "No job matching".
+    40	- **`claude agents`** opens the agent view: every session grouped by state, `Space` peeks without attaching, `Ctrl+R` renames, `Ctrl+T` pins against the ~1-hour idle reap, `Ctrl+X` stops. `Ctrl+S` groups by *directory*, which makes the shared-directory hazard visible.
+    41	- **It must run on the machine whose sessions you want.** Typed on the Mac it lists the Mac's jobs; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
+    42	- **No side-by-side view exists** in the harness. Simultaneous views mean one terminal (or tmux window) per session.
+    43	- **Process uptime is not idle time.** A session showing 23 hours of `etime` may have been active a minute ago; the honest staleness check is the modification time of its transcript under `~/.claude/projects/<project>/<session-id>.jsonl`.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/handoff-supervisor.py | sed -n '241,480p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+   241	            ["git", *arguments], cwd=str(working_directory),
+   242	            capture_output=True, text=True, check=False, timeout=timeout,
+   243	        )
+   244	    except (OSError, subprocess.SubprocessError) as error:
+   245	        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+   246	
+   247	
+   248	def sync_working_branch_with_main(working_directory: Path) -> str:
+   249	    """Bring the agent's branch to main before a session starts. One line back.
+   250	
+   251	    Ruled 2026-08-13. An agent's home sits on its own branch only because git
+   252	    refuses one branch in two worktrees — nobody chose a long-lived personal
+   253	    branch, and left alone it drifts from main until someone merges by hand.
+   254	    Syncing here, between sessions, is the one safe moment: the previous
+   255	    session has exited and the next has not started, so no agent is holding a
+   256	    mental model of the tree.
+   257	
+   258	    Deliberately conservative — it only ever fast-forwards:
+   259	
+   260	    * uncommitted work, a failed fetch, no origin/main, or a branch carrying
+   261	      commits main does not have: report and change nothing;
+   262	    * strictly behind main with a clean tree: fast-forward.
+   263	
+   264	    Never a merge, because a conflicted merge left in the tree before the agent
+   265	    wakes is worse than being behind: the branch counts go in the report and
+   266	    the agent, which can judge, decides. Callers must not run this against a
+   267	    LIVE session's directory — see supervise_sessions, which syncs only on the
+   268	    launch path and never on adoption.
+   269	    """
+   270	    toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
+   271	    if toplevel.returncode != 0:
+   272	        return "branch sync: not a git checkout, nothing to sync"
+   273	
+   274	    fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
+   275	    fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
+   276	
+   277	    if run_git_here(["rev-parse", "--verify", "--quiet", "origin/main"],
+   278	                    working_directory, timeout=15).returncode != 0:
+   279	        return f"branch sync: no origin/main to sync with{fetch_note}"
+   280	
+   281	    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"],
+   282	                          working_directory, timeout=15).stdout.strip() or "HEAD"
+   283	
+   284	    dirty = run_git_here(["status", "--porcelain"], working_directory, timeout=30).stdout.strip()
+   285	    if dirty:
+   286	        return (f"branch sync: {branch} left as is — {len(dirty.splitlines())} uncommitted "
+   287	                f"path(s) in the tree{fetch_note}")
+   288	
+   289	    if run_git_here(["merge-base", "--is-ancestor", "origin/main", "HEAD"],
+   290	                    working_directory, timeout=15).returncode == 0:
+   291	        ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+   292	                             working_directory, timeout=30).stdout.strip() or "?"
+   293	        if ahead == "0":
+   294	            return f"branch sync: {branch} is current with main{fetch_note}"
+   295	        return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+   296	                f"it — nothing to pull{fetch_note}")
+   297	
+   298	    if run_git_here(["merge-base", "--is-ancestor", "HEAD", "origin/main"],
+   299	                    working_directory, timeout=15).returncode == 0:
+   300	        merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+   301	        if merged.returncode != 0:
+   302	            return (f"branch sync: {branch} could not fast-forward: "
+   303	                    f"{merged.stderr.strip() or 'no detail'}{fetch_note}")
+   304	        tip = run_git_here(["rev-parse", "--short", "HEAD"],
+   305	                           working_directory, timeout=15).stdout.strip()
+   306	        return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+   307	
+   308	    ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+   309	                         working_directory, timeout=30).stdout.strip() or "?"
+   310	    behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
+   311	                          working_directory, timeout=30).stdout.strip() or "?"
+   312	    return (f"branch sync: {branch} is {ahead} ahead of main and {behind} behind — merge when "
+   313	            f"ready (git merge origin/main){fetch_note}")
+   314	
+   315	
+   316	def launch_agent_session(agent_command: str, session_id: str, working_directory: Path, prompt: str):
+   317	    """Start one interactive session, inheriting this console's terminal."""
+   318	    return subprocess.Popen(
+   319	        [agent_command, "--session-id", session_id, prompt],
+   320	        cwd=str(working_directory),
+   321	    )
+   322	
+   323	
+   324	class AdoptedSession:
+   325	    """A session this supervisor did not launch, identified by process id.
+   326	
+   327	    A supervisor normally owns the process it started and can terminate it
+   328	    through that handle. A session started by hand — the founding boot, or any
+   329	    agent a person launched in a console — has no such owner, so it can never
+   330	    recycle. Adoption closes that: the agent's own handoff script starts a
+   331	    supervisor and tells it which process to watch, and everything after the
+   332	    kill is identical to the ordinary cycle.
+   333	    """
+   334	
+   335	    def __init__(self, session_id: str, process_id: int):
+   336	        self.session_id = session_id
+   337	        self.process_id = process_id
+   338	
+   339	    def poll(self):
+   340	        """Return None while the process is alive, 0 once it is gone."""
+   341	        try:
+   342	            os.kill(self.process_id, 0)
+   343	        except ProcessLookupError:
+   344	            return 0
+   345	        except PermissionError:
+   346	            return None  # alive, owned by someone else
+   347	        return None
+   348	
+   349	    def terminate(self):
+   350	        try:
+   351	            os.kill(self.process_id, signal.SIGTERM)
+   352	        except ProcessLookupError:
+   353	            pass
+   354	
+   355	    def kill(self):
+   356	        try:
+   357	            os.kill(self.process_id, signal.SIGKILL)
+   358	        except ProcessLookupError:
+   359	            pass
+   360	
+   361	    def wait(self, timeout=None):
+   362	        """Block until the process is gone, or raise once the timeout passes."""
+   363	        deadline = time.monotonic() + (timeout if timeout is not None else 0)
+   364	        while self.poll() is None:
+   365	            if timeout is not None and time.monotonic() > deadline:
+   366	                raise subprocess.TimeoutExpired(f"pid {self.process_id}", timeout)
+   367	            time.sleep(0.2)
+   368	        return 0
+   369	
+   370	
+   371	def claim_supervisor_lock(lock_path: Path) -> bool:
+   372	    """Take the one-supervisor-per-agent lock, or report it already held.
+   373	
+   374	    Two supervisors on one agent would each kill the session and each launch a
+   375	    successor, so the second must not start. A lock left by a supervisor that
+   376	    died is reclaimed: the recorded process id is checked before the lock is
+   377	    believed.
+   378	    """
+   379	    lock_path.parent.mkdir(parents=True, exist_ok=True)
+   380	    try:
+   381	        descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+   382	    except FileExistsError:
+   383	        try:
+   384	            holder = int(lock_path.read_text(encoding="utf-8").strip())
+   385	        except (ValueError, OSError):
+   386	            holder = None
+   387	        if holder is not None and holder != os.getpid():
+   388	            try:
+   389	                os.kill(holder, 0)
+   390	                return False  # a live supervisor already holds this agent
+   391	            except ProcessLookupError:
+   392	                pass
+   393	            except PermissionError:
+   394	                return False
+   395	        lock_path.unlink(missing_ok=True)  # the holder is gone; reclaim it
+   396	        return claim_supervisor_lock(lock_path)
+   397	    os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))
+   398	    os.close(descriptor)
+   399	    return True
+   400	
+   401	
+   402	def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
+   403	    """Block until the agent writes a new handoff, or the session exits.
+   404	
+   405	    Returns the handoff fields when a counter above `consumed_counter`
+   406	    appears, or None if the session ended on its own without writing one.
+   407	    Stamps the heartbeat while it waits, so the watched agent can tell a
+   408	    live supervisor from a dead one.
+   409	
+   410	    The exit check must not preempt the file check: a headless session exits
+   411	    when its turn ends, so its handoff arrives AS a process exit — the file
+   412	    was written during the turn, before the exit was observable. Exit with a
+   413	    new counter on disk is a handoff; exit without one is abandonment.
+   414	    """
+   415	    last_stamp = 0.0
+   416	    while True:
+   417	        exited = process.poll() is not None
+   418	
+   419	        if time.monotonic() - last_stamp >= HEARTBEAT_INTERVAL_SECONDS:
+   420	            stamp_heartbeat(state_path, state)
+   421	            last_stamp = time.monotonic()
+   422	
+   423	        if handoff_path.is_file():
+   424	            fields = parse_handoff_file(handoff_path)
+   425	            counter = counter_from(fields)
+   426	            if counter is not None and (consumed_counter is None or counter > consumed_counter):
+   427	                return fields
+   428	
+   429	        if exited:
+   430	            return None
+   431	
+   432	        time.sleep(HANDOFF_POLL_SECONDS)
+   433	
+   434	
+   435	def stop_session(process) -> None:
+   436	    process.terminate()
+   437	    try:
+   438	        process.wait(timeout=20)
+   439	    except subprocess.TimeoutExpired:
+   440	        print("handoff-supervisor: session ignored terminate; killing", file=sys.stderr)
+   441	        process.kill()
+   442	        process.wait()
+   443	
+   444	
+   445	@dataclass
+   446	class SupervisorSettings:
+   447	    """Everything one supervisor needs, resolved from the command line."""
+   448	
+   449	    agent: str
+   450	    working_directory: Path
+   451	    handoff_directory: Path
+   452	    agent_command: str
+   453	    first_prompt: str
+   454	    # A real annotation, not a string: this module is loaded by importlib in the
+   455	    # threshold hook and the tests, where a forward reference cannot resolve.
+   456	    adopted_session: Optional[AdoptedSession] = None
+   457	
+   458	    @property
+   459	    def handoff_path(self) -> Path:
+   460	        return self.handoff_directory / f"{self.agent}-handoff.md"
+   461	
+   462	    @property
+   463	    def state_path(self) -> Path:
+   464	        return self.handoff_directory / f"{self.agent}-supervisor-state.json"
+   465	
+   466	    @property
+   467	    def lock_path(self) -> Path:
+   468	        return self.handoff_directory / f"{self.agent}-supervisor.lock"
+   469	
+   470	
+   471	def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
+   472	                            handoff_fields: dict, generation: int):
+   473	    """Extract, archive, prune, and build the successor's launch.
+   474	
+   475	    Returns (successor_session_id, ignition_prompt), or (None, None) when
+   476	    extraction failed and relaunching would lose the dialog.
+   477	    """
+   478	    extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
+   479	    extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
+   480	    if not extracted:
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/handoff-supervisor.py | sed -n '481,720p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+   481	        print(
+   482	            "handoff-supervisor: extraction failed; not relaunching "
+   483	            "(the transcript is intact — recover by hand)",
+   484	            file=sys.stderr,
+   485	        )
+   486	        return None, None
+   487	
+   488	    shutil.copy2(
+   489	        settings.handoff_path,
+   490	        settings.handoff_directory / f"{settings.agent}-handoff-{generation:04d}.md",
+   491	    )
+   492	    prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
+   493	    prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
+   494	
+   495	    queue_status = queue_status_line(settings.working_directory)
+   496	    print(f"handoff-supervisor: {queue_status}")
+   497	
+   498	    successor_session_id = str(uuid.uuid4())
+   499	    copied = preseed_tasks(retiring_session_id, successor_session_id)
+   500	    print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
+   501	
+   502	    prompt = build_ignition_prompt(
+   503	        extract_path, handoff_fields, task_count_for(successor_session_id), queue_status
+   504	    )
+   505	    return successor_session_id, prompt
+   506	
+   507	
+   508	def supervise_sessions(settings: SupervisorSettings) -> int:
+   509	    """Launch, watch, and recycle sessions until one ends without a handoff."""
+   510	    state = read_supervisor_state(settings.state_path)
+   511	    generation = state.get("generation", 0)
+   512	    prompt = settings.first_prompt or (
+   513	        f"You are {settings.agent}. No handoff exists yet; ask what to work on."
+   514	    )
+   515	
+   516	    adopted = settings.adopted_session
+   517	    # A fresh start always mints a new session id. Reusing the one in the state
+   518	    # file would launch `claude --session-id` against a transcript that already
+   519	    # exists — and if the supervisor died while its agent kept running, would put
+   520	    # two processes on one session id. Adoption is how a running session is
+   521	    # picked back up.
+   522	    session_id = adopted.session_id if adopted else str(uuid.uuid4())
+   523	
+   524	    print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
+   525	    print(f"handoff-supervisor: watching {settings.handoff_path}")
+   526	
+   527	    while True:
+   528	        state.update({"session_id": session_id, "generation": generation})
+   529	        write_supervisor_state(settings.state_path, state)
+   530	
+   531	        if adopted is not None:
+   532	            print(
+   533	                f"handoff-supervisor: adopted running session {session_id} "
+   534	                f"(process {adopted.process_id}, generation {generation})"
+   535	            )
+   536	            process, adopted = adopted, None  # adoption applies to this pass only
+   537	        else:
+   538	            # Only on the launch path: an adopted session is alive in this
+   539	            # directory, and changing files under a working agent is the one
+   540	            # thing this must never do.
+   541	            print(f"handoff-supervisor: {sync_working_branch_with_main(settings.working_directory)}")
+   542	            print(f"handoff-supervisor: launching session {session_id} (generation {generation})")
+   543	            process = launch_agent_session(
+   544	                settings.agent_command, session_id, settings.working_directory, prompt
+   545	            )
+   546	
+   547	        handoff_fields = wait_for_handoff(
+   548	            process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
+   549	        )
+   550	        if handoff_fields is None:
+   551	            print("handoff-supervisor: session ended without a handoff; supervisor stopping")
+   552	            return 0
+   553	
+   554	        stop_session(process)
+   555	        generation += 1
+   556	
+   557	        if handoff_fields.get("dont-restart"):
+   558	            if not sys.stdin.isatty():
+   559	                # Nobody can answer: a supervisor the agent started has no
+   560	                # terminal, and asking would raise EOFError before the consumed
+   561	                # counter is recorded — leaving the next supervisor to re-fire on
+   562	                # a stale handoff. Not relaunching is the answer dont-restart asks
+   563	                # for, so take it.
+   564	                print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+   565	                answer = "n"
+   566	            else:
+   567	                answer = input("handoff-supervisor: restart? y/n ").strip().lower()
+   568	            if answer != "y":
+   569	                print("handoff-supervisor: stopping at the agent's request")
+   570	                state["consumed_counter"] = counter_from(handoff_fields)
+   571	                write_supervisor_state(settings.state_path, state)
+   572	                return 0
+   573	
+   574	        successor_session_id, prompt = carry_over_to_successor(
+   575	            settings, session_id, handoff_fields, generation
+   576	        )
+   577	        if successor_session_id is None:
+   578	            return 0
+   579	
+   580	        state["consumed_counter"] = counter_from(handoff_fields)
+   581	        session_id = successor_session_id
+   582	
+   583	
+   584	def main(argv=None) -> int:
+   585	    parser = argparse.ArgumentParser(
+   586	        description="Run and recycle one agent session.",
+   587	        formatter_class=argparse.RawDescriptionHelpFormatter,
+   588	        epilog=__doc__,
+   589	    )
+   590	    parser.add_argument("--agent", required=True, help="agent name; names the handoff and state files")
+   591	    parser.add_argument("--cd", default=".", help="the agent's worktree")
+   592	    parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="machine-local handoff directory")
+   593	    parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
+   594	    parser.add_argument("--first-prompt", default="", help="prompt for the first session (no handoff yet)")
+   595	    parser.add_argument(
+   596	        "--first-prompt-file", default="",
+   597	        help="file holding the first session's prompt; read here so no caller "
+   598	             "has to smuggle file content through nested shell quoting",
+   599	    )
+   600	    parser.add_argument(
+   601	        "--check", action="store_true",
+   602	        help="report whether a supervisor is watching this agent, then exit (0 alive, 1 not)",
+   603	    )
+   604	    parser.add_argument(
+   605	        "--adopt-session-id", default="",
+   606	        help="watch an already-running session with this id instead of launching one",
+   607	    )
+   608	    parser.add_argument(
+   609	        "--adopt-process-id", type=int, default=0,
+   610	        help="process id of the already-running session to adopt; required with --adopt-session-id",
+   611	    )
+   612	    arguments = parser.parse_args(argv)
+   613	
+   614	    if arguments.check:
+   615	        state_path = (
+   616	            Path(arguments.handoff_dir).expanduser() / f"{arguments.agent}-supervisor-state.json"
+   617	        )
+   618	        alive, explanation = supervisor_liveness(state_path)
+   619	        print(explanation)
+   620	        return 0 if alive else 1
+   621	
+   622	    if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
+   623	        parser.error("--adopt-session-id and --adopt-process-id must be given together")
+   624	
+   625	    adopted = None
+   626	    if arguments.adopt_session_id:
+   627	        adopted = AdoptedSession(arguments.adopt_session_id, arguments.adopt_process_id)
+   628	        if adopted.poll() is not None:
+   629	            print(
+   630	                f"handoff-supervisor: process {arguments.adopt_process_id} is already gone; "
+   631	                "nothing to adopt",
+   632	                file=sys.stderr,
+   633	            )
+   634	            return 2
+   635	
+   636	    if arguments.first_prompt_file:
+   637	        prompt_path = Path(arguments.first_prompt_file).expanduser()
+   638	        if not prompt_path.is_file():
+   639	            parser.error(f"--first-prompt-file does not exist: {prompt_path}")
+   640	        arguments.first_prompt = prompt_path.read_text(encoding="utf-8").strip()
+   641	
+   642	    working_directory = Path(arguments.cd).expanduser().resolve()
+   643	    if not working_directory.is_dir():
+   644	        parser.error(f"--cd is not a directory: {working_directory}")
+   645	    if shutil.which(arguments.agent_command) is None:
+   646	        print(f"handoff-supervisor: no such command: {arguments.agent_command}", file=sys.stderr)
+   647	        return 3
+   648	
+   649	    handoff_directory = Path(arguments.handoff_dir).expanduser()
+   650	    handoff_directory.mkdir(parents=True, exist_ok=True)
+   651	
+   652	    settings = SupervisorSettings(
+   653	        agent=arguments.agent,
+   654	        working_directory=working_directory,
+   655	        handoff_directory=handoff_directory,
+   656	        agent_command=arguments.agent_command,
+   657	        first_prompt=arguments.first_prompt,
+   658	        adopted_session=adopted,
+   659	    )
+   660	
+   661	    if not claim_supervisor_lock(settings.lock_path):
+   662	        print(
+   663	            f"handoff-supervisor: another supervisor already holds {settings.agent} "
+   664	            f"({settings.lock_path}); not starting a second one",
+   665	            file=sys.stderr,
+   666	        )
+   667	        return 4
+   668	
+   669	    try:
+   670	        return supervise_sessions(settings)
+   671	    finally:
+   672	        settings.lock_path.unlink(missing_ok=True)
+   673	
+   674	
+   675	if __name__ == "__main__":
+   676	    sys.exit(main())
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/handoff-supervisor.py | sed -n '1,240p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	#!/usr/bin/env python3
+     2	"""Run one agent session and recycle it when it writes a handoff.
+     3	
+     4	The handoff system's supervisor (specification:
+     5	docs/cross-project/fast-handoff-design.md). One supervisor per agent, run in
+     6	that agent's console. It owns the whole recycle cycle because an agent
+     7	cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
+     8	trips the safety classifier.
+     9	
+    10	The cycle, per recycle:
+    11	  1. Watch the handoff file for a restart-counter above the last consumed.
+    12	  2. Kill the running session.
+    13	  3. Extract its dialog to disk before anything else proceeds.
+    14	  4. Copy the retiring session's tasks into the successor's task directory.
+    15	  5. Print one queue-status line.
+    16	  6. Launch the successor with the ignition prompt.
+    17	  7. Keep the current and previous handoff and extract; delete older ones.
+    18	
+    19	The handoff file the agent writes (simple `key: value` lines):
+    20	  written-at:      UTC timestamp, ISO 8601
+    21	  next-step:       the first action the successor takes
+    22	  restart-counter: predecessor's counter plus one
+    23	  dont-restart:    optional; any value makes the supervisor ask before relaunching
+    24	
+    25	How much dialog to carry is not among them: the extractor takes the tail that
+    26	clears its word floor, so the retiring agent exercises no judgment over what
+    27	its successor receives.
+    28	
+    29	Never pass --allowedTools on the launch: it silently swallows the positional
+    30	prompt, so the successor would boot with no instructions at all.
+    31	
+    32	Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
+    33	"""
+    34	
+    35	import argparse
+    36	import json
+    37	import os
+    38	import shutil
+    39	import signal
+    40	import subprocess
+    41	import sys
+    42	import time
+    43	import uuid
+    44	from dataclasses import dataclass
+    45	from datetime import datetime, timezone
+    46	from pathlib import Path
+    47	from typing import Optional
+    48	
+    49	TASKS_ROOT = Path.home() / ".claude" / "tasks"
+    50	EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+    51	HANDOFF_POLL_SECONDS = 2.0
+    52	GENERATIONS_KEPT = 2
+    53	
+    54	# The supervisor stamps its state file while polling so anyone can ask whether
+    55	# a supervisor is still watching. Without this an agent can write a handoff,
+    56	# stop working, and wait forever on a supervisor that died — a hang that looks
+    57	# like obedience. Stamped on an interval rather than every poll to keep the
+    58	# write rate low; treated as dead at several times that interval, so a slow
+    59	# machine does not read as a corpse.
+    60	HEARTBEAT_INTERVAL_SECONDS = 10.0
+    61	HEARTBEAT_STALE_SECONDS = 60.0
+    62	
+    63	
+    64	def parse_handoff_file(handoff_path: Path) -> dict:
+    65	    """Read the agent-written handoff into a dict of its `key: value` lines."""
+    66	    fields = {}
+    67	    for line in handoff_path.read_text(encoding="utf-8").splitlines():
+    68	        stripped = line.strip()
+    69	        if not stripped or stripped.startswith("#") or ":" not in stripped:
+    70	            continue
+    71	        key, _, value = stripped.partition(":")
+    72	        key = key.strip().lower()
+    73	        if key not in fields:  # first occurrence wins; later prose cannot overwrite a field
+    74	            fields[key] = value.strip()
+    75	    return fields
+    76	
+    77	
+    78	def read_supervisor_state(state_path: Path) -> dict:
+    79	    if not state_path.is_file():
+    80	        return {"consumed_counter": None, "session_id": None, "generation": 0}
+    81	    try:
+    82	        return json.loads(state_path.read_text(encoding="utf-8"))
+    83	    except (json.JSONDecodeError, UnicodeDecodeError):
+    84	        print("handoff-supervisor: unreadable state file; starting fresh", file=sys.stderr)
+    85	        return {"consumed_counter": None, "session_id": None, "generation": 0}
+    86	
+    87	
+    88	def write_supervisor_state(state_path: Path, state: dict) -> None:
+    89	    state_path.parent.mkdir(parents=True, exist_ok=True)
+    90	    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    91	
+    92	
+    93	def stamp_heartbeat(state_path: Path, state: dict) -> None:
+    94	    """Record that a supervisor is alive and watching, right now."""
+    95	    state["last_poll_at"] = datetime.now(timezone.utc).isoformat()
+    96	    write_supervisor_state(state_path, state)
+    97	
+    98	
+    99	def supervisor_liveness(state_path: Path):
+   100	    """Return (is_alive, explanation) for the supervisor owning this state file."""
+   101	    if not state_path.is_file():
+   102	        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
+   103	
+   104	    state = read_supervisor_state(state_path)
+   105	    stamped = state.get("last_poll_at")
+   106	    if not stamped:
+   107	        return False, "supervisor state carries no heartbeat — it is from an older build or never polled"
+   108	
+   109	    try:
+   110	        last_poll = datetime.fromisoformat(stamped)
+   111	    except ValueError:
+   112	        return False, f"unreadable heartbeat: {stamped!r}"
+   113	
+   114	    age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
+   115	    if age_seconds > HEARTBEAT_STALE_SECONDS:
+   116	        return False, f"last heartbeat was {age_seconds:.0f}s ago — no supervisor is watching"
+   117	    return True, f"supervisor alive, last heartbeat {age_seconds:.0f}s ago"
+   118	
+   119	
+   120	def counter_from(fields: dict):
+   121	    raw = fields.get("restart-counter")
+   122	    if raw is None:
+   123	        return None
+   124	    try:
+   125	        return int(raw)
+   126	    except ValueError:
+   127	        return None
+   128	
+   129	
+   130	def elapsed_phrase(written_at: str) -> str:
+   131	    """Describe how stale a handoff is, for the ignition prompt."""
+   132	    try:
+   133	        written = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
+   134	    except (ValueError, AttributeError):
+   135	        return "written at an unrecorded time — treat every pointer in it as possibly stale"
+   136	
+   137	    minutes = (datetime.now(timezone.utc) - written).total_seconds() / 60
+   138	    if minutes < 90:
+   139	        amount = f"{int(minutes)} minutes"
+   140	    elif minutes < 60 * 48:
+   141	        amount = f"{int(minutes / 60)} hours"
+   142	    else:
+   143	        amount = f"{int(minutes / 60 / 24)} days"
+   144	    return f"written {amount} ago — the longer the gap, the more will have changed since"
+   145	
+   146	
+   147	def task_count_for(session_id: str) -> int:
+   148	    directory = TASKS_ROOT / session_id
+   149	    return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
+   150	
+   151	
+   152	def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
+   153	    """Copy task records into the successor's directory before it boots.
+   154	
+   155	    Rides undocumented harness state: tasks are <N>.json files under
+   156	    ~/.claude/tasks/<session-id>/, and a session started with an explicit id
+   157	    reads whatever is already there. An upgrade breaking this is detected at
+   158	    the successor's ignition count-check, with the queues as the backstop
+   159	    (per-upgrade canary re-runs were dropped as a remembered duty,
+   160	    user-ruled 2026-08-12); the canaries in handoff-supervisor-test.py
+   161	    (--canary) diagnose it when that fires.
+   162	    """
+   163	    source = TASKS_ROOT / retiring_session_id
+   164	    if not source.is_dir():
+   165	        return 0
+   166	    destination = TASKS_ROOT / successor_session_id
+   167	    destination.mkdir(parents=True, exist_ok=True)
+   168	    copied = 0
+   169	    for task_file in sorted(source.glob("*.json")):
+   170	        shutil.copy2(task_file, destination / task_file.name)
+   171	        copied += 1
+   172	    return copied
+   173	
+   174	
+   175	def queue_status_line(working_directory: Path) -> str:
+   176	    """Report each queue's depth and oldest item, so rot stays visible."""
+   177	    reports = []
+   178	    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/wiki/queue", "legacy-feature-queue"):
+   179	        directory = working_directory / queue_directory
+   180	        if not directory.is_dir():
+   181	            continue
+   182	        entries = sorted(
+   183	            item for item in directory.glob("*.md") if item.name.lower() != "readme.md"
+   184	        )
+   185	        if not entries:
+   186	            reports.append(f"{queue_directory}: empty")
+   187	            continue
+   188	        oldest = min(entries, key=lambda item: item.name)
+   189	        reports.append(f"{queue_directory}: {len(entries)}, oldest {oldest.name}")
+   190	    return "queues — " + ("; ".join(reports) if reports else "none found")
+   191	
+   192	
+   193	def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
+   194	    """Write the retiring session's dialog to disk. Returns True on success.
+   195	
+   196	    No boundary is passed: the extractor carries the tail that clears its word
+   197	    floor, so nothing here depends on a judgment the retiring agent made.
+   198	    """
+   199	    result = subprocess.run(
+   200	        [
+   201	            sys.executable, str(EXTRACTOR_PATH),
+   202	            "--session-id", session_id,
+   203	            "--cd", str(working_directory),
+   204	            "--output", str(output_path),
+   205	        ],
+   206	        check=False,
+   207	    )
+   208	    return result.returncode == 0
+   209	
+   210	
+   211	def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
+   212	                          queue_status: str = "") -> str:
+   213	    next_step = handoff_fields.get("next-step", "").strip()
+   214	    elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
+   215	    lines = [
+   216	        f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
+   217	        f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
+   218	    ]
+   219	    if queue_status:
+   220	        # The rot-visibility duty (#32): the successor is the one reader every
+   221	        # supervisor mode has — a detached supervisor's console is a log file.
+   222	        lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
+   223	    if next_step:
+   224	        lines.append(f"Then take the next step: {next_step}")
+   225	    else:
+   226	        lines.append("Then continue from where that dialog ends.")
+   227	    return " ".join(lines)
+   228	
+   229	
+   230	def prune_old_generations(directory: Path, stem: str) -> None:
+   231	    """Keep the newest GENERATIONS_KEPT files of one family; delete older."""
+   232	    generations = sorted(directory.glob(f"{stem}-*.md"), key=lambda item: item.name)
+   233	    for stale in generations[:-GENERATIONS_KEPT]:
+   234	        stale.unlink()
+   235	
+   236	
+   237	def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
+   238	    """Run git in the agent's directory; never raise, whatever goes wrong."""
+   239	    try:
+   240	        return subprocess.run(
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'nl -ba docs/issues/queue/45-session-seat-and-isolation-riders.md'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	# Session seat and isolation riders
+     2	
+     3	Queued for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents, launch and reattach). Raised in conversation 2026-08-13 while untangling why several sessions on the box were hard to tell apart and one had forked into another's checkout. Each item below was discussed and left undone deliberately — none is in flight.
+     4	
+     5	## 1. A guard that enforces one live session per directory
+     6	
+     7	**The invariant:** two live sessions must never share a working directory. Forks are the common road to breaking it — a fork inherits the parent's directory along with its conversation — and a background job launched from a session inherits the same cwd, which is what made several jobs look like duplicates in `~/agents/choirmaster`.
+     8	
+     9	**The proposal:** a PreToolUse hook on `Edit|Write` that refuses when another live Claude process shares this session's working directory, teaching the fix — "another session is live here; call `EnterWorktree` first". Reads and searches stay unblocked; they never collide. **Detection is the open problem, and the obvious method does not work.** A `/proc` scan comparing each Claude process's `cwd` was the first proposal; it was tried 2026-08-13 and found unreliable — an *attached* background session's process reports the directory the `claude attach` command was typed in, not the directory the session actually works in, so real duplicates hide and viewer windows masquerade as sessions. A working detector needs the session's own view of its working directory (its transcript records it, and the session itself answers correctly when asked), not the process table. Resolve this before building the hook: a guard whose detection is wrong is worse than none, because it teaches the wrong lesson at the wrong moment.
+    10	
+    11	**Why this shape:** `EnterWorktree` already relocates a running session correctly, so capability is not the gap — the trigger is. A SessionStart warning was considered and judged weaker: it advises, where the PreToolUse form blocks. The project already runs this exact pattern in `.claude/hooks/instruction-file-guard.py`.
+    12	
+    13	**Cost/caveat:** needs an entry in `.claude/settings.json` (instruction-class, so it lands through the user's walk), and a PreToolUse hook runs for every session on the machine, so a defect in it is felt everywhere.
+    14	
+    15	## 2. A `--directory` flag for the launchers
+    16	
+    17	`scripts/launch-claude-ubuntu` and `scripts/launch-claude-mac` place every agent in `<agents-root>/<name>` by convention and accept no directory argument, so a seat cannot adopt an existing worktree. That makes "promote this background thread to a visible tmux seat" harder than it needs to be. Roughly ten lines per launcher.
+    18	
+    19	Weakened, though not eliminated, by a fact discovered the same day: `claude attach <job-id>` already opens a background session in a terminal, so a seat is not the only route to visibility.
+    20	
+    21	## 3. A CLAUDE.md rule: background jobs push their own branch
+    22	
+    23	Several sessions pushing to one shared agent branch produced the `Merge remote-tracking branch 'origin/choirmaster' into choirmaster` commits in that branch's history, and a non-fast-forward rejection that cost a rebase mid-task. One branch per session removes the class: git already refuses one branch in two worktrees, so the discipline only has to cover which branch a session pushes.
+    24	
+    25	Instruction-class text, so it lands through the user's walk.
+    26	
+    27	## 4. md-review the fleet paths reference
+    28	
+    29	`docs/cross-project/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the md-review skill's stated target. Not yet reviewed.
+    30	
+    31	## 5. Migrating `choirmaster` to a machine-suffixed name
+    32	
+    33	Considered and deferred. The two machines share no agent state, so the same name on both is two unrelated agents rather than a conflict — the suffix buys legibility in a listing that spans machines, nothing more. Migrating the live seat means `git worktree move`, renaming its handoff files, and a restart, which is disruptive to a working agent for a cosmetic gain. Revisit only if a cross-machine listing becomes a routine view.
+    34	
+    35	## Session-management facts worth keeping (verified 2026-08-13, Claude Code 2.1.231)
+    36	
+    37	Not riders, but hard-won and easy to lose:
+    38	
+    39	- **Job ids are not session ids.** `claude attach <id>` takes the 8-character job id (the directory names under `~/.claude/jobs/`), not the session UUID. Attaching by session id fails with "No job matching".
+    40	- **`claude agents`** opens the agent view: every session grouped by state, `Space` peeks without attaching, `Ctrl+R` renames, `Ctrl+T` pins against the ~1-hour idle reap, `Ctrl+X` stops. `Ctrl+S` groups by *directory*, which makes the shared-directory hazard visible.
+    41	- **It must run on the machine whose sessions you want.** Typed on the Mac it lists the Mac's jobs; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
+    42	- **No side-by-side view exists** in the harness. Simultaneous views mean one terminal (or tmux window) per session.
+    43	- **Process uptime is not idle time.** A session showing 23 hours of `etime` may have been active a minute ago; the honest staleness check is the modification time of its transcript under `~/.claude/projects/<project>/<session-id>.jsonl`.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/handoff-supervisor.py | sed -n '1,220p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	#!/usr/bin/env python3
+     2	"""Run one agent session and recycle it when it writes a handoff.
+     3	
+     4	The handoff system's supervisor (specification:
+     5	docs/cross-project/fast-handoff-design.md). One supervisor per agent, run in
+     6	that agent's console. It owns the whole recycle cycle because an agent
+     7	cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
+     8	trips the safety classifier.
+     9	
+    10	The cycle, per recycle:
+    11	  1. Watch the handoff file for a restart-counter above the last consumed.
+    12	  2. Kill the running session.
+    13	  3. Extract its dialog to disk before anything else proceeds.
+    14	  4. Copy the retiring session's tasks into the successor's task directory.
+    15	  5. Print one queue-status line.
+    16	  6. Launch the successor with the ignition prompt.
+    17	  7. Keep the current and previous handoff and extract; delete older ones.
+    18	
+    19	The handoff file the agent writes (simple `key: value` lines):
+    20	  written-at:      UTC timestamp, ISO 8601
+    21	  next-step:       the first action the successor takes
+    22	  restart-counter: predecessor's counter plus one
+    23	  dont-restart:    optional; any value makes the supervisor ask before relaunching
+    24	
+    25	How much dialog to carry is not among them: the extractor takes the tail that
+    26	clears its word floor, so the retiring agent exercises no judgment over what
+    27	its successor receives.
+    28	
+    29	Never pass --allowedTools on the launch: it silently swallows the positional
+    30	prompt, so the successor would boot with no instructions at all.
+    31	
+    32	Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
+    33	"""
+    34	
+    35	import argparse
+    36	import json
+    37	import os
+    38	import shutil
+    39	import signal
+    40	import subprocess
+    41	import sys
+    42	import time
+    43	import uuid
+    44	from dataclasses import dataclass
+    45	from datetime import datetime, timezone
+    46	from pathlib import Path
+    47	from typing import Optional
+    48	
+    49	TASKS_ROOT = Path.home() / ".claude" / "tasks"
+    50	EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+    51	HANDOFF_POLL_SECONDS = 2.0
+    52	GENERATIONS_KEPT = 2
+    53	
+    54	# The supervisor stamps its state file while polling so anyone can ask whether
+    55	# a supervisor is still watching. Without this an agent can write a handoff,
+    56	# stop working, and wait forever on a supervisor that died — a hang that looks
+    57	# like obedience. Stamped on an interval rather than every poll to keep the
+    58	# write rate low; treated as dead at several times that interval, so a slow
+    59	# machine does not read as a corpse.
+    60	HEARTBEAT_INTERVAL_SECONDS = 10.0
+    61	HEARTBEAT_STALE_SECONDS = 60.0
+    62	
+    63	
+    64	def parse_handoff_file(handoff_path: Path) -> dict:
+    65	    """Read the agent-written handoff into a dict of its `key: value` lines."""
+    66	    fields = {}
+    67	    for line in handoff_path.read_text(encoding="utf-8").splitlines():
+    68	        stripped = line.strip()
+    69	        if not stripped or stripped.startswith("#") or ":" not in stripped:
+    70	            continue
+    71	        key, _, value = stripped.partition(":")
+    72	        key = key.strip().lower()
+    73	        if key not in fields:  # first occurrence wins; later prose cannot overwrite a field
+    74	            fields[key] = value.strip()
+    75	    return fields
+    76	
+    77	
+    78	def read_supervisor_state(state_path: Path) -> dict:
+    79	    if not state_path.is_file():
+    80	        return {"consumed_counter": None, "session_id": None, "generation": 0}
+    81	    try:
+    82	        return json.loads(state_path.read_text(encoding="utf-8"))
+    83	    except (json.JSONDecodeError, UnicodeDecodeError):
+    84	        print("handoff-supervisor: unreadable state file; starting fresh", file=sys.stderr)
+    85	        return {"consumed_counter": None, "session_id": None, "generation": 0}
+    86	
+    87	
+    88	def write_supervisor_state(state_path: Path, state: dict) -> None:
+    89	    state_path.parent.mkdir(parents=True, exist_ok=True)
+    90	    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    91	
+    92	
+    93	def stamp_heartbeat(state_path: Path, state: dict) -> None:
+    94	    """Record that a supervisor is alive and watching, right now."""
+    95	    state["last_poll_at"] = datetime.now(timezone.utc).isoformat()
+    96	    write_supervisor_state(state_path, state)
+    97	
+    98	
+    99	def supervisor_liveness(state_path: Path):
+   100	    """Return (is_alive, explanation) for the supervisor owning this state file."""
+   101	    if not state_path.is_file():
+   102	        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
+   103	
+   104	    state = read_supervisor_state(state_path)
+   105	    stamped = state.get("last_poll_at")
+   106	    if not stamped:
+   107	        return False, "supervisor state carries no heartbeat — it is from an older build or never polled"
+   108	
+   109	    try:
+   110	        last_poll = datetime.fromisoformat(stamped)
+   111	    except ValueError:
+   112	        return False, f"unreadable heartbeat: {stamped!r}"
+   113	
+   114	    age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
+   115	    if age_seconds > HEARTBEAT_STALE_SECONDS:
+   116	        return False, f"last heartbeat was {age_seconds:.0f}s ago — no supervisor is watching"
+   117	    return True, f"supervisor alive, last heartbeat {age_seconds:.0f}s ago"
+   118	
+   119	
+   120	def counter_from(fields: dict):
+   121	    raw = fields.get("restart-counter")
+   122	    if raw is None:
+   123	        return None
+   124	    try:
+   125	        return int(raw)
+   126	    except ValueError:
+   127	        return None
+   128	
+   129	
+   130	def elapsed_phrase(written_at: str) -> str:
+   131	    """Describe how stale a handoff is, for the ignition prompt."""
+   132	    try:
+   133	        written = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
+   134	    except (ValueError, AttributeError):
+   135	        return "written at an unrecorded time — treat every pointer in it as possibly stale"
+   136	
+   137	    minutes = (datetime.now(timezone.utc) - written).total_seconds() / 60
+   138	    if minutes < 90:
+   139	        amount = f"{int(minutes)} minutes"
+   140	    elif minutes < 60 * 48:
+   141	        amount = f"{int(minutes / 60)} hours"
+   142	    else:
+   143	        amount = f"{int(minutes / 60 / 24)} days"
+   144	    return f"written {amount} ago — the longer the gap, the more will have changed since"
+   145	
+   146	
+   147	def task_count_for(session_id: str) -> int:
+   148	    directory = TASKS_ROOT / session_id
+   149	    return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
+   150	
+   151	
+   152	def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
+   153	    """Copy task records into the successor's directory before it boots.
+   154	
+   155	    Rides undocumented harness state: tasks are <N>.json files under
+   156	    ~/.claude/tasks/<session-id>/, and a session started with an explicit id
+   157	    reads whatever is already there. An upgrade breaking this is detected at
+   158	    the successor's ignition count-check, with the queues as the backstop
+   159	    (per-upgrade canary re-runs were dropped as a remembered duty,
+   160	    user-ruled 2026-08-12); the canaries in handoff-supervisor-test.py
+   161	    (--canary) diagnose it when that fires.
+   162	    """
+   163	    source = TASKS_ROOT / retiring_session_id
+   164	    if not source.is_dir():
+   165	        return 0
+   166	    destination = TASKS_ROOT / successor_session_id
+   167	    destination.mkdir(parents=True, exist_ok=True)
+   168	    copied = 0
+   169	    for task_file in sorted(source.glob("*.json")):
+   170	        shutil.copy2(task_file, destination / task_file.name)
+   171	        copied += 1
+   172	    return copied
+   173	
+   174	
+   175	def queue_status_line(working_directory: Path) -> str:
+   176	    """Report each queue's depth and oldest item, so rot stays visible."""
+   177	    reports = []
+   178	    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/wiki/queue", "legacy-feature-queue"):
+   179	        directory = working_directory / queue_directory
+   180	        if not directory.is_dir():
+   181	            continue
+   182	        entries = sorted(
+   183	            item for item in directory.glob("*.md") if item.name.lower() != "readme.md"
+   184	        )
+   185	        if not entries:
+   186	            reports.append(f"{queue_directory}: empty")
+   187	            continue
+   188	        oldest = min(entries, key=lambda item: item.name)
+   189	        reports.append(f"{queue_directory}: {len(entries)}, oldest {oldest.name}")
+   190	    return "queues — " + ("; ".join(reports) if reports else "none found")
+   191	
+   192	
+   193	def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
+   194	    """Write the retiring session's dialog to disk. Returns True on success.
+   195	
+   196	    No boundary is passed: the extractor carries the tail that clears its word
+   197	    floor, so nothing here depends on a judgment the retiring agent made.
+   198	    """
+   199	    result = subprocess.run(
+   200	        [
+   201	            sys.executable, str(EXTRACTOR_PATH),
+   202	            "--session-id", session_id,
+   203	            "--cd", str(working_directory),
+   204	            "--output", str(output_path),
+   205	        ],
+   206	        check=False,
+   207	    )
+   208	    return result.returncode == 0
+   209	
+   210	
+   211	def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
+   212	                          queue_status: str = "") -> str:
+   213	    next_step = handoff_fields.get("next-step", "").strip()
+   214	    elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
+   215	    lines = [
+   216	        f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
+   217	        f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
+   218	    ]
+   219	    if queue_status:
+   220	        # The rot-visibility duty (#32): the successor is the one reader every
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/handoff-supervisor.py | sed -n '221,440p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+   221	        # supervisor mode has — a detached supervisor's console is a log file.
+   222	        lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
+   223	    if next_step:
+   224	        lines.append(f"Then take the next step: {next_step}")
+   225	    else:
+   226	        lines.append("Then continue from where that dialog ends.")
+   227	    return " ".join(lines)
+   228	
+   229	
+   230	def prune_old_generations(directory: Path, stem: str) -> None:
+   231	    """Keep the newest GENERATIONS_KEPT files of one family; delete older."""
+   232	    generations = sorted(directory.glob(f"{stem}-*.md"), key=lambda item: item.name)
+   233	    for stale in generations[:-GENERATIONS_KEPT]:
+   234	        stale.unlink()
+   235	
+   236	
+   237	def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
+   238	    """Run git in the agent's directory; never raise, whatever goes wrong."""
+   239	    try:
+   240	        return subprocess.run(
+   241	            ["git", *arguments], cwd=str(working_directory),
+   242	            capture_output=True, text=True, check=False, timeout=timeout,
+   243	        )
+   244	    except (OSError, subprocess.SubprocessError) as error:
+   245	        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+   246	
+   247	
+   248	def sync_working_branch_with_main(working_directory: Path) -> str:
+   249	    """Bring the agent's branch to main before a session starts. One line back.
+   250	
+   251	    Ruled 2026-08-13. An agent's home sits on its own branch only because git
+   252	    refuses one branch in two worktrees — nobody chose a long-lived personal
+   253	    branch, and left alone it drifts from main until someone merges by hand.
+   254	    Syncing here, between sessions, is the one safe moment: the previous
+   255	    session has exited and the next has not started, so no agent is holding a
+   256	    mental model of the tree.
+   257	
+   258	    Deliberately conservative — it only ever fast-forwards:
+   259	
+   260	    * uncommitted work, a failed fetch, no origin/main, or a branch carrying
+   261	      commits main does not have: report and change nothing;
+   262	    * strictly behind main with a clean tree: fast-forward.
+   263	
+   264	    Never a merge, because a conflicted merge left in the tree before the agent
+   265	    wakes is worse than being behind: the branch counts go in the report and
+   266	    the agent, which can judge, decides. Callers must not run this against a
+   267	    LIVE session's directory — see supervise_sessions, which syncs only on the
+   268	    launch path and never on adoption.
+   269	    """
+   270	    toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
+   271	    if toplevel.returncode != 0:
+   272	        return "branch sync: not a git checkout, nothing to sync"
+   273	
+   274	    fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
+   275	    fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
+   276	
+   277	    if run_git_here(["rev-parse", "--verify", "--quiet", "origin/main"],
+   278	                    working_directory, timeout=15).returncode != 0:
+   279	        return f"branch sync: no origin/main to sync with{fetch_note}"
+   280	
+   281	    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"],
+   282	                          working_directory, timeout=15).stdout.strip() or "HEAD"
+   283	
+   284	    dirty = run_git_here(["status", "--porcelain"], working_directory, timeout=30).stdout.strip()
+   285	    if dirty:
+   286	        return (f"branch sync: {branch} left as is — {len(dirty.splitlines())} uncommitted "
+   287	                f"path(s) in the tree{fetch_note}")
+   288	
+   289	    if run_git_here(["merge-base", "--is-ancestor", "origin/main", "HEAD"],
+   290	                    working_directory, timeout=15).returncode == 0:
+   291	        ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+   292	                             working_directory, timeout=30).stdout.strip() or "?"
+   293	        if ahead == "0":
+   294	            return f"branch sync: {branch} is current with main{fetch_note}"
+   295	        return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+   296	                f"it — nothing to pull{fetch_note}")
+   297	
+   298	    if run_git_here(["merge-base", "--is-ancestor", "HEAD", "origin/main"],
+   299	                    working_directory, timeout=15).returncode == 0:
+   300	        merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+   301	        if merged.returncode != 0:
+   302	            return (f"branch sync: {branch} could not fast-forward: "
+   303	                    f"{merged.stderr.strip() or 'no detail'}{fetch_note}")
+   304	        tip = run_git_here(["rev-parse", "--short", "HEAD"],
+   305	                           working_directory, timeout=15).stdout.strip()
+   306	        return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+   307	
+   308	    ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+   309	                         working_directory, timeout=30).stdout.strip() or "?"
+   310	    behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
+   311	                          working_directory, timeout=30).stdout.strip() or "?"
+   312	    return (f"branch sync: {branch} is {ahead} ahead of main and {behind} behind — merge when "
+   313	            f"ready (git merge origin/main){fetch_note}")
+   314	
+   315	
+   316	def launch_agent_session(agent_command: str, session_id: str, working_directory: Path, prompt: str):
+   317	    """Start one interactive session, inheriting this console's terminal."""
+   318	    return subprocess.Popen(
+   319	        [agent_command, "--session-id", session_id, prompt],
+   320	        cwd=str(working_directory),
+   321	    )
+   322	
+   323	
+   324	class AdoptedSession:
+   325	    """A session this supervisor did not launch, identified by process id.
+   326	
+   327	    A supervisor normally owns the process it started and can terminate it
+   328	    through that handle. A session started by hand — the founding boot, or any
+   329	    agent a person launched in a console — has no such owner, so it can never
+   330	    recycle. Adoption closes that: the agent's own handoff script starts a
+   331	    supervisor and tells it which process to watch, and everything after the
+   332	    kill is identical to the ordinary cycle.
+   333	    """
+   334	
+   335	    def __init__(self, session_id: str, process_id: int):
+   336	        self.session_id = session_id
+   337	        self.process_id = process_id
+   338	
+   339	    def poll(self):
+   340	        """Return None while the process is alive, 0 once it is gone."""
+   341	        try:
+   342	            os.kill(self.process_id, 0)
+   343	        except ProcessLookupError:
+   344	            return 0
+   345	        except PermissionError:
+   346	            return None  # alive, owned by someone else
+   347	        return None
+   348	
+   349	    def terminate(self):
+   350	        try:
+   351	            os.kill(self.process_id, signal.SIGTERM)
+   352	        except ProcessLookupError:
+   353	            pass
+   354	
+   355	    def kill(self):
+   356	        try:
+   357	            os.kill(self.process_id, signal.SIGKILL)
+   358	        except ProcessLookupError:
+   359	            pass
+   360	
+   361	    def wait(self, timeout=None):
+   362	        """Block until the process is gone, or raise once the timeout passes."""
+   363	        deadline = time.monotonic() + (timeout if timeout is not None else 0)
+   364	        while self.poll() is None:
+   365	            if timeout is not None and time.monotonic() > deadline:
+   366	                raise subprocess.TimeoutExpired(f"pid {self.process_id}", timeout)
+   367	            time.sleep(0.2)
+   368	        return 0
+   369	
+   370	
+   371	def claim_supervisor_lock(lock_path: Path) -> bool:
+   372	    """Take the one-supervisor-per-agent lock, or report it already held.
+   373	
+   374	    Two supervisors on one agent would each kill the session and each launch a
+   375	    successor, so the second must not start. A lock left by a supervisor that
+   376	    died is reclaimed: the recorded process id is checked before the lock is
+   377	    believed.
+   378	    """
+   379	    lock_path.parent.mkdir(parents=True, exist_ok=True)
+   380	    try:
+   381	        descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+   382	    except FileExistsError:
+   383	        try:
+   384	            holder = int(lock_path.read_text(encoding="utf-8").strip())
+   385	        except (ValueError, OSError):
+   386	            holder = None
+   387	        if holder is not None and holder != os.getpid():
+   388	            try:
+   389	                os.kill(holder, 0)
+   390	                return False  # a live supervisor already holds this agent
+   391	            except ProcessLookupError:
+   392	                pass
+   393	            except PermissionError:
+   394	                return False
+   395	        lock_path.unlink(missing_ok=True)  # the holder is gone; reclaim it
+   396	        return claim_supervisor_lock(lock_path)
+   397	    os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))
+   398	    os.close(descriptor)
+   399	    return True
+   400	
+   401	
+   402	def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
+   403	    """Block until the agent writes a new handoff, or the session exits.
+   404	
+   405	    Returns the handoff fields when a counter above `consumed_counter`
+   406	    appears, or None if the session ended on its own without writing one.
+   407	    Stamps the heartbeat while it waits, so the watched agent can tell a
+   408	    live supervisor from a dead one.
+   409	
+   410	    The exit check must not preempt the file check: a headless session exits
+   411	    when its turn ends, so its handoff arrives AS a process exit — the file
+   412	    was written during the turn, before the exit was observable. Exit with a
+   413	    new counter on disk is a handoff; exit without one is abandonment.
+   414	    """
+   415	    last_stamp = 0.0
+   416	    while True:
+   417	        exited = process.poll() is not None
+   418	
+   419	        if time.monotonic() - last_stamp >= HEARTBEAT_INTERVAL_SECONDS:
+   420	            stamp_heartbeat(state_path, state)
+   421	            last_stamp = time.monotonic()
+   422	
+   423	        if handoff_path.is_file():
+   424	            fields = parse_handoff_file(handoff_path)
+   425	            counter = counter_from(fields)
+   426	            if counter is not None and (consumed_counter is None or counter > consumed_counter):
+   427	                return fields
+   428	
+   429	        if exited:
+   430	            return None
+   431	
+   432	        time.sleep(HANDOFF_POLL_SECONDS)
+   433	
+   434	
+   435	def stop_session(process) -> None:
+   436	    process.terminate()
+   437	    try:
+   438	        process.wait(timeout=20)
+   439	    except subprocess.TimeoutExpired:
+   440	        print("handoff-supervisor: session ignored terminate; killing", file=sys.stderr)
+
