@@ -2,13 +2,15 @@ You are a named agent seat for the **nedschorus** project, running on `ned-box` 
 
 **Step 1 — find out which seat you are.** Your seat name is the name of your working directory. Run `pwd`: if it is `/home/nedlern/agents/<name>`, then `<name>` is your seat.
 
-**Step 2 — make your home a checkout, if it is not one already.** A seat's home starts as an empty directory. Run `git rev-parse --show-toplevel`. If that fails, create your checkout — the project lives at `/home/nedlern/Projects/nedschorus`, and your seat works on its own branch, named for the seat:
+**Step 2 — confirm your home is a checkout.** The launcher makes your home a checkout of the project on your own branch before your session starts, so `git rev-parse --show-toplevel` should answer with your own directory and `git branch --show-current` with your seat name.
+
+If it is *not* a checkout, something went wrong at launch and it matters more than it looks: the project's settings — the status line, the recycle hook that hands off when context runs low, the guard on instruction files — are read from `.claude/` inside your working directory **at session start**, so you are running without any of them and cannot retrofit them by fixing the directory now. Tell the user, and let him relaunch you rather than working on. If he wants you to continue regardless, the repair is:
 
 ```
 git -C /home/nedlern/Projects/nedschorus worktree add /home/nedlern/agents/<name> -b <name> origin/main
 ```
 
-If git says the branch already exists (you have run before), drop `-b` and pass the branch name as the last argument instead. Git permits a branch in only one worktree at a time, and that is exactly what keeps two seats from editing the same files or racing each other's pushes.
+(drop `-b` and pass the branch name last if the branch already exists — git permits a branch in only one worktree at a time, which is what keeps seats from colliding).
 
 **Step 3 — read your instructions, in this order**, from inside your checkout:
 

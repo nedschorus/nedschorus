@@ -105,6 +105,31 @@ t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
 d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
 json.dump(d,open(p,\"w\"),indent=2)' $AGENT_DIRECTORY"
 
+# The agent's home must be a CHECKOUT before the session starts, not after.
+# Project settings — the status line, the recycle Stop hook, the
+# instruction-file guard — are read from .claude/ inside the working
+# directory at session start, so an agent booted into a bare directory runs
+# with none of them, and fixing its own home later cannot retrofit the
+# session it is already in (observed 2026-08-14: a seat launched into an
+# empty ~/agents/gatekeeper had no status line and no hooks). Skipped when
+# the home is already a checkout, so relaunches are untouched; a branch that
+# already exists is reused rather than recreated, since git allows a branch
+# in only one worktree at a time.
+PREPARE_COMMAND="$PREPARE_COMMAND && \
+if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
+  git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
+  git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY -b '$AGENT_NAME' origin/main 2>/dev/null \
+  || git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY '$AGENT_NAME' \
+  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings'; \
+fi"
+
+# tmux tells the terminal the session name, so an iTerm2 tab reads
+# "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
+# server each launch: it is a global option, harmless to repeat.
+PREPARE_COMMAND="$PREPARE_COMMAND; \
+tmux set-option -g set-titles on 2>/dev/null; \
+tmux set-option -g set-titles-string '#S' 2>/dev/null; true"
+
 if [ "$ATTACH" = yes ]; then
     exec ssh -t "$AGENT_BOX" \
         "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\""
