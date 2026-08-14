@@ -54,3 +54,17 @@ Not riders, but hard-won and easy to lose:
 - **It must run on the machine whose sessions you want.** Typed on the Mac it lists the Mac's jobs; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
 - **No side-by-side view exists** in the harness. Simultaneous views mean one terminal (or tmux window) per session.
 - **Process uptime is not idle time.** A session showing 23 hours of `etime` may have been active a minute ago; the honest staleness check is the modification time of its transcript under `~/.claude/projects/<project>/<session-id>.jsonl`.
+
+## Cloud sessions and `claude --teleport` (read from the 2.1.232 binary, 2026-08-14)
+
+A cloud session — one running on Anthropic's infrastructure rather than on the box or the Mac — has no filesystem of either machine: no `~/.claude`, no seat worktree, no `/mnt/backup`. It reaches a project by **cloning a git repository**, which makes git the only channel that can deliver anything to it. That is a design constraint rather than a preference, and it is the strongest argument for the shared machinery living in a real repository rather than only in machine-local installs.
+
+`claude --teleport` moves a session between the cloud and a local CLI, in both directions (`teleportToRemote` exists alongside the resume path). Three constraints are enforced, each visible as its own error:
+
+- **The local git working directory must be clean.** *"Git working directory is not clean. Please commit or stash your changes before using --teleport."* Seats routinely carry uncommitted work, so teleporting into a seat's worktree is not a casual operation.
+- **It must run from a checkout of the same repository the cloud session used.** The error is `tengu_teleport_error_repo_mismatch_sessions_api`.
+- **It cannot be combined with `--continue`,** nor with another remote backend (a `cc://` connect URL, `claude ssh`, `claude assistant`) — *"both select a remote backend; pick one."*
+
+The second constraint has a consequence for any repository split: **a cloud session is bound to one repository.** If shared machinery and project content live in separate repositories, a cloud session that cloned the project repository cannot see the machinery, and a teleport lands in the project checkout. Whichever repository a cloud session clones is the one it gets.
+
+Cloud sessions also sync files under explicit budgets, and give up rather than degrade silently — the binary carries distinct messages for a directory with more files than per-turn sync can track, a repository too large to track, a starting commit that cannot be read in the local checkout, and an exhausted per-session file budget. A large repository is therefore a functional limit on cloud sessions, not merely a slow one.
