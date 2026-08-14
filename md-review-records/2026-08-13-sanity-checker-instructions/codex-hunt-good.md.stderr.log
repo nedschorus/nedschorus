@@ -2105,3 +2105,42 @@ scripts/git-gatekeeper.py:1625:        if arguments.command == "check-in":
 scripts/git-gatekeeper.py:1626:            return check_in(arguments)
 scripts/git-gatekeeper-test.py
 
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git branch -a --contains 023e0d236dcca98ecb15a178f4c45a99f341084f && git branch -a --contains aa0004e 2>/dev/null || true
+git merge-base --is-ancestor 023e0d2 main; printf 'main_has_023=%s\\n' \""'$?"
+git show main:.claude/skills/md-review/SKILL.md | sed -n '"'1,60p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+  walk-and-md-review-skill-rules
+  remotes/origin/walk-and-md-review-skill-rules
++ choirmaster
+  launch-claude-machine-named-launchers
++ main
+* seat-launch-first-prompt
+  worktree-gatekeeper-walk-fork-continuation
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/choirmaster
+  remotes/origin/claude/gatekeeper-audit-account-case-and-rulings-fold
+  remotes/origin/claude/ghi-write-walk-resume-item2
+  remotes/origin/handoff-hook-fired-marker-mkdir-fix
+  remotes/origin/launch-claude-machine-named-launchers
+  remotes/origin/main
+  remotes/origin/pr-52-review-doc-repairs
+  remotes/origin/seat-launch-first-prompt
+main_has_023=1
+---
+name: md-review
+description: Review an MD file of lasting value before it lands on main — a skill, a wiki page, a completed design — so future agents can clearly understand, use, and build on it. Typically the final step before pushing; drafts still in progress are not ready for it.
+---
+
+# md-review
+
+## When Used
+
+When MD files are finalized so future agents can clearly understand them (wiki files), use them properly (skills), or encode them (designs). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed.
+
+## What to do
+
+1. Run `scripts/md-review-grid.py --target <path>` as a background task, and arm a Monitor on its output that emits an event per `saved:` and per `FAILED` line — each finished review reaches you the moment it lands, and a failed cell surfaces immediately instead of being discovered at the end. It launches eight reviewers and saves their reviews to the `md-review-records/` directory. The script output tells you what to do next.
+2. Read each md-review report as it arrives. Triage as you go, but keep your judgments provisional until all eight reviews are in, as the later reviews may offer more insight than the earlier ones.
+3. When you have processed all reviews and formulated a draft response, use the walk-me-through skill to walk through what problems were detected, and what you propose to do about them. Order the walk from items of most importance to least.
+

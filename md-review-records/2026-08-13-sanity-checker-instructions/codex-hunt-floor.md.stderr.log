@@ -3015,3 +3015,283 @@ mtime=2026-08-13 21:25:57.971000000 -0700 size=3672695 path=/home/nedlern/.claud
 /home/nedlern/agents/choirmaster/md-review-records/2026-08-12-sanity-checker-calibration/scorecard-run-2.md
 /home/nedlern/agents/choirmaster/md-review-records/2026-08-12-attack-split-experiment/fast-handoff-fresh-eyes-codex.md
 
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba scripts/md-review-claude-cell.py | sed -n '1,150p' && printf '%s\\n' '--- experiment report provenance ---' && for p in md-review-records/2026-08-12-attack-split-experiment/*.md; do head -n 1 \""'$p"; done | sort | head -n 40 && printf '"'%s\\n' '--- record counts ---' && find md-review-records/2026-08-12-attack-split-experiment -maxdepth 1 -type f -name '*.md' | wc -l"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	#!/usr/bin/env python3
+     2	"""Run one Claude cell of an md-review grid against a document.
+     3	
+     4	One invocation = one cell — the twin of the Codex cell launcher
+     5	(scripts/md-review-codex-cell.py). The prompt templates in
+     6	.claude/skills/md-review/prompts/ are the single prompt source for BOTH
+     7	runtimes' cells: both launchers read the same template files, so the two
+     8	legs cannot drift apart.
+     9	
+    10	Usage:
+    11	  scripts/md-review-claude-cell.py --cell restate --tier floor --target docs/drafts/foo.md
+    12	  scripts/md-review-claude-cell.py --cell defect-hunt --tier good --target .claude/skills/x/SKILL.md
+    13	
+    14	The cell's final message prints to stdout after a provenance stamp; progress
+    15	stays on stderr. Exit codes: 0 cell ran, 2 bad invocation, else claude's code.
+    16	
+    17	The cell runs with this repository as its working directory, so its
+    18	instruction floor (the checkout's CLAUDE.md / AGENTS.md, when present) is
+    19	identical to the Codex cells' — never the invoking session's project.
+    20	"""
+    21	
+    22	import argparse
+    23	import pathlib
+    24	import subprocess
+    25	import sys
+    26	
+    27	REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+    28	PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+    29	
+    30	# Tier -> Claude model id. One place to update as models change. User-picked
+    31	# (good = Opus-class, floor = Sonnet-class, 2026-08-04); exact ids verified
+    32	# against live subagent transcripts 2026-08-04.
+    33	TIER_TO_CLAUDE_MODEL = {
+    34	    "good": "claude-opus-5",
+    35	    "floor": "claude-sonnet-5",
+    36	}
+    37	
+    38	# Tier -> reasoning effort, pinned explicitly so a cell's behavior never
+    39	# depends on the machine-local default. Accepted levels today:
+    40	# low, medium, high, xhigh, max. "high" for both tiers per the skill's
+    41	# good-at-high-effort ruling; recalibrating is the user's call, here.
+    42	TIER_TO_REASONING_EFFORT = {
+    43	    "good": "high",
+    44	    "floor": "high",
+    45	}
+    46	
+    47	# Read-only tool set: a review cell inspects, never edits. Comma-joined so
+    48	# the variadic --allowedTools option parses it as one token.
+    49	ALLOWED_TOOLS = "Read,Grep,Glob"
+    50	
+    51	
+    52	def main() -> int:
+    53	    parser = argparse.ArgumentParser(
+    54	        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    55	    )
+    56	    parser.add_argument("--cell", required=True, choices=["restate", "defect-hunt"])
+    57	    parser.add_argument("--tier", required=True, choices=["good", "floor"])
+    58	    parser.add_argument(
+    59	        "--target", required=True, help="document path, relative to the repo root or absolute"
+    60	    )
+    61	    parser.add_argument("--model", help="explicit Claude model id; overrides the tier mapping")
+    62	    args = parser.parse_args()
+    63	
+    64	    target = pathlib.Path(args.target)
+    65	    if not target.is_absolute():
+    66	        target = REPO_ROOT / target
+    67	    if not target.is_file():
+    68	        print(f"md-review-claude-cell: target not found: {target}", file=sys.stderr)
+    69	        return 2
+    70	
+    71	    template_path = PROMPTS_DIR / f"{args.cell}.md"
+    72	    if not template_path.is_file():
+    73	        print(f"md-review-claude-cell: prompt template missing: {template_path}", file=sys.stderr)
+    74	        return 2
+    75	    prompt = template_path.read_text(encoding="utf-8").replace("{TARGET_PATH}", str(target))
+    76	
+    77	    model = args.model or TIER_TO_CLAUDE_MODEL[args.tier]
+    78	    effort = TIER_TO_REASONING_EFFORT[args.tier]
+    79	    command = [
+    80	        "claude",
+    81	        "-p",
+    82	        "--model", model,
+    83	        "--effort", effort,
+    84	        "--output-format", "text",
+    85	        "--allowedTools", ALLOWED_TOOLS,
+    86	    ]
+    87	
+    88	    # The prompt travels via stdin, not as a positional argument: the CLI's
+    89	    # variadic options (--allowedTools) swallow a trailing positional
+    90	    # (measured 2026-08-05: the cell ran with no input at all), and
+    91	    # subprocess.run(input=...) writes stdin and closes it, so the
+    92	    # inherited-open-stdin deadlock class is avoided by construction.
+    93	    completed = subprocess.run(
+    94	        command,
+    95	        input=prompt,
+    96	        stdout=subprocess.PIPE,
+    97	        stderr=sys.stderr,
+    98	        cwd=REPO_ROOT,
+    99	        text=True,
+   100	        check=False,
+   101	    )
+   102	    if completed.returncode != 0:
+   103	        if completed.stdout:
+   104	            print(completed.stdout, file=sys.stderr)
+   105	        print(
+   106	            f"md-review-claude-cell: claude -p failed (exit {completed.returncode})"
+   107	            + (" — if the error above says the CLI is not logged in, ask the user to run: claude login"
+   108	               if "auth" in (completed.stdout or "").lower() or "login" in (completed.stdout or "").lower()
+   109	               else ""),
+   110	            file=sys.stderr,
+   111	        )
+   112	        return completed.returncode
+   113	
+   114	    # Provenance header for the review record: the which-cells-earn-their-keep
+   115	    # analysis needs every cell output pinned to its exact model and effort
+   116	    # (tier names drift across model eras; pins do not).
+   117	    print(
+   118	        f"<!-- provenance: runtime=claude model={model} "
+   119	        f"effort={effort} cell={args.cell} "
+   120	        f"tier={args.tier} target={args.target} -->\n"
+   121	    )
+   122	    print(completed.stdout)
+   123	    return 0
+   124	
+   125	
+   126	if __name__ == "__main__":
+   127	    sys.exit(main())
+--- experiment report provenance ---
+<!-- provenance: runtime=claude model=claude-fable-5 effort=xhigh attack=cut doc=fast-handoff isolation=instruction-pinned document set -->
+<!-- provenance: runtime=claude model=claude-fable-5 effort=xhigh attack=cut doc=gatekeeper isolation=instruction-pinned document set -->
+<!-- provenance: runtime=claude model=claude-fable-5 effort=xhigh attack=fresh-eyes doc=fast-handoff isolation=empty-scratch-directory -->
+<!-- provenance: runtime=claude model=claude-fable-5 effort=xhigh attack=fresh-eyes doc=gatekeeper isolation=empty-scratch-directory -->
+<!-- provenance: runtime=claude model=claude-fable-5 effort=xhigh attack=mechanization doc=fast-handoff isolation=instruction-pinned document set -->
+<!-- provenance: runtime=claude model=claude-fable-5 effort=xhigh attack=mechanization doc=gatekeeper isolation=instruction-pinned document set -->
+<!-- provenance: runtime=codex model=gpt-5.6-sol effort=xhigh attack=cut doc=fast-handoff isolation=instruction-pinned document set -->
+<!-- provenance: runtime=codex model=gpt-5.6-sol effort=xhigh attack=cut doc=gatekeeper isolation=instruction-pinned document set -->
+<!-- provenance: runtime=codex model=gpt-5.6-sol effort=xhigh attack=fresh-eyes doc=fast-handoff isolation=empty-scratch-directory -->
+<!-- provenance: runtime=codex model=gpt-5.6-sol effort=xhigh attack=fresh-eyes doc=gatekeeper isolation=empty-scratch-directory -->
+<!-- provenance: runtime=codex model=gpt-5.6-sol effort=xhigh attack=mechanization doc=fast-handoff isolation=instruction-pinned document set -->
+<!-- provenance: runtime=codex model=gpt-5.6-sol effort=xhigh attack=mechanization doc=gatekeeper isolation=instruction-pinned document set -->
+<!-- provenance: scoring of the attack-split validation experiment (grid-seat rulings, user-walked 2026-08-12) — 3 stance attacks x 2 runtimes (claude-fable-5, gpt-5.6-sol, both xhigh) x 2 archived ground-truth documents; scored by the requesting agent (session 49e0a3cf) against the S1-S9 rulings (md-review-records/2026-08-12-sanity-checker-calibration/) and the seven fast-handoff rulings (md-review-records/2026-08-12-fast-handoff-sanity-check/dispositions.md); cell reports in this directory -->
+--- record counts ---
+13
+
+[35m[3mcodex[0m[0m
+The review has surfaced two definite grounding problems already: the target says all four novel findings came from archived snapshots, but the cited experiment’s fresh-eyes cells received only problem statements; and it reports “eight judgment cells” while the experiment provenance describes 12 attack/runtime/document cells. I’m checking the remaining section-level instructions for order, ownership, and stopping-point defects before compiling the final list.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "printf '%s\\n' '--- draft-review dispositions ---' && nl -ba md-review-records/2026-08-11-sanity-checker-prompt-draft/dispositions.md && printf '%s\\n' '--- draft-review reference check ---' && nl -ba md-review-records/2026-08-11-sanity-checker-prompt-draft/reference-check.md && printf '%s\\n' '--- draft-review report headings ---' && rg -n '"'^#|''^##|''^###|''^'"\\*\\*' md-review-records/2026-08-11-sanity-checker-prompt-draft/*.md | head -n 300"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+--- draft-review dispositions ---
+     1	# Dispositions — md-review of docs/drafts/sanity-checker-prompt-draft.md
+     2	
+     3	Grid run 2026-08-11 (eight reviewers: restate and defect-hunt, good and floor tiers, Claude and Codex runtimes). This file is the walk anchor: items below are marked as the user rules on them. Findings referenced by report and number (e.g. claude-hunt-good #20).
+     4	
+     5	Overall: the four restate reports show the draft is understood — both restaters resolved "write nothing," the walk flow, and the NP-complete example correctly from context. The defects that survive triage are precision and consistency faults, concentrated in the method/report machinery; the two hunt reports agree heavily.
+     6	
+     7	## Walk order
+     8	
+     9	1. Purpose: what this walk decides and the overall verdict — processed 2026-08-11 → accepted
+    10	2. The reporting tangle: "report the earliest that applies" vs the earned-finding guard; "finding" defined two ways; hunts and leanness certification have no home in the report format; "depth of simplification" undefined (claude-hunt-good #20–23, #33, #35; codex-hunt-good #23, #41, #45; claude-hunt-floor #4, #12) — processed 2026-08-11 → accepted: ladder classifies, guard decides; report given three named parts; depth mapped to ladder rungs; certifications exempt from the five fields
+    11	3. Assignment-paragraph precision: who accepts findings ("he" → the user); "write nothing" → files; singular/plural; naming the document under review (claude-hunt-good #5, #7, #9; codex-hunt-good #6, #8, #9) — processed 2026-08-11 → accepted: all three fixes applied; the review request must name the document under review
+    12	4. The goal-sentence bar and priority alignment: the and/or chain; "and testability" vs "or testability" drift; safety missing from the priority order; forms-list intro (claude-hunt-good #12–14; codex-hunt-good #16; codex-hunt-floor #7, #10) — processed 2026-08-11 → revised (user ruling): "safer" removed from the document entirely — it primes defensive over-checking, and its legitimate half is what "reliable" already means here; "easier to use" promoted into the headline, goal sentence, and priority 1; the and/or chain became an at-least-one-of-six menu with losses declared in LOST; both reliability/testability homes aligned to "or"
+    13	5. Zero-context patches: gloss the check-in gate, the walk, walk-order blocks; scope CONSEQUENCES "every test" and COST to the documents read (claude-hunt-good #3, #30, #32, #36; codex-hunt-good #43, #44) — processed 2026-08-11 → revised (user rulings): COST field removed outright — AIs count tokens, but real cost is clock and human time, and LOST + CONSEQUENCES already carry the price; "walk" explained by naming the walk-me-through skill in a sentence instead of oblique reference; glosses and CONSEQUENCES scoping applied as proposed
+    14	6. Discipline gaps: the roadmap-absent case; "rulings are recorded inline" overclaim (claude-hunt-good #29, #31; codex-hunt-good #37, #40) — processed 2026-08-11 → accepted: premature-looking mechanisms become report questions when no plan is given; rulings "ordinarily" inline, with elsewhere-notes taken at their word
+    15	7. The readability-vs-trim line (claude-hunt-good #34; codex-hunt-good #10; codex-hunt-floor #41) — processed 2026-08-11 → accepted: readability findings must be structural (reorganize, split, merge, deduplicate); phrasing polish stays barred as the comprehension cells' territory
+    16	8. The NP-complete label and the backup-example fragment — user's wording, options offered (claude-hunt-good #10, #11; codex-hunt-good #12, #13) — processed 2026-08-11 → revised (user rulings): label widened to the family "unbounded, NP-complete, intractable, or undecidable"; the backup example completed with the user's framing — not detection-instead-of-prevention but containment: with the right structure an unwanted edit is a momentary glitch remedied by restoring the copy — and generalized into its own hunt: contain a problem so failures are quickly and easily remedied, and prevention machinery can shrink or disappear
+    17	9. Flagged, recommend keep — re-planned 2026-08-11 (user direction: walk all five, don't dismiss feedback wholesale); items 9–13 below replace this item
+    18	9. Owner's-quote universals (claude-hunt-good #16–18; codex-hunt-good #18–21) — processed 2026-08-11 → revised (user rulings, one per sentence): "both" removed; thousand-lines and works-or-doesn't sentences replaced with "A well-designed Python script, even a thousand lines, should be fully deterministic, tunable, and testable — unlike even a short prompt, which is situationally dependent"; closing claim scoped to "far longer code that can be 100% predictable"
+    19	10. Cut-class absolutes (claude-hunt-good #26, #27; codex-hunt-good #32, #34; codex-hunt-floor #27–29) — processed 2026-08-12 → revised (user rulings, walked part by part): (a) "guaranteed to drift apart" → "which will drift apart"; (b) carrier-vs-invariant class rewritten in the user's words as "Facts used directly instead of derived by LLM processing" — clearest words, no "carrier"/"invariant"/"by hand"; the calibration example's "carrier" vocabulary updated to match (supersedes the settle-walk keep-the-heading ruling); (c) the every-cut-fits opener cut entirely — the classes don't need their track record explained; guards-class counterexample verified a misread
+    20	11. The name "sanity-checker" vs the naming rule (claude-hunt-good #37; codex-hunt-good #4) — processed 2026-08-12 → rejected, no change: the name stands as ruled; the naming-history discoverability concern is moot because the draft-era history becomes irrelevant at deployment
+    21	12. "Calibration" naming two things (claude-hunt-good #38) — processed 2026-08-12 → revised (user ruling: clearest wording): body section renamed "Two worked examples from this project's ruled history"; "calibration" now appears only in the status header's pointer to the lessons-file protocol, which vanishes at deployment
+    22	13. The Discipline heading vs its contents (claude-hunt-good #28) — processed 2026-08-12 → revised (user wording): heading is now "The rules"
+    23	14. Housekeeping outside the draft: the stale walk-order block in subtract-cell-prompt-lessons.md (codex-hunt-floor #1) — processed 2026-08-12 → accepted: dated close-out note added to that file's walk-order section; requirements record and calibration protocol unchanged
+    24	
+    25	Walk closed 2026-08-12: all 14 items processed. The md-review's accepted and revised fixes are in the draft on the choirmaster branch; the calibration protocol is the next step, on the user's word.
+--- draft-review reference check ---
+     1	# Reference-integrity pre-pass
+     2	
+     3	- ok: `docs/drafts/simplification-review-codex-naming-notes.jsonl`
+     4	- UNRESOLVED: `docs/drafts/simplification-review-prompt-draft.md`
+     5	- ok: `md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md`
+--- draft-review report headings ---
+md-review-records/2026-08-11-sanity-checker-prompt-draft/reference-check.md:1:# Reference-integrity pre-pass
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:3:## Document status and scope
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:15:## Your assignment
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:61:## Priority order when simplifications conflict
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:73:## The highest-value form: prompts to code
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:93:## The method: six questions, asked in order
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:125:## Cut classes with a validated track record
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:139:## Discipline — what you must not do
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:177:## Report format
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-floor.md:199:## Two calibration examples from this project's ruled history
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:3:# Sanity-checker — reviewer instructions (draft)
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:11:## Your assignment
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:36:## Priority order when simplifications conflict
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:44:## The highest-value form: prompts to code
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:56:## The method: six questions, asked in order
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:75:## Cut classes with a validated track record
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:85:## Discipline — what you must not do
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:103:## Report format
+md-review-records/2026-08-11-sanity-checker-prompt-draft/codex-restate-good.md:116:## Two calibration examples from this project’s ruled history
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:3:## Frontmatter
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:7:## Title line
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:11:## Status paragraph (unheaded, before the horizontal rule)
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:21:## Line after the status paragraph (before the rule)
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:25:## Your assignment
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:71:## Priority order when simplifications conflict
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:83:## The highest-value form: prompts to code
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:105:## The method: six questions, asked in order
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:137:## Cut classes with a validated track record
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:153:## Discipline — what you must not do
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:177:## Report format
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-good.md:201:## Two calibration examples from this project's ruled history
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:3:# Sanity-checker prompt draft — sentence-by-sentence restatement
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:5:## Header note (before the horizontal rule)
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:13:## Your assignment
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:38:## Priority order when simplifications conflict
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:46:## The highest-value form: prompts to code
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:59:## The method: six questions, asked in order
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:74:## Cut classes with a validated track record
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:84:## Discipline — what you must not do
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:96:## Report format
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-restate-floor.md:109:## Two calibration examples from this project's ruled history
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:5:**1. Meta status note, line 3 — undefined terms "review cell" and "grid"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:9:**2. Lines 9–11 — plural/singular antecedent mismatch ("They" / "It")**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:13:**3. Line 11 — undefined term "comprehension fix"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:17:**4. Line 11 vs. line 92 — "finding" is defined two incompatible ways**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:22:**5. Lines 13–15 — "simpler, saner, safer" but only "saner" is elaborated**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:26:**6. Lines 16/18 vs. 28/30 vs. 76 — the same rules restated in three places (self-violates the file's own "Duplicated normative homes" class)**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:35:**7. Lines 20, 73, 77 — the theoretical/intractable-problem rule stated three times**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:42:**8. Line 20 — "NP complete problems" is a technically wrong label for the given example**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:46:**9. Line 66 — "guaranteed to drift apart" is an absolute claim broader than it can hold**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:50:**10. Lines 45 and 52 — the six-question ladder's terminal step assumes a model that may not exist**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:55:**11. Line 54 — "the ladder" is used before being named**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:59:**12. Lines 56–59 vs. line 90 — conflicting report-structuring instructions**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-floor.md:64:**13. Line 59 — "a better way" / "unknown unknowns" hunt has no stopping point**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:9:**1. L3 — "Not wired into any skill or grid" / "it becomes a review cell"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:12:**2. L3 — "The name \"sanity-checker\" is the user's ruled candidate (2026-08-11, refined the same day from \"sanity reviewer\")"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:15:**3. L5 — "Everything below the rule is the prompt itself, written for a reviewer with zero context beyond what it names."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:18:**4. L5 — "below the rule"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:21:**5. L11 — "write nothing — your only output is the report described at the end"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:24:**6. L11 — "Read the documents you are given and the documents they link"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:27:**7. L11 — "You receive MD files." vs. "the document under review" / L88 "every sentence elsewhere in the document"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:30:**8. L11 — "unlike a comprehension fix, a wrong one applied silently makes the design worse under a cleaner surface"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:33:**9. L11 — "the requesting agent triages your findings and walks them with the user, and only the findings he accepts reach the document"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:36:**10. L20 — "looking for attempts to solve NP complete problems, like detecting every way a computer can edit a file"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:39:**11. L20 — "In the case of guarding a file from edits, simply backing up that file, then checking if it has been altered."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:42:**12. L22 — "every change you propose must leave the system better — simpler or more autonomous, safer or more testable, and saner or more reliable"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:45:**13. L18 vs. L30 — "but not at the expense of reliability and testability" / "welcome, but never at the expense of reliability or testability"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:48:**14. L26–L30 vs. L86 — the priority order has no entry for safety**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:51:**15. L28 vs. L11 — "zero remembered human steps"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:54:**16. L36 — "so that the steps, states, or algorithm is both hundreds of times faster, deterministic, followed exactly, and can be tested and tuned exactly"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:57:**17. L36 — "Ten, a hundred, or even a thousand lines of Python is in actuality simpler to debug than invoking an agent with a short prompt."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:60:**18. L38 — "the real work did not disappear or even shrink, it moved somewhere invisible and difficult to test under real world conditions"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:63:**19. L41 vs. L54 — "Code handles everything where variability adds nothing: validation, parsing, calculation, …"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:66:**20. L45 — "ask these questions in this order and report the earliest one that applies"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:73:**21. L54 vs. L92 vs. L11 — the word "finding" carries two incompatible definitions**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:76:**22. L54 — "the ladder generates candidates; the priority order decides which are worth building"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:79:**23. L56–L59 vs. L82–L90 — "Two hunts deserve their own sections in your report" conflicts with the report format**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:82:**24. L58 — "list every place the design relies on an LLM following English instructions where a script could do the job"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:85:**25. L59 — "And are we missing something important, an unknown unknown?"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:88:**26. L63 — "Every cut this project has accepted from a review of this kind fits one of these classes."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:91:**27. L67 — "move the carrier, never drop the fact"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:94:**28. L71 — section heading "Discipline — what you must not do"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:97:**29. L74 — "You may be given the project's forward plan."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:100:**30. L78 — "look for \"ruled\"/\"RULED\" annotations and walk-order blocks"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:103:**31. L78 — "The project's rulings are recorded inline in the document and the documents it links"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:106:**32. L88 — "every sentence elsewhere in the document, and every test, that becomes false or stale if this change lands"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:109:**33. L90 — "Order findings by depth of simplification, deepest first."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:112:**34. L90 vs. L15 — "A wording-level trim is not worth reporting."**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:115:**35. L92 — "Say explicitly which areas are already minimal"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:118:**36. L96 — "an instruction to pass `--base` (a 40-character commit id) to the check-in gate"; L97 — "nothing reads the trailer it produces"**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:121:**37. Naming — "sanity-checker" versus the names of everything around it**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/claude-hunt-good.md:124:**38. L3 vs. L94 — "calibration" names two different things**
+md-review-records/2026-08-11-sanity-checker-prompt-draft/dispositions.md:1:# Dispositions — md-review of docs/drafts/sanity-checker-prompt-draft.md
+md-review-records/2026-08-11-sanity-checker-prompt-draft/dispositions.md:7:## Walk order
+
