@@ -2,6 +2,16 @@
 
 Snapshot taken 2026-08-13 for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), to divide the box's open work among a small number of named agents. Written because parallel sessions accumulated faster than anyone tracked them: forks were used to park context for later, successors wrote handoffs describing their *present* state rather than their fork point, and several threads ended up overlapping. Operational snapshot, not a standing design — the PR and issue rows go stale as they land; the thread map and the context-file paths stay useful.
 
+## 0. State as of 2026-08-13, late evening
+
+The fastest way to catch up.
+
+- **Two seats are running** on the box: `gatekeeper` and `sanity-checker`, both in `~/agents/<seat>` on their own branches, both past their first action. The gatekeeper seat has reported and is waiting on a ruling; the sanity-checker seat is triaging its four findings and writing queue documents to route them. See § 6a for how they were launched and the one trap in it.
+- **Every seat document has been md-reviewed**, twelve in all, and each review's findings applied to the document it reviewed. The reviews were brutal and useful: 23 findings on the gatekeeper brief, 28 on the seat model, 30 on the sanity-checker brief, 26 on the fleet brief, with "clean sections: none" on each of the first four. The corrections are in PR #58.
+- **The largest single defect class was vocabulary**: the briefs used *pile*, *walked approval*, *instruction-class*, *slice* and the C-numbers as if established, and none was defined anywhere. The seat model now defines them once.
+- **Two corrections worth knowing because they were wrong facts, not wrong wording**: every document written that day was stamped `2026-08-14` (UTC job timestamps read as local dates) and is now corrected to `2026-08-13`; and the seat-first-prompt's repair command could not work — `git worktree add` refuses a non-empty path, and its "drop `-b`" variant was an invalid invocation, on the branch-already-exists path that any relaunched seat takes.
+- **Still owed:** a second-pass review of the documents that changed *after* their first review — applying findings can introduce new ones — starting with `seat-first-prompt.md`, `agent-seat-model.md` and `gatekeeper-instructions.md`.
+
 ## 1. Open pull requests
 
 | PR | Branch | What it carries | Owner stream |
