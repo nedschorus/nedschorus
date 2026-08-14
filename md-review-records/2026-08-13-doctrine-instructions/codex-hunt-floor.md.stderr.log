@@ -455,3 +455,120 @@ Five committed homes plus the shared place — no `docs/working/` ever exists:
 8. RESOLVED 2026-07-24 (number kept for reference stability): boot set = the five founding skills only (step 1); none of the nine candidate skills ([nedschorus#15](https://github.com/nedschorus/nedschorus/issues/15)–[#23](https://github.com/nedschorus/nedschorus/issues/23)) joins at boot. Candidates join one at a time, when a real task exposes the missing decision the candidate encodes; first expected pull: `write-test-plan` ([nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18)) at the step-7 git-gatekeeper task. Named-deferred classes — on the map, deliberately no GHI until their trigger occurs: `release-transition` and `learn-from-failure` (carried from the skills research), and `suite-health` (boss-ruled 2026-07-29, SDLC-note walk): the seven July-5 suite-operation skills (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness-writers) recorded as one deferred class, trigger being the first sustained test suite whose signal degrades; skip-warden's expiry-on-skips convention rides the first test-writing skill; test-diff-reviewer and test-ghostwriter are already covered by existing candidates.
 9. RESOLVED 2026-07-24 (number kept for reference stability): the rewrite policy is ruled — see § Standing decisions. Per-cherry-pick four-class feature classification (preserve-feature / update-feature / remove-feature / consider-feature), records in the slice plan or entry-manifest line, undecided features to `legacy-feature-queue/`, and unexamined is never preserved.
 
+[35m[3mcodex[0m[0m
+The target also names `.claude/hooks/instruction-file-guard.py` as the enforcement mechanism, so I’m reading that explicit path before judging whether the claim about approval enforcement is executable or complete.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'wc -l .claude/hooks/instruction-file-guard.py && nl -ba .claude/hooks/instruction-file-guard.py'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+104 .claude/hooks/instruction-file-guard.py
+     1	#!/usr/bin/env python3
+     2	"""Soft block on modifying instruction files (user-walked 2026-08-07, nedschorus#45).
+     3	
+     4	Wired as a PreToolUse hook on Edit, Write, and NotebookEdit. Instruction
+     5	files — CLAUDE.md, per-agent CLAUDE.local.md identity files, and everything
+     6	under .claude/ — change only through the user's walk. Agents predictably try
+     7	to improve them (observed repeatedly in the legacy fleet); a path-scoped rule
+     8	cannot stop that (rules are context, not enforcement, and file creation
+     9	never triggers them — probed 2026-08-07), so the block lives at the tool
+    10	call, where it also catches creation.
+    11	
+    12	Soft block, not a wall: the deny message teaches the sanctioned path and
+    13	names the override. An edit the user has already approved passes once by
+    14	writing the user's exact approval words into .walk-approved at the
+    15	repository root; the marker is consumed by the passing call. The override is
+    16	deliberately self-serve — the audit value is the visible, quoted approval in
+    17	the marker and the transcript, not tamper-proofing.
+    18	
+    19	.claude/ is in the protected set as self-protection: this hook's own wiring
+    20	lives in .claude/settings.json, and an unguarded settings file is a guard an
+    21	agent can delete.
+    22	
+    23	The harness's auto-memory under ~/.claude/projects/ is deliberately inside the
+    24	protected set (user-ruled 2026-08-11): every memory entry is user-reviewed.
+    25	Other harness state (transcripts, handoffs) carries no review requirement — a
+    26	carve-out is added when a real harness write trips this guard, not in advance.
+    27	Two exist, each added that way: `.claude/worktrees/` (an agent's isolated
+    28	checkout) and `.claude/jobs/` (a background job's scratch directory, which the
+    29	harness hands out for temporary files and deletes with the job).
+    30	"""
+    31	
+    32	import json
+    33	import os
+    34	import sys
+    35	from pathlib import Path
+    36	
+    37	PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
+    38	PROTECTED_DIRECTORY = ".claude"
+    39	APPROVAL_MARKER_NAME = ".walk-approved"
+    40	
+    41	DENY_MESSAGE = (
+    42	    "Before modifying {path}, get the user's approval on your change: instruction files "
+    43	    "(CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only "
+    44	    "through the user's walk, however clearly the edit would help. State the proposed "
+    45	    "change to the user and walk it with him. If he has already approved this exact "
+    46	    "change, quote his exact approval words into {marker} at the repository root, then "
+    47	    "resubmit your write or edit — the marker is consumed by the one call it approves."
+    48	)
+    49	
+    50	
+    51	def project_root() -> Path:
+    52	    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+    53	
+    54	
+    55	def is_protected(file_path: str) -> bool:
+    56	    path = Path(file_path)
+    57	    if path.name in PROTECTED_BASENAMES:
+    58	        return True
+    59	    parts = path.resolve().parts
+    60	    for index, part in enumerate(parts):
+    61	        if part == PROTECTED_DIRECTORY:
+    62	            if index + 1 < len(parts) and parts[index + 1] in ("worktrees", "jobs"):
+    63	                # A worktree checkout's home under .claude/worktrees/, or a
+    64	                # background job's scratch directory under .claude/jobs/<id>/tmp
+    65	                # — both are working space the harness hands out, not machinery
+    66	                # that instructs anybody. The jobs carve-out was added 2026-08-13
+    67	                # after a real write tripped the guard, which is the condition
+    68	                # this file's docstring sets for adding one.
+    69	                continue
+    70	            return True
+    71	    return False
+    72	
+    73	
+    74	def consume_approval_marker(marker_path: Path) -> bool:
+    75	    """One approved change passes; the marker is spent by the call it approves."""
+    76	    try:
+    77	        content = marker_path.read_text(encoding="utf-8").strip()
+    78	    except (FileNotFoundError, OSError):
+    79	        return False
+    80	    if not content:
+    81	        return False
+    82	    marker_path.unlink(missing_ok=True)
+    83	    return True
+    84	
+    85	
+    86	def main() -> int:
+    87	    try:
+    88	        payload = json.loads(sys.stdin.read() or "{}")
+    89	    except json.JSONDecodeError:
+    90	        return 0
+    91	    file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+    92	    if not file_path or not is_protected(file_path):
+    93	        return 0
+    94	
+    95	    marker_path = project_root() / APPROVAL_MARKER_NAME
+    96	    if consume_approval_marker(marker_path):
+    97	        return 0
+    98	
+    99	    print(DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
+   100	    return 2
+   101	
+   102	
+   103	if __name__ == "__main__":
+   104	    sys.exit(main())
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "rg -n -i 'fix ladder|fix-ladder|ladder' docs/cross-project/nedschorus-founding-plan.md docs/agents/agent-seat-model.md docs/agents/doctrine-instructions.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+docs/agents/doctrine-instructions.md:22:`docs/cross-project/nedschorus-founding-plan.md` is the project's constitution — its standing decisions, the artifact-lifecycle rule, the fix ladder, the rewrite policy. Most items here amend or extend it, so read it first and be explicit about which standing decision a proposal touches.
+docs/cross-project/nedschorus-founding-plan.md:16:- **The prior-art cross-check is complete** — two adversarial passes over the nine founding patterns; every borrowing's disposition is recorded on closed [nedschorus#5](https://github.com/nedschorus/nedschorus/issues/5), and the full reports are git-history-recoverable from there (the doc was temporary reference, disposed at close). Net: git-gatekeeper/ladder/python-first are established practice (validating, not novel); the handoff governance bundle and legacy-with-manifest survived as unmatched compositions; handoff-quality instrumentation deferred low-priority with raise-triggers ([nedschorus#6](https://github.com/nedschorus/nedschorus/issues/6)).
+
