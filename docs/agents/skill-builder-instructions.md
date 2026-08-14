@@ -2,13 +2,19 @@
 
 Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
 
-Your pile is **the queue of proposed skills**: seven of them, each filed as an issue, plus the procedure that drains the project's queues. They belong together because every build has the same shape and shares one authoring standard, so the seventh should cost far less than the first.
+Your pile is **the queue of proposed skills** — seven, each filed as an issue — together with [#24](https://github.com/nedschorus/nedschorus/issues/24), the queue-drain procedure. #24 is not an eighth skill: it is the process by which this queue and the project's others get emptied, so it governs how you work the other seven rather than being one of them.
+
+They belong together because most share a shape and one authoring standard, so the later builds cost far less than the first. Two do not, and knowing which is which saves a wasted session: **#19 (`attack-artifact`) is filed as an open comparison question rather than a settled design** — the work there is to answer whether it should exist and in what form, not to build it — and **#17 (`design-change`) describes a read-only skill**, which changes what "done" looks like but not the build process.
+
+**Reading the issues:** every item's substance lives in its GitHub issue, reached with `gh issue view <n> --repo nedschorus/nedschorus`. If `gh` is unauthenticated or the network is down, stop and tell the user rather than working from the summaries below — they are orientation, not specification.
 
 A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `md-review`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
 
 **Your work is done when** each issue below is either built and landed, ruled out with the reason recorded in the issue, or left with a stated blocker. You will not finish all seven in one series — build one, hand off, and let the next session take the next. Then write a handoff and stop.
 
 ## The queue
+
+An item's **state** — whether it is unstarted, in progress, built, or ruled out — lives in its issue: open or closed, plus whatever the body records. There is no separate tracker, so after any build or ruling, update the issue body through the `ghi-write` skill; otherwise the next session cannot tell what you did. Where an issue and its queue document disagree, the issue is authoritative on state and the queue document on substance.
 
 | Issue | Skill | What it is for, and any material already written |
 |---|---|---|
