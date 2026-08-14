@@ -14,11 +14,11 @@ The launcher shipped, and the work grew from "reach an agent by name" into how t
 - **`docs/agents/seat-first-prompt.md`** — the launcher's `--first-prompt-file`: what a zero-context agent reads to discover which seat it is and where to start.
 - **`docs/cross-project/fleet-machine-paths-and-checkouts.md`** — full path map for both machines, the three checkout kinds, and what does and does not cross between them.
 - **`docs/issues/queue/45-session-seat-and-isolation-riders.md`** — five ideas raised and deliberately not built, each with its reasoning: the one-live-session-per-directory guard (whose obvious `/proc` detection was tried and proved unreliable), a `--directory` flag for the launchers, a branch-per-session CLAUDE.md rule, an md-review of the paths reference, and the deferred `choirmaster` rename.
-- **`docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md`** — a 2026-08-14 snapshot of every open thread on the box, its context file, and the proposed seat split. Operational, so its PR and issue rows go stale; the thread map and context paths do not.
+- **`docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md`** — a 2026-08-13 snapshot of every open thread on the box, its context file, and the proposed seat split. Operational, so its PR and issue rows go stale; the thread map and context paths do not.
 
 ## The harness's `--agent` mechanism, and what adopting it would cost (2026-08-08)
 
-Moved here from the issue body 2026-08-14, when that body was condensed to the summary the routing doctrine asks of it. No decision was taken; the roster design owns it.
+Moved here from the issue body 2026-08-13, when that body was condensed to the summary the routing doctrine asks of it. No decision was taken; the roster design owns it.
 
 Claude Code has a first-class mechanism for naming an agent, found by reading the 2.1.220 binary: the `--agent <name>` launch flag (equivalently the `CLAUDE_AGENT` environment variable) runs the main loop as the agent type defined at `.claude/agents/<name>.md`, and the harness reports that name to the status line as `agent.name`. A roster entry could therefore be a real harness object rather than a launcher convention. This project chose the launcher convention instead — the typed name is the whole configuration, no roster — and these three costs are why the question stayed open:
 

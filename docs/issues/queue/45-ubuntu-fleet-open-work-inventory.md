@@ -1,6 +1,6 @@
 # Ubuntu fleet — open work inventory and thread map
 
-Snapshot taken 2026-08-14 for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), to divide the box's open work among a small number of named agents. Written because parallel sessions accumulated faster than anyone tracked them: forks were used to park context for later, successors wrote handoffs describing their *present* state rather than their fork point, and several threads ended up overlapping. Operational snapshot, not a standing design — the PR and issue rows go stale as they land; the thread map and the context-file paths stay useful.
+Snapshot taken 2026-08-13 for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), to divide the box's open work among a small number of named agents. Written because parallel sessions accumulated faster than anyone tracked them: forks were used to park context for later, successors wrote handoffs describing their *present* state rather than their fork point, and several threads ended up overlapping. Operational snapshot, not a standing design — the PR and issue rows go stale as they land; the thread map and the context-file paths stay useful.
 
 ## 1. Open pull requests
 
@@ -52,7 +52,7 @@ Transcripts are the durable context. A new session can be pointed at any of thes
 | login session | `3d8bf995` | `~/.claude/projects/-home-nedlern/3d8bf995-*.jsonl` | never had a task; delete |
 | tmux seat | `f741668d` | `~/.claude/projects/-home-nedlern-agents-choirmaster/f741668d-*.jsonl` | duplicate of the choirmaster stream; resolve against `ea663864` |
 
-### Complete transcript sweep (2026-08-14)
+### Complete transcript sweep (2026-08-13)
 
 All 35 transcripts over 30 KB were read for their titles, not just the ones already known. What it added beyond the table above:
 

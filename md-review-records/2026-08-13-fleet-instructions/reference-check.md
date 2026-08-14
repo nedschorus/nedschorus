@@ -1,0 +1,25 @@
+# Reference-integrity pre-pass
+
+- UNRESOLVED: `claude/hooks/instruction-file-guard.py`
+- UNRESOLVED: `/.claude/jobs/`
+- UNRESOLVED: `/.claude/projects/`
+- UNRESOLVED: `/.local/bin`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/27`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/33`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/34`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/36`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/37`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/38`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/45`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/issues/50`
+- UNRESOLVED: `//github.com/nedschorus/nedschorus/pull/57`
+- ok: `CLAUDE.md`
+- ok: `agent-seat-model.md`
+- ok: `docs/cross-project/fleet-machine-paths-and-checkouts.md`
+- ok: `docs/issues/queue/45-session-seat-and-isolation-riders.md`
+- UNRESOLVED: `local.md`
+- ok: `scripts/handoff-context-threshold-hook.py`
+- ok: `scripts/handoff-supervisor.py`
+- UNRESOLVED: `scripts/launch-claude`
+- UNRESOLVED: `scripts/launch-claude-`
+- UNRESOLVED: `turn/steer`
