@@ -74,6 +74,19 @@ The supervisor reads `~/.claude/handoffs/<agent>-handoff.md`, where `<agent>` is
 
 Either way, a handoff written by a *forked* session describes that session's state when it wrote the handoff, not the fork point. When the fork point is what matters, point the new session at the `-dialog-` extract or the transcript instead, and say in the first prompt which part of the history is the subject.
 
+## 6a. Seats launched 2026-08-13, and how
+
+`gatekeeper` and `sanity-checker` are running on the box, each in `~/agents/<seat>` on its own branch, reading the reviewed versions of their briefs. Both were verified to start correctly: branch confirmed, status line present (which is the tell that project settings loaded, and therefore that the recycle hook and the instruction-file guard loaded too).
+
+They were **not** launched by the documented recipe, because that recipe cannot work yet: it reads `docs/agents/seat-first-prompt.md` from the box's checkout of main, and that file is still in PR #58 along with every md-review correction to the briefs. Launching from main would have booted both seats into the pre-review documents — the ones carrying twenty to thirty findings each.
+
+What was done instead, and what to undo once #58 merges:
+
+1. Each seat's worktree was created from the PR branch rather than main: `git worktree add ~/agents/<seat> -b <seat> seat-launch-first-prompt`. The launcher skips creating a home that is already a checkout, so this simply pre-empts it.
+2. The launcher was then run with the prompt file taken from the seat's own checkout: `sh scripts/launch-claude-mac <seat> --no-attach --first-prompt-file /home/nedlern/agents/<seat>/docs/agents/seat-first-prompt.md`. The Mac twin runs locally on the box and is mechanically identical to the Ubuntu launcher minus the SSH hop, which is what makes it usable from a box-side session.
+
+Consequence to expect: each seat's branch carries PR #58's commits, so the supervisor's branch sync will report it as *ahead of main* and change nothing. Once #58 merges, those branches become strictly behind and fast-forward normally. No action is needed unless #58 is changed substantially before merging, in which case the seats should be relaunched from the merged main.
+
 ## 7. Proposed split into named agents
 
 Three seats, chosen so no two touch the same files or branches:
