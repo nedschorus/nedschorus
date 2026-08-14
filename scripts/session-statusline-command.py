@@ -48,6 +48,16 @@ Payload fields are those of Claude Code 2.1.220 and 2.1.226, read from the
 binary's status line builder rather than from documentation.
 """
 
+# Annotations are evaluated at definition time unless deferred, and `Path |
+# None` below is PEP 604, which lands in Python 3.10. Under an older
+# interpreter the script therefore dies on import with a TypeError, before
+# main() runs — so the graceful-degradation contract above never gets a
+# chance, and the status line renders empty with nothing said. A Mac's
+# Xcode-provided python3 is still 3.9, so the interpreter that a pane
+# resolves cannot be assumed. This import defers the annotations and keeps
+# the script running from 3.7 up.
+from __future__ import annotations
+
 import json
 import os
 import sys
