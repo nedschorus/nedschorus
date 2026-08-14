@@ -31,6 +31,11 @@ Exit code is 0 when healthy and 1 when any check fails, so a caller can branch o
 it without parsing the text.
 """
 
+# The status line loads this module, and the status line has to survive a Mac's
+# Xcode-provided python3, which is still 3.9. Deferring annotations keeps both
+# running from 3.7 up; see the same note in session-statusline-command.py.
+from __future__ import annotations
+
 import argparse
 import json
 import os

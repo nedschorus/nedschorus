@@ -120,15 +120,19 @@ if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
   git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
   git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY -b '$AGENT_NAME' origin/main 2>/dev/null \
   || git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY '$AGENT_NAME' \
-  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings'; \
+  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings' >&2; \
 fi"
 
 # tmux tells the terminal the session name, so an iTerm2 tab reads
 # "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
 # server each launch: it is a global option, harmless to repeat.
-PREPARE_COMMAND="$PREPARE_COMMAND; \
-tmux set-option -g set-titles on 2>/dev/null; \
-tmux set-option -g set-titles-string '#S' 2>/dev/null; true"
+# Joined with && so an earlier failure in PREPARE_COMMAND still aborts the
+# launch, and each tmux call is individually tolerated with || true rather than
+# a trailing `true` that would swallow everything before it. The twin does the
+# same per-command, at scripts/launch-claude-mac.
+PREPARE_COMMAND="$PREPARE_COMMAND && { \
+tmux set-option -g set-titles on 2>/dev/null || true; \
+tmux set-option -g set-titles-string '#S' 2>/dev/null || true; }"
 
 if [ "$ATTACH" = yes ]; then
     exec ssh -t "$AGENT_BOX" \
