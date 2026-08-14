@@ -87,6 +87,8 @@ What was done instead, and what to undo once #58 merges:
 
 Consequence to expect: each seat's branch carries PR #58's commits, so the supervisor's branch sync will report it as *ahead of main* and change nothing. Once #58 merges, those branches become strictly behind and fast-forward normally. No action is needed unless #58 is changed substantially before merging, in which case the seats should be relaunched from the merged main.
 
+**A trap to answer before saying yes to it.** The `gatekeeper` seat noticed this lineage within minutes and proposed `git reset --hard origin/main` to start its branch clean — sound reasoning from where it sits, and the wrong move today. Its checkout's `docs/agents/` would revert to the pre-review briefs, and a later session in that seat would read the versions carrying twenty-three findings. **Wait until #58 merges**; the reset is then unnecessary, because the branch fast-forwards on its own. If a seat must be cleaned before that, relaunch it from the PR branch rather than resetting to main.
+
 ## 7. Proposed split into named agents
 
 Three seats, chosen so no two touch the same files or branches:
