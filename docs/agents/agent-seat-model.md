@@ -92,6 +92,15 @@ From the **Mac**, using the Mac's own checkout of this repository:
 
 The script runs on the Mac and reaches the box over SSH. The `--first-prompt-file` path is a **box-side** path, because the supervisor reads that file on the box. One generic file serves every seat: the agent learns its own name from its working directory, so nothing needs substituting.
 
+**Both halves must actually exist where they are named**, and they live on different machines: the script in the Mac's checkout, the prompt file in the box's. A checkout that has not pulled since these landed has neither. Check before launching a seat for the first time:
+
+```
+ls ~/Projects/nedschorus/scripts/launch-claude-ubuntu                        # on the Mac
+ssh nedlern@ned-box 'ls /home/nedlern/Projects/nedschorus/docs/agents/seat-first-prompt.md'
+```
+
+If the box's copy is missing, `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` and try again.
+
 Three things about that command worth knowing before you rely on it:
 
 - **It is attach-or-create.** Running the name again attaches to the live session rather than starting a second one — and in that case `--first-prompt-file` does nothing, because there is no new session to seed. To exit a seat, exit the session inside it (`/exit`); to leave it running, detach from tmux (`Ctrl-b d`).
