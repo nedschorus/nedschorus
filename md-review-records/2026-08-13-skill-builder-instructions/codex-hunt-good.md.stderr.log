@@ -1,0 +1,1120 @@
+Reading additional input from stdin...
+OpenAI Codex v0.147.0
+--------
+[1mworkdir:[0m /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[1mmodel:[0m gpt-5.6-sol
+[1mprovider:[0m openai
+[1mapproval:[0m never
+[1msandbox:[0m read-only
+[1mreasoning effort:[0m xhigh
+[1mreasoning summaries:[0m none
+[1msession id:[0m 019ffeb1-b5ee-71f2-a1bb-afc6efd3bb56
+--------
+[36muser[0m
+Review this file for a range of defects. Read /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/docs/agents/skill-builder-instructions.md in full, including any YAML frontmatter. Your context is deliberately minimal — the checkout's instruction file (CLAUDE.md / AGENTS.md) if one exists, this file, and whatever it references by an explicit path — and that is the point: this file must be understandable by a future agent with only this context. A cryptic missing word or concept is a defect to flag, not a gap you should fill in. Mode: analysis-only; inspect allowed, edits forbidden.
+
+Flag and comment on every phrase or sentence that: (a) contradicts or conflicts with any other phrase or sentence in this file; (b) supports incompatible readings; (c) is wrong or impossible when taken or obeyed literally; (d) is un-executable because this file does not provide the knowledge or context needed to proceed (an undefined term, an unexplained reference or procedure); (e) requires an agent to complete work but lacks a clear stopping point; (f) makes an absolute claim (never / always / every / all / cannot) broader than can actually hold — give the ordinary counterexample; (g) defines a mechanism or store but leaves a reachable case, failure, or limit neither stated nor discarded; (h) defines a term that duplicates or conflicts with a definition in the checkout's CLAUDE.md or AGENTS.md — quote both definitions; (i) introduces a name that is not self-documenting or would be hard to find by search. Classes (g) and (h) apply only to things this file itself defines: never demand that the file contain a mechanism, store, or definition it does not have.
+
+For each flag: quote the exact phrase or sentence, and explain what is wrong, when it does harm, and why — completely enough that the author can fix it without asking you anything. Do not propose fixes. Do not rate severity or importance; state only your own confidence — sure, or unsure and why. Report findings you are unsure about rather than suppressing them. Output: numbered findings in document order, then one line — "clean sections:" — listing sections with no findings.
+
+[35m[3mcodex[0m[0m
+I’ll inspect the checkout-level instructions first, then read the requested file and only the explicit paths it references. I’ll keep this analysis-only and report findings in document order.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "pwd && rg --files -g 'AGENTS.md' -g 'CLAUDE.md' -g 'docs/agents/skill-builder-instructions.md'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+CLAUDE.md
+docs/agents/skill-builder-instructions.md
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "wc -l CLAUDE.md docs/agents/skill-builder-instructions.md && sed -n '1,240p' CLAUDE.md && sed -n '1,280p' docs/agents/skill-builder-instructions.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+   9 CLAUDE.md
+  37 docs/agents/skill-builder-instructions.md
+  46 total
+# nedschorus
+
+- The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: modify anything there or execute its code.
+- Use standard SDLC terms.
+- Write durable artifacts — committed files, issue bodies, commit messages — for a reader with zero context: the subject identifiable, the why stated, usable without the conversation that produced it.
+- When writing instructions, absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously.
+- When creating or inventing names, for directories, file names, globals, functions, classes, scripts, section headings, and other names likely to be grepped, use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
+- How a change reaches main: the git-gatekeeper (`scripts/git-gatekeeper.py check-in` — specification: `docs/cross-project/git-gatekeeper-design.md`) is the permanent path — one program, one credential, one door; agents never push to main. Until its credential work lands (activation waits on build slice 6), the gate is dormant and the interim lane applies: commit to the working branch, push it, and the user's Mac-side agent reviews and merges. In-flight work answers to `status <digest>` and `cancel <digest>`; `audit` checks main's live protection against the design.
+- Before saving or proposing a memory, check whether it is actually a task — something to do, removed when done. If so make it a task, not a memory; memory holds durable facts and every memory write requires the user's approval.
+# `skill-builder` — seat instructions
+
+Your pile: **the candidate-skill queue.** Seven proposed skills, each a build of the same shape, sharing one authoring checklist and one walk process — which is exactly why they belong to one seat: the seventh build should be far cheaper than the first. Read [the seat model](agent-seat-model.md) for how seats work.
+
+## The queue
+
+Each has an issue carrying its state and, in several cases, a queue document carrying detail:
+
+| Issue | Skill | Note |
+|---|---|---|
+| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked plans with observable oracles; **flagged as the likely first build**. Riders in `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
+| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence kernel, no delete-and-start-over mandates. Riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
+| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging with a three-fix escalation stop. Detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
+| [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | exact-revision defect-first review with a five-part finding gate |
+| [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | baseline-vs-candidate A/B with trigger cases and raw-count reporting |
+| [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a d-review comparison question |
+| [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only evidence-grounded design, one recommendation, honest exits |
+
+Plus [#24](https://github.com/nedschorus/nedschorus/issues/24), the **queue-drain procedure** — the review process that empties the wiki queue, the pair queue, and the draft-label issue queue. It governs how the rest of this pile is worked, so read it early.
+
+## How skills are built here
+
+Find the **skill-authoring checklist** under `docs/` and follow it; it is the project's own standard and predates you. The existing skills are the worked examples — `.claude/skills/walk-me-through/`, `.claude/skills/md-review/`, `.claude/skills/handoff/`, `.claude/skills/ghi-write/` — and reading two of them closely is the cheapest way to learn the house style.
+
+Three rules that have bitten previous builds:
+
+1. **A skill is instruction-class.** It lands only through the user's walk, and the `instruction-file-guard` hook enforces that mechanically — a `.walk-approved` marker quoting his approval, consumed by the one write it approves.
+2. **Skills are instructions, not essays.** Rationale asides get cut; the text tells an agent what to do. Four such asides were cut from `walk-me-through` on 2026-08-06 for exactly this reason.
+3. **Zero-context readability is the bar.** The user ruled 2026-08-11 that agents must understand their instructions cold, which is why a settled skill draft gets an md-review before it lands.
+
+## Related work you did not do
+
+The `sanity-checker` seat owns review methodology and may add a reviewer to the md-review grid; PRs #51 and #53 are its business. If a skill you are building would change how reviews are delivered, hand that part over rather than deciding it here.
+
+## First action
+
+Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) (the likely first build) with its riders file, then tell the user which skill you propose building first and why. Build nothing until he rules — the order is his call, and a skill is walked before it lands.
+
+[35m[3mcodex[0m[0m
+The file is short but delegates essential meaning to several linked issues and repository paths. I’m checking those explicit references now so I can distinguish a genuinely undefined instruction from one the document properly makes reachable.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba docs/agents/skill-builder-instructions.md && find docs/agents -maxdepth 1 -type f -print | sort && find .claude/skills/walk-me-through .claude/skills/md-review .claude/skills/handoff .claude/skills/ghi-write -maxdepth 2 -type f -print | sort && rg --files docs | rg 'skill.*author|author.*skill|18-write-test-plan|20-implement-with-evidence|21-diagnose-failure|agent-seat-model'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	# `skill-builder` — seat instructions
+     2	
+     3	Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+     4	
+     5	Your pile is **the queue of proposed skills**: seven of them, each filed as an issue, plus the procedure that drains the project's queues. They belong together because every build has the same shape and shares one authoring standard, so the seventh should cost far less than the first.
+     6	
+     7	A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `md-review`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
+     8	
+     9	**Your work is done when** each issue below is either built and landed, ruled out with the reason recorded in the issue, or left with a stated blocker. You will not finish all seven in one series — build one, hand off, and let the next session take the next. Then write a handoff and stop.
+    10	
+    11	## The queue
+    12	
+    13	| Issue | Skill | What it is for, and any material already written |
+    14	|---|---|---|
+    15	| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked test plans with observable oracles. Flagged as the likely first build; riders in `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
+    16	| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence without delete-and-start-over mandates; riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
+    17	| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging that stops after three failed fixes rather than thrashing; detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
+    18	| [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | defect-first code review at an exact revision, with a five-part gate a finding must pass to be reported |
+    19	| [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | A/B comparison of a baseline agent against a candidate over trigger cases, reporting raw counts |
+    20	| [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a comparison question rather than a settled design |
+    21	| [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only, evidence-grounded design producing one recommendation and honest exits |
+    22	
+    23	[#24](https://github.com/nedschorus/nedschorus/issues/24) is the **queue-drain procedure** — how the project empties its wiki queue, its pair queue, and its `draft`-labelled issue queue. It governs how this pile is worked, so read it before picking a skill.
+    24	
+    25	## How skills are built here
+    26	
+    27	Find the project's **skill-authoring checklist** under `docs/` and follow it — it predates you and is the standard your work will be judged against. Three rules have caught previous builds:
+    28	
+    29	1. **A skill is instruction-class**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
+    30	2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
+    31	3. **Zero-context readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets an md-review before it lands, which is `scripts/md-review-grid.py`.
+    32	
+    33	Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, md-review the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
+    34	
+    35	## Boundaries
+    36	
+    37	The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the md-review grid. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
+    38	
+    39	Using the review machinery on your own draft is ordinary work, not a boundary crossing. Changing how it behaves is.
+    40	
+    41	## First action
+    42	
+    43	Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) with its riders file. Then tell the user which skill you propose building first and why, and wait for his ruling — the order is his, and a skill is walked before it lands.
+docs/agents/agent-seat-model.md
+docs/agents/doctrine-instructions.md
+docs/agents/fleet-instructions.md
+docs/agents/gatekeeper-instructions.md
+docs/agents/ghi-instructions.md
+docs/agents/sanity-checker-instructions.md
+docs/agents/seat-first-prompt.md
+docs/agents/sidebar-instructions.md
+docs/agents/skill-builder-instructions.md
+.claude/skills/ghi-write/SKILL.md
+.claude/skills/handoff/SKILL.md
+.claude/skills/md-review/SKILL.md
+.claude/skills/md-review/prompts/defect-hunt.md
+.claude/skills/md-review/prompts/restate.md
+.claude/skills/walk-me-through/SKILL.md
+docs/agents/agent-seat-model.md
+docs/wiki/queue/skill-authoring-checklist.md
+docs/issues/queue/21-diagnose-failure-test-procedure.md
+docs/issues/queue/20-implement-with-evidence-agent-native-riders.md
+docs/issues/queue/18-write-test-plan-agent-native-riders.md
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git status --short -- docs/agents/skill-builder-instructions.md CLAUDE.md && git diff -- docs/agents/skill-builder-instructions.md && stat -c '%y %s %n' docs/agents/skill-builder-instructions.md CLAUDE.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+ M docs/agents/skill-builder-instructions.md
+diff --git a/docs/agents/skill-builder-instructions.md b/docs/agents/skill-builder-instructions.md
+index a489b59..9c1ad3d 100644
+--- a/docs/agents/skill-builder-instructions.md
++++ b/docs/agents/skill-builder-instructions.md
+@@ -1,37 +1,43 @@
+ # `skill-builder` — seat instructions
+ 
+-Your pile: **the candidate-skill queue.** Seven proposed skills, each a build of the same shape, sharing one authoring checklist and one walk process — which is exactly why they belong to one seat: the seventh build should be far cheaper than the first. Read [the seat model](agent-seat-model.md) for how seats work.
++Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+ 
+-## The queue
++Your pile is **the queue of proposed skills**: seven of them, each filed as an issue, plus the procedure that drains the project's queues. They belong together because every build has the same shape and shares one authoring standard, so the seventh should cost far less than the first.
++
++A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `md-review`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
+ 
+-Each has an issue carrying its state and, in several cases, a queue document carrying detail:
++**Your work is done when** each issue below is either built and landed, ruled out with the reason recorded in the issue, or left with a stated blocker. You will not finish all seven in one series — build one, hand off, and let the next session take the next. Then write a handoff and stop.
+ 
+-| Issue | Skill | Note |
++## The queue
++
++| Issue | Skill | What it is for, and any material already written |
+ |---|---|---|
+-| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked plans with observable oracles; **flagged as the likely first build**. Riders in `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
+-| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence kernel, no delete-and-start-over mandates. Riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
+-| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging with a three-fix escalation stop. Detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
+-| [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | exact-revision defect-first review with a five-part finding gate |
+-| [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | baseline-vs-candidate A/B with trigger cases and raw-count reporting |
+-| [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a d-review comparison question |
+-| [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only evidence-grounded design, one recommendation, honest exits |
++| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked test plans with observable oracles. Flagged as the likely first build; riders in `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
++| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence without delete-and-start-over mandates; riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
++| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging that stops after three failed fixes rather than thrashing; detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
++| [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | defect-first code review at an exact revision, with a five-part gate a finding must pass to be reported |
++| [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | A/B comparison of a baseline agent against a candidate over trigger cases, reporting raw counts |
++| [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a comparison question rather than a settled design |
++| [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only, evidence-grounded design producing one recommendation and honest exits |
+ 
+-Plus [#24](https://github.com/nedschorus/nedschorus/issues/24), the **queue-drain procedure** — the review process that empties the wiki queue, the pair queue, and the draft-label issue queue. It governs how the rest of this pile is worked, so read it early.
++[#24](https://github.com/nedschorus/nedschorus/issues/24) is the **queue-drain procedure** — how the project empties its wiki queue, its pair queue, and its `draft`-labelled issue queue. It governs how this pile is worked, so read it before picking a skill.
+ 
+ ## How skills are built here
+ 
+-Find the **skill-authoring checklist** under `docs/` and follow it; it is the project's own standard and predates you. The existing skills are the worked examples — `.claude/skills/walk-me-through/`, `.claude/skills/md-review/`, `.claude/skills/handoff/`, `.claude/skills/ghi-write/` — and reading two of them closely is the cheapest way to learn the house style.
++Find the project's **skill-authoring checklist** under `docs/` and follow it — it predates you and is the standard your work will be judged against. Three rules have caught previous builds:
++
++1. **A skill is instruction-class**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
++2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
++3. **Zero-context readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets an md-review before it lands, which is `scripts/md-review-grid.py`.
+ 
+-Three rules that have bitten previous builds:
++Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, md-review the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
+ 
+-1. **A skill is instruction-class.** It lands only through the user's walk, and the `instruction-file-guard` hook enforces that mechanically — a `.walk-approved` marker quoting his approval, consumed by the one write it approves.
+-2. **Skills are instructions, not essays.** Rationale asides get cut; the text tells an agent what to do. Four such asides were cut from `walk-me-through` on 2026-08-06 for exactly this reason.
+-3. **Zero-context readability is the bar.** The user ruled 2026-08-11 that agents must understand their instructions cold, which is why a settled skill draft gets an md-review before it lands.
++## Boundaries
+ 
+-## Related work you did not do
++The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the md-review grid. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
+ 
+-The `sanity-checker` seat owns review methodology and may add a reviewer to the md-review grid; PRs #51 and #53 are its business. If a skill you are building would change how reviews are delivered, hand that part over rather than deciding it here.
++Using the review machinery on your own draft is ordinary work, not a boundary crossing. Changing how it behaves is.
+ 
+ ## First action
+ 
+-Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) (the likely first build) with its riders file, then tell the user which skill you propose building first and why. Build nothing until he rules — the order is his call, and a skill is walked before it lands.
++Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) with its riders file. Then tell the user which skill you propose building first and why, and wait for his ruling — the order is his, and a skill is walked before it lands.
+2026-08-13 22:15:06.240844664 -0700 4660 docs/agents/skill-builder-instructions.md
+2026-08-13 15:33:00.771372514 -0700 1851 CLAUDE.md
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'wc -l docs/agents/agent-seat-model.md docs/wiki/queue/skill-authoring-checklist.md docs/issues/queue/18-write-test-plan-agent-native-riders.md docs/issues/queue/20-implement-with-evidence-agent-native-riders.md docs/issues/queue/21-diagnose-failure-test-procedure.md .claude/skills/walk-me-through/SKILL.md .claude/skills/md-review/SKILL.md .claude/skills/handoff/SKILL.md .claude/skills/ghi-write/SKILL.md .claude/hooks/instruction-file-guard.py scripts/md-review-grid.py && for f in docs/agents/agent-seat-model.md docs/wiki/queue/skill-authoring-checklist.md docs/issues/queue/18-write-test-plan-agent-native-riders.md docs/issues/queue/20-implement-with-evidence-agent-native-riders.md docs/issues/queue/21-diagnose-failure-test-procedure.md .claude/skills/walk-me-through/SKILL.md .claude/skills/md-review/SKILL.md .claude/skills/handoff/SKILL.md .claude/skills/ghi-write/SKILL.md; do echo "FILE: $f"; sed -n '"'1,320p' \""'$f"; done'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+  109 docs/agents/agent-seat-model.md
+   57 docs/wiki/queue/skill-authoring-checklist.md
+    8 docs/issues/queue/18-write-test-plan-agent-native-riders.md
+   11 docs/issues/queue/20-implement-with-evidence-agent-native-riders.md
+   32 docs/issues/queue/21-diagnose-failure-test-procedure.md
+   93 .claude/skills/walk-me-through/SKILL.md
+   16 .claude/skills/md-review/SKILL.md
+   12 .claude/skills/handoff/SKILL.md
+   36 .claude/skills/ghi-write/SKILL.md
+  104 .claude/hooks/instruction-file-guard.py
+  169 scripts/md-review-grid.py
+  647 total
+FILE: docs/agents/agent-seat-model.md
+# The agent seat model
+
+How work on the Ubuntu box is divided among named agents, and why it is divided that way. Ruled by the user 2026-08-13, after a day in which parallel sessions accumulated faster than anyone tracked them. The per-seat briefs live beside this file as `docs/agents/<seat>-instructions.md`; every agent reads its own brief, and this file is the shared background behind all of them.
+
+## The words this model uses
+
+Defined here because the briefs use them as if established, and an agent reading one cold has nowhere else to look.
+
+- **Seat** — a named, long-lived agent identity: a name, a home directory (`~/agents/<seat>`), its own git branch, and a brief. A seat is *occupied* by a session and outlives any one session. One place the word is used loosely and deliberately: the **Mac-side agent**, which reviews branches and merges them to `main`, is the user's own agent on his Mac and is not one of the seats defined here.
+- **Session** — one running conversation. Sessions end and are replaced; the seat persists.
+- **Supervisor** — `scripts/handoff-supervisor.py`, the process that launches a seat's session, replaces it when it hands off, and exits when its agent stops without handing off. One supervisor per seat, holding a lock that refuses a second.
+- **Recycle** — the supervisor replacing a session with a fresh one, carrying the handoff forward. Triggered when the agent writes a handoff, usually because the `Stop` hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
+- **Handoff** — `~/.claude/handoffs/<seat>-handoff.md`, written by a session for its successor. Machine-local, never committed. Its companion `~/.claude/handoffs/<seat>-dialog-NNNN.md` holds that session's conversation tail, which a successor reads when it needs the discussion rather than the conclusion.
+- **Pile** — the body of related work a seat owns. A subject area with shared context, not an ordered queue: the tasks in it are named by the seat's brief, not enumerated as a list to work through in order.
+- **Brief** — `docs/agents/<seat>-instructions.md`. What a seat's occupant reads to learn its job. Briefs vary in shape; read yours for what it says.
+- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the repository root, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
+- **Instruction-class** — files that tell agents how to behave: `CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/`. They change only with walked approval.
+- **Slice** — one numbered increment of a build plan, built and landed on its own.
+- **C-numbers** (`C1`, `C3`, `C7`…) — identifiers of the git-gatekeeper's credential rulings, defined in `docs/cross-project/git-gatekeeper-design.md` § The credential and enforcement. Meaningful only inside that document.
+
+## The grouping rule
+
+**Group tasks by shared context, not by workload.** The test for whether two tasks belong to one seat: *does doing the first make the agent smarter about the second?* If yes, same seat. If no, separate seats — even when that leaves a seat idle.
+
+The user's reasoning, which this model serves:
+
+- An agent with focused context is smarter than one carrying unrelated history. Confusion is the expensive failure.
+- **An idle seat costs almost nothing** — no tokens, no attention — so never merge two unrelated piles to keep a seat busy. It is not literally free: an unretired seat holds a directory and a branch, and retiring it later takes the steps below. That cost is small and one-time.
+- The natural unit of work is a series of related tasks; at the end of one, the agent writes a handoff and the session is replaced, so the next series starts on a clean context.
+- Seats are resumed weeks later, so a name must say what the seat is for without opening anything.
+
+`sidebar` is the deliberate exception to the grouping rule: it holds no pile at all and answers whatever is asked, precisely so that off-topic questions never land in a seat whose context they would pollute.
+
+## The seats
+
+Seven are defined. Each row's brief is the authority on what that seat owns.
+
+| Seat | What it owns | Brief |
+|---|---|---|
+| `gatekeeper` | the remaining work to activate the git-gatekeeper: the walked-approval evidence format, build slice 6, then the credential work | `gatekeeper-instructions.md` |
+| `sanity-checker` | review quality — the sanity-checker reviewer (a prompt that proposes simplifications, `docs/drafts/sanity-checker-prompt-draft.md`) and whether it joins the eight-cell md-review grid run by `scripts/md-review-grid.py` | `sanity-checker-instructions.md` |
+| `skill-builder` | the seven proposed skills queued as issues #17–#23, and the queue-drain procedure that empties the project's queues ([#24](https://github.com/nedschorus/nedschorus/issues/24)) | `skill-builder-instructions.md` |
+| `ghi` | GitHub-issue knowledge and tooling: ghi-info ([#46](https://github.com/nedschorus/nedschorus/issues/46)), run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)), the reference-integrity checker ([#42](https://github.com/nedschorus/nedschorus/issues/42)) | `ghi-instructions.md` |
+| `fleet` | session and agent machinery: the launchers, the handoff supervisor, seat isolation | `fleet-instructions.md` |
+| `doctrine` | how the project should work: what it preserves ([#32](https://github.com/nedschorus/nedschorus/issues/32)), instruction delivery ([#30](https://github.com/nedschorus/nedschorus/issues/30)), the research bundles | `doctrine-instructions.md` |
+| `sidebar` | nothing — the spare, for off-topic questions | `sidebar-instructions.md` |
+
+**On these being one-word names** (user-ruled 2026-08-13, after an md-review raised it): the project's multi-part naming rule in `CLAUDE.md` is scoped to names likely to be *grepped* — files, directories, functions, globals. A seat name is an **address**, not a search key: it is typed to reach an agent, the way a hostname is. So one word is right here, and a seat named after the system it works on is better than one that is not, because the point of the name is that the user recognises it in a session list weeks later.
+
+`gatekeeper` naming the seat that works on the git-gatekeeper is therefore deliberate, not a collision to fix. The program keeps its `git-` prefix everywhere (`scripts/git-gatekeeper.py`, `docs/cross-project/git-gatekeeper-design.md`), and every place a seat name appears carries its own suffix — `gatekeeper-instructions.md`, `gatekeeper-handoff.md`, `~/agents/gatekeeper` — so the composed names stay specific even where the root word is common.
+
+## How many run
+
+Two or three at a time is the working pattern; **five is the ceiling the user set**. Four is allowed and unusual — if you find yourself launching a fourth, it is worth asking whether one of the running seats is finished.
+
+## When a seat's work is done
+
+A seat's pile is finished when everything in it that an *agent* can do is done, and what remains has been handed to the user with the groundwork prepared. Several piles end in an act only he can perform — creating a GitHub account, applying branch protection, approving an instruction-class change — so a seat whose completion is defined as "the outcome happened" can never finish, and an agent with no completion criterion either invents adjacent work or stalls waiting for an event it cannot observe.
+
+Each brief states its own criterion. The shared shape: **land what you can, prepare what you cannot, tell the user exactly what is left and whose it is, write a handoff, and stop.** Stopping is a legitimate ending.
+
+## The two ways a seat ends
+
+They are different, and confusing them loses work.
+
+**Paused** — the seat's current series is done and nobody is using it. Exit the session. Its handoff, home directory and branch all stay exactly as they are, which is what makes the seat resumable weeks later: relaunching the same name boots from that handoff. This is the ordinary ending, and it needs no cleanup.
+
+**Retired** — the name is being freed or repurposed. Three steps, in order:
+
+1. **Stop the stream first.** A running seat writes a fresh handoff at every recycle, so archiving while its supervisor is alive only clears the file until the next one. Exit the session and confirm no supervisor remains.
+2. **Archive the handoff**, do not delete it — these files are machine-local and not in git, so a delete is unrecoverable. Rename it `~/.claude/handoffs/<seat>-handoff-retired-YYYY-MM-DD.md`. If that name already exists, append `-2`, `-3`; never rename onto an existing archive.
+3. **Release the home and the branch.** `git worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch separately with `git branch -d <seat>` if the name is to be reused, since removing a worktree leaves its branch behind. A seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
+
+`choirmaster` is the live case: the founding seat, whose work has been redistributed into the seats above. Its 2026-08-12 handoff was archived on 2026-08-13 so a future agent of that name starts fresh, and the user intends to reuse the name for a coordinating seat later. Until he does, no `choirmaster` seat is defined by this model.
+
+## Why there is no master agent
+
+Considered and declined 2026-08-13. A coordinating seat has nothing to do while the user chooses which seats run, and the evidence is `choirmaster` itself: created to direct, it drifted into being an ordinary topic thread. Revisit if seats ever need to hand work to each other without the user in the loop — which today they cannot, since a seat's only channel to another seat is through him.
+
+## Filing new work
+
+Put a new task in the seat whose existing context makes it cheapest — not the emptiest seat. If it fits none of them, it is either a question for `sidebar`, answered and forgotten, or the seed of a new pile, which is the user's decision rather than a default.
+
+## Launching a seat
+
+From the **Mac**, using the Mac's own checkout of this repository:
+
+```
+~/Projects/nedschorus/scripts/launch-claude-ubuntu <seat> \
+    --first-prompt-file /home/nedlern/Projects/nedschorus/docs/agents/seat-first-prompt.md
+```
+
+The script runs on the Mac and reaches the box over SSH. The `--first-prompt-file` path is a **box-side** path, because the supervisor reads that file on the box. One generic file serves every seat: the agent learns its own name from its working directory, so nothing needs substituting.
+
+Three things about that command worth knowing before you rely on it:
+
+- **It is attach-or-create.** Running the name again attaches to the live session rather than starting a second one — and in that case `--first-prompt-file` does nothing, because there is no new session to seed. To exit a seat, exit the session inside it (`/exit`); to leave it running, detach from tmux (`Ctrl-b d`).
+- **A handoff outranks the first-prompt file.** If `~/.claude/handoffs/<seat>-handoff.md` exists, the supervisor boots from it; `--first-prompt-file` seeds only a session that has no handoff waiting, which in practice means a seat's very first launch. To seed a seat from another thread's context deliberately, copy that thread's handoff into the seat's name before launching.
+- **A session that ends without writing a handoff leaves nothing behind.** The next launch of that name starts from the first-prompt file as if new. That is why a seat being paused should hand off first, and why the handoff — not the session — is the thing that carries a seat's thread.
+
+The launcher creates the seat's home as a checkout on its own branch **before the session starts**, because project settings — the status line, the recycle hook, the instruction-file guard — are read from `.claude/` in the working directory at session start, and an agent booted into a bare directory runs without any of them.
+
+## What separate branches do and do not protect
+
+Each seat works on its own branch, and git permits a branch in only one worktree at a time. That is what normally keeps two seats from editing the same files or racing each other's pushes, and it is a check rather than a guarantee: `git worktree add --force` overrides it, a separate clone of the repository is invisible to it, and two seats editing the same file on different branches simply defer their collision to the merge.
+
+It protects nothing outside git. `~/.claude/handoffs/`, the job scratch directories, and the tmux server are shared machine-local state that every seat writes. Two seats using the same *name* would collide there regardless of branches — which is why one name means one seat.
+
+**Nothing that matters is left only in a session.** Work belongs in commits and pushes; decisions belong in the governing documents and issues. The exception is the handoff, which is durable, machine-local, never pushed, and the one artifact that makes a paused seat resumable — so a seat exited without one loses its thread even though its committed work is safe.
+FILE: docs/wiki/queue/skill-authoring-checklist.md
+# Skill authoring checklist
+
+Consult this whenever a NedsChorus skill is created or revised. Distilled 2026-07-24 (outer walk item 11, user-approved) from the read-for-ideas-only extraction of Anthropic's skill-creator; full evidence in `nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` and the cops delta packet §11. Every skill-build GHI points here; the founding plan's step 1 builds against this list.
+
+## Five questions before writing anything
+
+1. What should the skill enable?
+2. When should it trigger — the actual user phrases and contexts? And when must it *not*?
+3. What output format is expected?
+4. Are the outputs objectively verifiable? Verifiable outputs get test cases; subjective outputs get human judgment. (This is the user-facing/agent-facing split — Anthropic reached the same rule independently.)
+5. **Which steps are machine work?** Anything with a determinate answer — a timestamp, a computed value, a file's format, a check whose result is yes or no — belongs in a script the skill runs, leaving the agent only what needs judgment. Ask this *before* reviewing any wording: a wording review presupposes the division of labor and structurally cannot find an error in it. (User-ruled 2026-08-06, from the `handoff` skill's walk, where a step-by-step review of the text validated three steps of agent-performed machine work before the user asked why a script was not doing it; the review had even flagged one of those steps and then declined to act on the flag.)
+
+## The description is the trigger
+
+The ~100-word description is the only part of a skill the model sees when deciding whether to invoke it; the body is invisible until invocation. So:
+
+- Put every piece of when-to-use information in the description, not the body. Phrase it as user intent, imperative form.
+- Front-load a concise positive AND negative scope: use for X; not for Y.
+- "Pushy" descriptions are a Claude-specific hypothesis, not doctrine — adopt only with false-trigger tests showing they help. Word-count targets are not portable across runtimes (fields get capped and truncated differently); measure, don't copy.
+- Descriptions compete for a capped listing budget. Many skills are fine; many *vague* skills degrade every skill's routing, because each dilutes the others' claim on attention.
+- The description states *when* to invoke, never *how* the skill works. A description that summarizes the workflow becomes a competing summary the agent follows instead of the body — the description is always in context while the body loads only on invocation (observed once, human-authored, in the source's tests: a workflow-summarizing description caused one review pass where the body required two). If the description alone is enough to act on, move the how into the body. (Superpowers extract, 2026-07-31.)
+
+## Structure: progressive disclosure
+
+- Description/metadata: always in context. Body: loads on invocation — keep it under 500 lines. Bundled references and scripts: unlimited, behind a table of contents.
+- Approaching the body limit means add hierarchy, not compression. Compression must preserve scope conditions and qualifiers verbatim — dropping a qualifier widens the rule's claim; that is a semantic change, not a shortening.
+
+## Register
+
+- A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear — no statistics, measured anecdotes, incident specimens, or out-of-context examples; if removing such content leaves a rule unclear, rewrite the rule to carry the clarity. Justifying data lives in the records stores and git history. (User-ruled 2026-08-05; placed here from the step-2 CLAUDE.md admission 2026-08-06 — this checklist, not the floor, governs skill content.)
+- Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; shared project concepts a skill relies on are defined in CLAUDE.md, once — not restated per skill. (User-ruled 2026-08-04; placed here 2026-08-06.)
+- Explain why a rule matters instead of stacking MUSTs; all-caps ALWAYS/NEVER is a yellow flag — reframe with the reasoning.
+- Fix an over-specifying claim by deleting the excess words, not by adding qualifiers — the corrected statement is usually shorter, not longer. Argument for already-ruled decisions is deleted once it is common sense; the decision trail carries the why. (User-ruled 2026-08-09.)
+- Reserve NOT/DO pairs for instructions that override a training default; that is the case they were invented for, and they earn nothing elsewhere.
+- Match an instruction's form to the failure it fixes — or, for preventive guidance, the failure it most plausibly prevents (superpowers extract, 2026-07-31; source: obra/superpowers `writing-skills`; context and decline records: `nc-queue/2026-07-31-superpowers-extracts.md` (moves to `nc-queue/archived/` at dispersal)):
+  - Wrong *shape* of output → a positive recipe: state what the output IS. In the source's measured wording tests, prohibition-only guidance produced clearly more of the unwanted content than the recipe form, and was directionally (not decisively) worse than no guidance at all. For load-bearing guidance, micro-test your own wording with a no-guidance control rather than assuming the result transfers.
+  - A part omitted from output the agent otherwise produces correctly → a required structural slot (a named section that must exist), not an exhortation to remember.
+  - Conditional guidance ("when X, do Y") → write X as an observable predicate the agent can test. A judgment call dressed as a condition does not reliably trigger.
+  - Keep a working recipe free of nuance clauses — vague escape hatches like "unless it matters": in the same wording tests, one such clause made a winning recipe's results inconsistent across trials. A genuine exception is its own conditional on an observable predicate (a scope restriction, not a nuance clause).
+- A NOT without a paired DO is unreliable — the not-space is infinite (user-ruled 2026-07-31). The wording tests above measured NOT-alone against recipe and no-guidance forms; they are consistent with this rule but did not test pairs.
+- The source's remaining machinery — standalone prohibition lists (NOTs with no paired DO) and rationalization tables — addresses agents whose long context holds their own prior work and self-justifications ("just this once"). NC's role separation gives one-shot workers fresh constructed context with no such investment, so for them that machinery is not imported; long-context surfaces (orchestrators, user-facing interactive sessions) remain exposed and are protected by code-enforced gates and reasoned rules, not by imported prohibition machinery (user-ruled 2026-07-31). An absolute that truly must hold gets code enforcement — a gatekeeper check, a lint — when buildable, filed as its own build task rather than built mid-authoring; until then it lives as a reasoned rule, and prompt text alone is not treated as enforcement of an absolute.
+
+## Testing agent-facing skills
+
+These rules govern any skill (or skill half) whose failures are silent. User-supervised interaction halves iterate in live use instead — their final quality judgment is human.
+
+- Assertions are objectively verifiable statements with descriptive names; subjective qualities go to a human, never forced into assertions.
+- An assertion that passes for both a good and a bad output is worse than useless — it manufactures false confidence. Discriminating power is the bar, and critiquing the evals themselves is part of the grader's job.
+- Negative trigger tests must be near-misses: they share the skill's keywords but lack its essence. Easy negatives prove nothing.
+- Burden of proof is on the expectation; no partial credit; evidence must show genuine task completion, not surface compliance.
+- Checkable assertions are checked by script, not eyeballed.
+- Scenario taxonomy (pair #9, principle 6): false trigger, missing context, conflicting instructions, partial failure, criteria-pass-while-intent-violated.
+- Micro-testing a load-bearing wording (referenced by the Register section): run the task with no guidance first — no failure means the guidance isn't needed; then each candidate wording as fresh-context single calls embedded in its realistic surrounding text (the full skill, not the wording alone), on a task that tempts the failure, 5+ repetitions; read every flagged output manually (template echoes fake as compliance); treat variance as a metric — five interpretations across five reps means the wording does not bind. (Superpowers extract, 2026-07-31.)
+
+## Deliberately excluded, with its reopening trigger
+
+skill-creator's iteration machinery — review UIs, benchmark loops, the description optimizer — is not adopted; it is complexity the earned-complexity ladder has not admitted, and its trigger measurement is a proxy. Revisit only if an NC skill's failures prove silent and frequent enough that live iteration demonstrably misses them, and only after false-trigger tests exist for the trigger claims involved.
+FILE: docs/issues/queue/18-write-test-plan-agent-native-riders.md
+# Riders for pair #18 (write-test-plan) — from the agent-native testing walk
+
+Queued for the boss's drain (promote / edit / demote / drop). Source: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §4 and §6a (boss-walked 2026-07-29/30). Destination: [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18).
+
+1. **Oracle-and-red-condition rule (the skill's core).** Every planned check, of any test kind, states its oracle (what is measured or compared) and its red condition (the reading that means fail) before implementation. A check whose red condition cannot occur proves nothing. This is the structural counter to implementation-mirroring tests (the boss's ~95%-useless observation): a test copied from the implementation cannot state a failure it would detect. Generalizes the draft contract's "expected red witness" beyond functional tests.
+2. **Reach-posit obligation.** Each planned test declares which design-significant paths it reaches; the declared set is diffed against measured execution (coverage.py dynamic contexts) — red on posited-but-unreached (false-green detector) or reached-but-forbidden. This mechanizes the draft contract's "reach proof". Escalation layers (per-claim, not standing): trace assertions for ordering claims; scripted-debugger interior-state assertions for claims with no test-visible seam.
+3. **Test-kind taxonomy (selection menu).** The skill selects kinds per claim across five axes (scope, oracle, input production, environment/workload, suite adequacy) rather than defaulting to example-based functional tests. Reference by pointer, not import: `/Users/el/Projects/nedlern-sonnet/cops/tasks/sessions/cops-nedschorus-automated-testing-kinds-survey-2026-07-29.md` (COPS, 2026-07-29; routine / trigger-reserved / reject buckets + 24-kind menu + 11 planner questions). Boss framing rulings binding on the skill: evidence value for good, maintainable code first — cost (CPU/tokens/storage) is a bound, not a ranking key; the draft contract's "least expensive test level" wording is corrected accordingly; standard terminology only.
+4. **Skip-expiry convention** (walk §3 ruling): every skipped or disabled test carries an owner and an expiry date from day one. Belongs in this skill's text or implement-with-evidence's, whichever first writes a test.
+FILE: docs/issues/queue/20-implement-with-evidence-agent-native-riders.md
+# Riders for pair #20 (implement-with-evidence) — from the agent-native testing walk
+
+Queued for the boss's drain (promote / edit / demote / drop). Source: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §6a items 2 and 4 (boss-walked 2026-07-29/30). Destination: [nedschorus#20](https://github.com/nedschorus/nedschorus/issues/20).
+
+1. **One-shot creators, retained for interrogation (boss-ruled).** Code and test writing is done by one-off agents: a creator's context is poisoned as a judge by its assumption of success, so it never reviews its own work. Its session ID (a short string; the transcript jsonl persists) is retained until the work clears checks **or 30 days elapse, whichever comes first** (boss-ruled 2026-07-30 — the interrogation window rides inside the drop discipline), so the creator can be resurrected as an **evidence source**: when a checker finds a problem, interrogate the creator with the blameless framing — "the goal is not an apology; was your instruction set confusing, incorrect, or lacking?" Findings land upstream (design text, skill prompts, wiki, CLAUDE.md), because every future agent inherits the same boot context — one context patch corrects the population.
+2. **Test writers are implementation-blind.** The agent writing tests receives the design, contracts, and error catalog — not the implementation — so implementation-mirroring tests are structurally impossible, and each test's declared red condition is derived from the design rather than transcribed from code.
+3. **Branch-frequency posits written at implementation time (boss-ruled).** Every branch (control-flow-graph edge) gets a frequency-class posit (HOT / NORMAL / RARE / NEVER-except-emergency) written while the author-agent's context is fresh; numeric posits (relative to the enclosing function) only where the design states a frequency. Posits are predictions with provenance (design-claim ref or dated author-judgment) — written before consulting measurement. Full mechanics and mismatch verdicts: pair #35's ladder record.
+
+4. **Bidirectional regression witness** (superpowers extract, 2026-07-31): a regression test's evidence cycle is write → pass → revert the fix → the test must fail → restore → pass. One direction proves the oracle can go red; both directions prove this test goes red for this fix. Mechanical (a stash/revert in the harness), applied when the witness is a test tied to a specific correction and a repro exists, at the fidelity category it honestly earned (minimal / partial / not-reproduced — see the #21 packet's procedure). Companion rule: an implementing agent's success claim is evidenced by the working-tree diff and check output, never by the agent's report alone.
+
+5. **Fix mode is a distinct role (boss-ruled 2026-07-31)**: applying review findings is done by a third fresh one-shot agent — not the writer, not the reviewer — with a constructed context (design + code + tests + complete findings batch) and a trust-nothing briefing; full contract in the agent-loop draft rules (rule 5). No dedicated fix skill is created yet; one is pulled when the first real fix task exposes the need (boot-set rule).
+FILE: docs/issues/queue/21-diagnose-failure-test-procedure.md
+# Boss-walked core for pair #21 (diagnose-failure) — the test-failure procedure
+
+Queued for the boss's drain (promote / edit / demote / drop). Boss-walked 2026-07-31 (superpowers-extracts walk, item 3 discussion); sources: the boss's two-scenario framing and cluster rule, the daemon incident, the superpowers `verification-before-completion` extract, and the ruled agent-loop ladder. Destination: [nedschorus#21](https://github.com/nedschorus/nedschorus/issues/21).
+
+## The cluster rule (boss, 2026-07-31)
+
+Most reproduction rates are 0%, 1%, 99%, or 100% — and which one is unknowable in advance. Two reruns therefore separate the clusters about as well as twenty. Rate is not a property of the bug: bugs are deterministic functions of input, state, schedule, and environment; "flaky" means the triggering condition is not in the controlled set. **"Repros aren't random, they are just subtle."**
+
+## The fork procedure (test-detected failures)
+
+1. **Red observed → rerun ×2.**
+   - Both red → deterministic; proceed to step 2.
+   - One of each → the middle is subtle: further sampling cannot FIND the hidden variable — stop sampling and start differencing. Capture one failing and one passing run fully (trace, environment, state snapshots) and diff them; the hidden variable is in that diff — a mechanical, patience-free job suited to agents. Control the variable; the bug promotes to ~100% and re-enters at step 2.
+   - If honest differencing fails to locate the variable: escalate BLOCKED with the paired evidence package — one failing and one passing run, traces, environment, and state snapshots attached. If the boss rules the fix ships anyway, the weak-evidence path below applies, recorded as a named residual.
+2. **Causal hypothesis with discriminating evidence — before the first fix.** Obvious cause → fix directly. Cause not obvious → debugger/trace *now*, not after a failed fix; a fix without an evidenced hypothesis spends a breaker round on a guess.
+3. **Fix, with the reach proof**: the failing run must be shown to execute the code being changed (the daemon guard, below).
+4. **Green → revert the fix → red returns → restore → green.** The revert-red step proves the fix — not environment drift, leftover state, or luck — produced the green (the bidirectional witness; scope: applies where a repro exists, at the fidelity category it honestly earned — minimal / partial / not-reproduced).
+5. **A round that never reaches green** is a failed round: record theory, action, result (R1); root-cause analysis required at R2; breaker trips at R3 per the agent-loop ladder.
+
+**Verification under residual nondeterminism:** if the failure resists determinization, rep-based confidence rests on a stationarity assumption the hidden variable defeats — N clean runs across varied environments is recorded as weak evidence with a named residual; it is never the witness.
+
+## The daemon specimen (environment-verdict class)
+
+Agents repeatedly "fixed" daemon code, never succeeding, because the running process was never reloaded — the code being edited was not the code executing. Three ruled mechanisms independently catch it: the breaker (red-stays-red trips at 3, and the widened frame includes environment); the environment/instrument verdicts; and sharpest, **the reach proof applied to the fix itself** — one probe showing "changed line never executed" reveals the stale process on attempt one. Aftermath belongs to the interrogation loop: one boot-context line ("after editing daemon code, reload the daemon") corrects every future agent.
+
+## Debugger-first diagnosis (boss, 2026-07-31)
+
+Agents can do what humans lack patience for: use debugger/attach instruments instead of logging to trace back up the actual execution — no edit, no rerun, no reload. This is also structurally safer than logging in the hard cases: log-based debugging requires editing code and reloading — the exact step that silently failed in the daemon incident — while an attached instrument can only show the code that is actually executing. Mechanics vary by situation (`py-spy dump` snapshots a live process non-invasively; `debugpy`/`pdb` want the process launched under them): the doctrine is *prefer trace/attach instruments over edit-and-rerun instruments for diagnosis*, tool chosen per case.
+
+## Production-class failures and the system-understanding gap
+
+Hard-to-repro production failures are diagnosed by instrumentation up the chain from the visible failure point — agent-duplicable (boundary instrumentation + the differencing above). The genuinely hard class (boss): design flaws, and one agent's failure to understand the large system around the code it sees. Status of countermeasures, stated precisely (new-vp flank correction, 2026-07-31): **one ruled countermeasure exists** — the broad-expert half of the reset pair, whose job is carrying the surrounding-system picture. The *doctrine* that explanatory architecture description is regenerated from code on demand and never carries authority is boss-ruled (queue note §6a item 1(b), 2026-07-29), but **no view-generation machinery or practice exists or is ruled** — "current architecture view on request" goes on the table as a candidate instance of that doctrine, not as existing machinery.
+FILE: .claude/skills/walk-me-through/SKILL.md
+---
+name: walk-me-through
+description: Present complex, multi-part material to the user one item at a time, pausing for his go-ahead between items. Use when a large multi-part result has just been produced or requested — findings, a design or plan to review, a triage list, a queue to drain — and the user will react or rule per item; when he says "walk me through X", "one at a time", or "slower"; or, unprompted, whenever your own reply would run past about four paragraphs of substantive explanation, or would ask a single approval covering several separately-decidable parts — walk it, whether it decomposes into decisions or is one explanation delivered in comprehension-sized steps. Not for material he asked to receive whole, or a reply short enough to land in one message. With no argument, walk the most recent large result in this conversation; if none exists, say so and ask for the subject. If the subject was requested but not yet produced, produce it first, then walk it.
+---
+
+# Walk me through
+
+Deliver complex material as a sequence of items, each sized to one decision or one comprehension step, one item per presenting turn, advancing only on the word of the user — the human operator running the project. A deciding walk's product is the decisions captured in their durable homes as they land; a teaching walk's product is comprehension, and its items legitimately capture nothing.
+
+## Opening a walk
+
+State the subject, the item count, and the walk's anchor in one line, then present the first item. A wrong subject guess in that line gives the user an immediate chance to correct it.
+
+Every walk needs an anchor for its marks, resolved in priority order:
+
+1. **The subject document**, when it lists or contains the items being walked (a plan, spec, queue file, findings report): dispositions are marked there, in place.
+2. **The walk's issue pair document** — the issue's companion document (`docs/issues/<n>-<slug>.md`) — when the walk serves an issue; or, when the walk's outcome is task-shaped work the project would track as an issue, create the pair at walk open. The pair document carries the marks and follows its normal close lifecycle.
+3. **Otherwise, a tmp-file ledger**: machine-local and uncommitted, in the checkout's gitignored `walk-ledgers/` directory with a dated, topic-named filename — a fixed location, so an interrupted session recovers the ledger by listing that directory, never from conversation memory. The ledger has one reader — the interrupted walk resuming at its first unresolved item — and it is deleted when the walk closes. Decisions survive only in their durable homes (issue bodies, commit messages, the governing documents, the artifacts themselves); the ledger is never committed.
+
+Whenever the walk's order is not inherent in the anchor itself, also record the ordered item list in the anchor as a walk-order block (a numbered list under a `## Walk order` heading) — in-place marks alone cannot say which unresolved item is next.
+
+When the walk decides things — the user will rule per item — open with a purpose item before any mechanism item: one item establishing what the decisions are for and the bar they will be judged by. A walk where the user only needs to understand is a teaching walk and needs no purpose item.
+
+## Ordering
+
+Follow the material's innate order when items depend on earlier ones to make sense — a system, a process, a dependency chain. Otherwise rank by importance, most important first. The test is comprehension, not execution: a findings list whose fixes must land in sequence still walks by importance. A mixed collection keeps required-sequence groups together, placing each group at the rank of its most important member, and uses the "Item N of M" heading scheme throughout.
+
+## Each item
+
+One item is one thing the user can react to on its own — one issue, one file, one decision. Before bundling parts into an item, test: could they get different answers? If yes, split. Also split: unrelated requests for approval; a complex issue, into the steps that explain it; an item that refers to a file, PR, or GHI that is not summarized, so a summary can be included. More but simpler items is better than fewer but more complex or cryptic items.
+
+Head every item with the running count — "Item N of M: <the point>" (or "Step N of M" on an innate-order walk) — and lead with the point. M is the current plan's count, purpose item included; a re-plan or size-split restates it. For a finding or recommendation, include the proposed action, not just the problem. When an item asks the user to choose among options, present it as a proposal: name the recommended option first and state that approval enacts it, then list the alternatives, each with the word that selects it. When there is no recommendation, say so and ask for an explicit choice. Never end a choice item with wording under which an approval word has no defined meaning. End every non-final presenting turn with exactly "Ready for the next item?" (or "Ready for the next step?" on an innate-order walk, or "Ready for the next part?" between sub-steps) — the visible pause is a required slot, not a flourish. A turn that answers a question and stays on the current item does not repeat the pause line — re-asking after the user withheld approval reads as pressure; end with the answer.
+
+The size cap is 300 words per item, and it is a comprehension budget, not a brevity target: the target is complete and clear. Length is not the measure: never cut needed substance to be shorter, never pad to look thorough; use what completeness needs within the cap, and split when the cap is too small. An item that needs more than the cap becomes two or more sub-steps, each presented separately. A size-split does not create separately answerable items: sub-steps share the item's number ("Item 4 of 9, part 2 of 3"), deliver the content in stages, and the item's single decision is asked once, at the last sub-step.
+
+Language: precise standard terminology, plainly used. The user is technical — do not over-simplify — but never coin vocabulary or reach for figurative phrasing where a standard term exists. Write each item in the register of one senior engineer explaining to another out loud: short sentences, concrete nouns, active verbs. When a term of art must appear, restate it in plain words at first use ("the entry checkpoint — the gate that records every legacy import"). A sentence that needs the conversation's history to parse is rewritten to stand alone. When the user says he does not understand, rewrite the item as a story built around one concrete failure example — or a concrete worked example when nothing fails — rather than restating the abstraction.
+
+References: cite every issue, PR, commit, or file the user may want to open as a full clickable URL or absolute `file://` path, paired with a self-documenting handle — never a bare issue number or bare filename as the reference. A script or command named in prose stays plain text.
+
+When the subject is a design or plan whose decisions the user has already ruled, present what it does — mechanisms, behaviors, branches — and omit the justification: re-derived rationale spends the budget without informing the reaction. Rationale returns when the user asks, or when the walk's subject IS the reasoning (a review's findings, a trade-off analysis).
+
+## Advancing
+
+Only the user advances the walk. A clear approval word — "y", "next", "go", "approved", or any equivalent unambiguous yes — moves to the next item, even when it rides alongside a reaction: answer the rider, then advance. Everything else — any reply with no approval word in it — stays on the current item:
+
+On an item that offers options, a bare approval word enacts the stated recommendation; an alternative is chosen by naming it. On an item with no stated recommendation, a bare approval word is ambiguous — ask, never guess.
+
+- A question, reaction, or new point: answer it, stay.
+- An automated event (a finished background task, an injected notice): handle it, return, and restate position ("back to item 3 of 6"). An automated event is never approval.
+- A genuinely ambiguous reply: ask — re-showing the current item is a fine way to ask — never guess.
+- A near-duplicate of a recent user message is usually an amendment typed while your reply rendered: treat the pair as one message and respond to the delta. When the delta is empty it is a re-send — respond once, and never read repetition as a second approval.
+- An instruction that changes the walk itself — stop, pause, hand over the rest whole, switch subjects — is followed, not treated as a stay-on-item reply: the user controls the walk's existence, not just its pace.
+
+NOT: advance because progress feels owed — a completed side task, a long silence, an unrelated notice. DO: advance on the user's approval word alone.
+
+## Capturing — the walk is a working review
+
+After each user response, classify the item: accepted, rejected, revised, or open — open meaning raised but not decided, because the user deferred or the answer depends on something pending. Then, before advancing:
+
+1. Mark the disposition at the anchor — the subject document, pair document, or ledger. Accepted, rejected, and revised items get a dated `processed <date> → <outcome>` line at the item's place. An open item gets an `open <date> — <what is pending>` note instead of a processed mark, so the resume rule returns to it. Marking never deletes the item's body.
+2. Record any decision or commitment in its durable home — the issue body (edited in place per the revision convention: revise the body itself; comments only for genuinely new events), the governing document, the code, or the commit that lands the change. When rulings accumulate, update the governing plan document alongside the specific artifacts it points to.
+3. State where the capture landed, or that the item yielded none. A blanket "nothing to capture" at walk end is how decisions get lost in conversation. On a teaching walk, per-item "nothing to capture" is the expected, legitimate state.
+
+The same duties cover conclusions the discussion itself produces — a side ruling, a direction the user sets, a question the exchange settles — even when they are not the item's own decision: capture each in its durable home before the walk advances. Never advance past an important question the discussion raised but left unanswered — resolve it or record it as open first.
+
+Capture the decision, never the meeting: the durable record carries the ruling's substance, date, and reasoning, and reads correctly to someone who does not know a walk happened. Walk framing ("item 6", "the user said") stays out of decision records — issue bodies, commits, governing documents. The anchor is the sanctioned exception: its disposition marks and walk-order block are walk records by design.
+
+## Re-planning
+
+A ruling that invalidates or changes later items re-plans the walk before it advances: revise, remove, or reorder the remaining items, update the anchor to match, and tell the user the count or sequence changed. Superseded material stays marked in the anchor rather than deleted — evidence for the walk's duration under a tmp ledger, durably where the anchor is durable. Questions and reactions that change no decision trigger no re-planning and no anchor edits.
+
+## Interruption and recovery
+
+The anchor is the recovery contract: after any interruption on this machine — a context reset, a session end, a long detour — the walk resumes at the first unresolved item (no processed mark; open notes count as unresolved) in the anchor's recorded order, recoverable from the anchor alone with no conversation state. A tmp-file ledger is machine-local, so recovery crosses sessions and context resets, not machines. Returning from any detour, restate position before continuing. After a context reset, never guess the position: reread the anchor. If the anchor is missing or inconsistent, say so and rebuild the item list with the user — still never guess.
+
+## Closing
+
+After the last item: confirm the final item's capture landed (or that it yielded none), then one closing sentence whose job is to state that the walk is complete and where its captures landed. NOT: produce an unsolicited recap, summary, or summary file of the walk — a recap the user asks for is his to have. DO: end with that single sentence — the captures in their homes are the walk's record.
+
+## Runtime parity
+
+This file is the canonical behavioral contract. A companion-runtime wrapper — Codex, once it is admitted as a companion runtime — derives from it: thin differences only (metadata, invocation syntax, tool names), with semantic parity to this contract. The contract and every derived wrapper are exercised against the same shared scenarios below.
+
+## Shared acceptance scenarios
+
+Live user-supervised use is the quality judgment for this skill's interaction behavior — its interaction failures are visible immediately, so it iterates in live use per the project's skill-authoring checklist (findable by that name under `docs/`). These six scenarios are the shared set the contract and every derived wrapper must handle; the mechanically checkable behaviors in them (word caps, count labels, mark-before-advance) get scripted tests only if this skill's failures ever prove silent and frequent enough that live iteration misses them:
+
+1. An over-compressed explanation the user cannot interpret.
+2. A complex item that must split into sub-steps.
+3. A settled-design walk that must not re-derive already-ruled rationale.
+4. A rejected or revised item, captured correctly.
+5. An interruption and correct resumption from the anchor.
+6. A response that changes later items, forcing a re-plan.
+FILE: .claude/skills/md-review/SKILL.md
+---
+name: md-review
+description: Review an MD file of lasting value before it lands on main — a skill, a wiki page, a completed design — so future agents can clearly understand, use, and build on it. Typically the final step before pushing; drafts still in progress are not ready for it.
+---
+
+# md-review
+
+## When Used
+
+When MD files are finalized so future agents can clearly understand them (wiki files), use them properly (skills), or encode them (designs). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed.
+
+## What to do
+
+1. Run `scripts/md-review-grid.py --target <path>` as a background task, and arm a Monitor on its output that emits an event per `saved:` and per `FAILED` line — each finished review reaches you the moment it lands, and a failed cell surfaces immediately instead of being discovered at the end. It launches eight reviewers and saves their reviews to the `md-review-records/` directory. The script output tells you what to do next.
+2. Read each md-review report as it arrives. Triage as you go, but keep your judgments provisional until all eight reviews are in, as the later reviews may offer more insight than the earlier ones.
+3. When you have processed all reviews and formulated a draft response, use the walk-me-through skill to walk through what problems were detected, and what you propose to do about them. Order the walk from items of most importance to least.
+FILE: .claude/skills/handoff/SKILL.md
+---
+name: handoff
+description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+---
+
+# handoff
+
+## What to do
+
+1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
+3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+FILE: .claude/skills/ghi-write/SKILL.md
+---
+name: ghi-write
+description: Use BEFORE any write that touches a GitHub issue in this project — filing a new issue, editing an issue body, commenting on an issue, or promoting queue material into an issue. Deciding whether material should become an issue also triggers it, because routing that decision is part of the skill. Not for merely reading or citing an issue.
+---
+
+# ghi-write
+
+## When Used
+
+Before filing a new issue, editing an issue body, commenting on an issue, or deciding whether material belongs in an issue.
+
+## What to do
+
+1. Ask before filing. Put the subject to ghi-info, the project's issue-knowledge agent, as a question — the ask command and its fallback ladder are under How to do it; read the issues it returns and the documents they cite. When an existing issue or pair document covers the subject — the same matter, not merely the same area — edit that artifact; revision is the default disposition. A failed ask does not block the write: fall down the ladder and proceed under these rules.
+2. Route by state. Every artifact this skill routes is either at its home or in a named queue with a drain:
+   - Material whose fate is not yet decided goes to a queue, not to an issue: `docs/wiki/queue/` for wiki-bound doctrine, `docs/issues/queue/` for pair-bound MDs; a candidate issue queues as a `draft`-labeled issue — the label is the issue world's queue membership.
+   - Anything carrying pending state — a wanted feature or component, an open question, a commitment to act — gets a GHI (GitHub issue): an MD-GHI pair when substantial working material rides with it, issue-only otherwise, and the issue body stays under 500 words either way — a body that cannot is carrying pair material. The body carries the summary, the pair MD the substance; the pair sequence is write the MD, land it on main, then cite it from the issue.
+   - Final reference content awaiting nothing is a bare MD at its home.
+   - The discriminator: the GHI carries state, the MD carries substance, the queue holds the not-yet-decided. When the routing is genuinely ambiguous, file a `draft`-labeled issue and move on.
+3. Revise by editing the body. A clarification, correction, or scope change edits the issue body, including fixes to references already in it. A comment is only for a genuinely new event — an instance outcome (one run of a recurring process the issue tracks, while the issue stays open), or a challenge to a ruling the issue records. Completion is not a comment: record the outcome in the body, then close the issue with its reason. Where an edit to the existing issue is sufficient, no second issue is filed; work that needs its own lifecycle — its own next action and its own closure — is a new issue, not an edit. (This overrides the default habit of stacking comments and new records; the edit history preserves the before/after.)
+4. Write for a zero-context reader. Before submitting, check the three tests: the subject is identifiable from the issue alone (the body plus what it cites); the why is stated; the next action is executable by a reader who was not in this conversation.
+5. Make every reference openable and every claim checked:
+   - A file reference must open from the reader's seat: full URLs for anything outside this repository; in-repo paths verified present on main before citing.
+   - Run the cheap verifications before submitting — a check one grep or one `gh` call answers is run now, so the body states what is, not what might be.
+   - An absence claim carries its search receipt: the query and the scope that came up empty.
+
+## How to do it
+
+- Ask: `scripts/ghi-info-ask.py "<question>"`; add `--include-closed` when asking about precedent or absence. When the ask fails, fall back in order: grep `ghi-mirror/` in the checkout when present (stale unless freshly regenerated), then `gh issue list --repo nedschorus/nedschorus --state all --limit 100 --search "<terms>"`, and grep the repository for pair documents on the subject.
+- File: `gh issue create --repo nedschorus/nedschorus --title "<title>" --body-file <file>`.
+- Edit: `gh issue edit <number> --repo nedschorus/nedschorus --body-file <file>`.
+- Close: after the body edit recording the outcome, `gh issue close <number> --repo nedschorus/nedschorus --reason "completed"` (or `"not planned"`, `"duplicate"`).
+- Comment (the two catalog events only): submit through the write tool `scripts/ghi-issue-write.py`'s comment verb naming the event kind; the write path denies plain `gh issue comment`. Until [nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46) builds the tool, plain `gh issue comment` naming the event kind is the interim path.
+- Compose bodies in a scratch file outside the repository and pass `--body-file`; an inline `--body` is easily mangled by shell quoting (backticks especially).
+- Queue routing: write the queue file under its destination directory, or add the `draft` label to the issue; the drain process is [nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24).
+- The machinery named here — ghi-info, `ghi-mirror/`, the write tool, the write path — is specified in `docs/issues/46-ghi-info-agent-design.md` and built under [nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46); the routing doctrine (queues, homes, the drain) is `docs/cross-project/nedschorus-founding-plan.md` § Project organization.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'nl -ba docs/wiki/queue/skill-authoring-checklist.md && nl -ba docs/issues/queue/18-write-test-plan-agent-native-riders.md && nl -ba docs/issues/queue/20-implement-with-evidence-agent-native-riders.md && nl -ba docs/issues/queue/21-diagnose-failure-test-procedure.md'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	# Skill authoring checklist
+     2	
+     3	Consult this whenever a NedsChorus skill is created or revised. Distilled 2026-07-24 (outer walk item 11, user-approved) from the read-for-ideas-only extraction of Anthropic's skill-creator; full evidence in `nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` and the cops delta packet §11. Every skill-build GHI points here; the founding plan's step 1 builds against this list.
+     4	
+     5	## Five questions before writing anything
+     6	
+     7	1. What should the skill enable?
+     8	2. When should it trigger — the actual user phrases and contexts? And when must it *not*?
+     9	3. What output format is expected?
+    10	4. Are the outputs objectively verifiable? Verifiable outputs get test cases; subjective outputs get human judgment. (This is the user-facing/agent-facing split — Anthropic reached the same rule independently.)
+    11	5. **Which steps are machine work?** Anything with a determinate answer — a timestamp, a computed value, a file's format, a check whose result is yes or no — belongs in a script the skill runs, leaving the agent only what needs judgment. Ask this *before* reviewing any wording: a wording review presupposes the division of labor and structurally cannot find an error in it. (User-ruled 2026-08-06, from the `handoff` skill's walk, where a step-by-step review of the text validated three steps of agent-performed machine work before the user asked why a script was not doing it; the review had even flagged one of those steps and then declined to act on the flag.)
+    12	
+    13	## The description is the trigger
+    14	
+    15	The ~100-word description is the only part of a skill the model sees when deciding whether to invoke it; the body is invisible until invocation. So:
+    16	
+    17	- Put every piece of when-to-use information in the description, not the body. Phrase it as user intent, imperative form.
+    18	- Front-load a concise positive AND negative scope: use for X; not for Y.
+    19	- "Pushy" descriptions are a Claude-specific hypothesis, not doctrine — adopt only with false-trigger tests showing they help. Word-count targets are not portable across runtimes (fields get capped and truncated differently); measure, don't copy.
+    20	- Descriptions compete for a capped listing budget. Many skills are fine; many *vague* skills degrade every skill's routing, because each dilutes the others' claim on attention.
+    21	- The description states *when* to invoke, never *how* the skill works. A description that summarizes the workflow becomes a competing summary the agent follows instead of the body — the description is always in context while the body loads only on invocation (observed once, human-authored, in the source's tests: a workflow-summarizing description caused one review pass where the body required two). If the description alone is enough to act on, move the how into the body. (Superpowers extract, 2026-07-31.)
+    22	
+    23	## Structure: progressive disclosure
+    24	
+    25	- Description/metadata: always in context. Body: loads on invocation — keep it under 500 lines. Bundled references and scripts: unlimited, behind a table of contents.
+    26	- Approaching the body limit means add hierarchy, not compression. Compression must preserve scope conditions and qualifiers verbatim — dropping a qualifier widens the rule's claim; that is a semantic change, not a shortening.
+    27	
+    28	## Register
+    29	
+    30	- A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear — no statistics, measured anecdotes, incident specimens, or out-of-context examples; if removing such content leaves a rule unclear, rewrite the rule to carry the clarity. Justifying data lives in the records stores and git history. (User-ruled 2026-08-05; placed here from the step-2 CLAUDE.md admission 2026-08-06 — this checklist, not the floor, governs skill content.)
+    31	- Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; shared project concepts a skill relies on are defined in CLAUDE.md, once — not restated per skill. (User-ruled 2026-08-04; placed here 2026-08-06.)
+    32	- Explain why a rule matters instead of stacking MUSTs; all-caps ALWAYS/NEVER is a yellow flag — reframe with the reasoning.
+    33	- Fix an over-specifying claim by deleting the excess words, not by adding qualifiers — the corrected statement is usually shorter, not longer. Argument for already-ruled decisions is deleted once it is common sense; the decision trail carries the why. (User-ruled 2026-08-09.)
+    34	- Reserve NOT/DO pairs for instructions that override a training default; that is the case they were invented for, and they earn nothing elsewhere.
+    35	- Match an instruction's form to the failure it fixes — or, for preventive guidance, the failure it most plausibly prevents (superpowers extract, 2026-07-31; source: obra/superpowers `writing-skills`; context and decline records: `nc-queue/2026-07-31-superpowers-extracts.md` (moves to `nc-queue/archived/` at dispersal)):
+    36	  - Wrong *shape* of output → a positive recipe: state what the output IS. In the source's measured wording tests, prohibition-only guidance produced clearly more of the unwanted content than the recipe form, and was directionally (not decisively) worse than no guidance at all. For load-bearing guidance, micro-test your own wording with a no-guidance control rather than assuming the result transfers.
+    37	  - A part omitted from output the agent otherwise produces correctly → a required structural slot (a named section that must exist), not an exhortation to remember.
+    38	  - Conditional guidance ("when X, do Y") → write X as an observable predicate the agent can test. A judgment call dressed as a condition does not reliably trigger.
+    39	  - Keep a working recipe free of nuance clauses — vague escape hatches like "unless it matters": in the same wording tests, one such clause made a winning recipe's results inconsistent across trials. A genuine exception is its own conditional on an observable predicate (a scope restriction, not a nuance clause).
+    40	- A NOT without a paired DO is unreliable — the not-space is infinite (user-ruled 2026-07-31). The wording tests above measured NOT-alone against recipe and no-guidance forms; they are consistent with this rule but did not test pairs.
+    41	- The source's remaining machinery — standalone prohibition lists (NOTs with no paired DO) and rationalization tables — addresses agents whose long context holds their own prior work and self-justifications ("just this once"). NC's role separation gives one-shot workers fresh constructed context with no such investment, so for them that machinery is not imported; long-context surfaces (orchestrators, user-facing interactive sessions) remain exposed and are protected by code-enforced gates and reasoned rules, not by imported prohibition machinery (user-ruled 2026-07-31). An absolute that truly must hold gets code enforcement — a gatekeeper check, a lint — when buildable, filed as its own build task rather than built mid-authoring; until then it lives as a reasoned rule, and prompt text alone is not treated as enforcement of an absolute.
+    42	
+    43	## Testing agent-facing skills
+    44	
+    45	These rules govern any skill (or skill half) whose failures are silent. User-supervised interaction halves iterate in live use instead — their final quality judgment is human.
+    46	
+    47	- Assertions are objectively verifiable statements with descriptive names; subjective qualities go to a human, never forced into assertions.
+    48	- An assertion that passes for both a good and a bad output is worse than useless — it manufactures false confidence. Discriminating power is the bar, and critiquing the evals themselves is part of the grader's job.
+    49	- Negative trigger tests must be near-misses: they share the skill's keywords but lack its essence. Easy negatives prove nothing.
+    50	- Burden of proof is on the expectation; no partial credit; evidence must show genuine task completion, not surface compliance.
+    51	- Checkable assertions are checked by script, not eyeballed.
+    52	- Scenario taxonomy (pair #9, principle 6): false trigger, missing context, conflicting instructions, partial failure, criteria-pass-while-intent-violated.
+    53	- Micro-testing a load-bearing wording (referenced by the Register section): run the task with no guidance first — no failure means the guidance isn't needed; then each candidate wording as fresh-context single calls embedded in its realistic surrounding text (the full skill, not the wording alone), on a task that tempts the failure, 5+ repetitions; read every flagged output manually (template echoes fake as compliance); treat variance as a metric — five interpretations across five reps means the wording does not bind. (Superpowers extract, 2026-07-31.)
+    54	
+    55	## Deliberately excluded, with its reopening trigger
+    56	
+    57	skill-creator's iteration machinery — review UIs, benchmark loops, the description optimizer — is not adopted; it is complexity the earned-complexity ladder has not admitted, and its trigger measurement is a proxy. Revisit only if an NC skill's failures prove silent and frequent enough that live iteration demonstrably misses them, and only after false-trigger tests exist for the trigger claims involved.
+     1	# Riders for pair #18 (write-test-plan) — from the agent-native testing walk
+     2	
+     3	Queued for the boss's drain (promote / edit / demote / drop). Source: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §4 and §6a (boss-walked 2026-07-29/30). Destination: [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18).
+     4	
+     5	1. **Oracle-and-red-condition rule (the skill's core).** Every planned check, of any test kind, states its oracle (what is measured or compared) and its red condition (the reading that means fail) before implementation. A check whose red condition cannot occur proves nothing. This is the structural counter to implementation-mirroring tests (the boss's ~95%-useless observation): a test copied from the implementation cannot state a failure it would detect. Generalizes the draft contract's "expected red witness" beyond functional tests.
+     6	2. **Reach-posit obligation.** Each planned test declares which design-significant paths it reaches; the declared set is diffed against measured execution (coverage.py dynamic contexts) — red on posited-but-unreached (false-green detector) or reached-but-forbidden. This mechanizes the draft contract's "reach proof". Escalation layers (per-claim, not standing): trace assertions for ordering claims; scripted-debugger interior-state assertions for claims with no test-visible seam.
+     7	3. **Test-kind taxonomy (selection menu).** The skill selects kinds per claim across five axes (scope, oracle, input production, environment/workload, suite adequacy) rather than defaulting to example-based functional tests. Reference by pointer, not import: `/Users/el/Projects/nedlern-sonnet/cops/tasks/sessions/cops-nedschorus-automated-testing-kinds-survey-2026-07-29.md` (COPS, 2026-07-29; routine / trigger-reserved / reject buckets + 24-kind menu + 11 planner questions). Boss framing rulings binding on the skill: evidence value for good, maintainable code first — cost (CPU/tokens/storage) is a bound, not a ranking key; the draft contract's "least expensive test level" wording is corrected accordingly; standard terminology only.
+     8	4. **Skip-expiry convention** (walk §3 ruling): every skipped or disabled test carries an owner and an expiry date from day one. Belongs in this skill's text or implement-with-evidence's, whichever first writes a test.
+     1	# Riders for pair #20 (implement-with-evidence) — from the agent-native testing walk
+     2	
+     3	Queued for the boss's drain (promote / edit / demote / drop). Source: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §6a items 2 and 4 (boss-walked 2026-07-29/30). Destination: [nedschorus#20](https://github.com/nedschorus/nedschorus/issues/20).
+     4	
+     5	1. **One-shot creators, retained for interrogation (boss-ruled).** Code and test writing is done by one-off agents: a creator's context is poisoned as a judge by its assumption of success, so it never reviews its own work. Its session ID (a short string; the transcript jsonl persists) is retained until the work clears checks **or 30 days elapse, whichever comes first** (boss-ruled 2026-07-30 — the interrogation window rides inside the drop discipline), so the creator can be resurrected as an **evidence source**: when a checker finds a problem, interrogate the creator with the blameless framing — "the goal is not an apology; was your instruction set confusing, incorrect, or lacking?" Findings land upstream (design text, skill prompts, wiki, CLAUDE.md), because every future agent inherits the same boot context — one context patch corrects the population.
+     6	2. **Test writers are implementation-blind.** The agent writing tests receives the design, contracts, and error catalog — not the implementation — so implementation-mirroring tests are structurally impossible, and each test's declared red condition is derived from the design rather than transcribed from code.
+     7	3. **Branch-frequency posits written at implementation time (boss-ruled).** Every branch (control-flow-graph edge) gets a frequency-class posit (HOT / NORMAL / RARE / NEVER-except-emergency) written while the author-agent's context is fresh; numeric posits (relative to the enclosing function) only where the design states a frequency. Posits are predictions with provenance (design-claim ref or dated author-judgment) — written before consulting measurement. Full mechanics and mismatch verdicts: pair #35's ladder record.
+     8	
+     9	4. **Bidirectional regression witness** (superpowers extract, 2026-07-31): a regression test's evidence cycle is write → pass → revert the fix → the test must fail → restore → pass. One direction proves the oracle can go red; both directions prove this test goes red for this fix. Mechanical (a stash/revert in the harness), applied when the witness is a test tied to a specific correction and a repro exists, at the fidelity category it honestly earned (minimal / partial / not-reproduced — see the #21 packet's procedure). Companion rule: an implementing agent's success claim is evidenced by the working-tree diff and check output, never by the agent's report alone.
+    10	
+    11	5. **Fix mode is a distinct role (boss-ruled 2026-07-31)**: applying review findings is done by a third fresh one-shot agent — not the writer, not the reviewer — with a constructed context (design + code + tests + complete findings batch) and a trust-nothing briefing; full contract in the agent-loop draft rules (rule 5). No dedicated fix skill is created yet; one is pulled when the first real fix task exposes the need (boot-set rule).
+     1	# Boss-walked core for pair #21 (diagnose-failure) — the test-failure procedure
+     2	
+     3	Queued for the boss's drain (promote / edit / demote / drop). Boss-walked 2026-07-31 (superpowers-extracts walk, item 3 discussion); sources: the boss's two-scenario framing and cluster rule, the daemon incident, the superpowers `verification-before-completion` extract, and the ruled agent-loop ladder. Destination: [nedschorus#21](https://github.com/nedschorus/nedschorus/issues/21).
+     4	
+     5	## The cluster rule (boss, 2026-07-31)
+     6	
+     7	Most reproduction rates are 0%, 1%, 99%, or 100% — and which one is unknowable in advance. Two reruns therefore separate the clusters about as well as twenty. Rate is not a property of the bug: bugs are deterministic functions of input, state, schedule, and environment; "flaky" means the triggering condition is not in the controlled set. **"Repros aren't random, they are just subtle."**
+     8	
+     9	## The fork procedure (test-detected failures)
+    10	
+    11	1. **Red observed → rerun ×2.**
+    12	   - Both red → deterministic; proceed to step 2.
+    13	   - One of each → the middle is subtle: further sampling cannot FIND the hidden variable — stop sampling and start differencing. Capture one failing and one passing run fully (trace, environment, state snapshots) and diff them; the hidden variable is in that diff — a mechanical, patience-free job suited to agents. Control the variable; the bug promotes to ~100% and re-enters at step 2.
+    14	   - If honest differencing fails to locate the variable: escalate BLOCKED with the paired evidence package — one failing and one passing run, traces, environment, and state snapshots attached. If the boss rules the fix ships anyway, the weak-evidence path below applies, recorded as a named residual.
+    15	2. **Causal hypothesis with discriminating evidence — before the first fix.** Obvious cause → fix directly. Cause not obvious → debugger/trace *now*, not after a failed fix; a fix without an evidenced hypothesis spends a breaker round on a guess.
+    16	3. **Fix, with the reach proof**: the failing run must be shown to execute the code being changed (the daemon guard, below).
+    17	4. **Green → revert the fix → red returns → restore → green.** The revert-red step proves the fix — not environment drift, leftover state, or luck — produced the green (the bidirectional witness; scope: applies where a repro exists, at the fidelity category it honestly earned — minimal / partial / not-reproduced).
+    18	5. **A round that never reaches green** is a failed round: record theory, action, result (R1); root-cause analysis required at R2; breaker trips at R3 per the agent-loop ladder.
+    19	
+    20	**Verification under residual nondeterminism:** if the failure resists determinization, rep-based confidence rests on a stationarity assumption the hidden variable defeats — N clean runs across varied environments is recorded as weak evidence with a named residual; it is never the witness.
+    21	
+    22	## The daemon specimen (environment-verdict class)
+    23	
+    24	Agents repeatedly "fixed" daemon code, never succeeding, because the running process was never reloaded — the code being edited was not the code executing. Three ruled mechanisms independently catch it: the breaker (red-stays-red trips at 3, and the widened frame includes environment); the environment/instrument verdicts; and sharpest, **the reach proof applied to the fix itself** — one probe showing "changed line never executed" reveals the stale process on attempt one. Aftermath belongs to the interrogation loop: one boot-context line ("after editing daemon code, reload the daemon") corrects every future agent.
+    25	
+    26	## Debugger-first diagnosis (boss, 2026-07-31)
+    27	
+    28	Agents can do what humans lack patience for: use debugger/attach instruments instead of logging to trace back up the actual execution — no edit, no rerun, no reload. This is also structurally safer than logging in the hard cases: log-based debugging requires editing code and reloading — the exact step that silently failed in the daemon incident — while an attached instrument can only show the code that is actually executing. Mechanics vary by situation (`py-spy dump` snapshots a live process non-invasively; `debugpy`/`pdb` want the process launched under them): the doctrine is *prefer trace/attach instruments over edit-and-rerun instruments for diagnosis*, tool chosen per case.
+    29	
+    30	## Production-class failures and the system-understanding gap
+    31	
+    32	Hard-to-repro production failures are diagnosed by instrumentation up the chain from the visible failure point — agent-duplicable (boundary instrumentation + the differencing above). The genuinely hard class (boss): design flaws, and one agent's failure to understand the large system around the code it sees. Status of countermeasures, stated precisely (new-vp flank correction, 2026-07-31): **one ruled countermeasure exists** — the broad-expert half of the reset pair, whose job is carrying the surrounding-system picture. The *doctrine* that explanatory architecture description is regenerated from code on demand and never carries authority is boss-ruled (queue note §6a item 1(b), 2026-07-29), but **no view-generation machinery or practice exists or is ruled** — "current architecture view on request" goes on the table as a candidate instance of that doctrine, not as existing machinery.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'nl -ba .claude/hooks/instruction-file-guard.py && nl -ba scripts/md-review-grid.py'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	#!/usr/bin/env python3
+     2	"""Soft block on modifying instruction files (user-walked 2026-08-07, nedschorus#45).
+     3	
+     4	Wired as a PreToolUse hook on Edit, Write, and NotebookEdit. Instruction
+     5	files — CLAUDE.md, per-agent CLAUDE.local.md identity files, and everything
+     6	under .claude/ — change only through the user's walk. Agents predictably try
+     7	to improve them (observed repeatedly in the legacy fleet); a path-scoped rule
+     8	cannot stop that (rules are context, not enforcement, and file creation
+     9	never triggers them — probed 2026-08-07), so the block lives at the tool
+    10	call, where it also catches creation.
+    11	
+    12	Soft block, not a wall: the deny message teaches the sanctioned path and
+    13	names the override. An edit the user has already approved passes once by
+    14	writing the user's exact approval words into .walk-approved at the
+    15	repository root; the marker is consumed by the passing call. The override is
+    16	deliberately self-serve — the audit value is the visible, quoted approval in
+    17	the marker and the transcript, not tamper-proofing.
+    18	
+    19	.claude/ is in the protected set as self-protection: this hook's own wiring
+    20	lives in .claude/settings.json, and an unguarded settings file is a guard an
+    21	agent can delete.
+    22	
+    23	The harness's auto-memory under ~/.claude/projects/ is deliberately inside the
+    24	protected set (user-ruled 2026-08-11): every memory entry is user-reviewed.
+    25	Other harness state (transcripts, handoffs) carries no review requirement — a
+    26	carve-out is added when a real harness write trips this guard, not in advance.
+    27	Two exist, each added that way: `.claude/worktrees/` (an agent's isolated
+    28	checkout) and `.claude/jobs/` (a background job's scratch directory, which the
+    29	harness hands out for temporary files and deletes with the job).
+    30	"""
+    31	
+    32	import json
+    33	import os
+    34	import sys
+    35	from pathlib import Path
+    36	
+    37	PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
+    38	PROTECTED_DIRECTORY = ".claude"
+    39	APPROVAL_MARKER_NAME = ".walk-approved"
+    40	
+    41	DENY_MESSAGE = (
+    42	    "Before modifying {path}, get the user's approval on your change: instruction files "
+    43	    "(CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only "
+    44	    "through the user's walk, however clearly the edit would help. State the proposed "
+    45	    "change to the user and walk it with him. If he has already approved this exact "
+    46	    "change, quote his exact approval words into {marker} at the repository root, then "
+    47	    "resubmit your write or edit — the marker is consumed by the one call it approves."
+    48	)
+    49	
+    50	
+    51	def project_root() -> Path:
+    52	    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+    53	
+    54	
+    55	def is_protected(file_path: str) -> bool:
+    56	    path = Path(file_path)
+    57	    if path.name in PROTECTED_BASENAMES:
+    58	        return True
+    59	    parts = path.resolve().parts
+    60	    for index, part in enumerate(parts):
+    61	        if part == PROTECTED_DIRECTORY:
+    62	            if index + 1 < len(parts) and parts[index + 1] in ("worktrees", "jobs"):
+    63	                # A worktree checkout's home under .claude/worktrees/, or a
+    64	                # background job's scratch directory under .claude/jobs/<id>/tmp
+    65	                # — both are working space the harness hands out, not machinery
+    66	                # that instructs anybody. The jobs carve-out was added 2026-08-13
+    67	                # after a real write tripped the guard, which is the condition
+    68	                # this file's docstring sets for adding one.
+    69	                continue
+    70	            return True
+    71	    return False
+    72	
+    73	
+    74	def consume_approval_marker(marker_path: Path) -> bool:
+    75	    """One approved change passes; the marker is spent by the call it approves."""
+    76	    try:
+    77	        content = marker_path.read_text(encoding="utf-8").strip()
+    78	    except (FileNotFoundError, OSError):
+    79	        return False
+    80	    if not content:
+    81	        return False
+    82	    marker_path.unlink(missing_ok=True)
+    83	    return True
+    84	
+    85	
+    86	def main() -> int:
+    87	    try:
+    88	        payload = json.loads(sys.stdin.read() or "{}")
+    89	    except json.JSONDecodeError:
+    90	        return 0
+    91	    file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+    92	    if not file_path or not is_protected(file_path):
+    93	        return 0
+    94	
+    95	    marker_path = project_root() / APPROVAL_MARKER_NAME
+    96	    if consume_approval_marker(marker_path):
+    97	        return 0
+    98	
+    99	    print(DENY_MESSAGE.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
+   100	    return 2
+   101	
+   102	
+   103	if __name__ == "__main__":
+   104	    sys.exit(main())
+     1	#!/usr/bin/env python3
+     2	"""Run a full md-review grid against a document.
+     3	
+     4	One invocation = one review: eight cells ({restate, defect-hunt} x
+     5	{good, floor} x {claude, codex}) launched in parallel, every report saved
+     6	into a dated record directory, progress and next-step instructions printed
+     7	for the reviewing agent as reviews land.
+     8	
+     9	Usage:
+    10	  scripts/md-review-grid.py --target docs/drafts/foo.md
+    11	
+    12	Exit codes: 0 all cells ran, 1 one or more cells failed, 2 bad invocation.
+    13	"""
+    14	
+    15	import argparse
+    16	import datetime
+    17	import pathlib
+    18	import re
+    19	import subprocess
+    20	import sys
+    21	import time
+    22	
+    23	REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+    24	RECORDS_DIR = REPO_ROOT / "md-review-records"
+    25	# Cell launchers, one per runtime.
+    26	CELL_LAUNCHERS = {
+    27	    "claude": REPO_ROOT / "scripts" / "md-review-claude-cell.py",
+    28	    "codex": REPO_ROOT / "scripts" / "md-review-codex-cell.py",
+    29	}
+    30	PASSES = ["restate", "defect-hunt"]
+    31	TIERS = ["good", "floor"]
+    32	
+    33	COMPLETION_INSTRUCTIONS = """\
+    34	All eight reviews are complete, in {record_dir}, one file per reviewer.
+    35	
+    36	Read every report in full. The restate reports show what a reader took each
+    37	sentence to mean — compare them against what you intended; a confident
+    38	misreading is a defect in the file, not in the reader. The defect-hunt
+    39	reports flag defects with each reviewer's own confidence; expect heavy
+    40	overlap — the same defect found independently by several reviewers is one
+    41	defect.
+    42	
+    43	Keep your judgments provisional until you have read all eight, as later
+    44	reports may offer more insight than earlier ones. Then formulate your draft
+    45	response: which problems are real, and what you propose to do about each.
+    46	Walk that with the user using the walk-me-through skill, ordered from most
+    47	important to least. The walk's anchor is {record_dir}/dispositions.md."""
+    48	
+    49	
+    50	def make_record_dir(target: pathlib.Path) -> pathlib.Path:
+    51	    date = datetime.date.today().isoformat()
+    52	    base = f"{date}-{target.stem}"
+    53	    record_dir = RECORDS_DIR / base
+    54	    suffix = 2
+    55	    while record_dir.exists():
+    56	        record_dir = RECORDS_DIR / f"{base}-{suffix}"
+    57	        suffix += 1
+    58	    record_dir.mkdir(parents=True)
+    59	    return record_dir
+    60	
+    61	
+    62	def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path) -> None:
+    63	    """Cheap grounding check: every path-like reference in the target either
+    64	    resolves (relative to the repo root or the target's directory) or is
+    65	    listed as unresolved. Result saved into the record for the reviewing
+    66	    agent; unresolved references are leads, not verdicts."""
+    67	    text = target.read_text(encoding="utf-8")
+    68	    candidates = sorted(set(re.findall(
+    69	        r"[\w./-]+/[\w./-]+|[\w-]+\.(?:md|py|sh|json|yaml|toml)", text)))
+    70	    lines = ["# Reference-integrity pre-pass", ""]
+    71	    for candidate in candidates:
+    72	        clean = candidate.strip(".,;:")
+    73	        resolved = (REPO_ROOT / clean).exists() or (target.parent / clean).exists()
+    74	        lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{clean}`")
+    75	    if not candidates:
+    76	        lines.append("- no path-like references found")
+    77	    (record_dir / "reference-check.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    78	
+    79	
+    80	def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
+    81	    """Start all eight cells in parallel. Returns {report_path: (process,
+    82	    stderr_path)}. The parent's file handles are closed right after each
+    83	    spawn; the child keeps its own copies, so a with-block is the wrong
+    84	    shape here."""
+    85	    running = {}
+    86	    for runtime, launcher in CELL_LAUNCHERS.items():
+    87	        for cell_pass in PASSES:
+    88	            for tier in TIERS:
+    89	                pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
+    90	                report_path = record_dir / f"{runtime}-{pass_token}-{tier}.md"
+    91	                stderr_path = record_dir / (report_path.name + ".stderr.log")
+    92	                out = open(report_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
+    93	                err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
+    94	                process = subprocess.Popen(  # pylint: disable=consider-using-with
+    95	                    [str(launcher), "--cell", cell_pass, "--tier", tier,
+    96	                     "--target", str(target)],
+    97	                    stdout=out, stderr=err, stdin=subprocess.DEVNULL,
+    98	                )
+    99	                out.close()
+   100	                err.close()
+   101	                running[report_path] = (process, stderr_path)
+   102	    return running
+   103	
+   104	
+   105	def wait_for_cells(running: dict) -> list:
+   106	    """Poll until every cell finishes; print per-report progress; return the
+   107	    list of failed report names."""
+   108	    failures = []
+   109	    while running:
+   110	        time.sleep(5)
+   111	        for report_path in list(running):
+   112	            process, stderr_path = running[report_path]
+   113	            code = process.poll()
+   114	            if code is None:
+   115	                continue
+   116	            del running[report_path]
+   117	            if code == 0:
+   118	                stderr_path.unlink(missing_ok=True)
+   119	                print(f"saved: {report_path}", flush=True)
+   120	                continue
+   121	            failures.append(report_path.name)
+   122	            hint = ""
+   123	            stderr_tail = stderr_path.read_text(encoding="utf-8")[-2000:]
+   124	            if "401" in stderr_tail or "Not logged in" in stderr_tail:
+   125	                hint = " — the runtime is logged out; ask the user to log in, then rerun this cell"
+   126	            print(f"FAILED (exit {code}): {report_path.name}{hint} "
+   127	                  f"(stderr kept: {stderr_path})", flush=True)
+   128	    return failures
+   129	
+   130	
+   131	def main() -> int:
+   132	    parser = argparse.ArgumentParser(
+   133	        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+   134	    )
+   135	    parser.add_argument(
+   136	        "--target", required=True, help="document path, relative to the repo root or absolute"
+   137	    )
+   138	    args = parser.parse_args()
+   139	
+   140	    target = pathlib.Path(args.target)
+   141	    if not target.is_absolute():
+   142	        target = REPO_ROOT / target
+   143	    if not target.is_file():
+   144	        print(f"md-review-grid: target not found: {target}", file=sys.stderr)
+   145	        return 2
+   146	    for runtime, launcher in CELL_LAUNCHERS.items():
+   147	        if not launcher.is_file():
+   148	            print(f"md-review-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
+   149	            return 2
+   150	
+   151	    record_dir = make_record_dir(target)
+   152	    reference_integrity_pre_pass(target, record_dir)
+   153	
+   154	    print(f"Launched eight reviewers against {target}. Reports appear in "
+   155	          f"{record_dir} as each completes — read each as it arrives.")
+   156	
+   157	    failures = wait_for_cells(launch_cells(target, record_dir))
+   158	
+   159	    print()
+   160	    print(COMPLETION_INSTRUCTIONS.format(record_dir=record_dir))
+   161	    if failures:
+   162	        print(f"\nNOTE: {len(failures)} review(s) failed and are absent from the "
+   163	              f"record: {', '.join(failures)}. Rerun them singly with the cell "
+   164	              f"launchers before triage, or note their absence in dispositions.md.")
+   165	    return 1 if failures else 0
+   166	
+   167	
+   168	if __name__ == "__main__":
+   169	    sys.exit(main())
+
+[1mweb search:[0m 
+[1mweb search:[0m https://github.com/nedschorus/nedschorus/issues/24
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "if [ -d ghi-mirror ]; then rg --files ghi-mirror | sort | sed -n '1,200p'; else echo 'no ghi-mirror'; fi && git branch --show-current && git log -1 --oneline -- docs/agents/skill-builder-instructions.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+no ghi-mirror
+seat-launch-first-prompt
+8181a37 seat model and seven agent briefs: work grouped by shared context, one instruction file per seat (nedschorus#45)
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'for n in 17 18 19 20 21 22 23 24; do gh issue view "$n" --repo nedschorus/nedschorus --json number,title,state,labels,body,url; done'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[31m exited 1 in 153ms:[0m
+error connecting to api.github.com
+check your internet connection or https://githubstatus.com
+error connecting to api.github.com
+check your internet connection or https://githubstatus.com
+error connecting to api.github.com
+check your internet connection or https://githubstatus.com
+error connecting to api.github.com
+check your internet connection or https://githubstatus.com
+error connecting to api.github.com
+check your internet connection or https://githubstatus.com
+
+[1mweb search:[0m 
+[1mweb search:[0m site:github.com/nedschorus/nedschorus/issues/24 nedschorus queue drain procedure ...
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "rg -n \"queue-drain|write-test-plan|implement-with-evidence|diagnose-failure|review-change|eval-agent-change|attack-artifact|design-change|#24|issue 24\" . --glob '"'!docs/agents/skill-builder-instructions.md'"' --glob '"'!docs/issues/queue/18-*'"' --glob '"'!docs/issues/queue/20-*'"' --glob '"'!docs/issues/queue/21-*'"' --glob '"'!md-review-records/**'"' | sed -n '1,400p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+./docs/agents/agent-seat-model.md:42:| `skill-builder` | the seven proposed skills queued as issues #17–#23, and the queue-drain procedure that empties the project's queues ([#24](https://github.com/nedschorus/nedschorus/issues/24)) | `skill-builder-instructions.md` |
+./docs/drafts/ghi-write-skill-draft.md:74:- Queue routing: write the queue file under its destination directory, or add the `draft` label to the issue; the drain process is [nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24).
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:16:- **Two candidates get near-wholesale official spines** (design-change ← Anthropic code-architect; review-change ← OpenAI review-agent); the rest are compositions.
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:26:## Item 4 — `design-change`
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:30:## Item 5 — `write-test-plan`
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:34:## Item 6 — `attack-artifact`
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:38:## Item 7 — `implement-with-evidence`
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:42:## Item 8 — `diagnose-failure`
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:46:## Item 9 — `review-change`
+./nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md:50:## Item 10 — `eval-agent-change`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:35:### Outer item 4 — `design-change`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:42:### Outer item 5 — `write-test-plan`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:52:### Outer item 6 — `attack-artifact`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:59:### Outer item 7 — `implement-with-evidence`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:66:### Outer item 8 — `diagnose-failure`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:73:### Outer item 9 — `review-change`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:80:### Outer item 10 — `eval-agent-change`
+./nc-queue/archived/2026-07-23-cops-candidate-skill-delta-packet.md:102:git-gatekeeper task, `write-test-plan` has the strongest fit; it should be one
+./docs/cross-project/nc-python-toolchain-plan.md:78:- **Rider on write-test-plan ([#18](https://github.com/nedschorus/nedschorus/issues/18)) — requirements-quality pass.** Run as the skill's first step, by the reader never the designer (legibility is measured at the point of consumption): checklist items test *what is written*, never the implementation ("is 'prominent display' quantified?"). Unresolved items are the `needs-design-clarification` refusal payload. Plus the traceability sentence: *the test plan lists, per requirement, its covering checks, and per check, its requirement; orphans in either direction are stated explicitly.*
+./nc-queue/2026-07-31-superpowers-extracts.md:13:3. **Bidirectional regression witness — walked 2026-07-31, kept and grown into the #21 packet** (`docs/issues/queue/21-diagnose-failure-test-procedure.md`): the boss-walked test-failure fork (cluster rule, diff-don't-sample with BLOCKED exit, debugger-first diagnosis, daemon specimen, weak-evidence residual path). Original extract: (`verification-before-completion`: write → pass → revert fix → must fail → restore → pass; and "agent success" claims require the VCS diff, not the report) → appended to the #20 packet's evidence kernel.
+./nc-queue/2026-07-31-superpowers-extracts.md:34:- `brainstorming` / `writing-plans` / `executing-plans` — covered by define-work/design-change plans; the plans-for-a-junior-engineer framing conflicts with NC's zero-context-reader rule only in register, not substance; nothing new to take.
+./docs/cross-project/nedschorus-founding-plan.md:24:- The boss's review queue is **issues labeled `draft`** (boss-ruled 2026-07-24, renaming `boss-review`: a marker names the artifact's STATE, not the action owed — a queued issue IS a draft; the label is the issue-world's queue membership under the artifact-lifecycle rule, § Project organization) — same format as all issues, full-context walkable bodies, non-blocking by rule, no title/filename markers (the label is the single authority). The scrub step of each handoff states every queue's depth AND oldest item's age — the `draft` issue queue and the directory queues alike — so starvation is visible, not just volume (package-review item 9; drain procedure tracked on [nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24)). When issue creation fails, the routed body is kept durably (committed) until an issue id exists — a routed suggestion is never lost to a failed API call.
+./docs/cross-project/nedschorus-founding-plan.md:48:**The MD-GHI pair:** a request for a durable MD IS a request for a doc + issue pair (the boss's trigger word: "memorialize"). All NC-related GHIs — paired or issue-only — are filed on the nedschorus repository, never in the old system's tracker (boss-ruled 2026-07-22: NC context must not drown among the legacy system's thousands of issues). `md-write` searches existing pairs first, then disposes NEW / REVISE (default on subject match) / REPLACE (supersede, old issue closed same commit) / REMOVE; ambiguity goes to the `draft` issue queue, never blocks. Session provenance: MDs via commit messages; issues via a footer line. Revision convention (boss-ruled 2026-07-22): a clarification or revision to an issue or a pair document EDITS the artifact — the GHI body, the document — never a stacked clarifying comment; additive records multiply and conflict with what they meant to fix. Comments append only for genuinely new events (an instance outcome, a ruling challenge — "completion" collapsed into close-with-reason plus the body edit recording the outcome, user-ruled 2026-08-12). Append-only audit surfaces (review clearances and their trailers) are the deliberate exception. Artifact-lifecycle rule (boss-ruled 2026-07-24; supersedes and absorbs the 2026-07-23 three-state artifact rule): **every artifact is either final at its home, or sitting in a named queue that states its destination — and every queue has a drain process.** No stateless piles, ever. Destination known up front → destination-rooted queue: wiki-bound doctrine in `docs/wiki/queue/`, pair-bound MDs in `docs/issues/queue/` — the same `queue` token everywhere, so one grep finds every queue. Destination decided only at the drain → decision queue: `nc-queue/` (boss notes) and `legacy-feature-queue/` (undecided legacy features). Draft GHIs carry the **`draft` label** — the issue-world's queue membership, symmetric with the directories. The drain is one process for all queues ([nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24)): the boss walks a queue when he chooses; each item gets exactly one of four outcomes — **promote** (`git mv` to the destination; the move commit is the record), **edit** (revise, stays queued), **demote** (down to evidence/transient, attached to its pair or session), **drop** (deleted with the reason in the commit message — explicit, never silent rot). The handoff scrub step reports every queue's depth and oldest item; until the NC handoff skill is built, that reporting runs as discipline. Transient design/research MDs never enter these queues — they live and die attached to their pair or session. The absorbed three-state routing still governs write time: a queue drop needs NO GHI — the queue is its attention surface until the drain decides its fate, and minting a GHI at drop time front-runs the walk; the moment something is wanted as a feature, component, or commitment — any pending state — it gets a GHI (lean decision → issue-only; substantial working material → the MD-GHI pair: the MD carries the greppable substance, the GHI carries the walkable state); a bare MD with no GHI is legitimate only for final reference content awaiting nothing (operator notes beside code, wiki pages), and anything about it that later becomes pending gets a GHI then. Discriminator: the GHI carries state, the MD carries substance, the queue holds the not-yet-decided. Boss clarification 2026-07-25 (walk 17 cluster 2): **a committed doc is not an attention surface** — a backlog section or "captured research" note in a pair doc is a pile unless it is queued or carried by a GHI; anything task-shaped (an investigation, an evaluation, a build) gets a GHI even when small — lean bundled issues are fine; and agent-internal task lists are invisible to the boss until a review method exists ([nedschorus#28](https://github.com/nedschorus/nedschorus/issues/28) item 5), so nothing may live only there. Enforced at write time by `ghi-write`/`md-write` ([nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13)).
+./docs/cross-project/nedschorus-founding-plan.md:69:**7. Pick ONE task; boot; run it; learn.** Ruled direction, CONFIRMED as the first bounded test task (walk item 15, 2026-07-25): the git foundation — the git-gatekeeper build slice (config + git-gatekeeper script with built-in checks + protection lock + workflow rules). Boot-test the delta first (find a named thing in the legacy system without writing there; use the bridge; produce a handoff — plus the founding interrogation probes: who are you; what are we building; what the legacy system is and its rules; hand off and resume; d-review a sample); every failure patches the pack. Then task 2 (standing candidate: the code-review skill), and companion admission right after the boot test passes. Candidate skills join one at a time when the running task exposes the missing decision (boot-set rule, open question 8) — the git-gatekeeper task's first expected pull is `write-test-plan` ([nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18)).
+./docs/cross-project/nedschorus-founding-plan.md:104:8. RESOLVED 2026-07-24 (number kept for reference stability): boot set = the five founding skills only (step 1); none of the nine candidate skills ([nedschorus#15](https://github.com/nedschorus/nedschorus/issues/15)–[#23](https://github.com/nedschorus/nedschorus/issues/23)) joins at boot. Candidates join one at a time, when a real task exposes the missing decision the candidate encodes; first expected pull: `write-test-plan` ([nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18)) at the step-7 git-gatekeeper task. Named-deferred classes — on the map, deliberately no GHI until their trigger occurs: `release-transition` and `learn-from-failure` (carried from the skills research), and `suite-health` (boss-ruled 2026-07-29, SDLC-note walk): the seven July-5 suite-operation skills (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness-writers) recorded as one deferred class, trigger being the first sustained test suite whose signal degrades; skip-warden's expiry-on-skips convention rides the first test-writing skill; test-diff-reviewer and test-ghostwriter are already covered by existing candidates.
+./nc-queue/2026-07-30-app-skill-curation-walk-instrument.md:28:- **engineering:code-review** — PR/diff review workflow. processed 2026-07-30 → **DROP** (boss-confirmed) — superseded by review-change [#22](https://github.com/nedschorus/nedschorus/issues/22): the NC adaptation is already planned (task 2) from stronger graded donors (OpenAI review-agent spine, Google criteria); this skill adds nothing as donor and squats on #22's trigger territory. Interim reviews stay boss-walked. Pattern set for Group C: the question is "does an NC sibling's plan already subsume it?"
+./nc-queue/2026-07-30-app-skill-curation-walk-instrument.md:29:- **engineering:testing-strategy** — test strategy/plan design. processed 2026-07-30 → **DROP** (boss-approved) — subsumed by write-test-plan [#18](https://github.com/nedschorus/nedschorus/issues/18) (first scheduled pull; contract + dogfood + taxonomy + riders all exist); this skill is the weakest-graded capability class (generic strategy prose, no oracle/red discipline) squatting on the highest-value NC trigger territory. Nothing survives as donor.
+./nc-queue/2026-07-30-app-skill-curation-walk-instrument.md:30:- **engineering:debug** — structured debugging workflow. processed 2026-07-30 → **KEEP with named eviction** (boss-approved) — the one real interim window: diagnose-failure [#21](https://github.com/nedschorus/nedschorus/issues/21) builds only "when the project has a diagnosis task" while the gatekeeper build will produce real bugs before then; no doctrine conflict (same donor family; the breaker ladder counts fix attempts from outside any debugging procedure); collision cost zero until #21 boots. Eviction: #21's near-miss routing tests run with this skill present; the loser leaves.
+./nc-queue/2026-07-30-app-skill-curation-walk-instrument.md:31:- **engineering:architecture** — ADR creation/evaluation. processed 2026-07-30 → **DROP + extract** (boss-approved) — the design-evaluation half is subsumed by design-change [#17](https://github.com/nedschorus/nedschorus/issues/17); the ADR *form* (the real complement — NC's append-only decisions layer needs exactly this shape) extracted to `docs/wiki/queue/adr-form-extract.md` for the md-write build or wiki doctrine, with a claims-line addition per the SSOT rulings.
+./nc-queue/2026-07-30-app-skill-curation-walk-instrument.md:32:- **engineering:system-design** — system/API/data-model design. processed 2026-07-30 → **DROP** (boss-ruled) — fully subsumed by design-change [#17](https://github.com/nedschorus/nedschorus/issues/17) (code-architect spine + boss terminal states); no extractable remainder; vaguest trigger in the bundle, the exact class the description-budget finding warns degrades routing.
+./nc-queue/2026-07-30-app-skill-curation-walk-instrument.md:33:- **engineering:tech-debt** — debt audit/prioritization. processed 2026-07-30 → **DROP** (boss-ruled) — contradicted by ruled doctrine, not merely subsumed: the accumulate-then-triage model lost to detect-at-the-mechanism (usage/posits [#35](https://github.com/nedschorus/nedschorus/issues/35), design-change sweep, patch-cycle tripwire); every legitimate concern has a stronger NC owner.
+./nc-queue/2026-07-29-cops-task-brief-test-kind-taxonomy.md:1:# Task brief for COPS — automated test-kind taxonomy (precursor to write-test-plan)
+./nc-queue/2026-07-29-cops-task-brief-test-kind-taxonomy.md:5:**Requested by:** the boss, during the 2026-07-28 queue-note walk, as a named precursor to the `write-test-plan` candidate skill ([nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18)).
+./nc-queue/2026-07-29-cops-task-brief-test-kind-taxonomy.md:11:Motivation: the draft `write-test-plan` contract (your file `cops-nedschorus-reproducible-engineering-skills-research-2026-07-22.md`, "Initial write-test-plan contract") says "choose the least expensive test level that still reaches the real mechanism," but offers no menu of kinds to choose from. The taxonomy is that menu. This satisfies your own stopping rule (decision 10): new research must answer a named design or evaluation question.
+./nc-queue/2026-07-29-cops-task-brief-test-kind-taxonomy.md:48:One Markdown file in your session-artifacts convention (`cops/tasks/sessions/`), keyed to [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18), written for a zero-context reader. The boss will walk it; its accepted content feeds the `write-test-plan` skill when that skill is built.
+./docs/wiki/queue/adr-form-extract.md:5:The one piece that survives the drop (the skill's design-evaluation half is subsumed by design-change, [nedschorus#17](https://github.com/nedschorus/nedschorus/issues/17)): the **architecture decision record form**, matching the walk-ruled decisions layer of design docs (append-only, dated, drift-immune, superseded not edited):
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:9:- **The list**: five founding skills (d-review, walk-me-through, handoff, ghi-write, md-write) + nine candidates, one GHI each ([#15](https://github.com/nedschorus/nedschorus/issues/15)–[#23](https://github.com/nedschorus/nedschorus/issues/23)): define-work, plan-rewrite-slice, design-change, write-test-plan, attack-artifact (packaging vs d-review unresolved), implement-with-evidence, diagnose-failure, review-change, eval-agent-change.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:10:- **The when**: the routing table in the cops record ("missing decision → candidate") — a skill is pulled when a real task exposes the decision it encodes, never built ahead (boot-set rule, resolved 2026-07-24). First expected pull: write-test-plan ([#18](https://github.com/nedschorus/nedschorus/issues/18)) at the step-7 git-gatekeeper task.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:21:> **Potential improvement 2 — design-change obsolescence sweep.** A design change is the one moment the superseded category is cheaply identifiable: the design-change skill's contract gains the obligation "what does this change orphan?" Landing: rider on the design-change candidate GHI.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:23:> **Potential improvement 3 — patch-cycle tripwire at three, escalating to design AND goal.** Three review-fail-patch cycles on one change → stop patching; mandatory reconsideration of the design or of the goal itself (edge-case explosion; intractable or NP-complete as specified). The threshold exists twice in the ratified record (decision 23; diagnose-failure's three-failed-fixes rule); the additions are the goal-level escalation and making the cycle count visible in the attempt record so the tripwire can trip. Landing: rider on the diagnose-failure candidate GHI.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:48:The nine candidates are decision skills. The boss's 2026-07-05 ten (property-harness, stateful-model-tester, datadriven-migrator, golden-check-writer, repro-reducer, deflaker, skip-warden, suite-tiering, test-diff-reviewer, test-ghostwriter) are mostly **suite operations** — what to do when a real suite rots, flakes, or slows. Overlaps: test-diff-reviewer ≈ review-change's test half; test-ghostwriter is subsumed by write-test-plan + implement-with-evidence. The rest (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness writers) have no owner and no deferred entry. Proposed disposition: record one named-deferred class (working name `suite-health`) rather than seven skills; trigger: the first sustained suite whose signal degrades. Skip-warden's expiry-on-skips idea also feeds §2's retirement candidate.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:50:> **processed 2026-07-29 → ACCEPTED as one named-deferred class** (walk item 3, new-vp session b6241858; ruled by boss option-pick in the parallel Mac-app thread, recorded there on the worktree branch as `56fa4b3`). `suite-health` joins the named-deferred map beside release-transition and learn-from-failure — one line in the founding plan (§ open question 8's resolution is the map's home on main), NO GHI until the trigger occurs: the first sustained test suite whose signal degrades, necessarily well after code and tests exist. The seven unowned July-5 suite-operation skills fold into it (deflaker, repro-reducer, suite-tiering, skip-warden, golden/datadriven/property harness-writers); test-diff-reviewer stays covered by review-change's test half, test-ghostwriter by write-test-plan + implement-with-evidence. Skip-warden's expiry-on-skips convention rides the first test-writing skill; its skipped-test-as-declared-dead-code observation also feeds [nedschorus#35](https://github.com/nedschorus/nedschorus/issues/35)'s expectation-tag classes.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:52:## 4. Note — the anti-tautology device already exists in the write-test-plan contract
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:56:The boss's standing complaint: agent-written tests are ~95% useless because agents write tests from the implementation, producing tautologies. The write-test-plan contract's mechanical check — **every planned check states its expected red witness** (the exact reason it fails before the fix or against a deliberately bad implementation) — is the structural counter: a tautological test cannot state one. Two riders for the walk:
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:58:- Enforcement idea: hand test-writing (the implement-with-evidence half) to a zero-context one-shot agent given the contract/design and error catalog but **not** the implementation. An agent that never saw the implementation cannot mirror it. This uses the existing kleenex instrument; no new machinery.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:71:3. Test-declared reach + scripted debugger stepping — processed 2026-07-30 → accepted. Three-layer ladder: (1) reach-posit diff via coverage.py dynamic contexts (per-test executed-set vs declared reach; red on posited-but-unreached — a false-green detector — or reached-but-forbidden) = standing obligation once tests exist; mechanizes the write-test-plan "reach proof". (2) trace assertions (`sys.settrace`/`sys.monitoring`) for ordering claims — per-claim. (3) scripted-debugger interior-state assertions (scripted `pdb`, no interactivity) at points with no test-visible seam — per-claim, most implementation-coupled. Agent-native part: the debugger as a scriptable oracle-placement tool; humans never composed it with CI.
+./nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md:78:6. Disposition — processed 2026-07-30 → approved with one boss correction (the posit system is not a homeless research thread; it disperses onto [#35](https://github.com/nedschorus/nedschorus/issues/35) as that thread's ladder extension — one primitive, one home). Dispersal executed this session via destination-rooted queues, awaiting the boss's drain: `docs/issues/queue/18-write-test-plan-agent-native-riders.md`; `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md`; `docs/issues/queue/35-declaration-vs-reality-posit-ladder.md`; `docs/wiki/queue/agent-loop-rules-draft.md` (four draft engineering rules); founding-plan open-question-8 line extended with the suite-health named-deferred class (NOTE: this worktree's founding-plan copy is behind main — re-apply the one line at landing if it conflicts). COPS taxonomy referenced by pointer, no import. **Outer walk re-plan:** item 3b (implementation-blind test writer) folded — subsumed by §6a item 4's one-shot-creator and posits-as-predictions rulings, carried in the #20 queue packet. Remaining outer items: 3c (nine design gaps → git-gatekeeper task record), 4 (app-skill pile ruling).
+./docs/issues/46-ghi-info-agent-design.md:16:1. **Answer asks.** A GHI author, before filing or editing, asks what it should read. The answer is a bare list — "read #13, #24, #31."
+./docs/issues/46-ghi-info-agent-design.md:113:> Read first: issue #\<n\>; its pair document at \<path\>; and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
+./docs/issues/46-ghi-info-agent-design.md:140:> Read first: issue #\<n\>; its pair document at \<path\> (may not exist yet); and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
+./docs/issues/46-ghi-info-agent-design.md:179:> 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
+./docs/issues/9-neds-notes.md:139:### 3. `design-change`
+./docs/issues/9-neds-notes.md:150:### 4. `write-test-plan`
+./docs/issues/9-neds-notes.md:161:### 5. `attack-artifact`
+./docs/issues/9-neds-notes.md:173:### 6. `implement-with-evidence`
+./docs/issues/9-neds-notes.md:183:### 7. `diagnose-failure`
+./docs/issues/9-neds-notes.md:194:### 8. `review-change`
+./docs/issues/9-neds-notes.md:205:### 9. `eval-agent-change`
+./docs/issues/9-neds-notes.md:240:  write-test-plan, nedschorus#18).
+./docs/issues/9-neds-notes.md:290:4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#17.
+./docs/issues/9-neds-notes.md:291:5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading git-gatekeeper-task dogfood).
+./docs/issues/9-neds-notes.md:292:6. `attack-artifact` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#19, framed as the d-review comparison question.
+./docs/issues/9-neds-notes.md:293:7. `implement-with-evidence` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#20.
+./docs/issues/9-neds-notes.md:294:8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
+./docs/issues/9-neds-notes.md:295:9. `review-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#22.
+./docs/issues/9-neds-notes.md:296:10. `eval-agent-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#23.
+./docs/issues/9-neds-notes.md:312:    missing decision; first expected pull = write-test-plan (nedschorus#18)
+./docs/issues/9-neds-notes.md:327:    procedure stays tracked on nedschorus#24 (scrub reporting runs as
+./docs/issues/3-git-gatekeeper-build-slice-plan.md:327:2. **The `write-test-plan` skill.** Founding plan open question 8 names
+./docs/issues/3-git-gatekeeper-build-slice-plan.md:344:- The `write-test-plan` skill (open item 2) is NOT built first. Founding plan
+./docs/issues/3-git-gatekeeper-build-slice-plan.md:369:10. Open 2 — `write-test-plan` (#18): pull it now, or hand-write the plan
+./docs/issues/26-dynamic-agent-team-model.md:30:**Rework flows after review (boss-leaning 2026-08-04, recorded from the d-review build walk):** for an MD or doctrine file, the ORIGINAL author rewrites from the review notes — intent is the load-bearing input, and the author holds it. For code, the leaning is a NEW author instead: take the design, the old code, and the criticism, and try again — code must stand on its own, and a fresh author rebuilding from those inputs is the proof that it does (and that the design plus critique were sufficient). Firms up when the first code-review flow is built (the review-change candidate, [nedschorus#22](https://github.com/nedschorus/nedschorus/issues/22)).
+./docs/issues/10-working-ideas-and-research-backlog.md:85:  ([nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24) tracks
+./docs/issues/10-working-ideas-and-research-backlog.md:186:The separate engineering note records that no external `write-test-plan` or
+./docs/issues/10-working-ideas-and-research-backlog.md:730:- The main missing packaged capability is a rigorous `write-test-plan` skill.
+./docs/issues/10-working-ideas-and-research-backlog.md:741:  write-test-plan, nedschorus#18).
+./docs/issues/queue/35-declaration-vs-reality-posit-ladder.md:22:The boss's framing (2026-07-29): the hard problem is not removing obsolete code but determining what is used frequently versus never, and why — zero usage has four causes (lucky so far / superseded / flawed premise visible / flawed premise invisible) with four remedies; usage data finds candidates, the why is judgment. Companion improvements ruled in the same walk: design-change obsolescence sweep (pair #17 checklist line); patch-cycle tripwire generalized to a circuit breaker on closed agent loops (draft engineering rules queue).
+./docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md:37:- **Review and skills:** #24 (queue drain), #23 (eval-agent-change), #22 (review-change), #21 (diagnose-failure), #20 (implement-with-evidence), #19 (attack-artifact), #18 (write-test-plan), #17 (design-change), #38 (watch-your-back), #36 (mutual oversight), #26 (dynamic agent-team model).
+

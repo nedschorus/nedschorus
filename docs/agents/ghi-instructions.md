@@ -1,31 +1,38 @@
 # `ghi` — seat instructions
 
-Your pile: **GitHub-issue knowledge and the tooling around it** — the agent that answers "which issues bear on this file?", the CLI that invokes agents headlessly, and the checker that keeps references honest. They share the issue doctrine and the same design documents. Read [the seat model](agent-seat-model.md) for how seats work.
+Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+
+Your pile is **GitHub-issue knowledge and the tooling around it**. "GHI" is this project's shorthand for a GitHub issue. The pieces belong together because they share one doctrine — how the project decides what becomes an issue, what goes in a pair document, and what waits in a queue — and one set of design documents.
+
+**Your work is done when** ghi-info has a built first slice or a written reason it should wait, its two companion tools are designed or ruled out, and each issue below carries the current state. Then write a handoff and stop.
 
 ## The main build: ghi-info
 
-[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46), designed and awaiting build. **Read `docs/issues/46-ghi-info-agent-design.md` first** — the design landed 2026-08-11 after an md-review, with walk scaffolding deliberately stripped so it stands on its own.
+[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46), designed and awaiting build. **Read `docs/issues/46-ghi-info-agent-design.md` first** — it landed 2026-08-11 after an md-review, with the walk scaffolding deliberately stripped so it stands alone.
 
-Shape, in brief: a dedicated issue-knowledge agent, seated on the Ubuntu box at `~/agents/ghi-info`, asked which issues to read before a file or an edit, resumed headlessly per question and answering on exit. Mac-side callers reach it over SSH through the launcher. Its answers come from a mirror of issue state — **it never fetches live issue state itself**, a rule stated by its purpose rather than by prohibition.
+What it is: a dedicated agent that answers "which issues bear on this file, or this edit?" It lives on the box at `~/agents/ghi-info`, is resumed headlessly for each question, and answers on exit. Mac-side callers reach it over SSH. Its answers come from a local mirror of issue state rather than live GitHub calls — a rule stated by its purpose (it should be cheap and fast to ask) rather than by prohibition.
 
-Two rulings worth knowing before you touch it. First, the direction was **settled against a gate**: an earlier ghi-gatekeeper plan proposed gating issue reads and writes, and the user rejected it — no gate on reads or writes, a knowledge agent instead. That plan survives marked SUPERSEDED as the record of the rejected direction. Second, **write-tool denials are soft**: a refusal's job is a deliberate second look, and a still-convinced agent passes exactly one resubmit by writing its reasoning into a marker file. There is no user-approval branch and no forced escalation.
+Two rulings to know before touching it:
 
-The `ghi-write` skill (`.claude/skills/ghi-write/`) is live and governs every issue write — filing, editing a body, commenting, or promoting queue material. You will use it constantly; read it before your first issue write.
+- **The direction was settled against a gate.** An earlier plan proposed gating issue reads and writes; the user rejected it in favour of a knowledge agent. That plan survives marked SUPERSEDED as the record of the rejected direction — read it before proposing anything gate-shaped, so you do not re-derive a decision already made.
+- **Write refusals are soft.** A refusal's job is to make an agent look twice. An agent still convinced after reconsidering passes exactly one resubmit by writing its reasoning into a marker file. There is no user-approval branch and no forced escalation.
 
-## The neighbours
+The `ghi-write` skill (`.claude/skills/ghi-write/`) is live and governs every issue write — filing, editing a body, commenting, promoting queue material. You will use it constantly; read it before your first issue write. Note that it tells callers to ask ghi-info first and falls back when the ask fails: that fallback is the current state of the world, because the ask tool does not exist yet. Building it is your pile.
 
-- [#41](https://github.com/nedschorus/nedschorus/issues/41) **run-agent** — one CLI to invoke a Claude or Codex agent headlessly from any caller, Python or shell, either runtime. ghi-info needs exactly this to be callable, so the two are natural companions and may share a design.
-- [#42](https://github.com/nedschorus/nedschorus/issues/42) **reference-integrity checker** — links resolve and cited revision-paths exist; a pure-code review check, and the designated home for "what else can code check rather than an LLM". Directly serves the project's axis of replacing prompts with deterministic code.
-- [#39](https://github.com/nedschorus/nedschorus/issues/39) **memory instrumentation** — echo every memory read and write to the console; remind-tier hooks, no blocking, no context injection.
+## The companions
 
-## The doctrine you are working inside
+- [#41](https://github.com/nedschorus/nedschorus/issues/41) **run-agent** — one command to invoke a Claude or Codex agent headlessly from any caller, shell or Python, either runtime. ghi-info is defined as headlessly invokable, so this may need to exist first; deciding that ordering is part of your first action.
+- [#42](https://github.com/nedschorus/nedschorus/issues/42) **reference-integrity checker** — verifying that links resolve and that cited revision-paths exist. A pure-code check, and the designated home for the broader question of what else code can check instead of an LLM. It serves the project's axis directly: deterministic checks beat asking a model to look.
+- [#39](https://github.com/nedschorus/nedschorus/issues/39) **memory instrumentation** — echoing every memory read and write to the console; hooks that remind rather than block, with no context injection.
 
-Issues carry state; pair documents (`docs/issues/<n>-<slug>.md`) carry detail; queue documents (`docs/issues/queue/`) carry material awaiting promotion. The **revision convention** governs edits: revise the body in place, and use comments only for genuinely new events. A to-do is a task, not a memory — the user ruled that 2026-08-12, and where a task then goes is the routing doctrine's business.
+## The doctrine you work inside
+
+Issues carry state; pair documents (`docs/issues/<n>-<slug>.md`) carry substance; queue documents (`docs/issues/queue/`) hold material whose fate is undecided. Edits revise an issue body in place — comments are for genuinely new events only. A to-do is a task rather than a memory (user-ruled 2026-08-12). The routing rules live in `docs/cross-project/nedschorus-founding-plan.md` § Project organization.
 
 ## Boundaries
 
-The launcher and supervisor belong to `fleet`; if run-agent needs changes there, hand that part over. Skill *builds* belong to `skill-builder`, though `ghi-write` itself is yours since it is issue machinery.
+The launcher and supervisor belong to `fleet`; if run-agent needs changes there, tell the user rather than editing those scripts, since seats cannot hand work to each other directly. Skill *builds* belong to `skill-builder` — but `ghi-write` is yours, because it is issue machinery rather than a general skill.
 
 ## First action
 
-Read the ghi-info design and the ghi-write skill, then report to the user what ghi-info's first build slice should be and what it depends on — in particular whether run-agent (#41) must come first, since ghi-info is defined as headlessly invokable. Propose; do not start building until he rules.
+Read the ghi-info design and the `ghi-write` skill. Then report to the user what ghi-info's first build slice should be, and specifically whether run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)) must come first — ghi-info is defined as headlessly invokable, so the answer decides the order of your whole pile. Propose; do not start building until he rules.
