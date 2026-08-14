@@ -32,6 +32,19 @@ Instruction-class text, so it lands through the user's walk.
 
 Considered and deferred. The two machines share no agent state, so the same name on both is two unrelated agents rather than a conflict — the suffix buys legibility in a listing that spans machines, nothing more. Migrating the live seat means `git worktree move`, renaming its handoff files, and a restart, which is disruptive to a working agent for a cosmetic gain. Revisit only if a cross-machine listing becomes a routine view.
 
+## 6. `$CLAUDE_PROJECT_DIR` points at the main checkout in a forked session, so the guards look in the wrong place
+
+Owner: `fleet`. Found 2026-08-14 while wiring the backup-write guard, and confirmed twice.
+
+In a session forked or attached into a worktree under `.claude/worktrees/`, the harness loads `.claude/settings.json` from **the worktree** but expands `$CLAUDE_PROJECT_DIR` to **the main checkout** (`/home/nedlern/Projects/nedschorus`). The two disagree, and both guards are built on the assumption that they agree.
+
+Two consequences, one of them a live hole:
+
+1. **`.claude/hooks/instruction-file-guard.py` reads its `.walk-approved` marker from the wrong root.** Its `project_root()` resolves `$CLAUDE_PROJECT_DIR`, so an approval quoted into the worktree's marker is never seen, while a *stale* marker sitting in the main checkout silently authorises one guarded write in any forked session. One was observed being consumed that way before the cause was understood — the write went through on an approval that had nothing to do with it.
+2. **A hook registered by `$CLAUDE_PROJECT_DIR` path fails for any file that exists only on the branch.** Registering the new guard blocked every Edit and Write in the session until it was backed out, because the referenced path resolved into the main checkout where the file does not exist until merge. The interim fix is in `.claude/settings.json`: the registration falls back to `$PWD` when the `$CLAUDE_PROJECT_DIR` path is absent. That is a workaround at the call site, not a fix — the guards themselves still resolve their markers against the wrong root.
+
+The proper fix belongs inside the guards: resolve the repository root from the file being written (walk up to the enclosing `.git`) rather than trusting the environment, which also makes them correct for seats, worktrees, and the main checkout alike without a fallback in the settings file. Verify against a forked session specifically, since a normally-launched session does not reproduce it.
+
 ## Session-management facts worth keeping (verified 2026-08-13, Claude Code 2.1.231)
 
 Not riders, but hard-won and easy to lose:
