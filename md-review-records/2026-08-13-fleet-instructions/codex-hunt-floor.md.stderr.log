@@ -2985,3 +2985,110 @@ if __name__ == "__main__":
    439	    except subprocess.TimeoutExpired:
    440	        print("handoff-supervisor: session ignored terminate; killing", file=sys.stderr)
 
+[35m[3mcodex[0m[0m
+The cross-references confirm several distinctions that matter for the review: the “Mac-side agent” is explicitly not a seat, the supervisor does execute `git merge --ff-only`, and the guard’s marker is only a nonempty-file check. I’m doing a final consistency pass against the target’s line order and the actual settings/branch state before drafting findings.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "echo '---STATE---' && git branch --show-current && git status --short && echo '---SETTINGS FILES---' && rg --files .claude | sort && echo '---SETTINGS---' && for p in .claude/settings.json .claude/settings.local.json; do if test -f \""'$p"; then echo "--- $p ---"; nl -ba "$p"; fi; done && echo '"'---NAME/DEFINITION CHECK---' && rg -n \"Mac-side|walked approval|pile|fleet|rider|sanity-checker|branch sync|EnterWorktree|background job|Fork\" CLAUDE.md docs/agents/agent-seat-model.md docs/agents/fleet-instructions.md docs/issues/queue/45-session-seat-and-isolation-riders.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+---STATE---
+seat-launch-first-prompt
+ M md-review-records/2026-08-13-fleet-instructions/claude-restate-floor.md
+ D md-review-records/2026-08-13-fleet-instructions/claude-restate-floor.md.stderr.log
+ M md-review-records/2026-08-13-fleet-instructions/claude-restate-good.md
+ D md-review-records/2026-08-13-fleet-instructions/claude-restate-good.md.stderr.log
+ M md-review-records/2026-08-13-fleet-instructions/codex-hunt-floor.md.stderr.log
+ M md-review-records/2026-08-13-fleet-instructions/codex-hunt-good.md.stderr.log
+---SETTINGS FILES---
+.claude/hooks/instruction-file-guard-test.py
+.claude/hooks/instruction-file-guard.py
+.claude/settings.json
+.claude/skills/ghi-write/SKILL.md
+.claude/skills/handoff/SKILL.md
+.claude/skills/md-review/SKILL.md
+.claude/skills/md-review/prompts/defect-hunt.md
+.claude/skills/md-review/prompts/restate.md
+.claude/skills/walk-me-through/SKILL.md
+---SETTINGS---
+--- .claude/settings.json ---
+     1	{
+     2	  "statusLine": {
+     3	    "type": "command",
+     4	    "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/session-statusline-command.py"
+     5	  },
+     6	  "permissions": {
+     7	    "defaultMode": "bypassPermissions",
+     8	    "allow": [
+     9	      "Bash(gh pr merge *)"
+    10	    ]
+    11	  },
+    12	  "hooks": {
+    13	    "Stop": [
+    14	      {
+    15	        "hooks": [
+    16	          {
+    17	            "type": "command",
+    18	            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/handoff-context-threshold-hook.py"
+    19	          }
+    20	        ]
+    21	      }
+    22	    ],
+    23	    "PreToolUse": [
+    24	      {
+    25	        "matcher": "Edit|Write|NotebookEdit",
+    26	        "hooks": [
+    27	          {
+    28	            "type": "command",
+    29	            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/instruction-file-guard.py"
+    30	          }
+    31	        ]
+    32	      }
+    33	    ]
+    34	  },
+    35	  "enabledPlugins": {
+    36	    "design@claude-plugins-official": false,
+    37	    "cowork-plugin-management@claude-plugins-official": false,
+    38	    "productivity@claude-plugins-official": false
+    39	  },
+    40	  "skillOverrides": {
+    41	    "engineering:code-review": "off",
+    42	    "engineering:testing-strategy": "off",
+    43	    "engineering:architecture": "off",
+    44	    "engineering:system-design": "off",
+    45	    "engineering:tech-debt": "off",
+    46	    "engineering:documentation": "off",
+    47	    "engineering:deploy-checklist": "off",
+    48	    "engineering:incident-response": "off",
+    49	    "engineering:standup": "off",
+    50	    "anthropic-skills:morning": "off",
+    51	    "anthropic-skills:setup-cowork": "off",
+    52	    "anthropic-skills:schedule": "off"
+    53	  }
+    54	}
+---NAME/DEFINITION CHECK---
+docs/issues/queue/45-session-seat-and-isolation-riders.md:1:# Session seat and isolation riders
+docs/issues/queue/45-session-seat-and-isolation-riders.md:7:**The invariant:** two live sessions must never share a working directory. Forks are the common road to breaking it — a fork inherits the parent's directory along with its conversation — and a background job launched from a session inherits the same cwd, which is what made several jobs look like duplicates in `~/agents/choirmaster`.
+docs/issues/queue/45-session-seat-and-isolation-riders.md:9:**The proposal:** a PreToolUse hook on `Edit|Write` that refuses when another live Claude process shares this session's working directory, teaching the fix — "another session is live here; call `EnterWorktree` first". Reads and searches stay unblocked; they never collide. **Detection is the open problem, and the obvious method does not work.** A `/proc` scan comparing each Claude process's `cwd` was the first proposal; it was tried 2026-08-13 and found unreliable — an *attached* background session's process reports the directory the `claude attach` command was typed in, not the directory the session actually works in, so real duplicates hide and viewer windows masquerade as sessions. A working detector needs the session's own view of its working directory (its transcript records it, and the session itself answers correctly when asked), not the process table. Resolve this before building the hook: a guard whose detection is wrong is worse than none, because it teaches the wrong lesson at the wrong moment.
+docs/issues/queue/45-session-seat-and-isolation-riders.md:11:**Why this shape:** `EnterWorktree` already relocates a running session correctly, so capability is not the gap — the trigger is. A SessionStart warning was considered and judged weaker: it advises, where the PreToolUse form blocks. The project already runs this exact pattern in `.claude/hooks/instruction-file-guard.py`.
+docs/issues/queue/45-session-seat-and-isolation-riders.md:21:## 3. A CLAUDE.md rule: background jobs push their own branch
+docs/issues/queue/45-session-seat-and-isolation-riders.md:27:## 4. md-review the fleet paths reference
+docs/issues/queue/45-session-seat-and-isolation-riders.md:29:`docs/cross-project/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the md-review skill's stated target. Not yet reviewed.
+docs/issues/queue/45-session-seat-and-isolation-riders.md:37:Not riders, but hard-won and easy to lose:
+CLAUDE.md:8:- How a change reaches main: the git-gatekeeper (`scripts/git-gatekeeper.py check-in` — specification: `docs/cross-project/git-gatekeeper-design.md`) is the permanent path — one program, one credential, one door; agents never push to main. Until its credential work lands (activation waits on build slice 6), the gate is dormant and the interim lane applies: commit to the working branch, push it, and the user's Mac-side agent reviews and merges. In-flight work answers to `status <digest>` and `cancel <digest>`; `audit` checks main's live protection against the design.
+docs/agents/fleet-instructions.md:1:# `fleet` — seat instructions
+docs/agents/fleet-instructions.md:3:Your pile: **the machinery that runs agents** — launchers, handoffs, session isolation, and the tooling around keeping several agents straight. Read [the seat model](agent-seat-model.md) first; you own that model's implementation.
+docs/agents/fleet-instructions.md:7:**[PR #57](https://github.com/nedschorus/nedschorus/pull/57)**, branch `launch-claude-machine-named-launchers`, awaiting the Mac-side review seat. It carries: `scripts/launch-claude` renamed to `launch-claude-ubuntu` plus a new `launch-claude-mac` twin (both teach on the no-name case and list running agents); `docs/cross-project/fleet-machine-paths-and-checkouts.md`, the two-machine path reference; the supervisor's branch sync; the session riders; the fleet work inventory; and these seat briefs. **Nothing else should touch those files until it merges.**
+docs/agents/fleet-instructions.md:14:- **Guards**: `.claude/hooks/instruction-file-guard.py` blocks edits to CLAUDE.md and `.claude/` machinery without the user's walked approval, consumed through a `.walk-approved` marker.
+docs/agents/fleet-instructions.md:18:`docs/issues/queue/45-session-seat-and-isolation-riders.md` holds five ideas discussed and deliberately not built, each with its reasoning. **Read it before proposing any of them** — in particular, rider 1's obvious detection method (a `/proc` scan for two live sessions in one directory) was tried and **proved unreliable**: an attached session's process reports the directory the attach command was typed in, not the directory the session works in. Solve detection before building that guard.
+docs/agents/fleet-instructions.md:20:Issues: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#50](https://github.com/nedschorus/nedschorus/issues/50) (worktree file hygiene), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (turn/steer equivalents), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console insertion, stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (mutual oversight, watch-your-back). PR #52 (fast-handoff findings applied) is adjacent — coordinate with `sanity-checker`, which shepherds it.
+docs/agents/fleet-instructions.md:35:**Two live sessions must never share a working directory.** Forks inherit the parent's directory along with its conversation; background jobs inherit the launching session's cwd. `EnterWorktree` relocates a running session correctly — the gap is the trigger, not the capability.
+docs/agents/fleet-instructions.md:39:Check whether PR #57 has merged. If it has, verify the renamed launchers work from the Mac and tell the user. If not, report its status and ask which rider he wants next — noting that rider 1 is blocked on solving detection.
+docs/agents/agent-seat-model.md:9:- **Seat** — a named, long-lived agent identity: a name, a home directory (`~/agents/<seat>`), its own git branch, and a brief. A seat is *occupied* by a session and outlives any one session. One place the word is used loosely and deliberately: the **Mac-side agent**, which reviews branches and merges them to `main`, is the user's own agent on his Mac and is not one of the seats defined here.
+docs/agents/agent-seat-model.md:16:- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the repository root, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
+docs/agents/agent-seat-model.md:17:- **Instruction-class** — files that tell agents how to behave: `CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/`. They change only with walked approval.
+docs/agents/agent-seat-model.md:28:- **An idle seat costs almost nothing** — no tokens, no attention — so never merge two unrelated piles to keep a seat busy. It is not literally free: an unretired seat holds a directory and a branch, and retiring it later takes the steps below. That cost is small and one-time.
+docs/agents/agent-seat-model.md:32:`sidebar` is the deliberate exception to the grouping rule: it holds no pile at all and answers whatever is asked, precisely so that off-topic questions never land in a seat whose context they would pollute.
+docs/agents/agent-seat-model.md:41:| `sanity-checker` | review quality — the sanity-checker reviewer (a prompt that proposes simplifications, `docs/drafts/sanity-checker-prompt-draft.md`) and whether it joins the eight-cell md-review grid run by `scripts/md-review-grid.py` | `sanity-checker-instructions.md` |
+docs/agents/agent-seat-model.md:44:| `fleet` | session and agent machinery: the launchers, the handoff supervisor, seat isolation | `fleet-instructions.md` |
+docs/agents/agent-seat-model.md:56:A seat's pile is finished when everything in it that an *agent* can do is done, and what remains has been handed to the user with the groundwork prepared. Several piles end in an act only he can perform — creating a GitHub account, applying branch protection, approving an instruction-class change — so a seat whose completion is defined as "the outcome happened" can never finish, and an agent with no completion criterion either invents adjacent work or stalls waiting for an event it cannot observe.
+docs/agents/agent-seat-model.md:80:Put a new task in the seat whose existing context makes it cheapest — not the emptiest seat. If it fits none of them, it is either a question for `sidebar`, answered and forgotten, or the seed of a new pile, which is the user's decision rather than a default.
+

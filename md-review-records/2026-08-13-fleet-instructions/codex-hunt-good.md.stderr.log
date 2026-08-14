@@ -2229,3 +2229,268 @@ docs/agents/fleet-instructions.md:14:- **Guards**: `.claude/hooks/instruction-fi
 docs/agents/agent-seat-model.md:16:- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the repository root, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
 docs/agents/agent-seat-model.md:17:- **Instruction-class** — files that tell agents how to behave: `CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/`. They change only with walked approval.
 
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git log --all --oneline --decorate --grep='pull request #52\\|PR #52\\|fast-handoff findings' -20; git branch -r --contains "'$(git rev-list --all --grep='"'pull request #52' -1 2>/dev/null) 2>/dev/null || true; rg -n --hidden --glob '"'!md-review-records/**'"' --glob '"'!*.log'"' --glob '"'!.git/**'"' '\\bPR #52\\b|pull/52' docs scripts CLAUDE.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+1f551e2 (origin/handoff-hook-fired-marker-mkdir-fix) handoff threshold hook: create the handoff directory before writing the fired marker
+bf6b0e0 fast-handoff findings walk restructured: doc findings (F1-doc, F5, F6, F7) accepted as a class, resolution is gutting the design doc to what code cannot carry; walk continues on the four code-behavior items (nedschorus#3)
+77fbef9 fast-handoff findings walk restructured: doc findings (F1-doc, F5, F6, F7) accepted as a class, resolution is gutting the design doc to what code cannot carry; walk continues on the four code-behavior items (nedschorus#3)
+ca69ec4 fast-handoff findings walk item 1 accepted: purpose (nedschorus#3)
+  origin/seat-launch-first-prompt
+docs/agents/fleet-instructions.md:20:Issues: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#50](https://github.com/nedschorus/nedschorus/issues/50) (worktree file hygiene), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (turn/steer equivalents), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console insertion, stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (mutual oversight, watch-your-back). PR #52 (fast-handoff findings applied) is adjacent — coordinate with `sanity-checker`, which shepherds it.
+docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md:10:| [#52](https://github.com/nedschorus/nedschorus/pull/52) | `fast-handoff-findings-applied` | fast-handoff sanity-check findings applied, design doc gutted | choirmaster |
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git branch -a --list '*fast-handoff*' '*sanity*'; git log origin/main --oneline --grep='fast-handoff findings' -20; git merge-base --is-ancestor bf6b0e0 origin/main; git show -s --format='%H %P %s' bf6b0e0"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+  fast-handoff-findings-applied
+  sanity-checker-attack-split-experiment
+  remotes/origin/fast-handoff-findings-applied
+  remotes/origin/sanity-checker-attack-split-experiment
+77fbef9 fast-handoff findings walk restructured: doc findings (F1-doc, F5, F6, F7) accepted as a class, resolution is gutting the design doc to what code cannot carry; walk continues on the four code-behavior items (nedschorus#3)
+ca69ec4 fast-handoff findings walk item 1 accepted: purpose (nedschorus#3)
+bf6b0e0b65fb51aedd1e9c6fe157feb7ab4f888f 6bc5a1d6484975731d1cefa1be95f687faca1b60 fast-handoff findings walk restructured: doc findings (F1-doc, F5, F6, F7) accepted as a class, resolution is gutting the design doc to what code cannot carry; walk continues on the four code-behavior items (nedschorus#3)
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "command -v claude || true; claude --version 2>/dev/null || true; find ~/.claude/jobs -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | head -20; find ~/.claude/projects -type f -name '*.jsonl' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -5"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 106ms:[0m
+2.1.232 (Claude Code)
+3d8bf995
+ec9045a3
+d9eda3ec
+49e0a3cf
+ea663864
+1786684127.9488876690 /home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/c3019025-dae2-40f8-befe-4de12d41126b.jsonl
+1786684112.4781757020 /home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/ec9045a3-6202-4cdc-9fb2-d855d62585cc.jsonl
+1786684081.7477489770 /home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/d1ff34d4-b673-4a5a-bfcb-70ff02b279d1.jsonl
+1786683997.7053590440 /home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/eac0345e-02de-4bd2-a908-19c5d08534a5.jsonl
+1786683991.2034836090 /home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/24e138bf-21c0-4eed-8ded-3792e7f16f9b.jsonl
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "nl -ba ~/.bashrc | sed -n '1,100p'; rg -n 'local/bin|return' ~/.bashrc"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	# ~/.bashrc: executed by bash(1) for non-login shells.
+     2	# see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
+     3	# for examples
+     4	
+     5	# PATH is set BEFORE the non-interactive early-return below, so that commands
+     6	# sent from the Mac over ssh ("ssh nedlern@ned-box '<command>'") find the tools
+     7	# installed in ~/.local/bin — claude among them. Bash reads this file for an
+     8	# ssh command shell, but the return below fires first for non-interactive
+     9	# shells, which is why anything set after it is invisible to remote commands.
+    10	case ":$PATH:" in
+    11	    *":$HOME/.local/bin:"*) ;;
+    12	    *) export PATH="$HOME/.local/bin:$PATH" ;;
+    13	esac
+    14	
+    15	# If not running interactively, don't do anything
+    16	case $- in
+    17	    *i*) ;;
+    18	      *) return;;
+    19	esac
+    20	
+    21	# don't put duplicate lines or lines starting with space in the history.
+    22	# See bash(1) for more options
+    23	HISTCONTROL=ignoreboth
+    24	
+    25	# append to the history file, don't overwrite it
+    26	shopt -s histappend
+    27	
+    28	# for setting history length see HISTSIZE and HISTFILESIZE in bash(1)
+    29	HISTSIZE=1000
+    30	HISTFILESIZE=2000
+    31	
+    32	# check the window size after each command and, if necessary,
+    33	# update the values of LINES and COLUMNS.
+    34	shopt -s checkwinsize
+    35	
+    36	# If set, the pattern "**" used in a pathname expansion context will
+    37	# match all files and zero or more directories and subdirectories.
+    38	#shopt -s globstar
+    39	
+    40	# make less more friendly for non-text input files, see lesspipe(1)
+    41	[ -x /usr/bin/lesspipe ] && eval "$(SHELL=/bin/sh lesspipe)"
+    42	
+    43	# set variable identifying the chroot you work in (used in the prompt below)
+    44	if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
+    45	    debian_chroot=$(cat /etc/debian_chroot)
+    46	fi
+    47	
+    48	# set a fancy prompt (non-color, unless we know we "want" color)
+    49	case "$TERM" in
+    50	    xterm-color|*-256color) color_prompt=yes;;
+    51	esac
+    52	
+    53	# uncomment for a colored prompt, if the terminal has the capability; turned
+    54	# off by default to not distract the user: the focus in a terminal window
+    55	# should be on the output of commands, not on the prompt
+    56	#force_color_prompt=yes
+    57	
+    58	if [ -n "$force_color_prompt" ]; then
+    59	    if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
+    60		# We have color support; assume it's compliant with Ecma-48
+    61		# (ISO/IEC-6429). (Lack of such support is extremely rare, and such
+    62		# a case would tend to support setf rather than setaf.)
+    63		color_prompt=yes
+    64	    else
+    65		color_prompt=
+    66	    fi
+    67	fi
+    68	
+    69	if [ "$color_prompt" = yes ]; then
+    70	    PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+    71	else
+    72	    PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
+    73	fi
+    74	unset color_prompt force_color_prompt
+    75	
+    76	# If this is an xterm set the title to user@host:dir
+    77	case "$TERM" in
+    78	xterm*|rxvt*)
+    79	    PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
+    80	    ;;
+    81	*)
+    82	    ;;
+    83	esac
+    84	
+    85	# enable color support of ls and also add handy aliases
+    86	if [ -x /usr/bin/dircolors ]; then
+    87	    test -r ~/.dircolors && eval "$(dircolors -b ~/.dircolors)" || eval "$(dircolors -b)"
+    88	    alias ls='ls --color=auto'
+    89	    #alias dir='dir --color=auto'
+    90	    #alias vdir='vdir --color=auto'
+    91	
+    92	    alias grep='grep --color=auto'
+    93	    alias fgrep='fgrep --color=auto'
+    94	    alias egrep='egrep --color=auto'
+    95	fi
+    96	
+    97	# colored GCC warnings and errors
+    98	#export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
+    99	
+   100	# some more ls aliases
+5:# PATH is set BEFORE the non-interactive early-return below, so that commands
+7:# installed in ~/.local/bin — claude among them. Bash reads this file for an
+8:# ssh command shell, but the return below fires first for non-interactive
+11:    *":$HOME/.local/bin:"*) ;;
+12:    *) export PATH="$HOME/.local/bin:$PATH" ;;
+18:      *) return;;
+129:export PATH="$HOME/.local/bin:$PATH"
+
+[35m[3mcodex[0m[0m
+The local remote history already shows PR #57 merged into `origin/main`, so the “open PR / awaiting review” state is stale. I’ve also found several literal mismatches between the brief and the referenced implementations—for example, the guard only covers selected editor tool calls, and the supervisor has documented handoff paths where it does not recycle. I’m finishing the document-order pass and separating definite defects from genuinely uncertain ones.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git show -s --format='%H%n%P%n%s' f9964e7; git diff --name-status f9964e7"'^1 f9964e7''^2; rg -n '"'"'^def |''^class |dont-restart|extraction failed|sync_working_branch_with_main|adopt'"' scripts/handoff-supervisor.py; rg -n 'NEDSCHORUS_AGENTS_ROOT|NEDSCHORUS_AGENT_BOX|first-prompt|no-attach' scripts/launch-claude-ubuntu scripts/launch-claude-mac"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+f9964e7fe60f9705ba2bdbc6a415dcbe392b20b4
+ac975e2dc6ea57bf67c572183b634a3284170158 613d2ef8b95eb6a22aad779e139022863b3a6319
+Merge pull request #57 from nedschorus/launch-claude-machine-named-launchers
+M	.claude/hooks/instruction-file-guard-test.py
+M	.claude/hooks/instruction-file-guard.py
+A	docs/agents/agent-seat-model.md
+A	docs/agents/doctrine-instructions.md
+A	docs/agents/fleet-instructions.md
+A	docs/agents/gatekeeper-instructions.md
+A	docs/agents/ghi-instructions.md
+A	docs/agents/sanity-checker-instructions.md
+A	docs/agents/sidebar-instructions.md
+A	docs/agents/skill-builder-instructions.md
+A	docs/cross-project/fleet-machine-paths-and-checkouts.md
+M	docs/issues/45-remote-named-agent-launch-and-reattach.md
+M	docs/issues/46-ghi-info-agent-design.md
+A	docs/issues/queue/45-session-seat-and-isolation-riders.md
+A	docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md
+M	scripts/git-gatekeeper.py
+M	scripts/handoff-supervisor-test.py
+M	scripts/handoff-supervisor.py
+A	scripts/launch-claude-mac
+R061	scripts/launch-claude	scripts/launch-claude-ubuntu
+23:  dont-restart:    optional; any value makes the supervisor ask before relaunching
+64:def parse_handoff_file(handoff_path: Path) -> dict:
+78:def read_supervisor_state(state_path: Path) -> dict:
+88:def write_supervisor_state(state_path: Path, state: dict) -> None:
+93:def stamp_heartbeat(state_path: Path, state: dict) -> None:
+99:def supervisor_liveness(state_path: Path):
+120:def counter_from(fields: dict):
+130:def elapsed_phrase(written_at: str) -> str:
+147:def task_count_for(session_id: str) -> int:
+152:def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
+175:def queue_status_line(working_directory: Path) -> str:
+193:def extract_dialog(session_id: str, working_directory: Path, output_path: Path) -> bool:
+211:def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
+230:def prune_old_generations(directory: Path, stem: str) -> None:
+237:def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
+248:def sync_working_branch_with_main(working_directory: Path) -> str:
+268:    launch path and never on adoption.
+316:def launch_agent_session(agent_command: str, session_id: str, working_directory: Path, prompt: str):
+324:class AdoptedSession:
+371:def claim_supervisor_lock(lock_path: Path) -> bool:
+402:def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: Path, state: dict):
+435:def stop_session(process) -> None:
+446:class SupervisorSettings:
+456:    adopted_session: Optional[AdoptedSession] = None
+471:def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
+476:    extraction failed and relaunching would lose the dialog.
+482:            "handoff-supervisor: extraction failed; not relaunching "
+508:def supervise_sessions(settings: SupervisorSettings) -> int:
+516:    adopted = settings.adopted_session
+522:    session_id = adopted.session_id if adopted else str(uuid.uuid4())
+531:        if adopted is not None:
+533:                f"handoff-supervisor: adopted running session {session_id} "
+534:                f"(process {adopted.process_id}, generation {generation})"
+536:            process, adopted = adopted, None  # adoption applies to this pass only
+538:            # Only on the launch path: an adopted session is alive in this
+541:            print(f"handoff-supervisor: {sync_working_branch_with_main(settings.working_directory)}")
+557:        if handoff_fields.get("dont-restart"):
+562:                # a stale handoff. Not relaunching is the answer dont-restart asks
+564:                print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+584:def main(argv=None) -> int:
+605:        "--adopt-session-id", default="",
+609:        "--adopt-process-id", type=int, default=0,
+610:        help="process id of the already-running session to adopt; required with --adopt-session-id",
+622:    if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
+623:        parser.error("--adopt-session-id and --adopt-process-id must be given together")
+625:    adopted = None
+626:    if arguments.adopt_session_id:
+627:        adopted = AdoptedSession(arguments.adopt_session_id, arguments.adopt_process_id)
+628:        if adopted.poll() is not None:
+630:                f"handoff-supervisor: process {arguments.adopt_process_id} is already gone; "
+631:                "nothing to adopt",
+658:        adopted_session=adopted,
+scripts/launch-claude-mac:2:# launch-claude-mac <name> [--no-attach] — reach the named agent ON THIS MAC.
+scripts/launch-claude-mac:6:# is $NEDSCHORUS_AGENTS_ROOT/<name> (default ~/agents/<name>), created on first
+scripts/launch-claude-mac:29:# --no-attach creates the session without attaching this terminal (for scripts
+scripts/launch-claude-mac:36:AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
+scripts/launch-claude-mac:48:    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+scripts/launch-claude-mac:77:        (--no-attach) ATTACH=no; shift ;;
+scripts/launch-claude-mac:78:        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a path}"; shift 2 ;;
+scripts/launch-claude-mac:139:# A first-prompt file seeds only the FIRST session. The supervisor reads the
+scripts/launch-claude-mac:142:    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+scripts/launch-claude-ubuntu:2:# launch-claude-ubuntu <name> [--no-attach] — reach the named agent on the
+scripts/launch-claude-ubuntu:10:# $NEDSCHORUS_AGENTS_ROOT/<name> on the box (default ~/agents/<name>), created
+scripts/launch-claude-ubuntu:28:# --no-attach creates the session without attaching this terminal (for
+scripts/launch-claude-ubuntu:38:AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
+scripts/launch-claude-ubuntu:39:AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
+scripts/launch-claude-ubuntu:46:    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+scripts/launch-claude-ubuntu:76:        (--no-attach) ATTACH=no; shift ;;
+scripts/launch-claude-ubuntu:77:        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a box-side path}"; shift 2 ;;
+scripts/launch-claude-ubuntu:90:# A first-prompt file (box-side path) seeds only the FIRST session — used for
+scripts/launch-claude-ubuntu:95:    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "if test -e /home/nedlern/Projects/nedlern; then ls -ld /home/nedlern/Projects/nedlern; else echo 'legacy path absent'; fi; git worktree list --porcelain | sed -n '1,100p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+legacy path absent
+worktree /home/nedlern/Projects/nedschorus
+HEAD f9964e7fe60f9705ba2bdbc6a415dcbe392b20b4
+branch refs/heads/main
+
+worktree /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+HEAD df8b4b054ec7452d9eacf5b480064023b1745cdd
+branch refs/heads/seat-launch-first-prompt
+
+worktree /home/nedlern/agents/choirmaster
+HEAD 06af034971cb44e196fc5ddf8084aa38160433b0
+branch refs/heads/choirmaster
+
+

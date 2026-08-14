@@ -45,7 +45,9 @@ Seven are defined. Each row's brief is the authority on what that seat owns.
 | `doctrine` | how the project should work: what it preserves ([#32](https://github.com/nedschorus/nedschorus/issues/32)), instruction delivery ([#30](https://github.com/nedschorus/nedschorus/issues/30)), the research bundles | `doctrine-instructions.md` |
 | `sidebar` | nothing — the spare, for off-topic questions | `sidebar-instructions.md` |
 
-**A naming caution, unresolved:** these are one-word names, which the project's own rule in `CLAUDE.md` warns against for anything likely to be grepped — and `gatekeeper` collides with the git-gatekeeper program it works on, so `~/agents/gatekeeper` reads as the program's home. The names stand until the user rules otherwise; when searching, prefer the full path (`docs/agents/gatekeeper-instructions.md`) over the bare word.
+**On these being one-word names** (user-ruled 2026-08-13, after an md-review raised it): the project's multi-part naming rule in `CLAUDE.md` is scoped to names likely to be *grepped* — files, directories, functions, globals. A seat name is an **address**, not a search key: it is typed to reach an agent, the way a hostname is. So one word is right here, and a seat named after the system it works on is better than one that is not, because the point of the name is that the user recognises it in a session list weeks later.
+
+`gatekeeper` naming the seat that works on the git-gatekeeper is therefore deliberate, not a collision to fix. The program keeps its `git-` prefix everywhere (`scripts/git-gatekeeper.py`, `docs/cross-project/git-gatekeeper-design.md`), and every place a seat name appears carries its own suffix — `gatekeeper-instructions.md`, `gatekeeper-handoff.md`, `~/agents/gatekeeper` — so the composed names stay specific even where the root word is common.
 
 ## How many run
 
