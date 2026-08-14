@@ -45,8 +45,15 @@ When a new task arrives, put it in the seat whose existing context makes it chea
 
 ## Mechanics every seat shares
 
-- **Launch:** from the Mac, `~/Projects/nedschorus/scripts/launch-claude-ubuntu <seat>` (until PR #57 merges, the script is still named `launch-claude`). It is attach-or-create: running the same name again attaches rather than duplicating.
-- **Home and branch:** each seat lives in `~/agents/<seat>` on the box, on its own branch — which is what keeps two seats from touching the same files or racing each other's pushes. A seat that works on the repository needs its home made a checkout: `git worktree add ~/agents/<seat> -b <seat> origin/main`.
+- **Launch,** from the Mac, in one line — the first-prompt file tells a zero-context agent everything, including how to find out which seat it is:
+
+  ```
+  ~/Projects/nedschorus/scripts/launch-claude-ubuntu <seat> \
+      --first-prompt-file /home/nedlern/Projects/nedschorus/docs/agents/seat-first-prompt.md
+  ```
+
+  The path is a **box-side** path, since the supervisor reads the file on the box. One generic file serves every seat: the agent learns its own name from its working directory, so nothing needs substituting. `--first-prompt-file` seeds only the first session; after the first recycle the seat's own handoff takes over. Launching is attach-or-create — running the same name again attaches to the live agent rather than starting a second one.
+- **Home and branch:** each seat lives in `~/agents/<seat>` on the box, on its own branch — which is what keeps two seats from touching the same files or racing each other's pushes. The launcher creates that home as an **empty directory, not a checkout**; the first-prompt file has the agent make it one on its first run (`git worktree add` into an empty existing directory works, verified 2026-08-14).
 - **Context on arrival:** the supervisor reads `~/.claude/handoffs/<seat>-handoff.md` if one exists. To seed a seat from another thread's context, pass `--first-prompt-file <path>` to the launcher, or copy that thread's handoff to `~/.claude/handoffs/<seat>-handoff.md` before launching.
 - **A forked session's handoff describes where it ended, not where it forked.** When the fork point is the subject, point the new seat at the `-dialog-` extract or the raw transcript instead, and say which part of the history matters.
 - **Nothing durable lives in a session.** Work is committed and pushed; decisions are recorded in the governing documents and issues. A seat can be exited at any time without loss once its work is pushed.
