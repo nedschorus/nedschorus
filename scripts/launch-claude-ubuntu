@@ -1,5 +1,9 @@
 #!/bin/sh
-# launch-claude <name> [--no-attach] — reach the named agent on the agent box.
+# launch-claude-ubuntu <name> [--no-attach] — reach the named agent on the
+# Ubuntu agent box, from the user's Mac. Its twin, launch-claude-mac, runs the
+# same conventions locally on the Mac; the machine is in the name because the
+# two are otherwise indistinguishable at the call site, and picking the wrong
+# one is a real mistake to make.
 #
 # Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
 # type is the whole configuration. The agent's directory is
@@ -17,6 +21,9 @@
 # stops without handing off; the tmux session closes with it, so nothing
 # lingers. A second launch of a running name attaches instead of duplicating,
 # and the supervisor's own lock refuses a duplicate even if tmux is bypassed.
+# Both protections are per-machine, as is every other thing an agent owns, so
+# the same name used on both machines is simply two unrelated agents — no
+# conflict, only a label you cannot tell apart in a listing spanning both.
 #
 # --no-attach creates the session without attaching this terminal (for
 # scripts and checks); attach later by running the plain form.
@@ -31,8 +38,31 @@ set -eu
 AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
 
+# The no-name case is the common mistake, so it teaches rather than scolds:
+# what a name is for, and which agents are up on the box right now to pick from
+# or avoid colliding with. The listing costs one SSH round trip and happens
+# only on this error path, never on a launch.
 usage() {
-    echo "usage: launch-claude <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    echo >&2
+    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    echo "tmux session on the box, the home directory ($AGENTS_ROOT/<name>), and the" >&2
+    echo "agent's handoff files. Running a name that is already up ATTACHES to that" >&2
+    echo "agent — you cannot start a second copy of one." >&2
+    echo >&2
+    running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
+        'tmux list-sessions -F "#{session_name}" 2>/dev/null' 2>/dev/null | tr '\n' ' ')
+    if [ -n "$running" ]; then
+        echo "Agents running on the box now: $running" >&2
+    else
+        echo "No agents are running on the box now (or it could not be reached)." >&2
+    fi
+    echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
+    echo >&2
+    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    echo "unrelated agents, not a conflict. Suffix names (-ubuntu, -mac) only if you want" >&2
+    echo "to tell them apart at a glance; nothing here requires it." >&2
     exit 2
 }
 
@@ -49,7 +79,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$AGENT_NAME" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
@@ -80,4 +110,4 @@ if [ "$ATTACH" = yes ]; then
         "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\""
 fi
 exec ssh "$AGENT_BOX" \
-    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude: $AGENT_NAME is already running (attach with: launch-claude $AGENT_NAME)'"
+    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: $AGENT_NAME is already running (attach with: launch-claude-ubuntu $AGENT_NAME)'"
