@@ -46,8 +46,8 @@ Transcripts are the durable context. A new session can be pointed at any of thes
 |---|---|---|---|
 | gatekeeper + launchers (this stream) | `ec9045a3` | `~/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/ec9045a3-6202-4cdc-9fb2-d855d62585cc.jsonl` | live; PR #57 open; handoff at `~/.claude/handoffs/gatekeeper-walk-fork-handoff.md` |
 | choirmaster stream, current | `ea663864` | `~/.claude/projects/-home-nedlern-agents-choirmaster/ea663864-8dd4-4734-a0e7-a0c65d5eb1de.jsonl` | live, blocked on the ruling above |
-| choirmaster stream, predecessor | `49e0a3cf` | same directory, `49e0a3cf-4ebc-41d9-9417-3edafe0e2aa8.jsonl` (3.6 MB) | retired; handoff consumed |
-| code-review prompt drafting | — | same directory, `29d66917-9767-47cb-a221-d4876d8014cd.jsonl` (3.6 MB, "Draft code review prompt for reliability improvement") | unclaimed; substantial context, no live session |
+| choirmaster stream, predecessor | `49e0a3cf` | `~/.claude/projects/-home-nedlern-agents-choirmaster/49e0a3cf-4ebc-41d9-9417-3edafe0e2aa8.jsonl` (3.6 MB) | retired; handoff consumed |
+| code-review prompt drafting | — | `~/.claude/projects/-home-nedlern-agents-choirmaster/29d66917-9767-47cb-a221-d4876d8014cd.jsonl` (3.6 MB, "Draft code review prompt for reliability improvement") | unclaimed; substantial context, no live session |
 | sanity-checker | `d9eda3ec` | `~/.claude/projects/-home-nedlern-agents-choirmaster/d9eda3ec-*.jsonl` | retired; handoff written |
 | login session | `3d8bf995` | `~/.claude/projects/-home-nedlern/3d8bf995-*.jsonl` | never had a task; delete |
 | tmux seat | `f741668d` | `~/.claude/projects/-home-nedlern-agents-choirmaster/f741668d-*.jsonl` | duplicate of the choirmaster stream; resolve against `ea663864` |
@@ -63,7 +63,7 @@ All 35 transcripts over 30 KB were read for their titles, not just the ones alre
 
 **Everything else is accounted for.** The remaining transcripts fall into three groups, none needing an owner: predecessor generations of the two live streams (`5a7d955e`, `d9eda3ec`, `49e0a3cf`, `574972e0`, `1caf1c51`, `ccc79ae5`, plus the gatekeeper worktree's own `b2912831`, `27862506`, `0550ed74`); **md-review and experiment cells** whose findings already live in `md-review-records/` (`3766ca30`, `84a8a260`, `946596c0`, `0f34ff59` from the 2026-08-09 grid; `832f3b95`, `9cd26c95`, `0e711797`, `99a2f1a4` from the sanity-checker draft review; `8d89bd09`, `83e22b1a`, `849436bf`, `9aae839c`, `cd59239a`, `82f21e87` from the 2026-08-12 attack-split experiment); and two box-maintenance sessions from July (`bab1c2b3` security audit, `c75a8d63` upgrade).
 
-Preserved handoffs and dialog extracts, all under `~/.claude/handoffs/`: `choirmaster-handoff.md` plus generations `-0002`/`-0003`, `gatekeeper-walk-fork-handoff.md` plus its generations, and matching `-dialog-` files carrying each session's conversation tail.
+Preserved handoffs and dialog extracts, all under `~/.claude/handoffs/`: the choirmaster and gatekeeper-walk-fork handoffs plus their numbered generations, and matching `-dialog-` files carrying each session's conversation tail.
 
 ## 6. How to give a new agent someone else's handoff
 

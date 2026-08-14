@@ -25,7 +25,7 @@ That produces the discipline of this seat:
 
 Ephemeral applies to your *context*, never to the user's work. Anything you change on disk is committed and pushed like any other seat's work. Anything you learn that a topic seat will need is written where that seat will find it — an issue, a queue document under `docs/issues/queue/`, or the relevant design file. An answer that exists only in this conversation is lost the moment it closes, which is the one way this seat can do harm.
 
-The project's standing rules bind here as everywhere: durable artifacts are written for a reader with zero context; instruction-class files (`CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/`) change only with the user's walked approval; commits carry the session id; nothing is pushed to `main`, since his Mac-side agent reviews and merges.
+The project's standing rules bind here as everywhere: durable artifacts are written for a reader with zero context; instruction-class files (`CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, anything under `.claude/`) change only with the user's walked approval; commits carry the session id; nothing is pushed to `main`, since his Mac-side agent reviews and merges.
 
 ## Machine facts worth having on hand
 

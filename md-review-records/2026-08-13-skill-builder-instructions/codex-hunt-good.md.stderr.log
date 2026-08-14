@@ -1118,3 +1118,191 @@ check your internet connection or https://githubstatus.com
 ./docs/issues/queue/35-declaration-vs-reality-posit-ladder.md:22:The boss's framing (2026-07-29): the hard problem is not removing obsolete code but determining what is used frequently versus never, and why — zero usage has four causes (lucky so far / superseded / flawed premise visible / flawed premise invisible) with four remedies; usage data finds candidates, the why is judgment. Companion improvements ruled in the same walk: design-change obsolescence sweep (pair #17 checklist line); patch-cycle tripwire generalized to a circuit breaker on closed agent loops (draft engineering rules queue).
 ./docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md:37:- **Review and skills:** #24 (queue drain), #23 (eval-agent-change), #22 (review-change), #21 (diagnose-failure), #20 (implement-with-evidence), #19 (attack-artifact), #18 (write-test-plan), #17 (design-change), #38 (watch-your-back), #36 (mutual oversight), #26 (dynamic agent-team model).
 
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git log --all --since='2026-08-05' --until='2026-08-07 23:59' --oneline -- .claude/skills/walk-me-through/SKILL.md && git log --all -S'Rationale' --oneline -- .claude/skills/walk-me-through/SKILL.md && git log --all --format='%H %ad %s' --date=short -- .claude/skills/walk-me-through/SKILL.md | sed -n '1,30p'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 11ms:[0m
+51e9478d271ac6a4f858c33f3b184d3151a09acf 2026-08-12 walk-me-through skill: choice items are proposals — approval enacts the named recommendation, alternatives are chosen by naming them (user-walked 2026-08-12)
+2228e204763fc2b3fce57371e1b12744ae3532f3 2026-08-12 walk-me-through skill: recommended option is named explicitly and presented first (user-walked 2026-08-12)
+0c4bbc453b8d58089ad5ea6fddad21469f6ebc55 2026-08-12 walk-me-through skill: choice items are proposals — approval enacts the named recommendation, alternatives are chosen by naming them (user-walked 2026-08-12)
+b56d83e2eb51e9721465771cef9c1609587f8056 2026-08-12 walk-me-through skill: recommended option is named explicitly and presented first (user-walked 2026-08-12)
+b98cea4ab770b7c0bf1014c9ae86463ded657c97 2026-08-06 terminology sweep (user-ruled at the CLAUDE.md admission): boss -> user across live instruction surfaces — walk-me-through canonical, three md-review scripts, three queued wiki docs; design docs and records deliberately untouched — new-vp session 9a618380
+f4ce3f97a1d09f03af8d131d7dd88a4b3c38551d 2026-08-06 walk-me-through amendments landed (boss-walked 2026-08-06): memorialize-before-advancing paragraph in Capturing; item-split expansion (three named split cases + more-but-simpler principle, high-stakes and approval-binding sentences cut); bundled-approval trigger clause in description; four rationale asides cut per skills-are-instructions-only — new-vp session 9a618380
+1b7bb4c79ff0a25e9d59cb911728603ff75adeb2 2026-08-03 walk-me-through: first founding skill (step 1) — canonical walk contract, boss-walked and d-reviewed 2026-08-03
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "find .claude/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | sort && find .claude/skills -mindepth 2 -maxdepth 2 -name SKILL.md -printf '%h\\n' | sort"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+ghi-write
+handoff
+md-review
+walk-me-through
+.claude/skills/ghi-write
+.claude/skills/handoff
+.claude/skills/md-review
+.claude/skills/walk-me-through
+
+[35m[3mcodex[0m[0m
+I’ve found that several apparent wording issues depend on whether “md-review” means the whole skill workflow or only its named script, and whether “review methodology” includes the queued code-review skill. I’m checking the explicitly reachable definitions before finalizing those flags.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'nl -ba docs/agents/sanity-checker-instructions.md && nl -ba .claude/skills/md-review/SKILL.md && nl -ba .claude/skills/handoff/SKILL.md'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+     1	# `sanity-checker` — seat instructions
+     2	
+     3	Your pile — the body of related work this seat owns — is **how this project reviews things, and how well that works.** Read [the seat model](agent-seat-model.md) first: it defines the words used here (pile, seat, walked approval, instruction-class) and explains how seats operate.
+     4	
+     5	**A name that does double duty.** `sanity-checker` is both this seat and the thing it works on: a reviewer *prompt* that reads a design or plan and proposes simplifications. Below, "this seat" means you; "the sanity-checker prompt" means the artifact. They are never the same thing.
+     6	
+     7	**Your work is done when** the grid-seat decision below has been put to the user and ruled, the four un-triaged findings have been verified and routed to the seats that own them, and the PRs listed here are merged or their remaining work is stated. Then write a handoff and stop.
+     8	
+     9	## The decision this pile exists to reach
+    10	
+    11	**Should the sanity-checker prompt become part of the md-review grid** — the eight-cell reviewer array that `scripts/md-review-grid.py` runs over a document — and if so, as three separate reviewers rather than one?
+    12	
+    13	The proposal is three *stances*, each a differently-framed instance of the prompt: **cut** (what should be removed), **mechanization** (what an English instruction could become deterministic code), and **fresh-eyes** (what a reader without history would misread). The three prompt files are in `md-review-records/2026-08-12-attack-split-experiment/`, alongside the evidence.
+    14	
+    15	What is already settled, walked with the user and recorded in the header of `docs/drafts/sanity-checker-prompt-draft.md`: the prompt's scope, its trigger, the order of its sections, **which models it runs on** (Fable and gpt-5.6-sol at xhigh), piecemeal delivery, and who owns triage of its output. **Do not reopen those.** The open question is only whether the prompt takes seats in the grid at all, and as three stances or one.
+    16	
+    17	The evidence is `md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, also in PR #53. Read it before the walk, because the user's first question will be what its numbers mean, and this file deliberately does not restate them — a summary you cannot defend is worse than none.
+    18	
+    19	**A skill change is walked with the user before it is committed.** That is the part within your power; merging is his Mac-side agent's. So the deliverable here is a walk and a ruling, not an applied change.
+    20	
+    21	## Four findings needing triage before anything is proposed
+    22	
+    23	The attack-split experiment surfaced these beyond what the experiment was scored against. They have never been presented to the user. **Every one was written against an archived snapshot of the code, so each claim must be checked against the repository as it is now** — and each is restated here in full, because the original wording was shorthand no one could act on.
+    24	
+    25	1. **The gatekeeper specification promises checks it does not run.** The spec says that when a test suite exists, the tests run at check-in time. A suite now exists (`scripts/git-gatekeeper-test.py`), but nothing wires it into the check-in path. Note carefully what this does and does not mean: the gate is dormant anyway — no credential, so nothing routes through it — so this is not a live hole today. It is an unimplemented promise that would become a live hole on the day the gate activates. Verify by reading the check-in path in `scripts/git-gatekeeper.py`.
+    26	2. **Nothing stops the gatekeeper approving a change to its own source.** An agent could edit `scripts/git-gatekeeper.py` and check that edit in through the very program it just changed. Build slice 6 is the intended answer, since it would require walked approval for instruction-class files, and the gatekeeper's own source is proposed to join that class — so verify against the slice plan whether this is already covered by a ruling rather than open.
+    27	3. **Agents hand-write 40-character commit ids into records, and mistype them.** The proposal is that whatever writes such a record stamps the id itself rather than an agent transcribing it. No mechanism was designed; the finding is that the manual path exists at all. Verify by looking for hand-written full SHAs in recent records.
+    28	4. **A session can stall without anything noticing.** The handoff system replaces a session when its context runs low, but a session that hangs while still well under that threshold trips nothing — no timer, no liveness check. Verify against `scripts/handoff-supervisor.py` and `scripts/handoff-context-threshold-hook.py`, and note this one cannot be settled by reading code alone: it is a claim about runtime behaviour, so if you cannot verify it, say so rather than manufacturing a code-level test.
+    29	
+    30	**Where each goes after verification.** Findings 1 and 2 belong to the `gatekeeper` seat, 4 to `fleet`, and 3 to whichever seat owns the record-writing path it turns out to touch — decide that when you know, and say why. Seats cannot hand work to each other directly: write the survivor into the receiving seat's brief or a queue document under `docs/issues/queue/`, and tell the user what you routed where. A triage whose output is not written down evaporates, which is precisely how these four went un-presented for two days.
+    31	
+    32	## Background you will need
+    33	
+    34	- `docs/drafts/sanity-checker-prompt-draft.md` — the settled prompt, plus the header recording what has been walked.
+    35	- `md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md` — the requirements record behind it, including the user's verbatim statement of what "simplify" must mean, and a calibration protocol proposed as a precondition for adopting the prompt into the grid. Read that protocol before the walk and form a view: it is a proposal, not a rule, and whether it should gate adoption is part of what the user is deciding.
+    36	- `md-review-records/2026-08-11-sanity-checker-prompt-draft/` — the md-review of that draft.
+    37	- The grid itself: `.claude/skills/md-review/SKILL.md`, `scripts/md-review-grid.py`, and the per-runtime cell scripts. The grid runs each document past eight reviewers — two runtimes (Claude and Codex) × two model tiers × two cell kinds (defect hunt and restate). The Codex lower tier changed model on 2026-08-13; that affects which model produces those cells and nothing about how the grid is run.
+    38	
+    39	**PRs yours to shepherd:** [#51](https://github.com/nedschorus/nedschorus/pull/51) (skill rules — walk choice items are proposals; md-review delivers piecemeal under a Monitor) and [#53](https://github.com/nedschorus/nedschorus/pull/53) (the attack-split experiment and its scorecard). If either has merged, note it. If either has review comments, address them on its branch. Merging is not yours.
+    40	
+    41	## An unowned thread worth claiming
+    42	
+    43	Session `29d66917` (3.67 MB, last active 2026-08-13) drafted a **code-review prompt for reliability improvement** in `~/agents/choirmaster`. No live session, no handoff, mentioned nowhere else — and plainly your subject. Its transcript is `~/.claude/projects/-home-nedlern-agents-choirmaster/29d66917-9767-47cb-a221-d4876d8014cd.jsonl`. Read it before starting any code-review-prompt work; that wheel is partly built.
+    44	
+    45	## The user's standing bar for reviewers
+    46	
+    47	From the 2026-08-10 walk: *"asking to simplify is like asking to optimize without context."* State the axis. This project's axis is **simple-to-operate over simple-to-build; mechanical guarantees over trained habit; a detector with no consumer is cost without value; never trade a deterministic script for probabilistic agent behavior.**
+    48	
+    49	## First action
+    50	
+    51	Read the scorecard and the prompt draft's header, verify the four findings against current code, and route them. Then offer the user the grid-seat walk. He was asked once which should come first — the walk or the triage — and never answered; do the triage first, since its results may bear on the walk, and say that is what you did.
+     1	---
+     2	name: md-review
+     3	description: Review an MD file of lasting value before it lands on main — a skill, a wiki page, a completed design — so future agents can clearly understand, use, and build on it. Typically the final step before pushing; drafts still in progress are not ready for it.
+     4	---
+     5	
+     6	# md-review
+     7	
+     8	## When Used
+     9	
+    10	When MD files are finalized so future agents can clearly understand them (wiki files), use them properly (skills), or encode them (designs). The md-review is typically the final step before pushing MD files of lasting value to main. Drafts in progress, and plans under development, are not ready to be md-reviewed.
+    11	
+    12	## What to do
+    13	
+    14	1. Run `scripts/md-review-grid.py --target <path>` as a background task, and arm a Monitor on its output that emits an event per `saved:` and per `FAILED` line — each finished review reaches you the moment it lands, and a failed cell surfaces immediately instead of being discovered at the end. It launches eight reviewers and saves their reviews to the `md-review-records/` directory. The script output tells you what to do next.
+    15	2. Read each md-review report as it arrives. Triage as you go, but keep your judgments provisional until all eight reviews are in, as the later reviews may offer more insight than the earlier ones.
+    16	3. When you have processed all reviews and formulated a draft response, use the walk-me-through skill to walk through what problems were detected, and what you propose to do about them. Order the walk from items of most importance to least.
+     1	---
+     2	name: handoff
+     3	description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+     4	---
+     5	
+     6	# handoff
+     7	
+     8	## What to do
+     9	
+    10	1. Write a clear and complete prompt telling your successor what their first action should be. It is an instruction to act on, not a summary of this session. Your successor will read the last few thousand words of this conversation before acting on your prompt, so it will have that context. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number.
+    11	2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time, sets the restart counter, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
+    12	3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git log --all --oneline --grep='queue drain\\|queue-drain\\|#24' | sed -n '1,100p' && sed -n '60,100p' docs/issues/10-working-ideas-and-research-backlog.md && git show --stat --oneline 8181a37"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+4b20892 artifact-lifecycle rule executed (boss-approved 2026-07-24): destination-rooted queues + one drain; boss-review -> draft
+9ce01a4 walk ledger: item-12 addendum — queue-drain procedure captured as nedschorus#24 (boss-directed post-handoff, session ad0a3708)
+- Publishing strategy, channels, and mechanics live in
+  [pair #4](4-open-source-publishing-community-strategy.md); this backlog no
+  longer duplicates them.
+
+Scrubbed 2026-07-26 (boss-ruled): the marketing and self-promotion material
+formerly here — channel lists, adaptation workflow, article titles — removed
+as too speculative. Recoverable from git history.
+
+### Durable Markdown and GitHub issues
+
+The founding work has resolved the original artifact-placement questions. The
+authority is the founding plan § Project organization (the artifact-lifecycle
+rule); this is the summary, updated 2026-07-26 to the ruled state:
+
+- A request for a durable Markdown document creates an MD-GitHub-issue pair.
+- Working documents live at `docs/issues/<number>-<slug>.md`.
+- Permanent truth graduates to `docs/wiki/`.
+- Session continuity lives under `handoff/`.
+- Cross-project founding material lives under `docs/cross-project/`.
+- Every artifact is either FINAL at its home or sitting in a NAMED QUEUE that
+  states its destination, and every queue drains by one four-outcome process
+  (promote / edit / demote / drop): `docs/wiki/queue/` for wiki-bound
+  doctrine, `docs/issues/queue/` for pair-bound documents, `nc-queue/` for
+  boss-requested notes awaiting their first walk, `legacy-feature-queue/` for
+  consider-features outliving their slice
+  ([nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24) tracks
+  the drain procedure).
+- Draft GitHub issues carry the **`draft` label** — the issue-world's queue
+  membership (renamed from `boss-review`, 2026-07-24).
+- Provenance: Markdown provenance lives in git commit history; GitHub-issue
+  provenance is a footer line in the body or a revision comment; frontmatter
+  fields exist only where a named consumer uses them.
+- Repository control is the git-gatekeeper program holding the one push
+  credential — every agent invokes it directly. The single-admitting-AGENT
+  concept is retired (walk item 15 ruling; the earlier line here saying "one
+  admitting agent" predated it).
+
+The original open questions about whether an artifact should be a GitHub issue,
+a Markdown document, or both should not be reopened without new evidence.
+
+### Walkthroughs and comprehensibility
+8181a37 seat model and seven agent briefs: work grouped by shared context, one instruction file per seat (nedschorus#45)
+ docs/agents/agent-seat-model.md            | 52 ++++++++++++++++++++++++++++++
+ docs/agents/doctrine-instructions.md       | 38 ++++++++++++++++++++++
+ docs/agents/fleet-instructions.md          | 39 ++++++++++++++++++++++
+ docs/agents/gatekeeper-instructions.md     | 31 ++++++++++++++++++
+ docs/agents/ghi-instructions.md            | 31 ++++++++++++++++++
+ docs/agents/sanity-checker-instructions.md | 41 +++++++++++++++++++++++
+ docs/agents/sidebar-instructions.md        | 32 ++++++++++++++++++
+ docs/agents/skill-builder-instructions.md  | 37 +++++++++++++++++++++
+ 8 files changed, 301 insertions(+)
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "git status --short && sha256sum docs/agents/skill-builder-instructions.md && stat -c '%y %s' docs/agents/skill-builder-instructions.md"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+ M md-review-records/2026-08-13-skill-builder-instructions/claude-hunt-good.md
+ D md-review-records/2026-08-13-skill-builder-instructions/claude-hunt-good.md.stderr.log
+ D md-review-records/2026-08-13-skill-builder-instructions/claude-restate-floor.md.stderr.log
+ M md-review-records/2026-08-13-skill-builder-instructions/claude-restate-good.md
+ D md-review-records/2026-08-13-skill-builder-instructions/claude-restate-good.md.stderr.log
+ M md-review-records/2026-08-13-skill-builder-instructions/codex-hunt-floor.md.stderr.log
+ M md-review-records/2026-08-13-skill-builder-instructions/codex-hunt-good.md.stderr.log
+ M md-review-records/2026-08-13-skill-builder-instructions/codex-restate-floor.md
+ D md-review-records/2026-08-13-skill-builder-instructions/codex-restate-floor.md.stderr.log
+d767d99125bc1d50be3db01c2d896c080d199534ef7cc155fe4d3a684744eab2  docs/agents/skill-builder-instructions.md
+2026-08-13 22:15:06.240844664 -0700 4660
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc 'git log -3 --oneline --decorate && git status --short -- docs/agents/skill-builder-instructions.md && git show HEAD:docs/agents/skill-builder-instructions.md | sha256sum'[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+9b8abf1 (HEAD -> seat-launch-first-prompt, origin/seat-launch-first-prompt) remaining four briefs rewritten against the defect classes the first five reviews established (nedschorus#45)
+96acf35 fleet brief rewritten: it forbade its own correction and gave the agent Mac work it cannot do (nedschorus#45)
+0128f34 seat names: one word is right, and naming a seat after its system is deliberate (user-ruled 2026-08-13)
+d767d99125bc1d50be3db01c2d896c080d199534ef7cc155fe4d3a684744eab2  -
+
