@@ -2,6 +2,18 @@
 
 How work on the Ubuntu box is divided among named agents, and why it is divided that way. Ruled by the user 2026-08-14 after a day in which parallel sessions accumulated faster than anyone tracked them. The per-seat briefs live beside this file as `<seat>-instructions.md`.
 
+## The words this model uses
+
+Defined here because the briefs use them as if established, and an agent reading one cold has nowhere else to look.
+
+- **Seat** — a named, long-lived agent identity: a name, a home directory on the box, its own git branch, and a brief. `gatekeeper` is a seat. A seat is *occupied* by a session, and outlives any one session: sessions recycle, the seat persists. Note the one place this word is used loosely: the **Mac-side review seat**, which merges branches to `main`, is not one of the seats defined here — it is the user's own agent on his Mac, outside this model entirely.
+- **Pile** — the body of related work a seat owns. Not a queue and not an ordered task list: a pile is a *subject area* with shared context, and the tasks in it are named by the seat's brief rather than enumerated anywhere as a list to be worked through in order.
+- **Brief** — the file `docs/agents/<seat>-instructions.md`. It states the seat's pile, the issues and PRs in it, what to read, its boundaries against other seats, and its first action.
+- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill: material presented one item at a time, each ruled on separately) rather than as a single yes to a bundle. Certain changes require it, and one mechanism records it: the approver's exact words are written into `.walk-approved` at the repository root, where the instruction-file guard consumes them for the one write they approve. Written **walked approval** throughout; the hyphenated form *walked-approval* appears only as a compound adjective, as in "walked-approval evidence".
+- **Instruction-class** — files that tell agents how to behave: `CLAUDE.md`, `CLAUDE.local.md`, and anything under `.claude/`. They change only with walked approval, enforced by a hook rather than by rule.
+- **Slice** — one numbered increment of a build plan, built and landed on its own. The git-gatekeeper's plan has five original slices plus a sixth added later by ruling, which is why "all five slices are built" and "build slice 6" are both true.
+- **C-numbers** (`C1`, `C3`, `C7`…) — the identifiers of the git-gatekeeper's credential and enforcement rulings, defined in `docs/cross-project/git-gatekeeper-design.md` § The credential and enforcement. They are meaningful only inside that document; grepping the bare token across the repository is noise.
+
 ## The grouping rule
 
 **Group tasks by shared context, not by workload.** The test for whether two tasks belong to one seat is: *does doing the first make the agent smarter about the second?* If yes, same seat. If no, separate seats — even when that leaves a seat idle.
@@ -30,6 +42,12 @@ Seven seats are defined; **two or three run at a time**, five is the user's maxi
 ## Why there is no master agent
 
 Considered and declined 2026-08-14. A coordinating seat has nothing to do while the user is the one choosing which two or three seats run: today's evidence is that `choirmaster`, created as a directing seat, drifted into being an ordinary topic thread. Revisit if seats ever need to hand work to each other without the user in the loop.
+
+## When a seat's work is done
+
+A seat's pile is finished when everything in it that an *agent* can do is done, and whatever remains has been handed to the user with the groundwork prepared. Several piles end in an act only the user can perform — creating a GitHub account, applying branch protection, approving an instruction-class change — so a seat whose completion is defined as "the outcome happened" can never finish, and an agent with no completion criterion either invents adjacent work or stalls waiting for an event it cannot observe.
+
+Each brief therefore states its own completion criterion. The shared shape: **land what you can, prepare what you cannot, tell the user exactly what is left and who must do it, write the handoff, and stop.** Stopping is a legitimate ending, not a failure — the seat is exited and its name resumed when that pile comes back.
 
 ## Retiring a seat, and reusing its name
 
