@@ -1,0 +1,89 @@
+Reading additional input from stdin...
+OpenAI Codex v0.147.0
+--------
+[1mworkdir:[0m /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[1mmodel:[0m gpt-5.6-luna
+[1mprovider:[0m openai
+[1mapproval:[0m never
+[1msandbox:[0m read-only
+[1mreasoning effort:[0m xhigh
+[1mreasoning summaries:[0m none
+[1msession id:[0m 019ffebc-2b96-7c63-b09f-c2642bd9e0ce
+--------
+[36muser[0m
+Review this file for a range of defects. Read /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/docs/agents/doctrine-instructions.md in full, including any YAML frontmatter. Your context is deliberately minimal — the checkout's instruction file (CLAUDE.md / AGENTS.md) if one exists, this file, and whatever it references by an explicit path — and that is the point: this file must be understandable by a future agent with only this context. A cryptic missing word or concept is a defect to flag, not a gap you should fill in. Mode: analysis-only; inspect allowed, edits forbidden.
+
+Flag and comment on every phrase or sentence that: (a) contradicts or conflicts with any other phrase or sentence in this file; (b) supports incompatible readings; (c) is wrong or impossible when taken or obeyed literally; (d) is un-executable because this file does not provide the knowledge or context needed to proceed (an undefined term, an unexplained reference or procedure); (e) requires an agent to complete work but lacks a clear stopping point; (f) makes an absolute claim (never / always / every / all / cannot) broader than can actually hold — give the ordinary counterexample; (g) defines a mechanism or store but leaves a reachable case, failure, or limit neither stated nor discarded; (h) defines a term that duplicates or conflicts with a definition in the checkout's CLAUDE.md or AGENTS.md — quote both definitions; (i) introduces a name that is not self-documenting or would be hard to find by search. Classes (g) and (h) apply only to things this file itself defines: never demand that the file contain a mechanism, store, or definition it does not have.
+
+For each flag: quote the exact phrase or sentence, and explain what is wrong, when it does harm, and why — completely enough that the author can fix it without asking you anything. Do not propose fixes. Do not rate severity or importance; state only your own confidence — sure, or unsure and why. Report findings you are unsure about rather than suppressing them. Output: numbered findings in document order, then one line — "clean sections:" — listing sections with no findings.
+
+[35m[3mcodex[0m[0m
+I’ll inspect the checkout instructions (if present), then read the target file and only the files it explicitly references. I’ll stay analysis-only and report findings in document order with confidence.
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "pwd && rg --files -g 'CLAUDE.md' -g 'AGENTS.md' -g 'docs/agents/doctrine-instructions.md'"[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+CLAUDE.md
+docs/agents/doctrine-instructions.md
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "wc -l \"/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/CLAUDE.md\" && sed -n '1,400p' \"/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/CLAUDE.md\""[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+9 /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/CLAUDE.md
+# nedschorus
+
+- The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: modify anything there or execute its code.
+- Use standard SDLC terms.
+- Write durable artifacts — committed files, issue bodies, commit messages — for a reader with zero context: the subject identifiable, the why stated, usable without the conversation that produced it.
+- When writing instructions, absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously.
+- When creating or inventing names, for directories, file names, globals, functions, classes, scripts, section headings, and other names likely to be grepped, use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
+- How a change reaches main: the git-gatekeeper (`scripts/git-gatekeeper.py check-in` — specification: `docs/cross-project/git-gatekeeper-design.md`) is the permanent path — one program, one credential, one door; agents never push to main. Until its credential work lands (activation waits on build slice 6), the gate is dormant and the interim lane applies: commit to the working branch, push it, and the user's Mac-side agent reviews and merges. In-flight work answers to `status <digest>` and `cancel <digest>`; `audit` checks main's live protection against the design.
+- Before saving or proposing a memory, check whether it is actually a task — something to do, removed when done. If so make it a task, not a memory; memory holds durable facts and every memory write requires the user's approval.
+
+[35m[3mexec[0m[0m
+[1m/bin/bash -lc "wc -l \"/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/docs/agents/doctrine-instructions.md\" && sed -n '1,400p' \"/home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/docs/agents/doctrine-instructions.md\""[0m in /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[32m succeeded in 0ms:[0m
+42 /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/docs/agents/doctrine-instructions.md
+# `doctrine` — seat instructions
+
+Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+
+Your pile is **how the project should work**: what it preserves, how instructions reach agents, what gets reviewed and when. These are thinking tasks rather than builds, and they belong together because each one amends the same foundation and is judged by the same standards.
+
+**Your work is done when** the item the user chose has a written ruling in its durable home — an issue body, a governing document, or a CLAUDE.md line walked with him — and the others are left where the next session can find them. These are open-ended subjects; one series of work means one item settled, not the pile emptied. Then write a handoff and stop.
+
+## The pile
+
+- [#32](https://github.com/nedschorus/nedschorus/issues/32) **What this project preserves**, where it goes, how it is codified, and how it is kept from drifting. Destined for a wiki page with subpages. The largest item here and the most central.
+- [#30](https://github.com/nedschorus/nedschorus/issues/30) **Trigger-first instruction delivery** — treating *when* an instruction reaches an agent as a property of the instruction itself, rather than putting everything in one file read at start.
+- [#31](https://github.com/nedschorus/nedschorus/issues/31) **Review-system requirements** learned from the legacy gate. Dormant by ruling until some class of work first required review — and that condition has now arrived: the git-gatekeeper's slice 6 needs a walked-approval evidence format. **Coordinate with `gatekeeper` before designing it**, since that seat's brief also points here; whichever of you takes it, only one should, and the user decides which.
+- [#44](https://github.com/nedschorus/nedschorus/issues/44) **Import-tracking doctrine** — reconciling the entry checkpoint, the rewrite policy, and the gatekeeper's import check with the goal of building a team rather than a museum.
+- [#25](https://github.com/nedschorus/nedschorus/issues/25) **Check-in timing** — infrequently-updated files committed immediately after update; append-type logs at logical breakpoints.
+- [#35](https://github.com/nedschorus/nedschorus/issues/35) **Usage versus expectation** — an open research thread treating obsolescence as a design problem rather than a function of age.
+- [#28](https://github.com/nedschorus/nedschorus/issues/28) and [#29](https://github.com/nedschorus/nedschorus/issues/29) — two **research bundles**: agent introspection (recaps, denoised artifacts, monitoring method, task-list visibility) and runtime behaviour (instruction compression and deliberate scrub, instruction precedence, output styles, context clearing, memory maintenance).
+- [#26](https://github.com/nedschorus/nedschorus/issues/26) **Dynamic agent-team model** — sparring pairs, on-tap domain experts, spy-triaged oversight. Design capture; research pending.
+
+## The ground you stand on
+
+`docs/cross-project/nedschorus-founding-plan.md` is the project's constitution — its standing decisions, the artifact-lifecycle rule, the fix ladder, the rewrite policy. Most items here amend or extend it, so read it first and be explicit about which standing decision a proposal touches.
+
+`CLAUDE.md` at the repository root carries the operative rules agents actually read. It is instruction-class: changes land only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py` and a quoted marker. Much of this pile ends in a CLAUDE.md line, so expect walks rather than commits.
+
+## How the user judges a proposal
+
+Recorded from many walks, because proposals that ignore these come back:
+
+- **State the axis.** "Simplify" without an axis is "optimize" without an axis. This project's axis: simple-to-operate over simple-to-build; mechanical guarantees over trained habit; deterministic code over LLM prompts wherever the choice exists.
+- **Machinery with no consumer gets cut.** Logging is cheap; the machinery to act on logs is the real cost.
+- **A deterministic script is not traded for probabilistic agent behaviour**, even when the script is longer.
+- **A forcing function counts as a consumer.** A required field nothing parses can still earn its place by forcing an explicit answer.
+- **Absolutes in instructions can backfire.** CLAUDE.md says to use "always" and "never" cautiously; that applies to what you write as much as to what you review.
+
+## Boundaries
+
+You produce rulings; other seats implement them. The gatekeeper's specification belongs to `gatekeeper`, review methodology to `sanity-checker`, session machinery to `fleet`, skills to `skill-builder`. Where a ruling lands in their territory, write it down and tell the user, who routes it — seats cannot hand work to each other.
+
+## First action
+
+Read the founding plan and [#32](https://github.com/nedschorus/nedschorus/issues/32). Then ask the user which item he wants thought about, and put one question to him first: whether [#31](https://github.com/nedschorus/nedschorus/issues/31)'s walked-approval evidence format should be designed here or in `gatekeeper`. Both piles now point at it, and doing it twice is worse than doing it once in the wrong seat.
+

@@ -1,0 +1,15 @@
+Reading additional input from stdin...
+OpenAI Codex v0.147.0
+--------
+[1mworkdir:[0m /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation
+[1mmodel:[0m gpt-5.6-luna
+[1mprovider:[0m openai
+[1mapproval:[0m never
+[1msandbox:[0m read-only
+[1mreasoning effort:[0m xhigh
+[1mreasoning summaries:[0m none
+[1msession id:[0m 019ffebb-3fce-7571-ae3e-344bce8a512e
+--------
+[36muser[0m
+Read /home/nedlern/Projects/nedschorus/.claude/worktrees/gatekeeper-walk-fork-continuation/docs/agents/ghi-instructions.md in full (including any YAML frontmatter). Then restate, in your own words, exactly what you think each sentence means — clearly and completely. It may take more words than the original to say exactly what you think a sentence means: many sentences use ambiguous words with several meanings, or jargon, or coined expressions that are hard to interpret out of their normal context. When that happens, spell out the meaning you actually took; if you genuinely cannot tell between meanings, say so and give the readings. Do not repair anything, do not fill gaps. Go section by section; for each section output the section name, then a numbered list of your restatements, one per sentence. In the frontmatter, restate prose fields such as a description like any other sentences; skip data fields — a name, ids, dates. No commentary, no evaluation, no summary, no questions at the end.
+

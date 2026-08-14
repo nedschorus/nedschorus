@@ -1,14 +1,9 @@
 #!/bin/sh
-# Sequential md-review of the nine seat documents not already under review
-# (user-directed 2026-08-14: review all twelve). Serial by design — each grid
-# launches eight reviewer processes, so running twelve at once would put
-# ninety-six on the box. Deleted after use.
+# Sequential md-review of the documents still unreviewed after the first runner
+# was killed with its parent session (2026-08-13). Serial by design — each grid
+# launches eight reviewer processes. Deleted after use.
 set -u
 for target in \
-    docs/agents/sanity-checker-instructions.md \
-    docs/agents/fleet-instructions.md \
-    docs/agents/skill-builder-instructions.md \
-    docs/agents/ghi-instructions.md \
     docs/agents/doctrine-instructions.md \
     docs/agents/sidebar-instructions.md \
     docs/cross-project/fleet-machine-paths-and-checkouts.md \
