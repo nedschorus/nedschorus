@@ -22,7 +22,7 @@ The review history — two md-review grids and a subtraction review, with the ru
 
 Step 1 gates step 2 and nothing else. Step 3's preparation can proceed in parallel; only its GitHub half waits on the user.
 
-Also yours: **PR #55** (`gatekeeper audit: account names compared case-insensitively; PR #49 review rulings folded into the slice plan`). If it has merged, note it and move on. If it is open with requested changes, read the rulings it folds in before touching it, then address the comments on that branch. If it is open and untouched, mention it to the user rather than chasing it — merging is his Mac-side agent's job, not yours.
+PR #55 (`gatekeeper audit: account names compared case-insensitively; PR #49 review rulings folded into the slice plan`) **merged 2026-08-13**, so its rulings are in the slice plan you are about to read. Nothing of this pile is outstanding in review as of that date — verify with `gh pr list --repo nedschorus/nedschorus --state open` rather than trusting this sentence, since PR state goes stale within hours.
 
 ## What is already settled
 

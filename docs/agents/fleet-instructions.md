@@ -19,6 +19,8 @@ Accurate as of 2026-08-13. Where something is described as pending, check before
 
 **Pending in [PR #58](https://github.com/nedschorus/nedschorus/pull/58):** the seat briefs' md-review corrections, `docs/agents/seat-first-prompt.md`, and the launcher change that creates the home as a checkout. Until it merges, a seat launched from main gets the pre-review versions.
 
+PR states go stale within hours — three of this pile's were closed the same day they were listed — so check rather than trust any list of them here: `gh pr list --repo nedschorus/nedschorus --state open`. As of 2026-08-13 there is also [#59](https://github.com/nedschorus/nedschorus/pull/59) (status-line compatibility with an older python3), opened by another stream and touching your machinery.
+
 ## Your queue
 
 `docs/issues/queue/45-session-seat-and-isolation-riders.md` holds five ideas raised and deliberately not built, each with its reasoning. Read it before proposing any of them.
@@ -27,7 +29,7 @@ Rider 1 — a guard enforcing one live session per directory — is **blocked on
 
 Issues in your pile: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#50](https://github.com/nedschorus/nedschorus/issues/50) (worktree file hygiene), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state their git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup via CLAUDE.md lines is superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (injecting a message into an idle session, steering an active one), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console text insertion and stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (agents watching each other's work).
 
-[PR #52](https://github.com/nedschorus/nedschorus/pull/52) applies fast-handoff findings and touches the design document your machinery implements. The `sanity-checker` seat shepherds it because it came out of that seat's review work; read it before changing the supervisor, so you do not collide.
+The fast-handoff findings ([PR #52](https://github.com/nedschorus/nedschorus/pull/52)) are already on main; that PR was closed 2026-08-13 as already landed rather than rejected. `docs/cross-project/fast-handoff-design.md` is the design your machinery implements — read it before changing the supervisor.
 
 ## The isolation rule, and how far it actually holds
 

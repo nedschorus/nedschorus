@@ -36,7 +36,7 @@ The attack-split experiment surfaced these beyond what the experiment was scored
 - `md-review-records/2026-08-11-sanity-checker-prompt-draft/` — the md-review of that draft.
 - The grid itself: `.claude/skills/md-review/SKILL.md`, `scripts/md-review-grid.py`, and the per-runtime cell scripts. The grid runs each document past eight reviewers — two runtimes (Claude and Codex) × two model tiers × two cell kinds (defect hunt and restate). The Codex lower tier changed model on 2026-08-13; that affects which model produces those cells and nothing about how the grid is run.
 
-**PRs yours to shepherd:** [#51](https://github.com/nedschorus/nedschorus/pull/51) (skill rules — walk choice items are proposals; md-review delivers piecemeal under a Monitor) and [#53](https://github.com/nedschorus/nedschorus/pull/53) (the attack-split experiment and its scorecard). If either has merged, note it. If either has review comments, address them on its branch. Merging is not yours.
+**Pull requests: nothing of yours is outstanding.** [#51](https://github.com/nedschorus/nedschorus/pull/51) (skill rules) and [#53](https://github.com/nedschorus/nedschorus/pull/53) (the attack-split experiment and its scorecard) were closed 2026-08-13 as *already landed* — their content reached main through the choirmaster merge train and was verified byte-for-byte at Mac-side review, so the closure is not a rejection and nothing needs re-doing. Check before assuming otherwise: `gh pr list --repo nedschorus/nedschorus --state open`.
 
 ## An unowned thread worth claiming
 
