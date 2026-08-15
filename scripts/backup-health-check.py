@@ -7,8 +7,9 @@ restore is attempted. This check makes that visible in the status line, which is
 where the user already looks.
 
 Read-only by construction: it stats directories and reads two small JSON files.
-CLAUDE.md forbids agents writing backup state, and a health check that could
-corrupt what it measures would be a poor advertisement for the rule.
+Agents never write backup state (the backup-and-snapshot-write-guard hook holds
+the tool path), and a health check that could corrupt what it measures would be
+a poor advertisement for the rule.
 
 WHY THE LOG DIRECTORY AND NOT JUST SNAPSHOT AGE. Timeshift is time-driven, not
 content-driven: `--check` means "create a snapshot if one is scheduled", so it
@@ -131,6 +132,14 @@ def newest_scheduled_snapshot_age(snapshot_directory: Path):
 
 def diagnose():
     """Return (headline, detail_lines). headline is None when everything is healthy."""
+    # Timeshift runs only on ned-box. On any other machine every check below
+    # fails forever (/mnt/backup is never a mount there), so a Mac would show a
+    # permanent false alarm; other platforms report healthy silence instead.
+    # The env override marks a simulated tree (the test suite), which is
+    # diagnosed regardless of platform.
+    if sys.platform != "linux" and "NEDSCHORUS_BACKUP_MOUNT" not in os.environ:
+        return None, []
+
     detail = []
 
     if not is_mounted(BACKUP_MOUNT):

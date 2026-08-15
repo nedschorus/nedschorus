@@ -75,10 +75,12 @@ def is_protected(file_path: str) -> bool:
     except (OSError, RuntimeError):
         path = Path(file_path)
 
-    text = str(path)
-    for prefix in PROTECTED_PREFIXES:
-        if text == prefix or text.startswith(prefix + "/"):
-            return True
+    # macOS mounts /etc as a symlink to /private/etc, so resolving can carry a
+    # protected path OUT of its listed prefix; match the unresolved text too.
+    for text in (str(Path(file_path)), str(path)):
+        for prefix in PROTECTED_PREFIXES:
+            if text == prefix or text.startswith(prefix + "/"):
+                return True
 
     for part in path.parts:
         if part in PROTECTED_COMPONENT_NAMES:
