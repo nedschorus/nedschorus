@@ -1,5 +1,7 @@
 # Repository boundary and runtime layers
 
+> **DRAFT — do not rely on the manifest below.** Reviewed 2026-08-14 by the eight-cell md-review grid; both defect-hunt cells returned "clean sections: none", 83 findings between them. The findings are triaged in `md-review-records/2026-08-14-repo-boundary-and-runtime-layers/dispositions.md` and are **not yet applied**. Three of them are disqualifying on their own: one citation resolves only on an unmerged branch, the component table was built from filenames rather than from reading the files, and the filing rule at the end contradicts the table it is meant to extend. Work resumes when pull request #58 lands, because two rows describe files that arrive with it. The three-layer model and the runtime analysis are believed sound; the classifications are not.
+
 Where a new file belongs, and why. Ruled by the user 2026-08-14, in the walk that also hardened the box's backups.
 
 Read this before creating a script, skill, hook, or lasting document, and before proposing that anything move between repositories. It answers one question — *which repository, and which machine* — and it answers it for three runtimes rather than one.
