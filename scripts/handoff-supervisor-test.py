@@ -489,12 +489,89 @@ def run_branch_sync_cases(workspace: Path):
           "nothing to pull" in report, report)
 
 
+def run_no_seat_recycle_refusal_case(workspace: Path):
+    """A handoff arriving at a supervisor with no terminal must not recycle:
+    the successor would inherit this stdio and die at its first need for
+    input (observed 2026-08-14 — an adopted console session was killed and
+    its successor reported into a log file). The session stays up and the
+    handoff stays unconsumed for a seated supervisor."""
+    handoff_directory = workspace / "noseat"
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text(
+        "#!/bin/sh\n"
+        "exec >/dev/null 2>&1\n"  # release the supervisor's pipes, or the test waits out the sleep
+        "printf 'written-at: 2026-08-14T00:00:00Z\\nnext-step: recycle me\\nrestart-counter: 9\\n' "
+        f"> '{handoff_directory}/noseat-handoff.md'\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    stub_agent.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "noseat", "--cd", str(workspace),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    check("a handoff without a seat stops the supervisor cleanly",
+          result.returncode == 0, result.stderr[-300:])
+    check("the refusal names the missing terminal, before any kill",
+          "no terminal to seat a successor" in result.stdout, result.stdout[-400:])
+    state = supervisor.read_supervisor_state(handoff_directory / "noseat-supervisor-state.json")
+    check("the handoff stays unconsumed for a seated supervisor",
+          state.get("consumed_counter") is None, str(state))
+
+
+def run_boot_ignition_case(workspace: Path):
+    """A fresh boot that finds an unconsumed handoff ignites from it directly.
+    Launching first and letting the wait loop find the file would kill the
+    just-born session for a handoff that predates it (observed 2026-08-14 in
+    the crash-restart window)."""
+    handoff_directory = workspace / "bootignite"
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    (handoff_directory / "bootignite-handoff.md").write_text(
+        "written-at: 2026-08-14T00:00:00Z\nnext-step: resume the audit\nrestart-counter: 5\n",
+        encoding="utf-8",
+    )
+    supervisor.write_supervisor_state(
+        handoff_directory / "bootignite-supervisor-state.json",
+        {"consumed_counter": 4, "session_id": "no-such-session", "generation": 4},
+    )
+    record_path = handoff_directory / "launch-record.txt"
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text(
+        "#!/bin/sh\n"
+        "exec >/dev/null 2>&1\n"
+        f"printf '%s\\n' \"$3\" > '{record_path}'\n"  # argv: --session-id <id> <prompt>
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub_agent.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "bootignite", "--cd", str(workspace),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+    )
+    check("boot with an unconsumed handoff exits cleanly after the ignition session",
+          result.returncode == 0, result.stderr[-300:])
+    check("the boot says it is igniting from the unconsumed handoff",
+          "igniting from an unconsumed handoff" in result.stdout, result.stdout[-400:])
+    launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+    check("the ignition prompt carries the handoff's next step",
+          "resume the audit" in launched, launched[:200])
+    state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
+    check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
+    run_no_seat_recycle_refusal_case(Path(temporary_directory))
+    run_boot_ignition_case(Path(temporary_directory))
     run_first_prompt_file_cases(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
