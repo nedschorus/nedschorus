@@ -1,37 +1,49 @@
 # `skill-builder` — seat instructions
 
-Your pile: **the candidate-skill queue.** Seven proposed skills, each a build of the same shape, sharing one authoring checklist and one walk process — which is exactly why they belong to one seat: the seventh build should be far cheaper than the first. Read [the seat model](agent-seat-model.md) for how seats work.
+Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+
+Your pile is **the queue of proposed skills** — seven, each filed as an issue — together with [#24](https://github.com/nedschorus/nedschorus/issues/24), the queue-drain procedure. #24 is not an eighth skill: it is the process by which this queue and the project's others get emptied, so it governs how you work the other seven rather than being one of them.
+
+They belong together because most share a shape and one authoring standard, so the later builds cost far less than the first. Two do not, and knowing which is which saves a wasted session: **#19 (`attack-artifact`) is filed as an open comparison question rather than a settled design** — the work there is to answer whether it should exist and in what form, not to build it — and **#17 (`design-change`) describes a read-only skill**, which changes what "done" looks like but not the build process.
+
+**Reading the issues:** every item's substance lives in its GitHub issue, reached with `gh issue view <n> --repo nedschorus/nedschorus`. If `gh` is unauthenticated or the network is down, stop and tell the user rather than working from the summaries below — they are orientation, not specification.
+
+A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `md-review`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
+
+**Your work is done when** each issue below is either built and landed, ruled out with the reason recorded in the issue, or left with a stated blocker. You will not finish all seven in one series — build one, hand off, and let the next session take the next. Then write a handoff and stop.
 
 ## The queue
 
-Each has an issue carrying its state and, in several cases, a queue document carrying detail:
+An item's **state** — whether it is unstarted, in progress, built, or ruled out — lives in its issue: open or closed, plus whatever the body records. There is no separate tracker, so after any build or ruling, update the issue body through the `ghi-write` skill; otherwise the next session cannot tell what you did. Where an issue and its queue document disagree, the issue is authoritative on state and the queue document on substance.
 
-| Issue | Skill | Note |
+| Issue | Skill | What it is for, and any material already written |
 |---|---|---|
-| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked plans with observable oracles; **flagged as the likely first build**. Riders in `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
-| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence kernel, no delete-and-start-over mandates. Riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
-| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging with a three-fix escalation stop. Detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
-| [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | exact-revision defect-first review with a five-part finding gate |
-| [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | baseline-vs-candidate A/B with trigger cases and raw-count reporting |
-| [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a d-review comparison question |
-| [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only evidence-grounded design, one recommendation, honest exits |
+| [#18](https://github.com/nedschorus/nedschorus/issues/18) | `write-test-plan` | consequence-ranked test plans with observable oracles. Flagged as the likely first build; riders in `docs/issues/queue/18-write-test-plan-agent-native-riders.md` |
+| [#20](https://github.com/nedschorus/nedschorus/issues/20) | `implement-with-evidence` | red/green evidence without delete-and-start-over mandates; riders in `docs/issues/queue/20-implement-with-evidence-agent-native-riders.md` |
+| [#21](https://github.com/nedschorus/nedschorus/issues/21) | `diagnose-failure` | bounded causal debugging that stops after three failed fixes rather than thrashing; detail in `docs/issues/queue/21-diagnose-failure-test-procedure.md` |
+| [#22](https://github.com/nedschorus/nedschorus/issues/22) | `review-change` | defect-first code review at an exact revision, with a five-part gate a finding must pass to be reported |
+| [#23](https://github.com/nedschorus/nedschorus/issues/23) | `eval-agent-change` | A/B comparison of a baseline agent against a candidate over trigger cases, reporting raw counts |
+| [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a comparison question rather than a settled design |
+| [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only, evidence-grounded design producing one recommendation and honest exits |
 
-Plus [#24](https://github.com/nedschorus/nedschorus/issues/24), the **queue-drain procedure** — the review process that empties the wiki queue, the pair queue, and the draft-label issue queue. It governs how the rest of this pile is worked, so read it early.
+[#24](https://github.com/nedschorus/nedschorus/issues/24) is the **queue-drain procedure** — how the project empties its wiki queue, its pair queue, and its `draft`-labelled issue queue. It governs how this pile is worked, so read it before picking a skill.
 
 ## How skills are built here
 
-Find the **skill-authoring checklist** under `docs/` and follow it; it is the project's own standard and predates you. The existing skills are the worked examples — `.claude/skills/walk-me-through/`, `.claude/skills/md-review/`, `.claude/skills/handoff/`, `.claude/skills/ghi-write/` — and reading two of them closely is the cheapest way to learn the house style.
+Find the project's **skill-authoring checklist** under `docs/` and follow it — it predates you and is the standard your work will be judged against. Three rules have caught previous builds:
 
-Three rules that have bitten previous builds:
+1. **A skill is instruction-class**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
+2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
+3. **Zero-context readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets an md-review before it lands, which is `scripts/md-review-grid.py`.
 
-1. **A skill is instruction-class.** It lands only through the user's walk, and the `instruction-file-guard` hook enforces that mechanically — a `.walk-approved` marker quoting his approval, consumed by the one write it approves.
-2. **Skills are instructions, not essays.** Rationale asides get cut; the text tells an agent what to do. Four such asides were cut from `walk-me-through` on 2026-08-06 for exactly this reason.
-3. **Zero-context readability is the bar.** The user ruled 2026-08-11 that agents must understand their instructions cold, which is why a settled skill draft gets an md-review before it lands.
+Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, md-review the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
 
-## Related work you did not do
+## Boundaries
 
-The `sanity-checker` seat owns review methodology and may add a reviewer to the md-review grid; PRs #51 and #53 are its business. If a skill you are building would change how reviews are delivered, hand that part over rather than deciding it here.
+The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the md-review grid. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
+
+Using the review machinery on your own draft is ordinary work, not a boundary crossing. Changing how it behaves is.
 
 ## First action
 
-Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) (the likely first build) with its riders file, then tell the user which skill you propose building first and why. Build nothing until he rules — the order is his call, and a skill is walked before it lands.
+Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) with its riders file. Then tell the user which skill you propose building first and why, and wait for his ruling — the order is his, and a skill is walked before it lands.
