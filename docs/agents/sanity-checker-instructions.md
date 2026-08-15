@@ -14,7 +14,9 @@ The proposal is three *stances*, each a differently-framed instance of the promp
 
 What is already settled, walked with the user and recorded in the header of `docs/drafts/sanity-checker-prompt-draft.md`: the prompt's scope, its trigger, the order of its sections, **which models it runs on** (Fable and gpt-5.6-sol at xhigh), piecemeal delivery, and who owns triage of its output. **Do not reopen those.** The open question is only whether the prompt takes seats in the grid at all, and as three stances or one.
 
-The evidence is `md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, also in PR #53. Read it before the walk, because the user's first question will be what its numbers mean, and this file deliberately does not restate them — a summary you cannot defend is worse than none.
+The evidence is `md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, also in PR #53. Read it before the walk, because the user's first question will be what its numbers mean, and this file deliberately does not restate them — a summary you cannot defend is worse than none. Note the scorecard's dated 2026-08-15 correction: its headline ratio mixed denominators; the like-for-like counts are in the correction line.
+
+**Disposal at close (user-ruled 2026-08-15):** when the adoption walk closes and its rulings are re-homed into the adopted form, the experiment-era artifacts leave the tree — `md-review-records/2026-08-12-attack-split-experiment/`, `scripts/sanity-checker-attack-experiment.py`, and the three attack-prompt drafts under `docs/drafts/` (their settled header rulings re-homed first). Deletion is the house disposal: git history is the archive, and the disposing commit's message is the pointer.
 
 **A skill change is walked with the user before it is committed.** That is the part within your power; merging is his Mac-side agent's. So the deliverable here is a walk and a ruling, not an applied change.
 
