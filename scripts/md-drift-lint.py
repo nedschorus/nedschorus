@@ -46,6 +46,12 @@ SKIP_MARKERS = ("://", "<", "{", "*", "$", "~", "…")
 # absent from the working tree; its paths are not drift.
 HISTORY_MARKERS = ("git history", "git show")
 
+# A line pointing outside this repository names files this repo cannot vouch
+# for (added 2026-08-14). The legacy tree is read-only reference material and
+# is absent from some hosts entirely, so `git-clean-slate-plan.md` on a line
+# that also names ~/Projects/nedlern is a correct citation, not drift.
+FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system")
+
 _basename_index_cache = {}
 
 
@@ -54,6 +60,21 @@ def looks_like_repo_path(token: str) -> bool:
         return False
     if ":" in token:  # git show REF:path, URLs, drive letters
         return False
+    # A bare ".ext" is a file TYPE, not a file: prose naming `.meta.json` or
+    # `.gitignore` means the kind of file, and demanding one exist at the repo
+    # root is noise (added 2026-08-14).
+    if token.startswith(".") and "/" not in token:
+        return False
+    # A leading "/" is repo-root-relative when its first component names
+    # something at the repo root, and a filesystem path otherwise (added
+    # 2026-08-14). `/scripts/x.py` is this repo and is checked — including
+    # when it is missing, which is real drift. `/usr/local/lib/...` is a
+    # deploy location describing where something WILL live, correctly absent
+    # from every development host, and is not this repo's business.
+    if token.startswith("/"):
+        first = token.lstrip("/").split("/", 1)[0]
+        if not (REPO_ROOT / first).exists():
+            return False
     return token.endswith(PATH_EXTENSIONS) and not token.startswith("-")
 
 
@@ -68,10 +89,18 @@ def basename_index(repo_root: Path) -> set:
 
 
 def resolve(token: str, md_path: Path, repo_root: Path):
-    """Return the existing Path a token names (or a truthy marker), or None."""
+    """Return the existing Path a token names (or a truthy marker), or None.
+
+    A leading "/" is read as repo-root-relative, never filesystem-absolute
+    (fixed 2026-08-14). Treating it as filesystem-absolute produced standing
+    false positives on correct content: the design's intended install path
+    `/usr/local/lib/nedschorus-gatekeeper/git-gatekeeper.py` is deliberately
+    absent from this machine, and `/CLAUDE.md` means the repo's own file. A
+    linter that always complains about the central design document is one
+    every reader learns to skim past.
+    """
+    token = token.lstrip("/") or token
     candidates = [repo_root / token, md_path.parent / token]
-    if token.startswith("/"):
-        candidates = [Path(token)]
     for candidate in candidates:
         if candidate.exists():
             return candidate
@@ -101,20 +130,30 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
         for word in words:
             if looks_like_repo_path(word) and resolve(word, md_path, repo_root) is None:
                 yield f"path does not exist: {word}"
-        # Flag check: a token naming an existing project script must name
+        # Flag check: a command whose FIRST word is a project script must name
         # only flags that script's source contains.
-        script = next(
-            (resolve(word, md_path, repo_root) for word in words
-             if word.endswith(".py") and resolve(word, md_path, repo_root)),
-            None,
-        )
+        #
+        # Anchored at the first word (fixed 2026-08-14). Scanning the whole
+        # token for any resolvable .py bound every flag in the line to that
+        # script no matter which program owned it: `git log --follow --oneline
+        # scripts/md-drift-lint.py` reported --follow and --oneline missing
+        # from md-drift-lint.py. These documents are full of git commands
+        # naming script paths, so the class was one sentence from firing.
+        first = words[0] if words else ""
+        if first in ("python", "python3", "python3.13") and len(words) > 1:
+            first = words[1]
+        script = resolve(first, md_path, repo_root) if first.endswith(".py") else None
         if script is not None:
             try:
                 source = script.read_text(encoding="utf-8")
             except OSError:
                 continue
             for flag in FLAG_TOKEN.findall(token):
-                if flag not in source:
+                # Whole-flag match (fixed 2026-08-14): a plain substring test
+                # let a prefix of a real flag pass, so a doc that drifted from
+                # --dry-run to --dry reported nothing — exactly the drift this
+                # check exists to catch.
+                if not re.search(rf"{re.escape(flag)}(?![a-z0-9-])", source):
                     yield f"flag {flag} not found in {script.name}"
 
 
@@ -130,13 +169,34 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
             yield f"link target does not exist: {bare}"
 
 
-def find_duplicate_keys(pairs):
+def find_duplicate_keys(pairs, collisions):
+    """Collect every duplicate key rather than raising on the first.
+
+    Raising stopped at the first collision, so a file with three duplicated
+    keys took three edit-and-rerun cycles to clear (fixed 2026-08-14).
+    """
     seen = {}
     for key, value in pairs:
         if key in seen:
-            raise ValueError(f"duplicate key: {key!r}")
+            collisions.append(key)
         seen[key] = value
     return seen
+
+
+def find_key_line(text: str, key: str, occurrence: int) -> int:
+    """The line of the Nth occurrence of a JSON key, 1-based; 1 if not found.
+
+    The docstring promises `path:line: problem` and every duplicate used to
+    report line 1, which was actively wrong (fixed 2026-08-14).
+    """
+    pattern = re.compile(rf'"{re.escape(key)}"\s*:')
+    hits = 0
+    for line_number, line in enumerate(text.splitlines(), 1):
+        for _ in pattern.finditer(line):
+            hits += 1
+            if hits == occurrence:
+                return line_number
+    return 1
 
 
 def lint_markdown(path: Path, repo_root: Path):
@@ -147,7 +207,7 @@ def lint_markdown(path: Path, repo_root: Path):
             continue
         if in_code_fence:
             continue
-        if any(marker in line for marker in HISTORY_MARKERS):
+        if any(marker in line for marker in HISTORY_MARKERS + FOREIGN_ROOT_MARKERS):
             checks = (check_dates(line),)
         else:
             checks = (
@@ -161,10 +221,17 @@ def lint_markdown(path: Path, repo_root: Path):
 
 
 def lint_json(path: Path):
+    text = path.read_text(encoding="utf-8")
+    collisions = []
     try:
-        json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=find_duplicate_keys)
-    except ValueError as error:
+        json.loads(text, object_pairs_hook=lambda pairs: find_duplicate_keys(pairs, collisions))
+    except ValueError as error:  # malformed JSON: report it and stop
         yield 1, str(error)
+        return
+    for key in collisions:
+        # The second occurrence is the one that silently wins, so that is the
+        # line a reader needs to see.
+        yield find_key_line(text, key, 2), f"duplicate key: {key!r}"
 
 
 def main(argv=None) -> int:
