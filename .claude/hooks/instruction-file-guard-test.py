@@ -54,6 +54,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(workspace, str(workspace / "docs" / "ordinary.md"))
     check("an ordinary file passes", result.returncode == 0, result.stderr)
 
+    # The two carve-outs: harness working space, not machinery. Each was added
+    # after a real write tripped the guard, and each is asserted against its
+    # neighbours so a future widening cannot quietly take the protected paths
+    # with it.
+    result = run_hook(workspace, str(workspace / ".claude" / "jobs" / "ab12cd34" / "tmp" / "draft.txt"))
+    check("a background job's scratch file passes", result.returncode == 0, result.stderr)
+
+    result = run_hook(workspace, str(workspace / ".claude" / "worktrees" / "feature" / "src" / "app.py"))
+    check("a file inside a worktree checkout passes", result.returncode == 0, result.stderr)
+
+    result = run_hook(workspace, str(workspace / ".claude" / "worktrees" / "feature" / ".claude" / "settings.json"))
+    check("a worktree's OWN .claude/ is still protected", result.returncode == 2)
+
+    result = run_hook(workspace, str(workspace / ".claude" / "projects" / "-a-project" / "memory" / "fact.md"))
+    check("the auto-memory is still protected", result.returncode == 2)
+
+    result = run_hook(workspace, str(workspace / ".claude" / "jobs.json"))
+    check("a file merely named jobs.json under .claude/ is still protected",
+          result.returncode == 2)
+
     worktree = workspace / ".claude" / "worktrees" / "some-worktree"
     result = run_hook(workspace, str(worktree / "docs" / "ordinary.md"))
     check("an ordinary file in a worktree passes (the plumbing prefix is not the checkout's .claude)",

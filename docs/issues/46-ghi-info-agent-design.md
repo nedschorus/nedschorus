@@ -33,7 +33,7 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 ## The ghi-info session
 
-**Seat:** the Ubuntu box, `~/agents/ghi-info` (the box convention; see [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)); wrapper state — session id, counters — lives there. Mac-side callers reach it over SSH (`scripts/launch-claude`, same issue).
+**Seat:** the Ubuntu box, `~/agents/ghi-info` (the box convention; see [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)); wrapper state — session id, counters — lives there. Mac-side callers reach it over SSH (`scripts/launch-claude-ubuntu` — renamed from `launch-claude` 2026-08-13, when a Mac-local twin `scripts/launch-claude-mac` joined it; same issue).
 
 **Lifecycle:** active while taking a turn, otherwise exited — a session id, transcript, and the mirror persist; no process does. No idle state exists for this class.
 

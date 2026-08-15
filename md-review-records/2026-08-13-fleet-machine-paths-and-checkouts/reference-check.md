@@ -1,0 +1,19 @@
+# Reference-integrity pre-pass
+
+- UNRESOLVED: `-handoff.md`
+- UNRESOLVED: `/Projects/nedschorus`
+- UNRESOLVED: `/Users/el/.claude/handoffs/`
+- UNRESOLVED: `/Users/el/Projects/nedschorus`
+- UNRESOLVED: `/Users/el/Projects/nedschorus/.claude/worktrees/`
+- UNRESOLVED: `/Users/el/Projects/nedschorus/scripts/launch-claude-mac`
+- UNRESOLVED: `/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu`
+- UNRESOLVED: `/Users/el/agents/`
+- ok: `/home/nedlern/.claude/CLAUDE.md`
+- ok: `/home/nedlern/.claude/handoffs/`
+- ok: `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory/`
+- UNRESOLVED: `/home/nedlern/Projects/nedlern`
+- ok: `/home/nedlern/Projects/nedschorus`
+- ok: `/home/nedlern/Projects/nedschorus/.claude/worktrees/`
+- ok: `/home/nedlern/agents/`
+- ok: `/home/nedlern/agents/choirmaster`
+- ok: `scripts/handoff-extract-conversation-test.py`

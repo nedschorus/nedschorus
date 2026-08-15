@@ -234,6 +234,85 @@ def prune_old_generations(directory: Path, stem: str) -> None:
         stale.unlink()
 
 
+def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
+    """Run git in the agent's directory; never raise, whatever goes wrong."""
+    try:
+        return subprocess.run(
+            ["git", *arguments], cwd=str(working_directory),
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+
+
+def sync_working_branch_with_main(working_directory: Path) -> str:
+    """Bring the agent's branch to main before a session starts. One line back.
+
+    Ruled 2026-08-13. An agent's home sits on its own branch only because git
+    refuses one branch in two worktrees — nobody chose a long-lived personal
+    branch, and left alone it drifts from main until someone merges by hand.
+    Syncing here, between sessions, is the one safe moment: the previous
+    session has exited and the next has not started, so no agent is holding a
+    mental model of the tree.
+
+    Deliberately conservative — it only ever fast-forwards:
+
+    * uncommitted work, a failed fetch, no origin/main, or a branch carrying
+      commits main does not have: report and change nothing;
+    * strictly behind main with a clean tree: fast-forward.
+
+    Never a merge, because a conflicted merge left in the tree before the agent
+    wakes is worse than being behind: the branch counts go in the report and
+    the agent, which can judge, decides. Callers must not run this against a
+    LIVE session's directory — see supervise_sessions, which syncs only on the
+    launch path and never on adoption.
+    """
+    toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
+    if toplevel.returncode != 0:
+        return "branch sync: not a git checkout, nothing to sync"
+
+    fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
+    fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
+
+    if run_git_here(["rev-parse", "--verify", "--quiet", "origin/main"],
+                    working_directory, timeout=15).returncode != 0:
+        return f"branch sync: no origin/main to sync with{fetch_note}"
+
+    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"],
+                          working_directory, timeout=15).stdout.strip() or "HEAD"
+
+    dirty = run_git_here(["status", "--porcelain"], working_directory, timeout=30).stdout.strip()
+    if dirty:
+        return (f"branch sync: {branch} left as is — {len(dirty.splitlines())} uncommitted "
+                f"path(s) in the tree{fetch_note}")
+
+    if run_git_here(["merge-base", "--is-ancestor", "origin/main", "HEAD"],
+                    working_directory, timeout=15).returncode == 0:
+        ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+                             working_directory, timeout=30).stdout.strip() or "?"
+        if ahead == "0":
+            return f"branch sync: {branch} is current with main{fetch_note}"
+        return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+                f"it — nothing to pull{fetch_note}")
+
+    if run_git_here(["merge-base", "--is-ancestor", "HEAD", "origin/main"],
+                    working_directory, timeout=15).returncode == 0:
+        merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+        if merged.returncode != 0:
+            return (f"branch sync: {branch} could not fast-forward: "
+                    f"{merged.stderr.strip() or 'no detail'}{fetch_note}")
+        tip = run_git_here(["rev-parse", "--short", "HEAD"],
+                           working_directory, timeout=15).stdout.strip()
+        return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+
+    ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
+                         working_directory, timeout=30).stdout.strip() or "?"
+    behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
+                          working_directory, timeout=30).stdout.strip() or "?"
+    return (f"branch sync: {branch} is {ahead} ahead of main and {behind} behind — merge when "
+            f"ready (git merge origin/main){fetch_note}")
+
+
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path, prompt: str):
     """Start one interactive session, inheriting this console's terminal."""
     return subprocess.Popen(
@@ -456,6 +535,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             )
             process, adopted = adopted, None  # adoption applies to this pass only
         else:
+            # Only on the launch path: an adopted session is alive in this
+            # directory, and changing files under a working agent is the one
+            # thing this must never do.
+            print(f"handoff-supervisor: {sync_working_branch_with_main(settings.working_directory)}")
             print(f"handoff-supervisor: launching session {session_id} (generation {generation})")
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, prompt

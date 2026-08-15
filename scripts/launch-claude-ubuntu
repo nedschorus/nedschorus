@@ -1,0 +1,142 @@
+#!/bin/sh
+# launch-claude-ubuntu <name> [--no-attach] — reach the named agent on the
+# Ubuntu agent box, from the user's Mac. Its twin, launch-claude-mac, runs the
+# same conventions locally on the Mac; the machine is in the name because the
+# two are otherwise indistinguishable at the call site, and picking the wrong
+# one is a real mistake to make.
+#
+# Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
+# type is the whole configuration. The agent's directory is
+# $NEDSCHORUS_AGENTS_ROOT/<name> on the box (default ~/agents/<name>), created
+# on first use. A CLAUDE.local.md in that directory supplies the agent's
+# identity; without one the agent is generic and the name is just a label.
+# choirmaster is not registered anywhere — founding step 6 puts real content in
+# its directory, and this script treats it like any other name.
+#
+# Attach-or-create comes from tmux on the box: `tmux new-session -A` attaches
+# to the session named <name> when it exists and creates it when it does not,
+# so a closed iTerm2 window never orphans an agent — type the same command to
+# reconnect. Inside the session runs the handoff supervisor, which launches
+# the claude session, recycles it on every handoff, and exits when its agent
+# stops without handing off; the tmux session closes with it, so nothing
+# lingers. A second launch of a running name attaches instead of duplicating,
+# and the supervisor's own lock refuses a duplicate even if tmux is bypassed.
+# Both protections are per-machine, as is every other thing an agent owns, so
+# the same name used on both machines is simply two unrelated agents — no
+# conflict, only a label you cannot tell apart in a listing spanning both.
+#
+# --no-attach creates the session without attaching this terminal (for
+# scripts and checks); attach later by running the plain form.
+#
+# Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedschorus.
+
+set -eu
+
+# AGENTS_ROOT is a BOX-side path. The default's ~ is expanded by the box's
+# shell (it rides unquoted in the remote command), so keep the root free of
+# spaces; agent names are charset-checked below for the same reason.
+AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
+AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
+
+# The no-name case is the common mistake, so it teaches rather than scolds:
+# what a name is for, and which agents are up on the box right now to pick from
+# or avoid colliding with. The listing costs one SSH round trip and happens
+# only on this error path, never on a launch.
+usage() {
+    echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
+    echo >&2
+    echo "Every agent is named, and the name is the whole configuration: it names the" >&2
+    echo "tmux session on the box, the home directory ($AGENTS_ROOT/<name>), and the" >&2
+    echo "agent's handoff files. Running a name that is already up ATTACHES to that" >&2
+    echo "agent — you cannot start a second copy of one." >&2
+    echo >&2
+    running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
+        'tmux list-sessions -F "#{session_name}" 2>/dev/null' 2>/dev/null | tr '\n' ' ')
+    if [ -n "$running" ]; then
+        echo "Agents running on the box now: $running" >&2
+    else
+        echo "No agents are running on the box now (or it could not be reached)." >&2
+    fi
+    echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
+    echo >&2
+    echo "The two machines share no agent state — tmux sessions, home directories," >&2
+    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
+    echo "unrelated agents, not a conflict. Suffix names (-ubuntu, -mac) only if you want" >&2
+    echo "to tell them apart at a glance; nothing here requires it." >&2
+    exit 2
+}
+
+[ $# -ge 1 ] || usage
+AGENT_NAME="$1"
+shift
+ATTACH=yes
+FIRST_PROMPT_FILE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        (--no-attach) ATTACH=no; shift ;;
+        (--first-prompt-file) FIRST_PROMPT_FILE="${2:?--first-prompt-file needs a box-side path}"; shift 2 ;;
+        (*) usage ;;
+    esac
+done
+case "$AGENT_NAME" in
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
+esac
+
+AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
+SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
+--agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+
+# A first-prompt file (box-side path) seeds only the FIRST session — used for
+# the founding boot, where the committed handoff is the prompt. The supervisor
+# reads the file itself, so its content never rides through shell quoting.
+# After the first recycle the ordinary ignition prompt takes over.
+if [ -n "$FIRST_PROMPT_FILE" ]; then
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+fi
+
+# Pre-trust the agent directory on the box: a fresh directory otherwise stops
+# at Claude's one-time folder-trust dialog, which a detached launch can never
+# answer and an attached one should not have to.
+PREPARE_COMMAND="mkdir -p $AGENT_DIRECTORY && python3 -c 'import json,os,sys; \
+p=os.path.expanduser(\"~/.claude.json\"); \
+d=json.load(open(p)) if os.path.exists(p) else {}; \
+t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
+d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
+json.dump(d,open(p,\"w\"),indent=2)' $AGENT_DIRECTORY"
+
+# The agent's home must be a CHECKOUT before the session starts, not after.
+# Project settings — the status line, the recycle Stop hook, the
+# instruction-file guard — are read from .claude/ inside the working
+# directory at session start, so an agent booted into a bare directory runs
+# with none of them, and fixing its own home later cannot retrofit the
+# session it is already in (observed 2026-08-14: a seat launched into an
+# empty ~/agents/gatekeeper had no status line and no hooks). Skipped when
+# the home is already a checkout, so relaunches are untouched; a branch that
+# already exists is reused rather than recreated, since git allows a branch
+# in only one worktree at a time.
+PREPARE_COMMAND="$PREPARE_COMMAND && \
+if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
+  git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
+  git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY -b '$AGENT_NAME' origin/main 2>/dev/null \
+  || git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY '$AGENT_NAME' \
+  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings' >&2; \
+fi"
+
+# tmux tells the terminal the session name, so an iTerm2 tab reads
+# "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
+# server each launch: it is a global option, harmless to repeat.
+# Joined with && so an earlier failure in PREPARE_COMMAND still aborts the
+# launch, and each tmux call is individually tolerated with || true rather than
+# a trailing `true` that would swallow everything before it. The twin does the
+# same per-command, at scripts/launch-claude-mac.
+PREPARE_COMMAND="$PREPARE_COMMAND && { \
+tmux set-option -g set-titles on 2>/dev/null || true; \
+tmux set-option -g set-titles-string '#S' 2>/dev/null || true; }"
+
+if [ "$ATTACH" = yes ]; then
+    exec ssh -t "$AGENT_BOX" \
+        "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\""
+fi
+exec ssh "$AGENT_BOX" \
+    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: $AGENT_NAME is already running (attach with: launch-claude-ubuntu $AGENT_NAME)'"

@@ -1373,13 +1373,28 @@ def fetch_branch_protection(repo_slug: str) -> dict:
             "Re-run the audit; this failure is safe to retry.",
         ) from None
     if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no detail"
+        # GitHub answers 404 both for "no such protection" and for "your
+        # credential may not read protection settings", deliberately, so that
+        # an unauthorized caller cannot learn whether protection exists. The
+        # refusal must not let a reader collapse those two into an alarm.
+        unreadable = "404" in detail or "Not Found" in detail
         raise Refusal(
             "audit-failed",
-            f"reading protection for {repo_slug} failed: "
-            f"{completed.stderr.strip() or completed.stdout.strip() or 'no detail'}",
-            "Authenticate gh with an account that can read branch protection, or "
-            "fix the network, then re-run. An unreadable wall is a finding, never "
-            "a silent skip into green.",
+            f"reading protection for {repo_slug} failed: {detail}"
+            + (" — note that GitHub returns 404 both when protection is absent and "
+               "when the credential may not read it, so this does NOT show protection "
+               "is missing" if unreadable else ""),
+            ("Re-run under a credential that can read branch protection: the setting "
+             "requires admin on the repository, which agent tokens deliberately lack, "
+             "so this outcome is expected until the credential work lands (a dedicated "
+             "account, § The credential and enforcement). Until then the audit reports "
+             "that it could not verify, which is the honest answer — an unreadable wall "
+             "is a finding, never a silent skip into green."
+             if unreadable else
+             "Authenticate gh with an account that can read branch protection, or fix "
+             "the network, then re-run. An unreadable wall is a finding, never a silent "
+             "skip into green."),
         )
     try:
         return json.loads(completed.stdout)

@@ -402,8 +402,96 @@ def run_preseed_canaries() -> None:
     check("canary 2: new task ids allocate above the seeded maximum", max(new_files) >= 3, str(new_files))
 
 
+def git_in(arguments, cwd):
+    completed = subprocess.run(["git", *arguments], cwd=str(cwd),
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0 and arguments[0] not in ("merge",):
+        raise AssertionError(f"git {' '.join(arguments)} failed: {completed.stderr}")
+    return completed
+
+
+def run_branch_sync_cases(workspace: Path):
+    """Every branch of sync_working_branch_with_main, against real repositories.
+
+    The function only ever fast-forwards, so the cases that matter most are the
+    ones where it must NOT act: a dirty tree, a diverged branch, a directory
+    that is not a checkout at all.
+    """
+    root = workspace / "branch-sync"
+    root.mkdir()
+
+    check("a directory that is not a checkout syncs to nothing",
+          "nothing to sync" in supervisor.sync_working_branch_with_main(root))
+
+    remote = root / "remote.git"
+    git_in(["init", "--quiet", "--bare", "--initial-branch=main", str(remote)], root)
+    seed = root / "seed"
+    git_in(["clone", "--quiet", str(remote), str(seed)], root)
+    git_in(["config", "user.name", "fixture"], seed)
+    git_in(["config", "user.email", "fixture@nedschorus.invalid"], seed)
+    (seed / "README.md").write_text("seed\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "seed"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+
+    # The agent's home: a clone on its own branch, as every agent home is.
+    home = root / "agent-home"
+    git_in(["clone", "--quiet", str(remote), str(home)], root)
+    git_in(["config", "user.name", "agent"], home)
+    git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
+    git_in(["checkout", "--quiet", "-b", "agent-branch"], home)
+
+    check("a branch level with main reports current",
+          "current with main" in supervisor.sync_working_branch_with_main(home))
+
+    # Main moves ahead; the agent's clean branch must fast-forward onto it.
+    (seed / "README.md").write_text("seed\nfrom main\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main moves ahead"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+
+    report = supervisor.sync_working_branch_with_main(home)
+    check("a clean branch behind main fast-forwards", "fast-forwarded to main" in report, report)
+    check("the fast-forward really moved the files",
+          (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
+
+    # Uncommitted work is never disturbed, however far behind the branch is.
+    (seed / "README.md").write_text("seed\nfrom main\nfurther\n", encoding="utf-8")
+    git_in(["add", "-A"], seed)
+    git_in(["commit", "--quiet", "-m", "main moves again"], seed)
+    git_in(["push", "--quiet", "origin", "main"], seed)
+    (home / "work-in-progress.txt").write_text("half a thought\n", encoding="utf-8")
+
+    report = supervisor.sync_working_branch_with_main(home)
+    check("a dirty tree is left exactly as it is", "left as is" in report, report)
+    check("the uncommitted file survives the sync", (home / "work-in-progress.txt").is_file())
+    check("a dirty tree is not fast-forwarded",
+          (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
+
+    # A branch carrying its own commits is reported, never merged: a conflicted
+    # merge waiting for an agent that has not woken up is worse than being behind.
+    (home / "work-in-progress.txt").unlink()
+    (home / "agent-note.txt").write_text("finished thought\n", encoding="utf-8")
+    git_in(["add", "-A"], home)
+    git_in(["commit", "--quiet", "-m", "the agent's own work"], home)
+
+    report = supervisor.sync_working_branch_with_main(home)
+    check("a diverged branch is reported, not merged", "merge when ready" in report, report)
+    check("the diverged report counts both directions",
+          "1 ahead of main" in report and "1 behind" in report, report)
+    check("a diverged branch keeps its own commit",
+          git_in(["log", "-1", "--format=%s"], home).stdout.strip() == "the agent's own work")
+
+    # Ahead-only: everything main has, plus local work. Nothing to pull.
+    git_in(["merge", "--no-edit", "--quiet", "origin/main"], home)
+    report = supervisor.sync_working_branch_with_main(home)
+    check("a branch ahead of main with all of main reports nothing to pull",
+          "nothing to pull" in report, report)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
+    run_branch_sync_cases(Path(temporary_directory))
     run_exit_handoff_cases(Path(temporary_directory))
     run_adoption_cases(Path(temporary_directory))
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
