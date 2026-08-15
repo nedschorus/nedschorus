@@ -4,6 +4,30 @@ Pair document for [nedschorus#45](https://github.com/nedschorus/nedschorus/issue
 
 **Naming, user-ruled 2026-08-13:** the launcher is `scripts/launch-claude-ubuntu`, renamed from the machine-silent `launch-claude`, and it gained a local twin, `scripts/launch-claude-mac`. Text below written before that date says `launch-claude` and means the Ubuntu launcher. The machine belongs in the name because the two launchers are otherwise indistinguishable at the call site, and the box-versus-Mac mistake is a real one to make.
 
+## What this issue's work produced, and where it lives
+
+The launcher shipped, and the work grew from "reach an agent by name" into how the fleet is organised. Everything below is on main unless noted:
+
+- **`scripts/launch-claude-ubuntu`** and **`scripts/launch-claude-mac`** — the launchers (renamed from `launch-claude` 2026-08-13 so the target machine is in the name). They create the seat's home *as a checkout* before the session starts, because project settings — status line, recycle hook, instruction-file guard — load from `.claude/` in the working directory at session start.
+- **`docs/agents/agent-seat-model.md`** — how work is divided among named seats, and why: grouped by shared context rather than workload, two or three running at a time, seats retired and resumed by name.
+- **`docs/agents/<seat>-instructions.md`** — one brief per seat (`gatekeeper`, `sanity-checker`, `skill-builder`, `ghi`, `fleet`, `doctrine`, `sidebar`), each stating its pile, its issues and PRs, what to read, and its first action.
+- **`docs/agents/seat-first-prompt.md`** — the launcher's `--first-prompt-file`: what a zero-context agent reads to discover which seat it is and where to start.
+- **`docs/cross-project/fleet-machine-paths-and-checkouts.md`** — full path map for both machines, the three checkout kinds, and what does and does not cross between them.
+- **`docs/issues/queue/45-session-seat-and-isolation-riders.md`** — five ideas raised and deliberately not built, each with its reasoning: the one-live-session-per-directory guard (whose obvious `/proc` detection was tried and proved unreliable), a `--directory` flag for the launchers, a branch-per-session CLAUDE.md rule, an md-review of the paths reference, and the deferred `choirmaster` rename.
+- **`docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md`** — a 2026-08-13 snapshot of every open thread on the box, its context file, and the proposed seat split. Operational, so its PR and issue rows go stale; the thread map and context paths do not.
+
+## The harness's `--agent` mechanism, and what adopting it would cost (2026-08-08)
+
+Moved here from the issue body 2026-08-13, when that body was condensed to the summary the routing doctrine asks of it. No decision was taken; the roster design owns it.
+
+Claude Code has a first-class mechanism for naming an agent, found by reading the 2.1.220 binary: the `--agent <name>` launch flag (equivalently the `CLAUDE_AGENT` environment variable) runs the main loop as the agent type defined at `.claude/agents/<name>.md`, and the harness reports that name to the status line as `agent.name`. A roster entry could therefore be a real harness object rather than a launcher convention. This project chose the launcher convention instead — the typed name is the whole configuration, no roster — and these three costs are why the question stayed open:
+
+1. **It is not a label.** The named definition supplies the session's system prompt and its tool restrictions. Agent identity currently lives in a `CLAUDE.local.md` in the agent's home, a different mechanism with different reach; an agent definition would partly duplicate or replace it.
+2. **It is instruction-bearing text.** An agent definition is an injected system prompt, so it falls inside the reviewed class designated on [nedschorus#31](https://github.com/nedschorus/nedschorus/issues/31) and is created only through the user's walk.
+3. **It must be re-passed on every relaunch.** The harness warns that a resume without the flag silently drops the definition's tool restrictions. `scripts/handoff-supervisor.py` relaunches the agent on every recycle, so the supervisor would have to carry the flag or the identity evaporates at the first handoff — silently, which is the dangerous part.
+
+Recorded while wiring the status line, which is where `agent.name` surfaced.
+
 ## What the user asked for (2026-08-07)
 
 Type `launch-claude <name>` in iTerm2 and get that named agent. The agents themselves run on the Ubuntu box over SSH. If the agent is already running — because the iTerm2 window was closed — the same command reconnects to it rather than starting a second one.

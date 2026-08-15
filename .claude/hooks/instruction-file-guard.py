@@ -63,7 +63,7 @@ def is_protected(file_path: str) -> bool:
                 # A worktree checkout's home under .claude/worktrees/, or a
                 # background job's scratch directory under .claude/jobs/<id>/tmp
                 # — both are working space the harness hands out, not machinery
-                # that instructs anybody. The jobs carve-out was added 2026-08-14
+                # that instructs anybody. The jobs carve-out was added 2026-08-13
                 # after a real write tripped the guard, which is the condition
                 # this file's docstring sets for adding one.
                 continue

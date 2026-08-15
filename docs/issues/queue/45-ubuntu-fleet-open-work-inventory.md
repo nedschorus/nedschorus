@@ -1,6 +1,16 @@
 # Ubuntu fleet — open work inventory and thread map
 
-Snapshot taken 2026-08-14 for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), to divide the box's open work among a small number of named agents. Written because parallel sessions accumulated faster than anyone tracked them: forks were used to park context for later, successors wrote handoffs describing their *present* state rather than their fork point, and several threads ended up overlapping. Operational snapshot, not a standing design — the PR and issue rows go stale as they land; the thread map and the context-file paths stay useful.
+Snapshot taken 2026-08-13 for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), to divide the box's open work among a small number of named agents. Written because parallel sessions accumulated faster than anyone tracked them: forks were used to park context for later, successors wrote handoffs describing their *present* state rather than their fork point, and several threads ended up overlapping. Operational snapshot, not a standing design — the PR and issue rows go stale as they land; the thread map and the context-file paths stay useful.
+
+## 0. State as of 2026-08-13, late evening
+
+The fastest way to catch up.
+
+- **Two seats are running** on the box: `gatekeeper` and `sanity-checker`, both in `~/agents/<seat>` on their own branches, both past their first action. The gatekeeper seat has reported and is waiting on a ruling; the sanity-checker seat is triaging its four findings and writing queue documents to route them. See § 6a for how they were launched and the one trap in it.
+- **Every seat document has been md-reviewed**, twelve in all, and each review's findings applied to the document it reviewed. The reviews were brutal and useful: 23 findings on the gatekeeper brief, 28 on the seat model, 30 on the sanity-checker brief, 26 on the fleet brief, with "clean sections: none" on each of the first four. The corrections are in PR #58.
+- **The largest single defect class was vocabulary**: the briefs used *pile*, *walked approval*, *instruction-class*, *slice* and the C-numbers as if established, and none was defined anywhere. The seat model now defines them once.
+- **Two corrections worth knowing because they were wrong facts, not wrong wording**: every document written that day was stamped `2026-08-14` (UTC job timestamps read as local dates) and is now corrected to `2026-08-13`; and the seat-first-prompt's repair command could not work — `git worktree add` refuses a non-empty path, and its "drop `-b`" variant was an invalid invocation, on the branch-already-exists path that any relaunched seat takes.
+- **Still owed:** a second-pass review of the documents that changed *after* their first review — applying findings can introduce new ones — starting with `seat-first-prompt.md`, `agent-seat-model.md` and `gatekeeper-instructions.md`.
 
 ## 1. Open pull requests
 
@@ -46,13 +56,13 @@ Transcripts are the durable context. A new session can be pointed at any of thes
 |---|---|---|---|
 | gatekeeper + launchers (this stream) | `ec9045a3` | `~/.claude/projects/-home-nedlern-Projects-nedschorus--claude-worktrees-gatekeeper-walk-fork-continuation/ec9045a3-6202-4cdc-9fb2-d855d62585cc.jsonl` | live; PR #57 open; handoff at `~/.claude/handoffs/gatekeeper-walk-fork-handoff.md` |
 | choirmaster stream, current | `ea663864` | `~/.claude/projects/-home-nedlern-agents-choirmaster/ea663864-8dd4-4734-a0e7-a0c65d5eb1de.jsonl` | live, blocked on the ruling above |
-| choirmaster stream, predecessor | `49e0a3cf` | same directory, `49e0a3cf-4ebc-41d9-9417-3edafe0e2aa8.jsonl` (3.6 MB) | retired; handoff consumed |
-| code-review prompt drafting | — | same directory, `29d66917-9767-47cb-a221-d4876d8014cd.jsonl` (3.6 MB, "Draft code review prompt for reliability improvement") | unclaimed; substantial context, no live session |
+| choirmaster stream, predecessor | `49e0a3cf` | `~/.claude/projects/-home-nedlern-agents-choirmaster/49e0a3cf-4ebc-41d9-9417-3edafe0e2aa8.jsonl` (3.6 MB) | retired; handoff consumed |
+| code-review prompt drafting | — | `~/.claude/projects/-home-nedlern-agents-choirmaster/29d66917-9767-47cb-a221-d4876d8014cd.jsonl` (3.6 MB, "Draft code review prompt for reliability improvement") | unclaimed; substantial context, no live session |
 | sanity-checker | `d9eda3ec` | `~/.claude/projects/-home-nedlern-agents-choirmaster/d9eda3ec-*.jsonl` | retired; handoff written |
 | login session | `3d8bf995` | `~/.claude/projects/-home-nedlern/3d8bf995-*.jsonl` | never had a task; delete |
 | tmux seat | `f741668d` | `~/.claude/projects/-home-nedlern-agents-choirmaster/f741668d-*.jsonl` | duplicate of the choirmaster stream; resolve against `ea663864` |
 
-### Complete transcript sweep (2026-08-14)
+### Complete transcript sweep (2026-08-13)
 
 All 35 transcripts over 30 KB were read for their titles, not just the ones already known. What it added beyond the table above:
 
@@ -63,7 +73,7 @@ All 35 transcripts over 30 KB were read for their titles, not just the ones alre
 
 **Everything else is accounted for.** The remaining transcripts fall into three groups, none needing an owner: predecessor generations of the two live streams (`5a7d955e`, `d9eda3ec`, `49e0a3cf`, `574972e0`, `1caf1c51`, `ccc79ae5`, plus the gatekeeper worktree's own `b2912831`, `27862506`, `0550ed74`); **md-review and experiment cells** whose findings already live in `md-review-records/` (`3766ca30`, `84a8a260`, `946596c0`, `0f34ff59` from the 2026-08-09 grid; `832f3b95`, `9cd26c95`, `0e711797`, `99a2f1a4` from the sanity-checker draft review; `8d89bd09`, `83e22b1a`, `849436bf`, `9aae839c`, `cd59239a`, `82f21e87` from the 2026-08-12 attack-split experiment); and two box-maintenance sessions from July (`bab1c2b3` security audit, `c75a8d63` upgrade).
 
-Preserved handoffs and dialog extracts, all under `~/.claude/handoffs/`: `choirmaster-handoff.md` plus generations `-0002`/`-0003`, `gatekeeper-walk-fork-handoff.md` plus its generations, and matching `-dialog-` files carrying each session's conversation tail.
+Preserved handoffs and dialog extracts, all under `~/.claude/handoffs/`: the choirmaster and gatekeeper-walk-fork handoffs plus their numbered generations, and matching `-dialog-` files carrying each session's conversation tail.
 
 ## 6. How to give a new agent someone else's handoff
 
@@ -73,6 +83,21 @@ The supervisor reads `~/.claude/handoffs/<agent>-handoff.md`, where `<agent>` is
 2. **Copy the handoff to the new name** — `cp ~/.claude/handoffs/<old>-handoff.md ~/.claude/handoffs/<new>-handoff.md` before launching `<new>`; its supervisor picks it up as if it were its own.
 
 Either way, a handoff written by a *forked* session describes that session's state when it wrote the handoff, not the fork point. When the fork point is what matters, point the new session at the `-dialog-` extract or the transcript instead, and say in the first prompt which part of the history is the subject.
+
+## 6a. Seats launched 2026-08-13, and how
+
+`gatekeeper` and `sanity-checker` are running on the box, each in `~/agents/<seat>` on its own branch, reading the reviewed versions of their briefs. Both were verified to start correctly: branch confirmed, status line present (which is the tell that project settings loaded, and therefore that the recycle hook and the instruction-file guard loaded too).
+
+They were **not** launched by the documented recipe, because that recipe cannot work yet: it reads `docs/agents/seat-first-prompt.md` from the box's checkout of main, and that file is still in PR #58 along with every md-review correction to the briefs. Launching from main would have booted both seats into the pre-review documents — the ones carrying twenty to thirty findings each.
+
+What was done instead, and what to undo once #58 merges:
+
+1. Each seat's worktree was created from the PR branch rather than main: `git worktree add ~/agents/<seat> -b <seat> seat-launch-first-prompt`. The launcher skips creating a home that is already a checkout, so this simply pre-empts it.
+2. The launcher was then run with the prompt file taken from the seat's own checkout: `sh scripts/launch-claude-mac <seat> --no-attach --first-prompt-file /home/nedlern/agents/<seat>/docs/agents/seat-first-prompt.md`. The Mac twin runs locally on the box and is mechanically identical to the Ubuntu launcher minus the SSH hop, which is what makes it usable from a box-side session.
+
+Consequence to expect: each seat's branch carries PR #58's commits, so the supervisor's branch sync will report it as *ahead of main* and change nothing. Once #58 merges, those branches become strictly behind and fast-forward normally. No action is needed unless #58 is changed substantially before merging, in which case the seats should be relaunched from the merged main.
+
+**A trap to answer before saying yes to it.** The `gatekeeper` seat noticed this lineage within minutes and proposed `git reset --hard origin/main` to start its branch clean — sound reasoning from where it sits, and the wrong move today. Its checkout's `docs/agents/` would revert to the pre-review briefs, and a later session in that seat would read the versions carrying twenty-three findings. **Wait until #58 merges**; the reset is then unnecessary, because the branch fast-forwards on its own. If a seat must be cleaned before that, relaunch it from the PR branch rather than resetting to main.
 
 ## 7. Proposed split into named agents
 

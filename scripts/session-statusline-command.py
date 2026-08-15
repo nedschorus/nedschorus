@@ -55,9 +55,11 @@ binary's status line builder rather than from documentation.
 # chance, and the status line renders empty with nothing said. A Mac's
 # Xcode-provided python3 is still 3.9, so the interpreter that a pane
 # resolves cannot be assumed. This import defers the annotations and keeps
-# the script running from 3.7 up.
+# the script running from 3.7 up. It must stay the first statement after the
+# docstring, which is why the imports below it are not in alphabetical order.
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
@@ -72,6 +74,7 @@ BLUE_BOLD = "\033[01;34m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
+RED_BOLD = "\033[01;31m"
 
 # Thresholds on how much is LEFT — of the context window, or of a quota
 # window. The handoff fires at roughly half the context used, so the first
@@ -220,10 +223,40 @@ def consumption_segment(payload: dict) -> str:
     return " ".join(parts)
 
 
+def backup_health_segment() -> str:
+    """Warn when this machine's backups have stopped; empty when they are fine.
+
+    First in the line rather than last, because a line that is truncated or
+    wrapped loses its tail, and this is the one segment whose whole purpose is
+    to be seen. It appears only when something is wrong, so the jarring change
+    of shape is the point.
+
+    Loaded by path because the checker's filename is hyphenated, and lazily so
+    that a missing or broken checker costs nothing until the line is rendered.
+    Any failure yields an empty segment: a health check that blanks the status
+    line would be a worse fault than the one it reports.
+    """
+    try:
+        checker_path = Path(__file__).with_name("backup-health-check.py")
+        if not checker_path.exists():
+            return ""
+        specification = importlib.util.spec_from_file_location(
+            "backup_health_check", checker_path)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        headline, _detail = module.diagnose()
+        if not headline:
+            return ""
+        return colored(f"⚠ {headline}", RED_BOLD)
+    except Exception:  # noqa: BLE001 - see docstring
+        return ""
+
+
 def status_line_text(payload: dict) -> str:
     """Compose the visible line; every segment is independently optional."""
     working_directory = payload.get("workspace", {}).get("current_dir") or payload.get("cwd", "")
     segments = [
+        backup_health_segment(),
         location_segment(working_directory),
         agent_segment(payload),
         model_segment(payload),
