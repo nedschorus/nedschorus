@@ -172,7 +172,7 @@ work in both cases, not spec text.
 ### From the 2026-08-09 md-review of the specification
 
 Rulings from the user's review of the revised spec (records:
-`md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
+`git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
 spec text.
 
 Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports`

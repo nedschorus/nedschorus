@@ -5,7 +5,7 @@ rulings-as-of: 2026-08-12
 
 # Session recycling — the handoff system
 
-**What this document is.** The handoff system is built, tested, and trial-passed; the scripts and their test suites are the normative description of what it does. This document carries only what code cannot: the rulings and their reasons, the verified harness facts the design rests on, the live holes, and the pointer below. It was gutted to that charter on 2026-08-12 (user-ruled: there is no utility in prose that documents what is better understood by reading the code — mechanism prose drifts). The full pre-gut text, mechanism descriptions included, is snapshotted at `md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md` and in git history; the superseded 2026-07-22/24 design is at `git show e178e67:docs/cross-project/fast-handoff-design.md`.
+**What this document is.** The handoff system is built, tested, and trial-passed; the scripts and their test suites are the normative description of what it does. This document carries only what code cannot: the rulings and their reasons, the verified harness facts the design rests on, the live holes, and the pointer below. It was gutted to that charter on 2026-08-12 (user-ruled: there is no utility in prose that documents what is better understood by reading the code — mechanism prose drifts). The full pre-gut text, mechanism descriptions included, is snapshotted at `git show db917b5:md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md` and in git history; the superseded 2026-07-22/24 design is at `git show e178e67:docs/cross-project/fast-handoff-design.md`.
 
 ## The problem
 
