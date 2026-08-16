@@ -17,13 +17,16 @@ failing.
 
 The visible line, left to right (user-walked 2026-08-08):
 
-  ned-box:~/agents/choirmaster (choirmaster) │ Opus 5 · high │ 46% 2h 77% 3d 89%
+  ned-box:choirmaster (choirmaster) │ Opus 5 · high │ 46% 2h 77% 3d 89%
 
   host         green — which machine this session runs on. The user drives
                from a Mac over SSH while the agents run here, so the box name
                is the one thing a pane cannot be assumed to share.
-  path         blue, home abbreviated to ~. One agent, one worktree, so
-               several panes differ mainly by this.
+  directory    blue, the working directory's name alone — not its path
+               (user-ruled 2026-08-15; the path crowded every later segment
+               off the screen, worst under .claude/worktrees/). One agent,
+               one worktree, so several panes differ mainly by this. Home
+               itself still renders as ~.
   (branch)     read out of .git/HEAD directly, no subprocess. Redundant with
                the directory name today; not redundant on a detached HEAD or
                a slice branch, where committing to the wrong branch is silent.
@@ -103,14 +106,23 @@ def remaining_percent_text(remaining_percent: float) -> str:
     return colored(f"{remaining_percent:.0f}%", color_for_remaining(remaining_percent))
 
 
-def abbreviated_path(working_directory: str) -> str:
-    """Render the path as a shell prompt does: the home directory as ~."""
-    home = str(Path.home())
-    if working_directory == home:
+def working_directory_name(working_directory: str) -> str:
+    """The directory's own name, not the road to it.
+
+    The full path crowded the rest of the line off the screen (user-ruled
+    2026-08-15): a session in .claude/worktrees/<name> spent 63 characters
+    restating a project root every pane already shares, and with a long
+    branch beside it the location segment alone ran to 135 — past the width
+    of an ordinary window, so model, effort and the whole remaining-quota
+    block were never visible. The name is what differs between panes; the
+    road to it is not.
+    """
+    if not working_directory:
+        return ""
+    path = Path(working_directory)
+    if path == Path.home():
         return "~"
-    if working_directory.startswith(home + "/"):
-        return "~" + working_directory[len(home):]
-    return working_directory
+    return path.name or working_directory
 
 
 def git_head_file(working_directory: Path) -> Path | None:
@@ -152,7 +164,7 @@ def git_branch(working_directory: str) -> str:
 
 
 def location_segment(working_directory: str) -> str:
-    """host:path (branch) — where this session is, on which machine."""
+    """host:directory (branch) — where this session is, on which machine."""
     host = os.uname().nodename.split(".")[0]
 
     pieces = []
@@ -160,7 +172,7 @@ def location_segment(working_directory: str) -> str:
         pieces.append(colored(host, GREEN_BOLD))
     if working_directory:
         prefix = ":" if pieces else ""
-        pieces.append(prefix + colored(abbreviated_path(working_directory), BLUE_BOLD))
+        pieces.append(prefix + colored(working_directory_name(working_directory), BLUE_BOLD))
     branch = git_branch(working_directory)
     if branch:
         pieces.append(f" ({branch})")
