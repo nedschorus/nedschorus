@@ -246,7 +246,8 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
 
 
 def sync_working_branch_with_main(working_directory: Path) -> str:
-    """Bring the agent's branch to main before a session starts. One line back.
+    """Bring the agent's branch to main before a session starts, and return
+    one line of report describing what was or was not done.
 
     Ruled 2026-08-13. An agent's home sits on its own branch only because git
     refuses one branch in two worktrees — nobody chose a long-lived personal
@@ -263,9 +264,24 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 
     Never a merge, because a conflicted merge left in the tree before the agent
     wakes is worse than being behind: the branch counts go in the report and
-    the agent, which can judge, decides. Callers must not run this against a
-    LIVE session's directory — see supervise_sessions, which syncs only on the
-    launch path and never on adoption.
+    the agent, which can judge, decides.
+
+    Never call this while a session is running in that directory. Doing so
+    would rewrite the files under a working agent, which believes it knows
+    what its tree contains. There are exactly two ways supervise_sessions
+    reaches a directory, and only the first is safe:
+
+    * LAUNCH — the supervisor is about to start a session. Nothing is running
+      there, so the sync happens here.
+    * ADOPTION — a session is already running there, started by hand or by a
+      previous supervisor. It is never synced; it stays as it is until it
+      exits and the next launch syncs it.
+
+    The cost of that rule is that a long-lived session drifts arbitrarily far
+    from main with nothing announcing it, since sync is the only mechanism and
+    it fires once, before the session begins. The design's answer is that
+    sessions recycle often; a session that does not recycle should re-check
+    main itself rather than trust what it read at start.
     """
     toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
     if toplevel.returncode != 0:
