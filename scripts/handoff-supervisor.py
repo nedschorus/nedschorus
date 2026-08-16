@@ -246,7 +246,8 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
 
 
 def sync_working_branch_with_main(working_directory: Path) -> str:
-    """Bring the agent's branch to main before a session starts. One line back.
+    """Bring the agent's branch to main before a session starts, and return
+    one line of report describing what was or was not done.
 
     Ruled 2026-08-13. An agent's home sits on its own branch only because git
     refuses one branch in two worktrees — nobody chose a long-lived personal
