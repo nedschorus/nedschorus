@@ -191,7 +191,7 @@ def model_segment(payload: dict) -> str:
     return " · ".join(str(part) for part in (model, effort) if part)
 
 
-def time_until(reset_timestamp) -> str:
+def time_until(reset_timestamp: str | int | float) -> str:
     """Coarse countdown to a quota reset: days, else hours, else minutes.
 
     `resets_at` arrives as Unix epoch SECONDS, a number — the shape the
@@ -202,8 +202,12 @@ def time_until(reset_timestamp) -> str:
     `<context>% <5h-left> <5h>% <7d-left> <7d>%` (found 2026-08-15 from the
     user's own status line, which read `73% 85% 75%`).
 
-    Both forms are accepted. The number is the live contract; the string
-    costs two lines and keeps a payload that ever sends ISO working.
+    Two forms are accepted, and only two: a number, which is the live
+    contract, and an ISO-8601 string, which costs two lines and keeps a
+    payload that ever sends ISO working. A numeric STRING is deliberately not
+    accepted — `float("2000")` would read a year-only ISO date as 33 minutes
+    past the epoch, and a wrong countdown is worse than none. It drops the
+    field like any other unparseable value.
     """
     if isinstance(reset_timestamp, bool):
         return ""
