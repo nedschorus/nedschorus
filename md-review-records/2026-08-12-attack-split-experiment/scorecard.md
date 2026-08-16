@@ -20,6 +20,8 @@ The question: does splitting the calibrated sanity-checker prompt into three sta
 
 **Union: 4 of 5 in-band accepted cuts surfaced (baseline best: 3 of 6), zero unflagged false positives, and each runtime found accepted cuts the other missed.** One probable false positive by later ruling: cut-codex proposes deleting the branch-protection audit, which the 2026-08-12 ruling kept and re-anchored — collision flagged in the report. cut-claude matched the actual ruling ("the branch-protection audit is the keeper"). Both mechanization cells independently derived the audit-anchored-to-recycle fix — the ruling the user made in the git-gatekeeper walk, unseen by the cells.
 
+*Correction 2026-08-15: the headline ratio mixes denominators. The split's `4 of 5` drops S7 from its denominator (scored COVERED — already applied), while the baseline's `3 of 6` keeps S7 in. Counted like-for-like over the six accepted cuts, the split surfaced 4 of 6 — 5 of 6 if COVERED counts as surfaced — against the baseline's 3 of 6. The direction of the comparison is unchanged. The same reading applies to the verdict's `4/5 vs 3/6` below.*
+
 ## Fast-handoff document — union vs the seven rulings
 
 | Ruling | Disposition | Attack cells | Result |
