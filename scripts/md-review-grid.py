@@ -44,7 +44,12 @@ Keep your judgments provisional until you have read all eight, as later
 reports may offer more insight than earlier ones. Then formulate your draft
 response: which problems are real, and what you propose to do about each.
 Walk that with the user using the walk-me-through skill, ordered from most
-important to least. The walk's anchor is {record_dir}/dispositions.md."""
+important to least. The walk's anchor is {record_dir}/dispositions.md.
+
+These records are machine-local and gitignored (user-ruled 2026-08-14): never
+commit them. Delete {record_dir} once the work it served has landed — the
+findings belong in the reviewed document, the rulings in its governing
+document, and this directory is the working material that produced them."""
 
 
 def make_record_dir(target: pathlib.Path) -> pathlib.Path:

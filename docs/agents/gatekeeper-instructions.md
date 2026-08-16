@@ -10,7 +10,7 @@ Your pile — the body of related work this seat owns — is **taking the git-ga
 
 **Read first:** `docs/cross-project/git-gatekeeper-design.md` (the canonical specification, design-as-of 2026-08-12) and `docs/issues/3-git-gatekeeper-build-slice-plan.md` (the build order, its ruled design points, and the program follow-ups). Issue: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3), whose body is current as of 2026-08-12.
 
-The review history — two md-review grids and a subtraction review, with the rulings they produced and the reasoning behind each — is in `md-review-records/2026-08-09-git-gatekeeper-design/`, chiefly `dispositions.md` and `codex-dispositions.md` (roughly forty decisions, each dated with its grounds). Rulings also live in two other places, so that directory is not the whole record: the slice plan carries the design points it settles, and issue #3's body carries the state.
+The review history — two md-review grids and a subtraction review, with the rulings they produced and the reasoning behind each — is in `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`, chiefly `dispositions.md` and `codex-dispositions.md` (roughly forty decisions, each dated with its grounds). Rulings also live in two other places, so that directory is not the whole record: the slice plan carries the design points it settles, and issue #3's body carries the state.
 
 **A settled question may be reopened — by the user, not by you.** If one now looks wrong, read its disposition first, then put it to him with what changed; do not re-derive it silently and do not act against it. Re-deriving decisions he already made is the specific waste this record exists to prevent.
 

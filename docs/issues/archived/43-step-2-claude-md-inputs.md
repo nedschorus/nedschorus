@@ -1,6 +1,6 @@
 ---
 completed: 2026-08-06
-disposition: complete-and-archive — consumed by the landed CLAUDE.md at the repo root; admission marks in docs/drafts/claude-md-draft.md; review record in md-review-records/2026-08-06-claude-md-admitted/
+disposition: complete-and-archive — consumed by the landed CLAUDE.md at the repo root; admission marks in docs/drafts/claude-md-draft.md; review record in git show db917b5:md-review-records/2026-08-06-claude-md-admitted/
 ---
 
 # Step-2 CLAUDE.md inputs — the consolidated list

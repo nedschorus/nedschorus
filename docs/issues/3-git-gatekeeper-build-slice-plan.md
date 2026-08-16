@@ -172,7 +172,7 @@ work in both cases, not spec text.
 ### From the 2026-08-09 md-review of the specification
 
 Rulings from the user's review of the revised spec (records:
-`md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
+`git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
 spec text.
 
 Applied 2026-08-11 (suite then 140 cases green, was 146): the `imports`
@@ -637,7 +637,11 @@ remains in git history at `4cadb46`.
   before the floor could report. The ruling was then carried out on the
   Mac host 2026-08-13: `brew install git` put 2.55.0 ahead of Apple's
   2.39.5 on PATH and the git-floor case went green, leaving
-  `user.useConfigOnly` as the suite's only failing case there. Python was
+  `user.useConfigOnly` as the suite's only failing case there — itself
+  settled 2026-08-14, taking this host to 214 of 214 for the first time
+  (the setting is per-host and had been true on the Ubuntu box since the
+  build; the Mac was a later clone that never received the same setup).
+  Python was
   already satisfied by an explicitly-invoked `python3.13`; the system
   `python3` remains 3.9.6, which matters for any caller that runs the
   program as plain `python3` rather than naming the interpreter.
