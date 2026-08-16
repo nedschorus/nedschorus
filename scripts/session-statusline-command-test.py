@@ -8,6 +8,7 @@ Run: python3 scripts/session-statusline-command-test.py
 """
 
 import importlib.util
+import json
 import os
 import sys
 import time
@@ -89,6 +90,86 @@ check(
 empty_line = statusline.status_line_text({})
 check("status line survives an empty payload", os.uname().nodename.split(".")[0] in empty_line, empty_line)
 check("an empty payload adds no stray separators", statusline.SEPARATOR not in empty_line, empty_line)
+
+# Every case above asserts what this script BELIEVES the harness sends.
+# That belief was wrong once and the suite could not tell: resets_at is epoch
+# seconds, the fixture sent an ISO string, and both countdowns were blank in
+# every real session while the tests ran green (2026-08-15). The same wrong
+# belief wrote the code and the fixture, so no fixture can catch that class.
+# The canary asserts against a payload the harness actually delivered.
+#
+# Field TYPES, not values: values change on every refresh, types are the
+# contract. Absence is not failure -- rate_limits is documented as present
+# only for subscribers after a first API response, and agent.name only for a
+# session launched with --agent. A field that is present with the wrong type
+# IS failure, and is exactly the drift that blanked the countdowns.
+PAYLOAD_CONTRACT = [
+    ("workspace.current_dir", str),
+    ("model.display_name", str),
+    ("effort.level", str),
+    ("agent.name", str),
+    ("context_window.remaining_percentage", (int, float)),
+    ("rate_limits.five_hour.used_percentage", (int, float)),
+    ("rate_limits.five_hour.resets_at", (int, float)),
+    ("rate_limits.seven_day.used_percentage", (int, float)),
+    ("rate_limits.seven_day.resets_at", (int, float)),
+]
+
+
+def dotted_get(payload, dotted_path):
+    """Return (found, value) for a dotted path, without raising on a gap."""
+    current = payload
+    for piece in dotted_path.split("."):
+        if not isinstance(current, dict) or piece not in current:
+            return False, None
+        current = current[piece]
+    return True, current
+
+
+def run_payload_contract_canary():
+    capture_path = os.environ.get(statusline.PAYLOAD_CAPTURE_VARIABLE)
+    if not capture_path:
+        check(
+            f"canary: {statusline.PAYLOAD_CAPTURE_VARIABLE} names a captured payload",
+            False,
+            "unset. In a live session: export "
+            f"{statusline.PAYLOAD_CAPTURE_VARIABLE}=/tmp/statusline-payload.json, let the "
+            "line refresh once, then rerun with --canary and the same variable set.",
+        )
+        return
+    path = Path(capture_path)
+    if not path.is_file():
+        check("canary: the captured payload file exists", False,
+              f"{path} — the variable is set but no session has written a payload there yet")
+        return
+    try:
+        captured = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        check("canary: the captured payload is readable JSON", False, f"{path}: {error}")
+        return
+
+    check("canary: the captured payload is an object", isinstance(captured, dict), type(captured).__name__)
+    present = 0
+    for dotted_path, expected in PAYLOAD_CONTRACT:
+        found, value = dotted_get(captured, dotted_path)
+        if not found:
+            print(f"       {dotted_path}: absent (allowed)")
+            continue
+        present += 1
+        # bool is an int in Python; a bool here would be drift, not a number.
+        wrong = isinstance(value, bool) or not isinstance(value, expected)
+        names = expected.__name__ if isinstance(expected, type) else "/".join(t.__name__ for t in expected)
+        check(f"canary: {dotted_path} is {names}", not wrong,
+              f"got {type(value).__name__} = {value!r} — the harness changed shape")
+    check("canary: the captured payload carried at least one contract field", present > 0,
+          "every field absent — this may not be a status line payload")
+
+
+if "--canary" in sys.argv:
+    print("\n-- payload contract canary (against a captured live payload) --")
+    run_payload_contract_canary()
+else:
+    print("\n(skipped the payload contract canary; pass --canary to run it)")
 
 print()
 if failures:

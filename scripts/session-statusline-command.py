@@ -301,6 +301,41 @@ def status_line_text(payload: dict) -> str:
     return SEPARATOR.join(segment for segment in segments if segment)
 
 
+PAYLOAD_CAPTURE_VARIABLE = "NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE"
+
+
+def capture_payload(payload: dict) -> None:
+    """Write one real payload to disk when asked, for the contract canary.
+
+    Every fixture in the test suite asserts what this script BELIEVES the
+    harness sends. That belief was wrong once already and cost two days of
+    blank countdowns: `resets_at` is epoch seconds, the fixture used an ISO
+    string, and the suite stayed green throughout (fixed 2026-08-15). A
+    fixture cannot catch that class of error, because the same wrong belief
+    writes both the code and the test.
+
+    Ground truth is the payload the harness actually delivers. Set
+    NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE to a file path in a live session,
+    let the line refresh once, and the canary in
+    session-statusline-command-test.py checks the captured payload's field
+    TYPES against what this script consumes. Types, not values: values change
+    every refresh, types are the contract.
+
+    Off unless the variable is set, so an ordinary session pays nothing. Any
+    failure here is swallowed — a capture is a diagnostic, and the rule that
+    no fault may blank the status line outranks it.
+    """
+    destination = os.environ.get(PAYLOAD_CAPTURE_VARIABLE)
+    if not destination:
+        return
+    try:
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        return
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -308,6 +343,8 @@ def main() -> int:
             payload = {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         payload = {}
+
+    capture_payload(payload)
 
     try:
         print(status_line_text(payload))
