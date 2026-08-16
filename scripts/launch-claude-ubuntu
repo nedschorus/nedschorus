@@ -95,22 +95,17 @@ if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
 fi
 
-# Update Claude Code on the box at the one moment a version swap is safe:
-# before this seat exists, and only when no other session runs there. The
-# background auto-updater once purged the running version's files under live
-# sessions and the whole fleet died of it (nedschorus#62) — so background
-# updates are off on the box and this is where updating happens instead. A
-# box with live sessions skips the check; a failed or slow update warns and
+# Update Claude Code on the box before starting the seat: background
+# auto-update is off on the fleet (nedschorus#62), and launch is the chosen
+# moment instead — every fresh agent starts current. Running sessions are
+# unaffected by an update (user-established across many updates: installed
+# versions are retained on disk). A failed or slow update warns and
 # proceeds, because an update problem must never block starting an agent.
 # The twin does the same locally, at scripts/launch-claude-mac.
 UPDATE_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-if pgrep -x claude >/dev/null 2>&1; then \
-  echo 'launch-claude-ubuntu: live claude sessions on the box — skipping the update check (a version swap under running sessions kills them; nedschorus#62)'; \
-else \
-  echo 'launch-claude-ubuntu: no live sessions on the box — checking for a Claude Code update'; \
-  timeout \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45} claude update \
-  || echo 'launch-claude-ubuntu: claude update failed or timed out; launching on the installed version' >&2; \
-fi"
+echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
+timeout \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45} claude update \
+|| echo 'launch-claude-ubuntu: claude update failed or timed out; launching on the installed version' >&2"
 
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never

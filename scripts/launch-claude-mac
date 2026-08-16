@@ -99,22 +99,16 @@ command -v claude >/dev/null 2>&1 || {
     exit 2
 }
 
-# Update Claude Code at the one moment a version swap is safe: before this
-# seat exists, and only when no other session runs on this machine. The
-# background auto-updater once purged the running version's files under live
-# sessions and the whole fleet died of it (nedschorus#62) — so background
-# updates are off and this is where updating happens instead. A machine with
-# live sessions skips the check (their binary must not be swapped under
-# them); a failed or slow update warns and proceeds, because an update
-# problem must never block starting an agent.
+# Update Claude Code before starting the seat: background auto-update is off
+# on the fleet (nedschorus#62), and launch is the chosen moment instead —
+# every fresh agent starts current. Running sessions are unaffected by an
+# update (user-established across many updates: installed versions are
+# retained on disk). A failed or slow update warns and proceeds, because an
+# update problem must never block starting an agent.
 UPDATE_TIMEOUT="${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45}"
-if pgrep -x claude >/dev/null 2>&1; then
-    echo "launch-claude-mac: live claude sessions on this Mac — skipping the update check (a version swap under running sessions kills them; nedschorus#62)"
-else
-    echo "launch-claude-mac: no live sessions — checking for a Claude Code update"
-    perl -e 'alarm shift; exec @ARGV' "$UPDATE_TIMEOUT" claude update \
-        || echo "launch-claude-mac: claude update failed or timed out; launching on the installed version" >&2
-fi
+echo "launch-claude-mac: checking for a Claude Code update"
+perl -e 'alarm shift; exec @ARGV' "$UPDATE_TIMEOUT" claude update \
+    || echo "launch-claude-mac: claude update failed or timed out; launching on the installed version" >&2
 
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
 mkdir -p "$AGENT_DIRECTORY"
