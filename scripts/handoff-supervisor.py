@@ -524,6 +524,51 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
 
+    # A fresh boot may find an unconsumed handoff — a crash or reboot ended the
+    # previous cycle after the write but before a supervisor acted on it. Ignite
+    # from it directly. Launching first and letting the wait loop find the file
+    # would kill the just-born session for a handoff that predates it.
+    if adopted is None and settings.handoff_path.is_file():
+        boot_fields = parse_handoff_file(settings.handoff_path)
+        boot_counter = counter_from(boot_fields)
+        consumed = state.get("consumed_counter")
+        if boot_counter is not None and (consumed is None or boot_counter > consumed):
+            if boot_fields.get("dont-restart"):
+                # The handoff asks for a consultation before any relaunch;
+                # boot-ignition must not steamroll it. Same terminal rule as
+                # the in-cycle dont-restart branch below.
+                if not sys.stdin.isatty():
+                    print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
+                    state["consumed_counter"] = boot_counter
+                    write_supervisor_state(settings.state_path, state)
+                    return 0
+                if input("handoff-supervisor: restart? y/n ").strip().lower() != "y":
+                    print("handoff-supervisor: stopping at the agent's request")
+                    state["consumed_counter"] = boot_counter
+                    write_supervisor_state(settings.state_path, state)
+                    return 0
+            generation += 1
+            retiring_session_id = state.get("session_id")
+            successor_session_id, ignition = (
+                carry_over_to_successor(settings, retiring_session_id, boot_fields, generation)
+                if retiring_session_id else (None, None)
+            )
+            if successor_session_id is None:
+                # No retiring transcript to extract (new machine, or it is
+                # gone). The next-step still carries the work: ignite with it
+                # alone rather than discarding the handoff.
+                successor_session_id = str(uuid.uuid4())
+                ignition = (
+                    f"{boot_fields.get('next-step', '')} (Recovered at supervisor boot: the "
+                    "previous session's dialog extract is unavailable; this next-step and the "
+                    "repository are your whole context.)"
+                )
+                print("handoff-supervisor: igniting from an unconsumed handoff without a dialog extract")
+            else:
+                print("handoff-supervisor: igniting from an unconsumed handoff left by a previous cycle")
+            state["consumed_counter"] = boot_counter
+            session_id, prompt = successor_session_id, ignition
+
     while True:
         state.update({"session_id": session_id, "generation": generation})
         write_supervisor_state(settings.state_path, state)
@@ -549,6 +594,24 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         )
         if handoff_fields is None:
             print("handoff-supervisor: session ended without a handoff; supervisor stopping")
+            return 0
+
+        # A successor inherits this process's stdio, so without a terminal
+        # there is no seat to relaunch onto: the successor reads EOF at its
+        # first need for input and dies after one turn — observed 2026-08-14,
+        # when an adopted console session was killed and its successor
+        # reported into a log file. Refusing BEFORE the kill and the consume
+        # leaves the session alive and its handoff intact for a seated
+        # supervisor (a launcher-owned tmux pane) or a by-hand relaunch.
+        # dont-restart is exempt: that flow consumes and stops without ever
+        # launching a successor, which needs no seat.
+        if not sys.stdin.isatty() and not handoff_fields.get("dont-restart"):
+            print(
+                "handoff-supervisor: a handoff arrived, but this supervisor has no terminal to "
+                "seat a successor on — not recycling. The session stays up and the handoff stays "
+                "unconsumed; a seated supervisor (launch-claude-ubuntu / launch-claude-mac) or a "
+                "by-hand relaunch picks it up. Stopping."
+            )
             return 0
 
         stop_session(process)

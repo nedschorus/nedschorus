@@ -877,6 +877,33 @@ automatic integration (clean re-application, the usual case) and `conflict`
    the first expected candidate-skill pull, triggered by exactly this task.
    Building it first would produce this slice's test plan; not building it
    means the test plan above is hand-written, as it currently is.
+3. **Does this build own the check battery?** Two documents disagree, and
+   the disagreement is why nobody noticed the work was skipped.
+   [nc-python-toolchain-plan.md](../cross-project/nc-python-toolchain-plan.md)
+   § Phase 1 is headed "First pass (built with the gatekeeper, step 7)" and
+   specifies `nc-checkin-quality-gate` — gitleaks plus `ruff check`,
+   `ruff format --check`, `mypy` and `pytest`, run full-repo on every
+   check-in, refusing with the tool's structured output nested in the
+   gatekeeper's refusal (boss-ruled 2026-07-31). This plan never mentions
+   it. Neither does the specification, nor the build bindings: `git grep -icE
+   'ruff|mypy|pytest|gitleaks|nc-checkin-quality-gate|check battery' main --`
+   over `docs/issues/3-git-gatekeeper-build-slice-plan.md`,
+   `docs/cross-project/git-gatekeeper-design.md` and
+   `docs/issues/queue/3-gatekeeper-build-bindings.md` returns zero hits in
+   all three; the same query over `scripts/git-gatekeeper.py` also returns
+   zero. Only the two toolchain documents name it. All five slices are
+   built, so today the gate screens the request, builds the candidate and
+   handles the race, and runs no style check, no type check, no test suite
+   and no secret scan: a check-in that breaks every test in the repository
+   is accepted. The ruling needed is which document governs — whether this
+   build owns the battery (this plan gains a slice) or the binding has
+   lapsed (the toolchain plan's Phase 1 heading is corrected). A related
+   distinction the user raised 2026-08-14, already project doctrine as the
+   toolchain plan's "code beats prompts": mechanically decidable checks are
+   code and belong to the gate; correctness review is not mechanically
+   decidable and belongs to the judgment layer with skills and reviews.
+   Whichever way this is ruled, both tiers are currently absent from the
+   program. Raised 2026-08-14 by new-vp; not choirmaster's decision to make.
 
 ## How this plan was ruled
 

@@ -95,10 +95,22 @@ if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
 fi
 
+# Update Claude Code on the box before starting the seat: background
+# auto-update is off on the fleet (nedschorus#62), and launch is the chosen
+# moment instead — every fresh agent starts current. Running sessions are
+# unaffected by an update (user-established across many updates: installed
+# versions are retained on disk). A failed or slow update warns and
+# proceeds, because an update problem must never block starting an agent.
+# The twin does the same locally, at scripts/launch-claude-mac.
+UPDATE_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
+timeout \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45} claude update \
+|| echo 'launch-claude-ubuntu: claude update failed or timed out; launching on the installed version' >&2"
+
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never
 # answer and an attached one should not have to.
-PREPARE_COMMAND="mkdir -p $AGENT_DIRECTORY && python3 -c 'import json,os,sys; \
+PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p $AGENT_DIRECTORY && python3 -c 'import json,os,sys; \
 p=os.path.expanduser(\"~/.claude.json\"); \
 d=json.load(open(p)) if os.path.exists(p) else {}; \
 t=os.path.abspath(os.path.expanduser(sys.argv[1])); \

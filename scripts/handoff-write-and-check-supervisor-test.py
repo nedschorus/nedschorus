@@ -146,14 +146,20 @@ def run_liveness_report_cases(workspace: Path):
     """The write and the liveness report are one decision: a handoff nobody is
     watching must not stop the agent working."""
     result = run_writer(workspace, "Continue the walk.")
-    check("with no supervisor and no session identity, the writer exits 1",
+    check("with no supervisor, the writer exits 1",
           result.returncode == 1, result.stdout)
     check("with no supervisor, the agent is told to keep working",
-          "keep working" in result.stderr, result.stderr)
+          "keep working" in result.stdout, result.stdout)
     check("with no supervisor, the write still happened",
           (workspace / "tester-handoff.md").is_file(), "handoff missing")
-    check("the writer says why it could not start a supervisor",
-          "does not report its id" in result.stderr, result.stderr)
+    check("with no supervisor, the agent is told the by-hand relaunch path",
+          "relaunch claude here" in result.stdout
+          and str(workspace / "tester-handoff.md") in result.stdout,
+          result.stdout)
+    check("no supervisor is started for an unseated session",
+          not (workspace / "tester-supervisor.log").is_file()
+          and "Stop working now and wait" not in result.stdout,
+          result.stdout)
 
     writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"session_id": "s"})
     result = run_writer(workspace, "Continue the walk.")
@@ -168,30 +174,27 @@ def run_liveness_report_cases(workspace: Path):
     check("an unreadable heartbeat reads as nobody watching", result.returncode == 1, result.stdout)
 
 
-def run_app_hosted_cases(workspace: Path):
-    """An app-hosted session gets its handoff written but never a supervisor:
-    the successor a detached supervisor launches has no seat, so the writer
-    must refuse, name the manual path, and leave the session working."""
-    original_ancestry = writer.app_hosted_ancestry
-    original_environment = dict(os.environ)
-    writer.app_hosted_ancestry = lambda pid: True
-    os.environ["CLAUDE_CODE_SESSION_ID"] = "test-session"
-    os.environ["CLAUDE_PID"] = "12345"
-    try:
-        started, detail = writer.start_adopting_supervisor("tester", workspace)
-    finally:
-        writer.app_hosted_ancestry = original_ancestry
-        os.environ.clear()
-        os.environ.update(original_environment)
-    check("an app-hosted session never starts a supervisor", started is False, detail)
-    check(
-        "the app-hosted refusal names the desktop app and the manual path",
-        "desktop app" in detail and "clear" in detail, detail,
+def run_console_identity_case(workspace: Path):
+    """The adopt-and-recycle path is gone (removed 2026-08-14): a session with
+    a full environment identity gets exactly the same answer as one without —
+    handoff written, nobody watching, relaunch by hand. The identity that once
+    triggered a doomed detached supervisor must trigger nothing."""
+    next_step_path = workspace / "identity-next-step.txt"
+    next_step_path.write_text("Continue the walk.", encoding="utf-8")
+    environment = dict(os.environ)
+    environment["CLAUDE_CODE_SESSION_ID"] = "test-session"
+    environment["CLAUDE_PID"] = "12345"
+    environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "identcase",
+         "--next-step-file", str(next_step_path), "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False, env=environment,
     )
-    check(
-        "process id 1 has no app ancestry",
-        writer.app_hosted_ancestry("1") is False, "launchd read as app-hosted",
-    )
+    check("a session with environment identity still gets no supervisor",
+          result.returncode == 1 and not (workspace / "identcase-supervisor.log").is_file(),
+          result.stdout + result.stderr)
+    check("the identity path also names the by-hand relaunch",
+          "relaunch claude here" in result.stdout, result.stdout)
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
@@ -199,7 +202,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_counter_cases(Path(temporary_directory))
     run_invocation_cases(Path(temporary_directory))
     run_liveness_report_cases(Path(temporary_directory))
-    run_app_hosted_cases(Path(temporary_directory))
+    run_console_identity_case(Path(temporary_directory))
 
 print()
 if failures:

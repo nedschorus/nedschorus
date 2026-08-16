@@ -36,10 +36,16 @@ with tempfile.TemporaryDirectory() as workspace:
     root = Path(workspace)
     (root / "scripts").mkdir()
     (root / "scripts" / "real-script.py").write_text(
-        'parser.add_argument("--threshold")\n', encoding="utf-8"
+        'parser.add_argument("--threshold")\nWORD_FLOOR = 2500\nWINDOW = 100_000\n',
+        encoding="utf-8",
     )
     (root / "docs").mkdir()
-    (root / "docs" / "real-doc.md").write_text("# real\n", encoding="utf-8")
+    (root / "docs" / "real-doc.md").write_text(
+        "# real\n"
+        "The supervisor **must stop** working now and wait.\n"
+        "The handoff scrub reports the store's depth alongside the other queues.\n",
+        encoding="utf-8",
+    )
 
     # --- Path existence ---------------------------------------------------
     check("an existing backtick path passes",
@@ -136,6 +142,55 @@ with tempfile.TemporaryDirectory() as workspace:
     # --- Code fences ------------------------------------------------------
     check("fenced code blocks are skipped",
           problems_for("```\n`scripts/ghost.py` and 2026-13-40\n```\n", root) == [])
+
+    # --- Quoted text vs its attributed source -----------------------------
+    check("a quote present in the one named file passes",
+          problems_for('it says "must stop working now and wait" ([d](docs/real-doc.md))',
+                       root) == [])
+    problems = problems_for('it says "never said anywhere in that file" ([d](docs/real-doc.md))',
+                            root)
+    check("a quote absent from the named file is reported",
+          any("quoted text not found" in p for p in problems), str(problems))
+    check("emphasis in the source does not break the quote match",
+          problems_for('per "supervisor must stop working now" ([d](docs/real-doc.md))',
+                       root) == [])
+    check("an ellipsis quote checks its fragments and passes",
+          problems_for('the ruling "reports the store\'s depth ... the other queues" '
+                       "([d](docs/real-doc.md))", root) == [])
+    problems = problems_for('the ruling "reports the store\'s depth ... never in the file" '
+                            "([d](docs/real-doc.md))", root)
+    check("an ellipsis quote with a missing fragment is reported",
+          any("never in the file" in p for p in problems), str(problems))
+    check("a quote under four words is not checked",
+          problems_for('the "just a label" case ([d](docs/real-doc.md))', root) == [])
+    check("a line naming two files attributes nothing checkable",
+          problems_for('says "never said anywhere in that file" per [a](docs/real-doc.md) '
+                       "and `scripts/real-script.py`", root) == [])
+    check("a quote with no named file is not checked",
+          problems_for('he said "never said anywhere in that file" today', root) == [])
+    check("a quote touching a backtick span is skipped",
+          problems_for('prints `"not in the doc at all"` ([d](docs/real-doc.md))', root) == [])
+    check("punctuation closing the quoting sentence still matches",
+          problems_for('asked "reports the store\'s depth alongside the other queues?" '
+                       "([d](docs/real-doc.md))", root) == [])
+    check("a quote the line says was deleted is not checked",
+          problems_for('the "never said anywhere in that file" code was deleted 2026-08-10 '
+                       "([d](docs/real-doc.md))", root) == [])
+
+    # --- Numbers quoted from code -----------------------------------------
+    check("a backtick number found in the named code file passes",
+          problems_for("the floor is `2500` in `scripts/real-script.py`", root) == [])
+    problems = problems_for("the floor is `9999` in `scripts/real-script.py`", root)
+    check("a backtick number absent from the named code file is reported",
+          any("number 9999 not found" in p for p in problems), str(problems))
+    check("digit-group separators do not break the number match",
+          problems_for("a window of `100000` in `scripts/real-script.py`", root) == [])
+    check("a number inside a command span is a usage example, not checked",
+          problems_for("run `scripts/real-script.py --threshold 9999`", root) == [])
+    check("a prose number near a code file is not checked",
+          problems_for("all 9999 cases in `scripts/real-script.py`", root) == [])
+    check("a backtick number naming only an md file is not checked",
+          problems_for("the value `9999` per [d](docs/real-doc.md)", root) == [])
 
     # --- JSON duplicate keys ----------------------------------------------
     good_json = root / "good.json"
