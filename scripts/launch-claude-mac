@@ -138,6 +138,12 @@ if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
         || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
 fi
 
+# Boot-time worktree report: finished session worktrees pile up invisibly,
+# so each launch names any that are done (clean, landed, vacant) and the
+# command that removes them. Report only — removal stays a deliberate,
+# separate call — and a report problem never blocks a launch.
+python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
+
 # tmux tells the terminal the session name, so the tab reads the seat's name
 # rather than the command that happened to start it. Global option, harmless
 # to repeat on each launch.

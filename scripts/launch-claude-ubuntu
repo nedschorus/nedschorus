@@ -135,6 +135,11 @@ if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
   || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings' >&2; \
 fi"
 
+# Boot-time worktree report on the box — the twin of the same step in
+# launch-claude-mac: names any finished session worktree and the command
+# that removes it. Report only, and never blocks the launch.
+PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done || true; }"
+
 # tmux tells the terminal the session name, so an iTerm2 tab reads
 # "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
 # server each launch: it is a global option, harmless to repeat.
