@@ -79,14 +79,19 @@ for jsonl in sorted(root.glob("*/*.jsonl")):
                 matched = next((p for p in KNOWN_PREFIXES if text.startswith(p)), None)
                 shape = f"{KNOWN_PREFIXES[matched]}:{matched}" if matched else None
                 if shape is None:
-                    if text.startswith("<") :
+                    # Bracketed openings are sampled too: an injected shape
+                    # need not use angle brackets, and one absorbed into
+                    # typed-dialog is invisible (review finding, 2026-08-17).
+                    if text.startswith("<"):
                         shape = "OTHER-ANGLE:" + re.split(r"[ >\n]", text, maxsplit=1)[0][:40]
+                    elif text.startswith("["):
+                        shape = "OTHER-BRACKET:" + re.split(r"[\]\n]", text, maxsplit=1)[0][:40]
                     else:
                         shape = "typed-dialog"
                 shape_counts[shape] += 1
                 shape_words[shape] += len(text.split())
                 per_project[project][shape] += 1
-                if shape.startswith("OTHER-ANGLE") and len(unknown_samples) < 12:
+                if shape.startswith(("OTHER-ANGLE", "OTHER-BRACKET")) and len(unknown_samples) < 12:
                     unknown_samples.append((project, text[:160].replace("\n", " ")))
     except OSError:
         continue
@@ -96,11 +101,17 @@ print(f"{'shape':<42}{'records':>9}{'words':>11}")
 for shape, count in shape_counts.most_common():
     print(f"{shape:<42}{count:>9}{shape_words[shape]:>11}")
 print("\nprojects with most non-dialog user records:")
+def injected_count(counts):
+    # kept: shapes are deliberate dialog, not noise (review finding).
+    return sum(v for k, v in counts.items()
+               if k != "typed-dialog" and not k.startswith("kept:"))
+
+
 scored = sorted(per_project.items(),
-                key=lambda kv: sum(v for k, v in kv[1].items() if k != "typed-dialog"),
+                key=lambda kv: injected_count(kv[1]),
                 reverse=True)[:8]
 for project, counts in scored:
-    noise = sum(v for k, v in counts.items() if k != "typed-dialog")
+    noise = injected_count(counts)
     print(f"  {project[:60]:<62} dialog={counts.get('typed-dialog',0):<6} injected={noise}")
 if unknown_samples:
     print("\nunclassified angle-bracket samples:")

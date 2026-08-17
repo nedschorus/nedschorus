@@ -206,7 +206,9 @@ def record_shows_tool_activity(record) -> bool:
     """True for a record carrying tool calls or results (not a subagent's)."""
     if not isinstance(record, dict) or record.get("isSidechain"):
         return False
-    content = record.get("message", {}).get("content")
+    # "message": null appears on some harness record types; .get's default
+    # only covers a MISSING key (review finding, 2026-08-17 — this crashed).
+    content = (record.get("message") or {}).get("content")
     return isinstance(content, list) and any(
         isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result")
         for block in content
@@ -241,7 +243,7 @@ def dialog_turn_from_record(record):
     if record_type not in ("user", "assistant"):
         return None  # system, attachment, queue-operation, harness state
 
-    content = record.get("message", {}).get("content")
+    content = (record.get("message") or {}).get("content")
     if record_type == "user" and isinstance(content, str):
         text = content.strip()
     else:

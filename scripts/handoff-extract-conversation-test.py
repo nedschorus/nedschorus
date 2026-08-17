@@ -230,6 +230,20 @@ with tempfile.TemporaryDirectory() as workspace:
     check("harness records between the pair do not save the ack",
           "Routine — noted. On watch." not in kept, str(kept)[:200])
 
+    # "message": null appears on some harness record types; both content
+    # readers must survive it (review finding: this crashed extraction).
+    null_message = [
+        user_record("real prompt"),
+        user_record(notification_text),
+        {"type": "progress", "message": None},
+        {"type": "user", "message": None},
+        assistant_record("Routine ack after a null-message record."),
+    ]
+    path = write_transcript(workspace, "null-message.jsonl", null_message)
+    turns, skips = extractor.read_dialog_turns(path)
+    check("a null message field does not crash extraction",
+          [t["text"] for t in turns] == ["real prompt"], str(turns)[:200])
+
     # --- Short trailing handoff fragments are trimmed ----------------------
     tail_fragment = [
         user_record("penultimate prompt"),
