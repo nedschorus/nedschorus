@@ -30,7 +30,7 @@
           },
           {
             "type": "command",
-            "command": "sh -c 'GUARD=\"$CLAUDE_PROJECT_DIR/.claude/hooks/backup-and-snapshot-write-guard.py\"; [ -f \"$GUARD\" ] || GUARD=\"$PWD/.claude/hooks/backup-and-snapshot-write-guard.py\"; exec python3 \"$GUARD\"'"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/backup-and-snapshot-write-guard.py"
           }
         ]
       }
