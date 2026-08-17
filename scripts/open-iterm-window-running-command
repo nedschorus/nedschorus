@@ -1,0 +1,36 @@
+#!/bin/sh
+# open-iterm-window-running-command <command...> — open a new iTerm2 window on
+# this Mac running the given command.
+#
+# The command is passed as the new session's own process (iTerm's AppleScript
+# `command` parameter), never typed as keystrokes: AppleScript `write text`
+# races the user's real cursor and spliced a command on 2026-08-17 — the rule
+# and both incidents are recorded on nedschorus#27, and the project's
+# synthetic-keystroke guard hook blocks the `write text` form outright.
+#
+# The window closes when the command exits (iTerm profile default); for a
+# window that should persist, run an interactive process (e.g. ssh -t, tmux
+# attach) as the command.
+
+set -eu
+
+if [ $# -lt 1 ]; then
+    echo "usage: open-iterm-window-running-command <command...>" >&2
+    echo "Opens an iTerm2 window running the command — passed as the session's" >&2
+    echo "process, never as synthetic keystrokes (rule: nedschorus#27)." >&2
+    exit 2
+fi
+
+if ! command -v osascript >/dev/null 2>&1; then
+    echo "open-iterm-window-running-command: needs macOS (osascript not found)" >&2
+    exit 1
+fi
+
+# Escape for embedding in an AppleScript double-quoted string.
+ESCAPED=$(printf '%s' "$*" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+
+osascript <<APPLESCRIPT
+tell application "iTerm"
+	create window with default profile command "$ESCAPED"
+end tell
+APPLESCRIPT
