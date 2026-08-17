@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Census of user-record shapes across every Claude Code session transcript.
+
+The receipt behind handoff-extract-conversation.py's INJECTED_TEXT_PREFIXES
+list (2026-08-17: 341 transcripts, both machines — 59% of kept user-record
+words were harness-injected). Rerun it when extracts look noisy again: a new
+unclassified shape in its output is a new prefix for that list.
+
+For the handoff extractor's drop-list: walks ~/.claude/projects/*/*.jsonl,
+classifies every type=="user" record the extractor's current filter would
+KEEP (not isMeta, not sidechain, non-empty text), and prints a histogram of
+opening shapes plus samples of anything unclassified.
+"""
+import json, sys, re
+from pathlib import Path
+from collections import Counter, defaultdict
+
+KNOWN_PREFIXES = [
+    "<task-notification>",
+    "<cross-session-message",
+    "<command-name>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<system-reminder>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<user-memory-input>",
+    "[Request interrupted",
+    "[SYSTEM NOTIFICATION",
+]
+
+root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / ".claude" / "projects"
+shape_counts = Counter()
+shape_words = Counter()
+per_project = defaultdict(Counter)
+unknown_samples = []
+files = 0
+bad_lines = 0
+
+for jsonl in sorted(root.glob("*/*.jsonl")):
+    files += 1
+    project = jsonl.parent.name
+    try:
+        with jsonl.open("rb") as handle:
+            for raw in handle:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    record = json.loads(raw)
+                except Exception:
+                    bad_lines += 1
+                    continue
+                if not isinstance(record, dict) or record.get("type") != "user":
+                    continue
+                if record.get("isSidechain") or record.get("isMeta"):
+                    continue
+                content = record.get("message", {}).get("content")
+                if isinstance(content, str):
+                    text = content.strip()
+                elif isinstance(content, list):
+                    text = "\n".join(
+                        block.get("text", "") for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ).strip()
+                else:
+                    text = ""
+                if not text:
+                    continue
+                shape = next((p for p in KNOWN_PREFIXES if text.startswith(p)), None)
+                if shape is None:
+                    if text.startswith("<") :
+                        shape = "OTHER-ANGLE:" + re.split(r"[ >\n]", text, maxsplit=1)[0][:40]
+                    else:
+                        shape = "typed-dialog"
+                shape_counts[shape] += 1
+                shape_words[shape] += len(text.split())
+                per_project[project][shape] += 1
+                if shape.startswith("OTHER-ANGLE") and len(unknown_samples) < 12:
+                    unknown_samples.append((project, text[:160].replace("\n", " ")))
+    except OSError:
+        continue
+
+print(f"files: {files}  bad lines: {bad_lines}")
+print(f"{'shape':<42}{'records':>9}{'words':>11}")
+for shape, count in shape_counts.most_common():
+    print(f"{shape:<42}{count:>9}{shape_words[shape]:>11}")
+print("\nprojects with most non-dialog user records:")
+scored = sorted(per_project.items(),
+                key=lambda kv: sum(v for k, v in kv[1].items() if k != "typed-dialog"),
+                reverse=True)[:8]
+for project, counts in scored:
+    noise = sum(v for k, v in counts.items() if k != "typed-dialog")
+    print(f"  {project[:60]:<62} dialog={counts.get('typed-dialog',0):<6} injected={noise}")
+if unknown_samples:
+    print("\nunclassified angle-bracket samples:")
+    for project, sample in unknown_samples:
+        print(f"  [{project[:30]}] {sample}")

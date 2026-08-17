@@ -27,8 +27,14 @@ a second session in the same worktree makes that a race.
 
 Kept verbatim: user prompts and assistant display text. Dropped: tool
 calls and their results, thinking blocks, system and harness records,
-queued notifications, and subagent turns (isSidechain), none of which the
-successor needs and all of which are large.
+subagent turns (isSidechain), and harness-injected pseudo-prompts with the
+short agent acknowledgements that answer them — none of which the successor
+needs and all of which are large.
+
+Alongside the extraction, when it leaves turns behind, the complete filtered
+dialog is written as a sibling file: the tail is the successor's working set,
+the companion is the conversation's history without the raw transcript's tool
+dumps.
 
 Exit codes: 0 extraction written, 2 bad invocation, 3 transcript not
 found, 4 transcript unusable (empty, unparseable, or boundary not found).
@@ -47,13 +53,43 @@ PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 # the whole extraction.
 MAXIMUM_RECORD_BYTES = 4 * 1024 * 1024
 
-# How much dialog the successor receives: 1600 words is roughly eleven
-# exchanges (trimmed from 2500 after live restarts showed the longer tail
-# unused — the asymmetry favors lean: a starved successor reads the
-# transcript it is pointed at once; a fat tail taxes every restart). This
-# number, plus the transcript pointer and the left-behind count in the
-# header, is what replaced asking the retiring agent to judge a boundary.
-MINIMUM_DIALOG_WORDS = 1600
+# How much dialog the successor receives (trimmed from 2500 after live
+# restarts showed the longer tail unused, then from 1600 to 1000 when the
+# injected-record filter below made every counted word a real one — ruled
+# 2026-08-17: the 2026-08-17 merge-lane restart succeeded on 341 real words,
+# so 1000 carries ~3x that with margin. The asymmetry favors lean: a starved
+# successor reads the companion dialog or transcript it is pointed at once; a
+# fat tail taxes every restart). This number, plus those pointers and the
+# left-behind count in the header, is what replaced asking the retiring agent
+# to judge a boundary.
+MINIMUM_DIALOG_WORDS = 1000
+
+
+# Harness-injected user records open with one of these. The list is the
+# 2026-08-17 census of 341 transcripts across both machines and every project
+# (script: handoff-census-user-record-shapes.py, kept beside this one): of all
+# user-record words the old filter kept, 59% were injected, task-notifications
+# alone 860 records — displacing exactly the dialog the tail exists to carry.
+# <bash-input> is deliberately absent: those are commands the user personally
+# typed via the "!" prefix.
+INJECTED_TEXT_PREFIXES = (
+    "<task-notification>",
+    "<command-message>",
+    "<command-name>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<system-reminder>",
+    "[Request interrupted",
+)
+
+# An assistant turn at most this many words, immediately after an injected
+# record, is a routine acknowledgement of it ("Routine — … On watch.") and
+# falls with it. A longer reaction is real dialog and survives: length is the
+# only signal that distinguishes the watcher's one-line acks from an urgent
+# analysis a successor genuinely needs.
+MAXIMUM_ACKNOWLEDGEMENT_WORDS = 60
 
 
 class TranscriptProblem(Exception):
@@ -102,7 +138,13 @@ def read_dialog_turns(transcript_path: Path):
     final record can be a partial write.
     """
     turns = []
-    skip_counts = {"malformed": 0, "oversized": 0, "partial_final_record": 0}
+    skip_counts = {
+        "malformed": 0, "oversized": 0, "partial_final_record": 0,
+        "injected": 0, "acknowledgement": 0,
+    }
+    # True while the latest dropped record was harness-injected: the very next
+    # assistant turn, if short, is its acknowledgement and falls with it.
+    following_injected_record = False
 
     with transcript_path.open("rb") as handle:
         raw_lines = handle.readlines()
@@ -129,8 +171,24 @@ def read_dialog_turns(transcript_path: Path):
             continue
 
         turn = dialog_turn_from_record(record)
-        if turn is not None:
+        if turn is None:
+            continue  # non-dialog record: does not break an injected pair
+
+        if turn["voice"] == "user":
+            if turn["text"].startswith(INJECTED_TEXT_PREFIXES):
+                skip_counts["injected"] += 1
+                following_injected_record = True
+            else:
+                turns.append(turn)
+                following_injected_record = False
+            continue
+
+        if (following_injected_record
+                and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
+            skip_counts["acknowledgement"] += 1
+        else:
             turns.append(turn)
+        following_injected_record = False
 
     return turns, skip_counts
 
@@ -185,16 +243,28 @@ def select_tail_clearing_floor(turns, minimum_words: int = MINIMUM_DIALOG_WORDS)
 
     Walks back from the end until the selection clears the floor, then keeps
     walking to the nearest earlier user prompt so the extract opens on a
-    prompt rather than mid-exchange. Returns (selected_turns, start_index).
+    prompt rather than mid-exchange. Short trailing assistant turns are
+    trimmed first: the extraction runs after the retiring session was killed,
+    so its last turns are routinely fragments announcing the handoff
+    ("Writing the successor's first-action prompt:"). Only short turns fall —
+    a substantive final answer is real dialog and survives. Returns
+    (selected_turns, start_index).
     """
-    index = len(turns)
-    while index > 0 and word_count(turns[index:]) < minimum_words:
+    end = len(turns)
+    while (end > 0 and turns[end - 1]["voice"] == "assistant"
+           and len(turns[end - 1]["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
+        end -= 1
+    if end == 0:
+        end = len(turns)  # nothing but short assistant turns: keep what exists
+
+    index = end
+    while index > 0 and word_count(turns[index:end]) < minimum_words:
         index -= 1
 
     while index > 0 and turns[index]["voice"] != "user":
         index -= 1
 
-    return turns[index:], index
+    return turns[index:end], index
 
 
 def widen_to_minimum_words(turns, boundary_index: int, minimum_words: int) -> int:
@@ -243,7 +313,23 @@ class ExtractionReport:
     transcript_path: Path
     boundary_note: str
     turns_left_behind: int
+    total_turns: int
     skip_counts: dict
+    companion_path: Path = None
+
+
+def render_pointers(report: ExtractionReport) -> list:
+    lines = []
+    if report.companion_path:
+        lines.append(
+            f"Earlier dialog, complete and noise-free: {report.companion_path}."
+        )
+    lines.append(
+        f"The full transcript is at {report.transcript_path} — every tool call "
+        "and result, and the retiring agent's thinking, where the reasoning "
+        "behind a decision often lives."
+    )
+    return lines
 
 
 def render_extraction(turns, report: ExtractionReport) -> str:
@@ -251,14 +337,20 @@ def render_extraction(turns, report: ExtractionReport) -> str:
         f"# Session dialog — {report.session_id}",
         "",
         f"Boundary: {report.boundary_note}",
-        f"Turns carried: {len(turns)} of {len(turns) + report.turns_left_behind} "
-        f"({word_count(turns)} words).",
+        f"Turns carried: {len(turns)} of {report.total_turns} "
+        f"({word_count(turns)} words). Turn counts are dialog only — "
+        f"harness-injected records and their acknowledgements are filtered out.",
     ]
 
     if report.turns_left_behind:
         lines.append(
-            f"Earlier in this session, and NOT below: {report.turns_left_behind} turns. "
-            f"Read them from the transcript when your work reaches back that far."
+            f"Earlier in this session, and NOT below: {report.turns_left_behind} turns."
+        )
+    trimmed_at_end = report.total_turns - report.turns_left_behind - len(turns)
+    if trimmed_at_end > 0:
+        lines.append(
+            f"Trimmed from the end: {trimmed_at_end} short agent turn(s) — "
+            f"fragments from the session's last moments before the handoff."
         )
 
     skipped = ", ".join(f"{count} {name}" for name, count in report.skip_counts.items() if count)
@@ -271,13 +363,28 @@ def render_extraction(turns, report: ExtractionReport) -> str:
         speaker = "User" if turn["voice"] == "user" else "Agent"
         lines += [f"## {speaker}", "", turn["text"], ""]
 
-    lines += [
+    lines += ["---", "", "Need more than this?"]
+    lines += render_pointers(report)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_companion(turns, report: ExtractionReport) -> str:
+    """The complete filtered dialog: every real turn, none of the noise."""
+    lines = [
+        f"# Complete session dialog — {report.session_id}",
+        "",
+        f"All {len(turns)} dialog turns ({word_count(turns)} words), "
+        f"harness-injected records and their acknowledgements filtered out.",
+        f"Tool calls, results, and the agent's thinking are only in the full "
+        f"transcript: {report.transcript_path}",
+        "",
         "---",
         "",
-        "Need more than this? The full transcript, including tool calls and "
-        f"results, is at {report.transcript_path}.",
-        "",
     ]
+    for turn in turns:
+        speaker = "User" if turn["voice"] == "user" else "Agent"
+        lines += [f"## {speaker}", "", turn["text"], ""]
     return "\n".join(lines)
 
 
@@ -360,24 +467,30 @@ def main(argv=None) -> int:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
-    extraction = render_extraction(
-        selected,
-        ExtractionReport(
-            session_id=session_id,
-            transcript_path=transcript_path,
-            boundary_note=boundary_note,
-            turns_left_behind=start_index,
-            skip_counts=skip_counts,
-        ),
+    report = ExtractionReport(
+        session_id=session_id,
+        transcript_path=transcript_path,
+        boundary_note=boundary_note,
+        turns_left_behind=start_index,
+        total_turns=len(turns),
+        skip_counts=skip_counts,
     )
 
     if arguments.output:
         output_path = Path(arguments.output).expanduser()
+        if len(selected) < len(turns):
+            report.companion_path = output_path.with_name(
+                f"{output_path.stem}-complete{output_path.suffix}"
+            )
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(extraction, encoding="utf-8")
+        output_path.write_text(render_extraction(selected, report), encoding="utf-8")
         print(f"wrote {len(selected)} turns to {output_path}", file=sys.stderr)
+        if report.companion_path:
+            report.companion_path.write_text(
+                render_companion(turns, report), encoding="utf-8")
+            print(f"wrote all {len(turns)} turns to {report.companion_path}", file=sys.stderr)
     else:
-        sys.stdout.write(extraction)
+        sys.stdout.write(render_extraction(selected, report))
 
     return 0
 

@@ -153,6 +153,105 @@ with tempfile.TemporaryDirectory() as workspace:
     kept = [turn["text"] for turn in turns]
     check("keeps both voices, drops all noise", kept == ["kept prompt", "kept answer"], str(kept))
 
+    # --- Harness-injected pseudo-prompts and their acknowledgements --------
+    # Fixture shapes are copied from the field, not the design: a delivered
+    # monitor notification persists as a PLAIN user record — no isMeta, string
+    # content — indistinguishable by type from a typed prompt. The original
+    # fixture modeled it as a queue-operation record, which the filter always
+    # dropped, so the tests stayed green while real extracts ran 79% noise
+    # (2026-08-17 census of 341 transcripts: handoff-census-user-record-shapes.py).
+    notification_text = (
+        "<task-notification>\n<task-id>b123</task-id>\n"
+        '<summary>Monitor event: "fleet watcher"</summary>\n'
+        "<event>some seat said something</event>\n"
+        "If this event is something the user would act on now, send a "
+        "PushNotification. Routine or benign output doesn't need one.\n"
+        "</task-notification>"
+    )
+    injected = [
+        user_record("real question"),
+        assistant_record("real answer to the question"),
+        user_record(notification_text),
+        assistant_record("Routine — noted. On watch."),
+        user_record(notification_text),
+        assistant_record(" ".join(["urgent"] * 80)),
+        user_record("<command-message>walk-me-through</command-message> "
+                    "<command-name>/walk-me-through</command-name>"),
+        user_record("<local-command-stdout>Set model to Opus</local-command-stdout>"),
+        user_record("[Request interrupted by user]"),
+        user_record("<bash-input>git status</bash-input>"),
+        assistant_record("short reply after a real prompt"),
+    ]
+    path = write_transcript(workspace, "injected.jsonl", injected)
+    turns, skips = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    check("notification pseudo-prompts are dropped",
+          not any("<task-notification>" in text for text in kept), str(kept)[:200])
+    check("command and interrupt records are dropped",
+          not any(text.startswith(("<command-", "<local-command", "[Request interrupted"))
+                  for text in kept), str(kept)[:200])
+    check("the short acknowledgement falls with its notification",
+          "Routine — noted. On watch." not in kept, str(kept)[:200])
+    check("a long reaction to a notification survives as dialog",
+          any(text.startswith("urgent") for text in kept), str(kept)[:200])
+    check("bash-input is kept — the user typed it",
+          "<bash-input>git status</bash-input>" in kept, str(kept)[:200])
+    check("a short answer after a real prompt is kept",
+          "short reply after a real prompt" in kept, str(kept)[:200])
+    check("injected records are counted", skips["injected"] == 5, str(skips))
+    check("acknowledgements are counted", skips["acknowledgement"] == 1, str(skips))
+
+    # --- Short trailing handoff fragments are trimmed ----------------------
+    tail_fragment = [
+        user_record("penultimate prompt"),
+        assistant_record(" ".join(["substantive"] * 100)),
+        user_record("handoff please"),
+        assistant_record("Writing the successor's first-action prompt:"),
+    ]
+    path = write_transcript(workspace, "tail-fragment.jsonl", tail_fragment)
+    turns, _ = extractor.read_dialog_turns(path)
+    selected, start = extractor.select_tail_clearing_floor(turns, 10)
+    check("short dangling handoff fragment is trimmed",
+          selected[-1]["text"] == "handoff please",
+          selected[-1]["text"][:60])
+
+    solid_tail = [
+        user_record("a prompt"),
+        assistant_record(" ".join(["substantive"] * 100)),
+    ]
+    path = write_transcript(workspace, "solid-tail.jsonl", solid_tail)
+    turns, _ = extractor.read_dialog_turns(path)
+    selected, _ = extractor.select_tail_clearing_floor(turns, 10)
+    check("a substantive final answer survives the trim",
+          selected[-1]["text"].startswith("substantive"), selected[-1]["text"][:40])
+
+    # --- Companion file: the complete filtered dialog ----------------------
+    long_session = []
+    for chapter in range(10):
+        long_session.append(user_record(f"chapter {chapter} question"))
+        long_session.append(assistant_record(" ".join([f"chapter{chapter}"] * 300)))
+    path = write_transcript(workspace, "companion-source.jsonl", long_session)
+    tail_output = Path(workspace) / "seat-dialog-0003.md"
+    exit_code = extractor.main(["--transcript-path", str(path), "--output", str(tail_output)])
+    companion_output = Path(workspace) / "seat-dialog-0003-complete.md"
+    check("companion extraction exits 0", exit_code == 0, f"got {exit_code}")
+    check("companion file is written when turns are left behind",
+          companion_output.is_file())
+    check("companion carries every dialog turn",
+          companion_output.read_text(encoding="utf-8").count("\n## ") == 20,
+          companion_output.read_text(encoding="utf-8").count("\n## "))
+    tail_text = tail_output.read_text(encoding="utf-8")
+    check("extract points at the companion", str(companion_output) in tail_text)
+    check("extract names thinking in the transcript pointer", "thinking" in tail_text)
+    check("extract header counts only real turns", " of 20 (" in tail_text, tail_text[:300])
+
+    whole_session = ordinary_records()[:-1] + [assistant_record(" ".join(["closing"] * 80))]
+    path = write_transcript(workspace, "whole-session.jsonl", whole_session)
+    whole_output = Path(workspace) / "whole-out.md"
+    extractor.main(["--transcript-path", str(path), "--output", str(whole_output)])
+    check("no companion when the whole dialog is carried",
+          not (Path(workspace) / "whole-out-complete.md").exists())
+
     # --- Tolerance: malformed line skipped and counted --------------------
     path = write_transcript(
         workspace, "malformed.jsonl", ordinary_records(),
