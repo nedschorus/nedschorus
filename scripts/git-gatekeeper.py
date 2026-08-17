@@ -951,6 +951,19 @@ def signal_worker(pid: int, signal_number: int) -> None:
     detached" flag would be exactly the data that goes stale, tears, or names a
     recycled process.
     """
+    # pid 1 is init, and pids 0 and below address process groups or — at -1 —
+    # every process this account may signal: killpg(pgrp) resolves to
+    # kill(-pgrp) in glibc and Apple libc alike (POSIX leaves pgrp <= 1
+    # undefined), so killpg(1) is kill(-1), the broadcast. On both Linux and
+    # macOS os.getpgid(1) succeeds and returns 1, so pid 1 sailed through the
+    # leads-own-group check below and the "cancel an unstoppable worker" test
+    # case broadcast SIGTERM to every process this account owned — the whole
+    # agent fleet, the tmux server, and the systemd user manager (ned-box,
+    # twice on 2026-08-17; nedschorus#62). A recorded worker can never be a
+    # pid below 2, so refuse them all here; the worker then still reads as
+    # alive and cancel walks its wait to cancel-failed, the truthful outcome.
+    if pid < 2:
+        return
     try:
         leads_own_group = os.getpgid(pid) == pid
     except (OSError, ProcessLookupError, PermissionError):

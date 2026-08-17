@@ -680,9 +680,18 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # workspace. Nothing confirmed the kill before that ruling — both killpg
     # calls swallow every error and worker_state reads permission-denied as
     # alive — so a worker this user cannot signal produced a false "cancelled"
-    # after fifteen seconds of trying. Reproduced with pid 1, which is alive,
-    # foreign, and unsignalable; the case is skipped where it is signalable
-    # (running as root), because there cancel would really signal that group.
+    # after fifteen seconds of trying. The pid 1 fixture's original premise —
+    # "alive, foreign, and unsignalable" — was false on Linux and macOS both:
+    # getpgid(1) succeeds on each, signal_worker took the group branch, and
+    # killpg(1) resolves to kill(-1) in glibc and Apple libc (POSIX leaves
+    # pgrp <= 1 undefined) — the broadcast to every process this account may
+    # signal. This very case swept the whole ned-box fleet twice on 2026-08-17
+    # (nedschorus#62) before signal_worker learned to refuse pids below 2;
+    # that Mac runs stayed green is not platform safety and must not be read
+    # as any.
+    # The fixture stays pid 1 deliberately: it is now the regression case for
+    # that refusal, and the suite surviving this case is itself the check.
+    # Still skipped where pid 1 is signalable (running as root).
     try:
         os.kill(1, 0)
         init_is_unsignalable = False
