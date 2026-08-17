@@ -21,7 +21,8 @@ Decisions, in order:
   verifiably has no attached client (the guard itself runs `tmux
   display-message -p '#{session_attached}'`, over ssh when that tmux is
   ssh-wrapped); denied with the verification recipe when a target is
-  attached, unnamed, an unexpanded variable, or unverifiable. A target tmux
+  attached, unnamed, an unexpanded variable or placeholder (`$SEAT`,
+  xargs' `{}`), or unverifiable. A target tmux
   does not know is allowed — keystrokes to a nonexistent session type
   nothing, and the command fails on its own.
 - `CLAUDE_VERIFIED_DETACHED=1` as an environment-assignment prefix on the
@@ -39,7 +40,9 @@ string, a here-string `<<<`, or arithmetic like `1<<20` opens no phantom
 heredoc); a body is data unless its consumer executes it — `osascript
 <<EOF` is checked for synthetic typing, and a body piped to or fed to a
 shell (`sh`, `bash`, `zsh`) is analyzed as a command itself, as are `sh -c`
-execution strings and `eval` arguments. An `ssh` whose
+execution strings (the c may ride in a flag cluster, `bash -lc`) and `eval`
+arguments. Unquoted `#` comments are stripped the way the shell strips
+them. An `ssh` whose
 remote command contains the tmux invocation attributes probes to that host
 (carrying -p/-i/-l); ssh found elsewhere in a command — e.g. inside a
 keystroke payload — attributes nothing.
@@ -53,9 +56,10 @@ invocation.
 Detection is literal, not adversarial: it corrects the habit of composing
 these commands directly, which is the only way the failures have happened.
 Known pass-throughs by design: invocations laundered through generated
-files, python, command substitution inside double quotes, or ssh option
-forms the probe cannot reproduce (combined `-p2222`, `-o`/`-J` chains —
-those deny as unverifiable instead when a probe is needed).
+files, python, command substitution inside double quotes, a script fed to
+a shell's stdin (`echo ... | sh`), or ssh option forms the probe cannot
+reproduce (combined `-p2222`, `-o`/`-J` chains — the probe then dials its
+default route, which can misjudge a box it cannot actually see).
 """
 
 import json
@@ -125,12 +129,13 @@ UNVERIFIED_REASON = (
     "(nedschorus#27)."
 )
 
-VARIABLE_TARGET_REASON = (
-    "Blocked: tmux target '{target}' is an unexpanded shell variable, so "
-    "this guard cannot verify it is detached. Inline the literal session "
-    "name, or verify detachment yourself with: {probe} — 0 means detached — "
-    "then re-run with CLAUDE_VERIFIED_DETACHED=1 prefixed (rule: "
-    "nedschorus#27)."
+UNRESOLVED_TARGET_REASON = (
+    "Blocked: tmux target '{target}' contains an unexpanded variable or "
+    "substitution placeholder, so this guard cannot verify the real target "
+    "is detached — probing the literal text would misjudge it. Inline the "
+    "literal session name, or verify detachment yourself with: {probe} — 0 "
+    "means detached — then re-run with CLAUDE_VERIFIED_DETACHED=1 prefixed "
+    "(rule: nedschorus#27)."
 )
 
 NO_TARGET_REASON = (
@@ -188,6 +193,8 @@ def scan_line_for_heredoc_markers(line, in_single, in_double):
             in_double = True
             i += 1
             continue
+        if char == "#" and (i == 0 or line[i - 1] in " \t;&|()`"):
+            break  # unquoted comment — the rest of the line is not shell
         if char == "<" and line[i:i + 2] == "<<" and line[i:i + 3] != "<<<" \
                 and (i == 0 or line[i - 1] != "<"):
             prefix = line[:i]
@@ -228,7 +235,11 @@ def split_out_heredocs(command):
     mentioning `osascript` and `write text` is prose, not keystrokes, and the
     guard blocked its own commit message before learning this. But the body IS
     the script when the consumer executes it (`osascript <<EOF`, `sh <<EOF`),
-    so consumers are kept for the caller to judge."""
+    so consumers are kept for the caller to judge.
+
+    Terminator matching strips indentation, which is laxer than the shell
+    for `<<` without a dash; a body ending early only exposes more lines to
+    analysis — the fail-closed direction."""
     shell_lines, heredocs = [], []
     lines = command.split("\n")
     index = 0
@@ -318,6 +329,13 @@ def tokenize_simple_commands(shell_text):
         if char in COMMAND_SEPARATOR_CHARS:
             end_command()
             i += 1
+            continue
+        if char == "#" and word is None:
+            # A word-initial unquoted # opens a comment, exactly the shell's
+            # rule — foo#bar stays one word (N3: a comment mentioning the
+            # banned forms must not deny the command below it).
+            while i < n and shell_text[i] != "\n":
+                i += 1
             continue
         if word is None:
             word = []
@@ -490,10 +508,13 @@ def analyze_simple_command(words, ssh_context, verified, guard):
                                     guard)
 
     if special_kind == "shell":
-        # An inline execution string (`sh -c '...'`) is a command, not data.
+        # An inline execution string (`sh -c '...'`) is a command, not data,
+        # and the c may ride in a flag cluster — `bash -lc`, `sh -euc` (N2).
         # A shell without -c executes a file — laundering, disclaimed.
         for position, word in enumerate(after):
-            if word == "-c" and position + 1 < len(after):
+            if (word.startswith("-") and not word.startswith("--")
+                    and word[1:].isalpha() and "c" in word[1:]
+                    and position + 1 < len(after)):
                 return analyze_command_text(after[position + 1], ssh_context,
                                             verified, guard)
         return None
@@ -525,8 +546,11 @@ def analyze_simple_command(words, ssh_context, verified, guard):
     if not targets:
         return NO_TARGET_REASON
     for target in targets:
-        if "$" in target or "`" in target:
-            return VARIABLE_TARGET_REASON.format(
+        # $VAR and `...` are shell expansions; {} is xargs'/parallel's
+        # substitution placeholder (N1) — probing any of them literally gets
+        # "can't find" and would allow while the real target may be attached.
+        if "$" in target or "`" in target or "{}" in target:
+            return UNRESOLVED_TARGET_REASON.format(
                 target=target, probe=probe_recipe(target, ssh_context))
         attached, error = query_session_attached(target, ssh_context, guard)
         if attached is None:

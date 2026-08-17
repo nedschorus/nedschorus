@@ -173,6 +173,23 @@ check("F6: a gh issue comment about the rule passes",
       decide('gh issue comment 27 --body "the guard denies osascript write text '
              'and tmux send-keys at attached sessions"', StubRunner()) is None)
 
+# N3: comments are stripped the way the shell strips them.
+runner = StubRunner()
+check("N3: a comment line mentioning the banned forms does not deny the command below",
+      decide("# osascript write text\ngit status", runner) is None and not runner.calls,
+      runner.calls)
+runner = StubRunner()
+check("N3: a trailing comment mentioning tmux send-keys stays a comment",
+      decide("echo done # then tmux send-keys -t seat-a x", runner) is None
+      and not runner.calls,
+      runner.calls)
+runner = StubRunner(stdout="1\n")
+reason = decide("echo hi # docs mention <<EOF\ntmux send-keys -t seat-a x", runner)
+check("N3: a <<EOF inside a comment opens no heredoc; the next line is still guarded",
+      reason is not None and "attached client" in reason, reason)
+check("N3: a quoted # is not a comment (probed as part of the word)",
+      decide("tmux send-keys -t 'seat#3' x", StubRunner(stdout="0\n")) is None)
+
 # F7: a heredoc body handed to a shell is a command, not prose.
 sh_heredoc_write_text = (
     "sh <<'EOF'\n"
@@ -192,6 +209,12 @@ check("F7: a heredoc piped to sh with attached-target send-keys inside is denied
 # them deliberately (found in the fix round's own review).
 reason = decide("sh -c 'tmux send-keys -t seat-a x'", StubRunner(stdout="1\n"))
 check("an sh -c execution string is a command, not data",
+      reason is not None and "attached client" in reason, reason)
+reason = decide("bash -lc 'tmux send-keys -t seat-a x'", StubRunner(stdout="1\n"))
+check("N2: the -c riding in a flag cluster (bash -lc) is still an execution string",
+      reason is not None and "attached client" in reason, reason)
+reason = decide("sh -euc 'tmux send-keys -t seat-a x'", StubRunner(stdout="1\n"))
+check("N2: a longer cluster (sh -euc) is still an execution string",
       reason is not None and "attached client" in reason, reason)
 reason = decide('eval "tmux send-keys -t seat-a x"', StubRunner(stdout="1\n"))
 check("an eval argument is a command, not data",
@@ -272,9 +295,16 @@ check("F5: a -t value that happens to spell 'send' is not a verb (kill-session -
 runner = StubRunner()
 reason = decide('tmux send-keys -t "$SEAT" x', runner)
 check("F8a: an unexpanded variable target is denied naming the variable case",
-      reason is not None and "unexpanded shell variable" in reason
+      reason is not None and "unexpanded variable" in reason
       and "CLAUDE_VERIFIED_DETACHED=1" in reason and not runner.calls,
       reason)
+
+runner = StubRunner(stderr="can't find pane: {}", returncode=1)
+reason = decide("tmux ls -F '#{session_name}' | xargs -I{} tmux send-keys -t {} cmd",
+                runner)
+check("N1: an xargs {} placeholder target is unresolvable, not a can't-find allow",
+      reason is not None and "placeholder" in reason and not runner.calls,
+      (reason, runner.calls))
 
 runner = StubRunner(stdout="0\n")
 check("F8b: the glued -tseat-a form probes seat-a",
