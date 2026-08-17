@@ -36,8 +36,9 @@ Output contract — one stdout line per event, flushed immediately:
   <seat> MSG→<to>: <text>    a SendMessage tool call, first 150 chars
   <seat> API-ERROR           an entry flagged isApiErrorMessage
   <seat> WATCH: ...          the watcher's own state: "no transcript found"
-                             (once per disappearance, then it keeps polling)
-                             or "switched to <file>" on rollover
+                             (once per disappearance, then it keeps polling),
+                             "following <file>" on a seat's first acquisition
+                             mid-run, or "switched to <file>" on rollover
 
 Newlines inside a snippet become " ¶ ". Thinking blocks are never emitted;
 unparseable records are skipped silently. --snippet-chars scales the
@@ -46,9 +47,18 @@ AGENT/USER length; CMD stays 200 and MSG stays 150.
 Transcripts being followed at startup begin at end-of-file (--from-start
 reads them whole); a transcript acquired after startup — a rollover, or a
 seat's first transcript appearing — is read from byte 0, so the successor
-session's boot is caught. Only files named like a session UUID
-(<8-4-4-4-12 hex>.jsonl) are candidates: project directories also hold
-subagent/sidecar files (agent-<id>.jsonl) that must never be followed.
+session's boot is caught. But a transcript this run has followed before is
+resumed at the offset it left off at, never byte 0 again: when two live
+sessions share one project directory the newest-by-mtime rule alternates
+between their files, and re-reading from byte 0 at every switch-back would
+replay the seat's whole history as if it were happening now. Before
+switching away from a file the watcher gives it one final read and flushes
+any lines completed on disk; a final line still unterminated at that moment
+is dropped — an accepted limitation, not a solved one. Only files named
+like a session UUID (<8-4-4-4-12 hex>.jsonl) are candidates: anything else
+in a project directory — subagent/sidecar transcripts live under
+<project-dir>/<session-uuid>/subagents/ in the current layout, and the
+directory may hold other non-session entries — must never be followed.
 
 The seat whose directory contains this process's working directory is always
 excluded (--include-self overrides): watching yourself is a feedback loop —
@@ -80,17 +90,37 @@ from pathlib import Path
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
-# Session transcripts only. Project directories also hold subagent/sidecar
-# JSONL (agent-<id>.jsonl); following one would show a subagent's chatter as
-# the seat's own voice.
+# Session transcripts only. Subagent/sidecar transcripts live under
+# <project-dir>/<session-uuid>/subagents/ in the current layout, but the
+# name guard stays: it keeps the follower off directories and off any other
+# non-session file a project directory may grow, so a stray sidecar can
+# never speak in the seat's own voice.
 SESSION_TRANSCRIPT_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$")
 
 # Bash commands worth surfacing: anything that pushes, merges, writes to
 # PRs/issues, or destroys work. Everything else is noise at watch altitude.
-RISKY_COMMAND_PATTERN = re.compile(
-    r"git push|gh pr (merge|close|create)|gh issue (create|edit|comment)|"
-    r"git merge|git reset --hard|git worktree remove|git branch -[dD]|rm -rf")
+#
+# Option tokens may sit between `git` and its subcommand (`git -C <path>
+# push`, `git --git-dir=... push`). A short option's separate argument must
+# not itself start with a dash: `-C`'s path never does, and without that
+# guard a run of dash tokens parses ambiguously and backtracks explosively.
+_GIT_OPTION_TOKENS = r"""
+    (?:
+        \s+ -[a-zA-Z] \s+ (?!-)\S+     # short option with separate argument: -C <path>
+      | \s+ --[^\s=]+ (?: = \S+ )?     # long option, with or without =value
+      | \s+ -\S+                       # any other single-token flag cluster
+    )*
+"""
+RISKY_COMMAND_PATTERN = re.compile(rf"""
+    git {_GIT_OPTION_TOKENS} \s+
+        (?: push | merge | reset\s+--hard | worktree\s+remove | branch\s+-[dD] )
+  | gh \s+ pr \s+ (?: merge | close | create | comment | edit | review )
+  | gh \s+ issue \s+ (?: create | edit | comment | close )
+  | rm \s+ (?= (?:-[a-zA-Z]+\s+)* -[a-zA-Z]*r )  # some leading flag cluster has r
+           (?= (?:-[a-zA-Z]+\s+)* -[a-zA-Z]*f )  # ... and some has f: -rf, -fr,
+                                                 # -r -f, -f -r; never -f alone
+""", re.VERBOSE)
 
 CMD_SNIPPET_CHARS = 200
 MSG_SNIPPET_CHARS = 150
@@ -106,19 +136,19 @@ def project_directory_for_seat(seat_path, projects_root):
     """The ~/.claude/projects directory holding a seat's session transcripts.
 
     The harness mangles the seat's absolute path by replacing every character
-    that is not alphanumeric, a dash, or an underscore with a dash (verified
-    against real project directories: /a/.claude/b becomes -a--claude-b).
+    outside ASCII [a-zA-Z0-9] with a dash — underscores included (probed
+    against harness v2.1.233 with a real session: a directory named
+    mangle_probe got the project directory suffix -mangle-probe, and
+    /a/.claude/b becomes -a--claude-b).
     """
-    mangled = "".join(
-        character if (character.isalnum() or character in "-_") else "-"
-        for character in str(seat_path.resolve())
-    )
+    mangled = re.sub(r"[^a-zA-Z0-9]", "-", str(seat_path.resolve()))
     return projects_root / mangled
 
 
 def one_line_snippet(text, limit):
-    """First `limit` characters, newlines folded to " ¶ "."""
-    return " ¶ ".join(text.strip()[:limit].splitlines())
+    """Newlines folded to " ¶ " first, then the first `limit` characters —
+    fold-then-truncate, so the emitted length is bounded by `limit`."""
+    return " ¶ ".join(text.strip().splitlines())[:limit]
 
 
 def event_lines(seat_name, raw_record, snippet_chars):
@@ -162,7 +192,10 @@ def event_lines(seat_name, raw_record, snippet_chars):
                                f"{one_line_snippet(command, CMD_SNIPPET_CHARS)}")
                 elif block.get("name") == "SendMessage":
                     to = tool_input.get("to", "?")
-                    text = str(tool_input.get("message", ""))
+                    text = tool_input.get("message")
+                    if not isinstance(text, str):
+                        text = ""  # a missing or non-string message is never
+                        # shown as a repr; the "to" alone still surfaces
                     yield (f"{seat_name} MSG→{to}: "
                            f"{one_line_snippet(text, MSG_SNIPPET_CHARS)}")
             # "thinking" and every other block type: never emitted.
@@ -189,16 +222,27 @@ def event_lines(seat_name, raw_record, snippet_chars):
 
 
 class SeatFollower:
-    """Follow one seat's newest session transcript across rollovers."""
+    """Follow one seat's newest session transcript across rollovers.
 
-    def __init__(self, seat_path, projects_root):
+    Every file followed this run keeps its offset in followed_offsets, so
+    when the newest-by-mtime rule alternates between two live transcripts,
+    switching back resumes where that file left off instead of replaying it
+    from byte 0. A partial line pending at switch-away time is dropped (see
+    the module docstring); the final read just before switching keeps that
+    loss to genuinely unterminated lines.
+    """
+
+    def __init__(self, seat_path, projects_root, snippet_chars):
         self.seat_name = seat_path.name
         self.project_directory = project_directory_for_seat(seat_path, projects_root)
+        self.snippet_chars = snippet_chars
         self.transcript_path = None
         self.handle = None
         self.offset = 0
         self.pending = b""
         self.missing_announced = False
+        self.followed_offsets = {}  # path -> offset reached while following it
+        self.last_followed_path = None  # survives _close, unlike transcript_path
 
     def newest_candidate(self):
         try:
@@ -229,16 +273,27 @@ class SeatFollower:
         self.missing_announced = False
         if self.transcript_path is not None and newest == self.transcript_path:
             return
+        # Rollover: one final read of the file being left, so lines already
+        # complete on disk are flushed before the switch.
+        if self.handle is not None:
+            self.poll()
         if not at_startup:
-            # A rollover, or a seat's first transcript appearing mid-run:
-            # read from byte 0 so the successor session's boot is caught.
-            emit(f"{self.seat_name} WATCH: switched to {newest.name}")
+            if self.last_followed_path is None:
+                emit(f"{self.seat_name} WATCH: following {newest.name}")
+            elif newest != self.last_followed_path:
+                emit(f"{self.seat_name} WATCH: switched to {newest.name}")
+            # else: the same file reacquired after a transient reopen
+            # failure — nothing changed worth announcing.
         try:
-            self._open(newest, start_at_end=at_startup and not from_start)
+            # A file followed earlier this run resumes at its remembered
+            # offset; a genuinely new one starts at byte 0 (or, at startup
+            # without --from-start, at end-of-file).
+            self._open(newest, start_at_end=at_startup and not from_start,
+                       resume_offset=self.followed_offsets.get(newest))
         except OSError:
             self._close()  # vanished under us; the next rescan retries
 
-    def poll(self, snippet_chars):
+    def poll(self):
         """Emit whatever grew since the last poll; heal truncation/replacement."""
         if self.handle is None:
             return
@@ -248,7 +303,8 @@ class SeatFollower:
             return  # gone right now; the next rescan decides the successor
         if (on_disk.st_ino != os.fstat(self.handle.fileno()).st_ino
                 or on_disk.st_size < self.offset):
-            # Replaced or truncated: reopen by path and read it whole.
+            # Replaced or truncated: reopen by path and read it whole. The
+            # remembered offset is stale for this new content, so no resume.
             reopen_path = self.transcript_path
             self._close()
             try:
@@ -264,17 +320,28 @@ class SeatFollower:
         # The final fragment may be a partial write; hold it for next poll.
         *complete_records, self.pending = self.pending.split(b"\n")
         for raw_record in complete_records:
-            for line in event_lines(self.seat_name, raw_record, snippet_chars):
+            for line in event_lines(self.seat_name, raw_record, self.snippet_chars):
                 emit(line)
 
-    def _open(self, path, start_at_end):
+    def _open(self, path, start_at_end, resume_offset=None):
         self._close()
         self.handle = open(path, "rb")
         self.transcript_path = path
-        self.offset = self.handle.seek(0, os.SEEK_END) if start_at_end else 0
+        self.last_followed_path = path
+        if start_at_end:
+            self.offset = self.handle.seek(0, os.SEEK_END)
+        elif resume_offset is not None:
+            self.offset = resume_offset
+        else:
+            self.offset = 0
+        self.followed_offsets[path] = self.offset
         self.pending = b""
 
     def _close(self):
+        if self.transcript_path is not None:
+            # Remember how far this file was read, so reacquiring it later
+            # this run resumes here instead of replaying from byte 0.
+            self.followed_offsets[self.transcript_path] = self.offset
         if self.handle is not None:
             self.handle.close()
         self.handle = None
@@ -319,6 +386,15 @@ def parse_arguments(argv):
 
 def main(argv=None):
     arguments = parse_arguments(argv)
+    if arguments.poll_seconds <= 0:
+        print("watch-agent-dialogs: --poll-seconds must be > 0", file=sys.stderr)
+        return 2
+    if arguments.rescan_seconds <= 0:
+        print("watch-agent-dialogs: --rescan-seconds must be > 0", file=sys.stderr)
+        return 2
+    if arguments.snippet_chars < 1:
+        print("watch-agent-dialogs: --snippet-chars must be >= 1", file=sys.stderr)
+        return 2
     agents_root = Path(arguments.agents_root).expanduser()
     projects_root = Path(arguments.projects_root).expanduser()
     named_seats = None
@@ -357,7 +433,8 @@ def main(argv=None):
                 continue
             key = str(seat_path.resolve())
             if key not in followers:
-                followers[key] = SeatFollower(seat_path, projects_root)
+                followers[key] = SeatFollower(seat_path, projects_root,
+                                              arguments.snippet_chars)
                 followers[key].rescan(at_startup=at_startup,
                                       from_start=arguments.from_start)
 
@@ -381,7 +458,7 @@ def main(argv=None):
                 follower.rescan()
             next_rescan = time.monotonic() + arguments.rescan_seconds
         for follower in followers_in_order():
-            follower.poll(arguments.snippet_chars)
+            follower.poll()
         time.sleep(arguments.poll_seconds)
 
 
