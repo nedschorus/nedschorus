@@ -197,12 +197,82 @@ def run_console_identity_case(workspace: Path):
           "relaunch claude here" in result.stdout, result.stdout)
 
 
+def run_agent_name_and_claim_cases(workspace: Path):
+    """One agent name is one seat, and a seat is one directory.
+
+    The name selects the handoff file, the supervisor state and the lock, so
+    two sessions sharing a name share all three. On 2026-08-16 two
+    hand-started sessions were both called `new-vp`: one wrote counter 10,
+    the other wrote counter 11 seconds later, and the first was gone — never
+    archived, because retention keeps the last two generations of one file
+    rather than one file per session.
+    """
+    seat_one = workspace / "seat-one"
+    seat_two = workspace / "seat-two"
+    handoffs = workspace / "handoffs"
+    for directory in (seat_one, seat_two, handoffs):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def write_from(directory: Path, text: str, *extra):
+        next_step_path = directory / "next-step.txt"
+        next_step_path.write_text(text, encoding="utf-8")
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+        }
+        environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
+             "--handoff-dir", str(handoffs), *extra],
+            capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
+        )
+
+    # The name defaults to the directory, which is unique per worktree.
+    write_from(seat_one, "first seat's work")
+    check("the agent name defaults to the working directory's name",
+          (handoffs / "seat-one-handoff.md").is_file(),
+          str(sorted(item.name for item in handoffs.iterdir())))
+
+    # Resolved, because macOS reports /private/var where the tempdir says /var.
+    first_body = (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8")
+    check("the handoff records the directory that wrote it",
+          f"written-in: {seat_one.resolve()}" in first_body, first_body)
+
+    # A second seat gets its own file rather than the first seat's.
+    write_from(seat_two, "second seat's work")
+    check("a second directory writes its own handoff, not the first's",
+          (handoffs / "seat-two-handoff.md").is_file(),
+          str(sorted(item.name for item in handoffs.iterdir())))
+    check("the first seat's handoff is untouched",
+          (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
+
+    # The collision that actually happened: a foreign directory, one name.
+    foreign = write_from(seat_two, "would clobber", "--agent", "seat-one")
+    check("a foreign directory claiming the name is refused", foreign.returncode == 2, foreign.stderr)
+    check("the refusal names both directories",
+          str(seat_one) in foreign.stderr and str(seat_two) in foreign.stderr, foreign.stderr)
+    check("the refusal teaches the fix", "--claim" in foreign.stderr, foreign.stderr)
+    check("nothing was written on the refusal",
+          (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
+
+    # Succession is not a collision: the same directory writes again.
+    again = write_from(seat_one, "same seat, next generation")
+    check("the same directory may write its own handoff again", again.returncode != 2, again.stderr)
+
+    # --claim is the deliberate override.
+    claimed = write_from(seat_two, "taking the name", "--agent", "seat-one", "--claim")
+    check("--claim takes the name deliberately", claimed.returncode != 2, claimed.stderr)
+    check("--claim really replaced the contents",
+          "taking the name" in (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8"))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
     run_counter_cases(Path(temporary_directory))
     run_invocation_cases(Path(temporary_directory))
     run_liveness_report_cases(Path(temporary_directory))
     run_console_identity_case(Path(temporary_directory))
+    run_agent_name_and_claim_cases(Path(temporary_directory))
 
 print()
 if failures:
