@@ -1,6 +1,6 @@
-# Sanity-checker mechanization attack — reviewer instructions (draft)
+# Sanity-checker mechanization attack — reviewer instructions
 
-Status: DRAFT, derived 2026-08-12 as a delta of `sanity-checker-prompt-draft.md` per that file's grid-seat rulings (the three-attack candidate shape, user-walked 2026-08-12). Experiment cell only: it reviews live documents only after the validation experiment and the user's adoption walk. The band this attack carries: the Encode, Constrain, Externalize, and Verify rungs, and the prompts-to-code doctrine.
+Status: STANDING, adopted 2026-08-17 — the user ruled the three-attack split the sanity-check's standing shape on the validation experiment's scorecard, and `scripts/sanity-check-attacks.py` runs this cell. Derived 2026-08-12 as a delta of the retired unsplit prompt (decision trail in git history at `docs/drafts/sanity-checker-prompt-draft.md`). The band this attack carries: the Encode, Constrain, Externalize, and Verify rungs, and the prompts-to-code doctrine.
 
 Everything below the rule is the prompt itself, written for a reviewer with zero context beyond what it supplies.
 
