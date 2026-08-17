@@ -172,7 +172,16 @@ def read_dialog_turns(transcript_path: Path):
 
         turn = dialog_turn_from_record(record)
         if turn is None:
-            continue  # non-dialog record: does not break an injected pair
+            # Harness/state records (system, queue-operation, attachment) sit
+            # between a notification and its acknowledgement without breaking
+            # the pair. A tool-bearing record does break it: the agent moved
+            # on to real work, so its next text is a report the successor
+            # needs, not the notification's ack (review finding, 2026-08-17 —
+            # a short real conclusion after intervening tool work was being
+            # dropped unrecoverably).
+            if record_shows_tool_activity(record):
+                following_injected_record = False
+            continue
 
         if turn["voice"] == "user":
             if turn["text"].startswith(INJECTED_TEXT_PREFIXES):
@@ -191,6 +200,17 @@ def read_dialog_turns(transcript_path: Path):
         following_injected_record = False
 
     return turns, skip_counts
+
+
+def record_shows_tool_activity(record) -> bool:
+    """True for a record carrying tool calls or results (not a subagent's)."""
+    if not isinstance(record, dict) or record.get("isSidechain"):
+        return False
+    content = record.get("message", {}).get("content")
+    return isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result")
+        for block in content
+    )
 
 
 def joined_text_blocks(content) -> str:
@@ -423,6 +443,10 @@ def main(argv=None) -> int:
         parser.error("one of --session-id or --transcript-path is required")
     if arguments.last_turns is not None and arguments.last_turns < 1:
         parser.error("--last-turns must be at least 1")
+    if arguments.minimum_words < 1:
+        # A floor of zero used to crash the tail walk with an IndexError
+        # rather than refusing (review finding, 2026-08-17).
+        parser.error("--minimum-words must be at least 1")
 
     try:
         transcript_path = resolve_transcript_path(arguments)

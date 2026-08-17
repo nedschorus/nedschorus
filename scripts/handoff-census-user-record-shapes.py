@@ -6,29 +6,37 @@ list (2026-08-17: 341 transcripts, both machines — 59% of kept user-record
 words were harness-injected). Rerun it when extracts look noisy again: a new
 unclassified shape in its output is a new prefix for that list.
 
-For the handoff extractor's drop-list: walks ~/.claude/projects/*/*.jsonl,
-classifies every type=="user" record the extractor's current filter would
-KEEP (not isMeta, not sidechain, non-empty text), and prints a histogram of
+The known shapes are IMPORTED from the extractor, never copied (review
+finding, 2026-08-17: an out-of-sync copy either false-alarms on shapes the
+extractor already drops or silently blesses shapes it keeps). Anything the
+extractor drops reports as dropped:<prefix>; the deliberate keeps are the
+short KEPT_AS_DIALOG_PREFIXES list here. A shape in neither group is the
+signal this census exists to raise. Run it from a checkout — it needs the
+extractor beside it.
+
+Walks ~/.claude/projects/*/*.jsonl (or the root given as argv[1]),
+classifies every type=="user" record the extractor's pre-prefix filter would
+keep (not isMeta, not sidechain, non-empty text), and prints a histogram of
 opening shapes plus samples of anything unclassified.
 """
+import importlib.util
 import json, sys, re
 from pathlib import Path
 from collections import Counter, defaultdict
 
-KNOWN_PREFIXES = [
-    "<task-notification>",
-    "<cross-session-message",
-    "<command-name>",
-    "<local-command-stdout>",
-    "<local-command-stderr>",
-    "<system-reminder>",
-    "<bash-input>",
-    "<bash-stdout>",
-    "<bash-stderr>",
-    "<user-memory-input>",
-    "[Request interrupted",
-    "[SYSTEM NOTIFICATION",
-]
+_spec = importlib.util.spec_from_file_location(
+    "handoff_extract_conversation",
+    Path(__file__).with_name("handoff-extract-conversation.py"))
+_extractor = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_extractor)
+
+# Injected shapes the extractor deliberately KEEPS as dialog.
+KEPT_AS_DIALOG_PREFIXES = ("<bash-input>",)
+
+KNOWN_PREFIXES = {
+    prefix: "dropped" for prefix in _extractor.INJECTED_TEXT_PREFIXES
+}
+KNOWN_PREFIXES.update({prefix: "kept" for prefix in KEPT_AS_DIALOG_PREFIXES})
 
 root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / ".claude" / "projects"
 shape_counts = Counter()
@@ -68,7 +76,8 @@ for jsonl in sorted(root.glob("*/*.jsonl")):
                     text = ""
                 if not text:
                     continue
-                shape = next((p for p in KNOWN_PREFIXES if text.startswith(p)), None)
+                matched = next((p for p in KNOWN_PREFIXES if text.startswith(p)), None)
+                shape = f"{KNOWN_PREFIXES[matched]}:{matched}" if matched else None
                 if shape is None:
                     if text.startswith("<") :
                         shape = "OTHER-ANGLE:" + re.split(r"[ >\n]", text, maxsplit=1)[0][:40]

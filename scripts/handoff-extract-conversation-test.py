@@ -105,7 +105,9 @@ with tempfile.TemporaryDirectory() as workspace:
     selected, start, quoted = extractor.select_turns_from_boundary(turns, "topic 1 opens", 2500)
     check("a boundary already clearing the floor is untouched", start == quoted, f"{start} vs {quoted}")
 
-    selected, start, _ = extractor.select_turns_from_boundary(turns, "topic 0 opens", 999999)
+    # Quoting the LAST topic forces the widening walk to traverse the whole
+    # session (a boundary already at index 0 would pass this trivially).
+    selected, start, _ = extractor.select_turns_from_boundary(turns, "topic 9 opens", 999999)
     check("an unreachable floor carries the whole session", start == 0, f"got {start}")
 
     # --- The default: a floor-sized tail, no boundary named ---------------
@@ -201,6 +203,33 @@ with tempfile.TemporaryDirectory() as workspace:
     check("injected records are counted", skips["injected"] == 5, str(skips))
     check("acknowledgements are counted", skips["acknowledgement"] == 1, str(skips))
 
+    # A tool-bearing record between a notification and the next assistant text
+    # means the agent did real work — its short conclusion is a report the
+    # successor needs, not the notification's ack (review finding: it was
+    # being dropped unrecoverably). Pure harness records leave the pair intact.
+    tool_use_record = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "true"}}]}}
+    tool_result_record = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": "ran"}]}}
+    interleaved = [
+        user_record("fix the bug please"),
+        user_record(notification_text),
+        tool_use_record,
+        tool_result_record,
+        assistant_record("Fixed — the null check in parse() was inverted. Tests pass."),
+        user_record(notification_text),
+        {"type": "queue-operation", "operation": "enqueue"},
+        {"type": "system", "content": "notice"},
+        assistant_record("Routine — noted. On watch."),
+    ]
+    path = write_transcript(workspace, "interleaved.jsonl", interleaved)
+    turns, skips = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    check("a short real conclusion after tool work survives",
+          any(text.startswith("Fixed —") for text in kept), str(kept)[:200])
+    check("harness records between the pair do not save the ack",
+          "Routine — noted. On watch." not in kept, str(kept)[:200])
+
     # --- Short trailing handoff fragments are trimmed ----------------------
     tail_fragment = [
         user_record("penultimate prompt"),
@@ -214,6 +243,23 @@ with tempfile.TemporaryDirectory() as workspace:
     check("short dangling handoff fragment is trimmed",
           selected[-1]["text"] == "handoff please",
           selected[-1]["text"][:60])
+
+    fragment_output = Path(workspace) / "fragment-out.md"
+    exit_code = extractor.main(["--transcript-path", str(path),
+                                "--minimum-words", "10",
+                                "--output", str(fragment_output)])
+    fragment_text = fragment_output.read_text(encoding="utf-8")
+    check("header reports the trimmed fragment count",
+          "Trimmed from the end: 1 short agent turn(s)" in fragment_text,
+          fragment_text[:400])
+
+    # argparse refuses via SystemExit(2); catch it so the suite survives.
+    try:
+        exit_code = extractor.main(["--transcript-path", str(path), "--minimum-words", "0"])
+    except SystemExit as refusal:
+        exit_code = refusal.code
+    check("a zero word floor refuses with exit 2 instead of crashing",
+          exit_code == 2, f"got {exit_code}")
 
     solid_tail = [
         user_record("a prompt"),
