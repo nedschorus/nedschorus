@@ -8,6 +8,17 @@
 # and both incidents are recorded on nedschorus#27, and the project's
 # synthetic-keystroke guard hook blocks the `write text` form outright.
 #
+# Argument handling (PR #82 review, F11): one argument is the command string,
+# handed over whole. Several arguments are joined with single spaces, which
+# only preserves meaning while no argument itself contains whitespace or
+# quotes — `open-iterm-window-running-command ssh -t ned tmux attach` joins
+# faithfully, but an argument like "seat a" would silently become two words.
+# That form, and any raw newline (an AppleScript string cannot hold one), is
+# refused with guidance instead of guessed at.
+#
+# OPEN_ITERM_WINDOW_DRY_RUN=1 prints the generated AppleScript instead of
+# running it: the seam the test file uses, so no test opens a real window.
+#
 # The window closes when the command exits (iTerm profile default); for a
 # window that should persist, run an interactive process (e.g. ssh -t, tmux
 # attach) as the command.
@@ -21,16 +32,43 @@ if [ $# -lt 1 ]; then
     exit 2
 fi
 
-if ! command -v osascript >/dev/null 2>&1; then
+if [ $# -gt 1 ]; then
+    for ARGUMENT in "$@"; do
+        case $ARGUMENT in
+            *[[:space:]]* | *\'* | *\"*)
+                echo "open-iterm-window-running-command: refusing to join multiple arguments when one contains whitespace or quotes — the join would silently change the command's word boundaries (PR #82 review, F11). Pass the whole command as one quoted argument instead." >&2
+                exit 2
+                ;;
+        esac
+    done
+fi
+
+COMMAND_TEXT=$*
+
+NEWLINE='
+'
+case $COMMAND_TEXT in
+    *"$NEWLINE"*)
+        echo "open-iterm-window-running-command: the command may not contain a raw newline (an AppleScript string cannot hold one). Use shell separators like ';' inside the command string instead." >&2
+        exit 2
+        ;;
+esac
+
+if [ "${OPEN_ITERM_WINDOW_DRY_RUN:-}" != "1" ] && ! command -v osascript >/dev/null 2>&1; then
     echo "open-iterm-window-running-command: needs macOS (osascript not found)" >&2
     exit 1
 fi
 
 # Escape for embedding in an AppleScript double-quoted string.
-ESCAPED=$(printf '%s' "$*" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+ESCAPED=$(printf '%s' "$COMMAND_TEXT" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 
-osascript <<APPLESCRIPT
-tell application "iTerm"
-	create window with default profile command "$ESCAPED"
-end tell
-APPLESCRIPT
+APPLESCRIPT="tell application \"iTerm\"
+	create window with default profile command \"$ESCAPED\"
+end tell"
+
+if [ "${OPEN_ITERM_WINDOW_DRY_RUN:-}" = "1" ]; then
+    printf '%s\n' "$APPLESCRIPT"
+    exit 0
+fi
+
+printf '%s\n' "$APPLESCRIPT" | osascript -
