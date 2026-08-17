@@ -12,7 +12,9 @@ Status: design for everything md-review encodes as code; feeds the build; itself
    - Tier-to-model and effort pins at the top of the script, with the boss-picked change-control comment, same as the Codex script.
 2. **`scripts/md-review-codex-cell.py`** — rename of `scripts/d-review-codex-cell.py`; content otherwise unchanged.
 3. **`scripts/md-review-grid.py`** — the orchestrator; `--target <path>`, no mode argument (one review approach).
-   - Creates the dated record directory `md-review-records/<YYYY-MM-DD>-<target-slug>/`.
+   - Creates the dated record directory `md-review-records/<YYYY-MM-DD>-<target-slug>/` —
+     gitignored machine-local working material, deleted once the work it served lands
+     (user-ruled 2026-08-14).
    - Runs a reference-integrity pre-pass over the target (cited paths exist; quoted commands/files resolve) and writes its result into the record; grows into the nedschorus#42 checker when that is built.
    - Launches all eight cells in parallel across both runtimes and both tiers, each cell's stamped output written into the record as `<runtime>-<pass>-<tier>.md` the moment it completes — the reviewing agent reads them as they land.
    - Completion output teaches the next steps (read reports as ready, keep triage provisional until all are in, walk dispositions with the boss, dispositions file location) — the skill text does not repeat what this output says.

@@ -131,6 +131,8 @@ with tempfile.TemporaryDirectory() as workspace:
     # in the real handoff directory and are removed on the way out.
     PROBE_SESSION_ID = "handoff-threshold-hook-test-session"
     marker_file = hook.HANDOFF_DIRECTORY / f"{PROBE_SESSION_ID}-handoff-asked"
+    # On a fresh machine nothing has created the handoff directory yet.
+    hook.HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     quiet = transcript_with_usage(workspace, "quiet.jsonl", 100_000, cache_read=100_000)
     loud = transcript_with_usage(workspace, "loud.jsonl", 100_000, cache_read=500_000,

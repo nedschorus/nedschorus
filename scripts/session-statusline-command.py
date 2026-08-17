@@ -17,13 +17,16 @@ failing.
 
 The visible line, left to right (user-walked 2026-08-08):
 
-  ned-box:~/agents/choirmaster (choirmaster) │ Opus 5 · high │ 46% 2h 77% 3d 89%
+  ned-box:choirmaster (choirmaster) │ Opus 5 · high │ 46% 2h 77% 3d 89%
 
   host         green — which machine this session runs on. The user drives
                from a Mac over SSH while the agents run here, so the box name
                is the one thing a pane cannot be assumed to share.
-  path         blue, home abbreviated to ~. One agent, one worktree, so
-               several panes differ mainly by this.
+  directory    blue, the working directory's name alone — not its path
+               (user-ruled 2026-08-15; the path crowded every later segment
+               off the screen, worst under .claude/worktrees/). One agent,
+               one worktree, so several panes differ mainly by this. Home
+               itself still renders as ~.
   (branch)     read out of .git/HEAD directly, no subprocess. Redundant with
                the directory name today; not redundant on a detached HEAD or
                a slice branch, where committing to the wrong branch is silent.
@@ -48,6 +51,18 @@ Payload fields are those of Claude Code 2.1.220 and 2.1.226, read from the
 binary's status line builder rather than from documentation.
 """
 
+# Annotations are evaluated at definition time unless deferred, and `Path |
+# None` below is PEP 604, which lands in Python 3.10. Under an older
+# interpreter the script therefore dies on import with a TypeError, before
+# main() runs — so the graceful-degradation contract above never gets a
+# chance, and the status line renders empty with nothing said. A Mac's
+# Xcode-provided python3 is still 3.9, so the interpreter that a pane
+# resolves cannot be assumed. This import defers the annotations and keeps
+# the script running from 3.7 up. It must stay the first statement after the
+# docstring, which is why the imports below it are not in alphabetical order.
+from __future__ import annotations
+
+import importlib.util
 import json
 import os
 import sys
@@ -62,6 +77,7 @@ BLUE_BOLD = "\033[01;34m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
+RED_BOLD = "\033[01;31m"
 
 # Thresholds on how much is LEFT — of the context window, or of a quota
 # window. The handoff fires at roughly half the context used, so the first
@@ -90,14 +106,23 @@ def remaining_percent_text(remaining_percent: float) -> str:
     return colored(f"{remaining_percent:.0f}%", color_for_remaining(remaining_percent))
 
 
-def abbreviated_path(working_directory: str) -> str:
-    """Render the path as a shell prompt does: the home directory as ~."""
-    home = str(Path.home())
-    if working_directory == home:
+def working_directory_name(working_directory: str) -> str:
+    """The directory's own name, not the road to it.
+
+    The full path crowded the rest of the line off the screen (user-ruled
+    2026-08-15): a session in .claude/worktrees/<name> spent 63 characters
+    restating a project root every pane already shares, and with a long
+    branch beside it the location segment alone ran to 135 — past the width
+    of an ordinary window, so model, effort and the whole remaining-quota
+    block were never visible. The name is what differs between panes; the
+    road to it is not.
+    """
+    if not working_directory:
+        return ""
+    path = Path(working_directory)
+    if path == Path.home():
         return "~"
-    if working_directory.startswith(home + "/"):
-        return "~" + working_directory[len(home):]
-    return working_directory
+    return path.name or working_directory
 
 
 def git_head_file(working_directory: Path) -> Path | None:
@@ -139,7 +164,7 @@ def git_branch(working_directory: str) -> str:
 
 
 def location_segment(working_directory: str) -> str:
-    """host:path (branch) — where this session is, on which machine."""
+    """host:directory (branch) — where this session is, on which machine."""
     host = os.uname().nodename.split(".")[0]
 
     pieces = []
@@ -147,7 +172,7 @@ def location_segment(working_directory: str) -> str:
         pieces.append(colored(host, GREEN_BOLD))
     if working_directory:
         prefix = ":" if pieces else ""
-        pieces.append(prefix + colored(abbreviated_path(working_directory), BLUE_BOLD))
+        pieces.append(prefix + colored(working_directory_name(working_directory), BLUE_BOLD))
     branch = git_branch(working_directory)
     if branch:
         pieces.append(f" ({branch})")
@@ -166,12 +191,36 @@ def model_segment(payload: dict) -> str:
     return " · ".join(str(part) for part in (model, effort) if part)
 
 
-def time_until(reset_timestamp: str) -> str:
-    """Coarse countdown to a quota reset: days, else hours, else minutes."""
-    try:
-        resets_at = datetime.fromisoformat(reset_timestamp.replace("Z", "+00:00"))
-    except (AttributeError, ValueError):
+def time_until(reset_timestamp: str | int | float) -> str:
+    """Coarse countdown to a quota reset: days, else hours, else minutes.
+
+    `resets_at` arrives as Unix epoch SECONDS, a number — the shape the
+    harness documents for the status line payload. It was read here as an
+    ISO-8601 string, so `.replace` raised AttributeError on every refresh,
+    the field was dropped as if absent, and both countdowns had silently
+    never rendered: the line showed three bare percentages where it promised
+    `<context>% <5h-left> <5h>% <7d-left> <7d>%` (found 2026-08-15 from the
+    user's own status line, which read `73% 85% 75%`).
+
+    Two forms are accepted, and only two: a number, which is the live
+    contract, and an ISO-8601 string, which costs two lines and keeps a
+    payload that ever sends ISO working. A numeric STRING is deliberately not
+    accepted — `float("2000")` would read a year-only ISO date as 33 minutes
+    past the epoch, and a wrong countdown is worse than none. It drops the
+    field like any other unparseable value.
+    """
+    if isinstance(reset_timestamp, bool):
         return ""
+    if isinstance(reset_timestamp, (int, float)):
+        try:
+            resets_at = datetime.fromtimestamp(reset_timestamp, timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return ""
+    else:
+        try:
+            resets_at = datetime.fromisoformat(reset_timestamp.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            return ""
     if resets_at.tzinfo is None:
         resets_at = resets_at.replace(tzinfo=timezone.utc)
 
@@ -210,16 +259,81 @@ def consumption_segment(payload: dict) -> str:
     return " ".join(parts)
 
 
+def backup_health_segment() -> str:
+    """Warn when this machine's backups have stopped; empty when they are fine.
+
+    First in the line rather than last, because a line that is truncated or
+    wrapped loses its tail, and this is the one segment whose whole purpose is
+    to be seen. It appears only when something is wrong, so the jarring change
+    of shape is the point.
+
+    Loaded by path because the checker's filename is hyphenated, and lazily so
+    that a missing or broken checker costs nothing until the line is rendered.
+    Any failure yields an empty segment: a health check that blanks the status
+    line would be a worse fault than the one it reports.
+    """
+    try:
+        checker_path = Path(__file__).with_name("backup-health-check.py")
+        if not checker_path.exists():
+            return ""
+        specification = importlib.util.spec_from_file_location(
+            "backup_health_check", checker_path)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        headline, _detail = module.diagnose()
+        if not headline:
+            return ""
+        return colored(f"⚠ {headline}", RED_BOLD)
+    except Exception:  # noqa: BLE001 - see docstring
+        return ""
+
+
 def status_line_text(payload: dict) -> str:
     """Compose the visible line; every segment is independently optional."""
     working_directory = payload.get("workspace", {}).get("current_dir") or payload.get("cwd", "")
     segments = [
+        backup_health_segment(),
         location_segment(working_directory),
         agent_segment(payload),
         model_segment(payload),
         consumption_segment(payload),
     ]
     return SEPARATOR.join(segment for segment in segments if segment)
+
+
+PAYLOAD_CAPTURE_VARIABLE = "NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE"
+
+
+def capture_payload(payload: dict) -> None:
+    """Write one real payload to disk when asked, for the contract canary.
+
+    Every fixture in the test suite asserts what this script BELIEVES the
+    harness sends. That belief was wrong once already and cost two days of
+    blank countdowns: `resets_at` is epoch seconds, the fixture used an ISO
+    string, and the suite stayed green throughout (fixed 2026-08-15). A
+    fixture cannot catch that class of error, because the same wrong belief
+    writes both the code and the test.
+
+    Ground truth is the payload the harness actually delivers. Set
+    NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE to a file path in a live session,
+    let the line refresh once, and the canary in
+    session-statusline-command-test.py checks the captured payload's field
+    TYPES against what this script consumes. Types, not values: values change
+    every refresh, types are the contract.
+
+    Off unless the variable is set, so an ordinary session pays nothing. Any
+    failure here is swallowed — a capture is a diagnostic, and the rule that
+    no fault may blank the status line outranks it.
+    """
+    destination = os.environ.get(PAYLOAD_CAPTURE_VARIABLE)
+    if not destination:
+        return
+    try:
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        return
 
 
 def main() -> int:
@@ -229,6 +343,8 @@ def main() -> int:
             payload = {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         payload = {}
+
+    capture_payload(payload)
 
     try:
         print(status_line_text(payload))

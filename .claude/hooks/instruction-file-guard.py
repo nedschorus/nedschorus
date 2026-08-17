@@ -24,6 +24,9 @@ The harness's auto-memory under ~/.claude/projects/ is deliberately inside the
 protected set (user-ruled 2026-08-11): every memory entry is user-reviewed.
 Other harness state (transcripts, handoffs) carries no review requirement — a
 carve-out is added when a real harness write trips this guard, not in advance.
+Two exist, each added that way: `.claude/worktrees/` (an agent's isolated
+checkout) and `.claude/jobs/` (a background job's scratch directory, which the
+harness hands out for temporary files and deletes with the job).
 """
 
 import json
@@ -56,8 +59,14 @@ def is_protected(file_path: str) -> bool:
     parts = path.resolve().parts
     for index, part in enumerate(parts):
         if part == PROTECTED_DIRECTORY:
-            if index + 1 < len(parts) and parts[index + 1] == "worktrees":
-                continue  # a worktree checkout's home under .claude/worktrees/, not its .claude
+            if index + 1 < len(parts) and parts[index + 1] in ("worktrees", "jobs"):
+                # A worktree checkout's home under .claude/worktrees/, or a
+                # background job's scratch directory under .claude/jobs/<id>/tmp
+                # — both are working space the harness hands out, not machinery
+                # that instructs anybody. The jobs carve-out was added 2026-08-13
+                # after a real write tripped the guard, which is the condition
+                # this file's docstring sets for adding one.
+                continue
             return True
     return False
 

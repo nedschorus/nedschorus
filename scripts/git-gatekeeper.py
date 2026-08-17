@@ -1012,7 +1012,11 @@ def worker_state(workspace: Path) -> str:
     except PermissionError:
         pass  # alive under another user; still alive
     live_start = process_start_time(pid)
-    # "0" is the spawner's placeholder before the worker stamps itself.
+    # "" and "0" both mean the start time is unavailable — the file carries one
+    # token, or this platform answered neither /proc nor ps — and an unavailable
+    # value is not evidence, so the comparison is skipped rather than failed. No
+    # writer produces "0" deliberately since the placeholder was removed
+    # (2026-08-13); it survives here only as the one-token fallback's value.
     if recorded_start not in ("", "0") and live_start and recorded_start != live_start:
         return "dead"
     return "alive"
@@ -1112,6 +1116,42 @@ def fetch_and_find(repository: Path, digest: str) -> str | None:
     return find_existing_check_in(repository, digest)
 
 
+# The named-phase test seam (ruled 2026-08-12, built 2026-08-13). It replaces a
+# single pre-git sleep that every liveness, twin and refusal-record case had to
+# fit its own work inside — a status call, a full second check-in and a rival's
+# git work in three seconds, about five times margin on an idle machine and
+# nothing on a loaded one. When the sleep won, the assertions inverted quietly
+# into the opposite outcome rather than failing. A test now waits for the file
+# the worker writes on arrival at a phase, and releases it by creating the
+# release file, so no case depends on how long anything takes.
+#
+# Inert unless GATEKEEPER_TEST_WORKER_PAUSE_AT is set: it then names the one
+# phase the worker blocks at, and arrival files are written at every phase.
+WORKER_PHASES = ("before-git", "before-push", "after-push")
+WORKER_PHASE_RELEASE_TIMEOUT = 120
+
+
+def worker_phase(workspace: Path, phase: str) -> None:
+    """Announce arrival at `phase`; block there when a test asked for it."""
+    paused_at = os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE_AT")
+    if not paused_at:
+        return
+    (workspace / f".reached-{phase}").write_text("", encoding="utf-8")
+    if paused_at != phase:
+        return
+    if os.environ.get("GATEKEEPER_TEST_WORKER_IGNORES_TERM"):
+        # Stands in for the two ways a real worker outlives its cancellation: a
+        # `git push` child that survived a single-process kill, and a worker the
+        # canceller lacks permission to signal. Neither is constructible from
+        # inside one test process, and both pose cancel the same question —
+        # does it answer only what it verified?
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    release = workspace / f".release-{phase}"
+    deadline = time.monotonic() + WORKER_PHASE_RELEASE_TIMEOUT
+    while not release.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+
 def run_worker(arguments) -> int:
     """The detached half of --no-wait. Detached means nobody is listening:
     outcomes land in history (success) or the B4d record (refusal), where
@@ -1119,22 +1159,19 @@ def run_worker(arguments) -> int:
     workspace = workspace_for(arguments.digest)
     if workspace is None:
         return EXIT_DEFECT
+    # The worker's first act (ruled 2026-08-12, applied 2026-08-13): it is the
+    # only writer of worker.pid in --no-wait mode, so there is nothing to yield
+    # to and no race to lose. The former loop waited for the file to exist and
+    # the spawner had already created it, so the loop returned at once and the
+    # two writes raced for the file.
+    write_worker_identity(workspace)
     record_path = workspace / "request.json"
     if not record_path.is_file():
         return EXIT_DEFECT
     request = json.loads(record_path.read_text(encoding="utf-8"))
     digest = request["digest"]
 
-    # Stamp identity, yielding briefly to the spawner's placeholder write so
-    # the exact start-time always wins the file.
-    deadline = time.time() + 2
-    while not (workspace / "worker.pid").is_file() and time.time() < deadline:
-        time.sleep(0.05)
-    write_worker_identity(workspace)
-
-    pause = float(os.environ.get("GATEKEEPER_TEST_WORKER_PAUSE", "0") or 0)
-    if pause:  # test seam: holds the WORKING state open for cancel/liveness cases
-        time.sleep(pause)
+    worker_phase(workspace, "before-git")
 
     worktree: dict[str, bytes | None] = {}
     for path, change in request["changes"].items():
@@ -1144,10 +1181,12 @@ def run_worker(arguments) -> int:
         )
     clone = workspace / "candidate"
     try:
+        worker_phase(workspace, "before-push")
         try:
             integrate_and_push(clone, request, worktree, digest)
         except AlreadyCheckedIn:
             pass
+        worker_phase(workspace, "after-push")
         shutil.rmtree(workspace, ignore_errors=True)
         return EXIT_SUCCESS
     except Refusal as refusal:
@@ -1292,6 +1331,15 @@ def cancel_request(arguments) -> int:
 # The contract the audit checks (spec § The credential and enforcement, LIVE
 # since 2026-07-21). The C3 amendment moves the pusher to the dedicated
 # account — update this set in the same commit that applies it.
+#
+# Spelled the human-readable way; GitHub stores the canonical login lowercase
+# ("nedlern") and treats account names as case-insensitive for identity, so the
+# comparison below casefolds both sides rather than this constant being
+# lowercased — a lowercase constant reads as a typo against the spelling the
+# design uses everywhere, and the next reader restores the case and the bug
+# with it. Case-insensitive, still whole-name: `NedLern` is a proper prefix of
+# `NedLerner` (the org's second owner), so the comparison stays set equality
+# over whole logins and never becomes a substring test.
 EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern"}
 
 
@@ -1325,13 +1373,28 @@ def fetch_branch_protection(repo_slug: str) -> dict:
             "Re-run the audit; this failure is safe to retry.",
         ) from None
     if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no detail"
+        # GitHub answers 404 both for "no such protection" and for "your
+        # credential may not read protection settings", deliberately, so that
+        # an unauthorized caller cannot learn whether protection exists. The
+        # refusal must not let a reader collapse those two into an alarm.
+        unreadable = "404" in detail or "Not Found" in detail
         raise Refusal(
             "audit-failed",
-            f"reading protection for {repo_slug} failed: "
-            f"{completed.stderr.strip() or completed.stdout.strip() or 'no detail'}",
-            "Authenticate gh with an account that can read branch protection, or "
-            "fix the network, then re-run. An unreadable wall is a finding, never "
-            "a silent skip into green.",
+            f"reading protection for {repo_slug} failed: {detail}"
+            + (" — note that GitHub returns 404 both when protection is absent and "
+               "when the credential may not read it, so this does NOT show protection "
+               "is missing" if unreadable else ""),
+            ("Re-run under a credential that can read branch protection: the setting "
+             "requires admin on the repository, which agent tokens deliberately lack, "
+             "so this outcome is expected until the credential work lands (a dedicated "
+             "account, § The credential and enforcement). Until then the audit reports "
+             "that it could not verify, which is the honest answer — an unreadable wall "
+             "is a finding, never a silent skip into green."
+             if unreadable else
+             "Authenticate gh with an account that can read branch protection, or fix "
+             "the network, then re-run. An unreadable wall is a finding, never a silent "
+             "skip into green."),
         )
     try:
         return json.loads(completed.stdout)
@@ -1353,7 +1416,8 @@ def compare_protection(protection: dict) -> list[str]:
         )
     else:
         users = sorted(u.get("login", "") for u in restrictions.get("users") or [])
-        if set(users) != EXPECTED_MAIN_PUSHER_ACCOUNTS:
+        if ({u.casefold() for u in users}
+                != {a.casefold() for a in EXPECTED_MAIN_PUSHER_ACCOUNTS}):
             problems.append(
                 f"the push restriction names {users or ['nobody']} instead of "
                 f"{sorted(EXPECTED_MAIN_PUSHER_ACCOUNTS)}"
@@ -1460,8 +1524,7 @@ def check_in(arguments) -> int:
         # two: a twin arriving inside it saw a directory with no pid file,
         # concluded the owner was dead, and deleted the live sibling's request
         # and clone — the exact case 4.1 exists to prevent. An exclusive mkdir
-        # cannot be raced, and the identity is stamped before anything else so
-        # the 'unknown' window is one rename wide.
+        # cannot be raced, so the claim needs no pid file to hold it.
         workspace = existing
         try:
             workspace.mkdir(parents=True)
@@ -1471,11 +1534,22 @@ def check_in(arguments) -> int:
                 "summary": "in-progress — another submission claimed this exact "
                            f"work first; collect the outcome with: status {digest}",
             }, EXIT_SUCCESS)
-        write_worker_identity(workspace)
+        # One writer for worker.pid (ruled 2026-08-12, applied 2026-08-13).
+        # In waiting mode the caller IS the worker, so it stamps itself here.
+        # In --no-wait mode nothing stamps until the detached worker's first
+        # act: the spawner used to write a "<pid> 0" placeholder after Popen
+        # and race the worker for the file, and a worker dying before its own
+        # stamp left that placeholder forever — the reader skips the
+        # start-time comparison on a placeholder, so that workspace's
+        # pid-reuse guard was off for good. The gap now reads as unknown,
+        # which every caller treats as alive.
+        if not getattr(arguments, "no_wait", False):
+            write_worker_identity(workspace)
         # The request record: written once, read by everything downstream.
+        submitting_host = socket.gethostname()
         (workspace / "request.json").write_text(
             json.dumps({**request, "digest": digest, "remote": remote,
-                        "host": socket.gethostname()}, indent=2),
+                        "host": submitting_host}, indent=2),
             encoding="utf-8",
         )
         # The declaration snapshot: the worker (and any resubmit-side rebuild)
@@ -1496,15 +1570,23 @@ def check_in(arguments) -> int:
                 start_new_session=True, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            (workspace / "worker.pid").write_text(
-                f"{spawned.pid} 0", encoding="utf-8"  # worker stamps exact identity
-            )
             workspace = None  # ownership passed to the worker; do not sweep
+            # The digest is handed out with the machine it belongs to (ruled
+            # 2026-08-12). Workspaces are host-local — the worker, the state
+            # directory and the refusal record live on this host and nowhere
+            # else — and the fleet spans macOS and Ubuntu, so a digest carried
+            # to another machine answers "unknown" for work proceeding
+            # normally, and cancel there answers unknown-request while the
+            # worker runs on. The absence replies already say where they
+            # looked; this one now says where it came from.
             return emit({
                 "outcome": "accepted", "digest": digest,
                 "next_action": f"Collect the outcome with: git-gatekeeper.py "
-                               f"status {digest}",
-                "summary": f"accepted {digest}",
+                               f"status {digest} — run it on {submitting_host}, "
+                               f"the host this request was submitted from; its "
+                               f"workspace, worker and refusal record live "
+                               f"there and nowhere else.",
+                "summary": f"accepted {digest} on {submitting_host}",
             }, EXIT_SUCCESS)
 
         try:

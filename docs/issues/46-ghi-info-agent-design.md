@@ -5,7 +5,7 @@ design-as-of: 2026-08-11
 
 # ghi-info — the GHI knowledge agent (design)
 
-How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](../drafts/ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](../drafts/ghi-gatekeeper-plan-draft.md).
+How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: [ghi-info-agent-plan-draft.md](../drafts/ghi-info-agent-plan-draft.md) (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](../drafts/ghi-gatekeeper-plan-draft.md).
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
 
@@ -33,7 +33,7 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 ## The ghi-info session
 
-**Seat:** the Ubuntu box, `~/agents/ghi-info` (the box convention; see [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)); wrapper state — session id, counters — lives there. Mac-side callers reach it over SSH (`scripts/launch-claude`, same issue).
+**Seat:** the Ubuntu box, `~/agents/ghi-info` (the box convention; see [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)); wrapper state — session id, counters — lives there. Mac-side callers reach it over SSH (`scripts/launch-claude-ubuntu` — renamed from `launch-claude` 2026-08-13, when a Mac-local twin `scripts/launch-claude-mac` joined it; same issue).
 
 **Lifecycle:** active while taking a turn, otherwise exited — a session id, transcript, and the mirror persist; no process does. No idle state exists for this class.
 

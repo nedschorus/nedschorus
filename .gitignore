@@ -13,7 +13,21 @@ CLAUDE.local.md
 # instruction-file-guard override marker: consumed per approved change (.claude/hooks/instruction-file-guard.py)
 .walk-approved
 
+# backup-write-guard override marker: same consumed-per-change contract (.claude/hooks/backup-and-snapshot-write-guard.py)
+.backup-write-approved
+
 # Python bytecode caches: the test scripts import modules by path, which
 # writes these beside the sources
 __pycache__/
 *.pyc
+
+# md-review grid output: machine-local review evidence, never committed
+# (user-ruled 2026-08-14). The founding plan's disposal rule already covers
+# this class — "an evidence archive or reference file DELETES, with the
+# extracted decisions memorialized in their governing documents and a
+# `git show <sha>:<path>` recovery pointer" — and it had never been applied
+# here, so the directory grew to 69% of everything the repository tracked.
+# A review's findings belong in the document it reviewed; the transcripts
+# that produced them are working material, deleted when the work they served
+# lands. Everything deleted stays retrievable: git show db917b5:<path>
+md-review-records/
