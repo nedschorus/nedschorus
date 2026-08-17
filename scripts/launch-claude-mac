@@ -57,9 +57,9 @@ usage() {
     echo >&2
     running=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')
     if [ -n "$running" ]; then
-        echo "Agents running on this Mac now: $running" >&2
+        echo "Agent tmux sessions on this Mac now (live seats or after-exit shells): $running" >&2
     else
-        echo "No agents are running on this Mac now." >&2
+        echo "No agent tmux sessions on this Mac now." >&2
     fi
     echo "(Agents on the Ubuntu box are separate: launch-claude-ubuntu.)" >&2
     echo >&2
@@ -166,7 +166,17 @@ fi
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
 # seat is resumed in place by typing `claude --continue`, with no hunt for
 # the right cd. The tmux session — and so the window — now outlives the
-# supervisor and closes when this shell exits.
+# supervisor and closes when this shell exits. Re-running the launcher on
+# such a session ATTACHES to that shell (new-session -A ignores the command
+# for an existing name); the printed options cover it. The leading trap lets
+# the wrapper survive a Ctrl-C aimed at the supervisor — the tty signals the
+# whole foreground group, and an untrapped wrapper died before reaching the
+# shell (review finding, 2026-08-17); a handled trap, unlike an ignore, is
+# not inherited, so the supervisor's own Ctrl-C handling is untouched.
+# Attached launches only: a --no-attach seat keeps the old close-on-exit
+# behavior, because a shell nobody is watching in a detached session would
+# leak, and would turn the "already running" refusal below into a lie
+# automation acts on (review finding, 2026-08-17).
 AFTER_EXIT_COMMAND="echo; \
 echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in the seat's directory\"; \
 echo \"  resume the last session:  claude --continue\"; \
@@ -174,7 +184,8 @@ echo \"  fresh supervised seat:    exit, then launch-claude-mac $AGENT_NAME\"; \
 cd '$AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
 if [ "$ATTACH" = yes ]; then
-    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND"
+    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
+        "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND"
 fi
-tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" 2>/dev/null \
-    || echo "launch-claude-mac: $AGENT_NAME is already running (attach with: launch-claude-mac $AGENT_NAME)"
+tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" 2>/dev/null \
+    || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"

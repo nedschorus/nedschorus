@@ -56,9 +56,9 @@ usage() {
     running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
         'tmux list-sessions -F "#{session_name}" 2>/dev/null' 2>/dev/null | tr '\n' ' ')
     if [ -n "$running" ]; then
-        echo "Agents running on the box now: $running" >&2
+        echo "Agent tmux sessions on the box now (live seats or after-exit shells): $running" >&2
     else
-        echo "No agents are running on the box now (or it could not be reached)." >&2
+        echo "No agent tmux sessions on the box now (or it could not be reached)." >&2
     fi
     echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
     echo >&2
@@ -158,9 +158,20 @@ tmux set-option -g set-titles-string '#S' 2>/dev/null || true; }"
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
 # seat is resumed in place by typing `claude --continue`, with no hunt for
 # the right cd. The tmux session now outlives the supervisor and closes when
-# that shell exits. $AGENT_DIRECTORY rides unquoted so the box expands its ~;
-# \${SHELL} is escaped so the box, not this Mac, names the shell. The twin
-# does the same locally, at scripts/launch-claude-mac.
+# that shell exits. Re-running the launcher on such a session ATTACHES to
+# that shell (new-session -A ignores the command for an existing name); the
+# printed options cover it. The leading trap lets the wrapper survive a
+# Ctrl-C aimed at the supervisor — the tty signals the whole foreground
+# group, and an untrapped wrapper died before reaching the shell (review
+# finding, 2026-08-17); a handled trap, unlike an ignore, is not inherited,
+# so the supervisor's own Ctrl-C handling is untouched. Attached launches
+# only: a --no-attach seat keeps the old close-on-exit behavior, because a
+# shell nobody is watching in a detached session would leak, and would turn
+# the "already running" refusal below into a lie automation acts on (review
+# finding, 2026-08-17). $AGENT_DIRECTORY rides unquoted so the box expands
+# its ~; \${SHELL} is escaped so the box (at remote-command parse), not this
+# Mac, names the shell. The twin does the same locally, at
+# scripts/launch-claude-mac.
 AFTER_EXIT_COMMAND="echo; \
 echo 'launch-claude-ubuntu: the $AGENT_NAME supervisor exited; this shell is in the seat directory'; \
 echo '  resume the last session:  claude --continue'; \
@@ -169,7 +180,7 @@ cd $AGENT_DIRECTORY; exec \${SHELL:-sh}"
 
 if [ "$ATTACH" = yes ]; then
     exec ssh -t "$AGENT_BOX" \
-        "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\""
+        "$PREPARE_COMMAND && tmux new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\""
 fi
 exec ssh "$AGENT_BOX" \
-    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: $AGENT_NAME is already running (attach with: launch-claude-ubuntu $AGENT_NAME)'"
+    "$PREPARE_COMMAND && tmux new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" 2>/dev/null || echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'"
