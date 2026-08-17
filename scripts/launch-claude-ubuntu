@@ -140,6 +140,12 @@ fi"
 # that removes it. Report only, and never blocks the launch.
 PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done || true; }"
 
+# Boot-time freshness on the box — the twin of the same step in
+# launch-claude-mac: fast-forward the reference checkout to origin/main
+# (ff-only, never a merge). A stale copy of this script freshens the
+# checkout that carries its replacement, so the next launch runs current.
+PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus 2>/dev/null || true; }"
+
 # tmux tells the terminal the session name, so an iTerm2 tab reads
 # "gatekeeper" rather than "ssh" (the command it happened to run). Set on the
 # server each launch: it is a global option, harmless to repeat.

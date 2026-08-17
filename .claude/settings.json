@@ -16,6 +16,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/handoff-context-threshold-hook.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/checkout-freshness-catch-up.py"
           }
         ]
       }

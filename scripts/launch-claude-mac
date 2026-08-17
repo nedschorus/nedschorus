@@ -144,6 +144,13 @@ fi
 # separate call — and a report problem never blocks a launch.
 python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
 
+# Boot-time freshness: fast-forward the machine's reference checkout to
+# origin/main (ff-only, never a merge — it carries no work of its own by
+# construction). The mid-session half runs as a Stop hook
+# (scripts/checkout-freshness-catch-up.py); this covers machines between
+# sessions, and never blocks a launch.
+python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" 2>/dev/null || true
+
 # tmux tells the terminal the session name, so the tab reads the seat's name
 # rather than the command that happened to start it. Global option, harmless
 # to repeat on each launch.

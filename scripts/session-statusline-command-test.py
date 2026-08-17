@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -80,6 +81,26 @@ check("a numeric STRING is dropped, never read as an epoch",
 # agent.name is absent for an ordinary session and must not print an
 # empty separator-bounded segment when it is.
 check("no agent segment without an agent name", statusline.agent_segment(payload) == "")
+
+# The freshness suffix displays the catch-up hook's stamp and never fetches.
+with tempfile.TemporaryDirectory() as freshness_directory:
+    fake_checkout = Path(freshness_directory)
+    (fake_checkout / ".git").mkdir()
+    (fake_checkout / ".git" / "HEAD").write_text("ref: refs/heads/seat\n", encoding="utf-8")
+    check("no stamp, no freshness suffix",
+          statusline.freshness_suffix(str(fake_checkout)) == "")
+    stamp_path = fake_checkout / ".git" / "checkout-freshness-stamp.json"
+    stamp_path.write_text('{"behind": 3, "fetch_ok": true}', encoding="utf-8")
+    check("behind renders as a count",
+          statusline.freshness_suffix(str(fake_checkout)) == "⇣3",
+          statusline.freshness_suffix(str(fake_checkout)))
+    stamp_path.write_text('{"behind": 3, "fetch_ok": false}', encoding="utf-8")
+    check("a failed fetch marks the count as doubtful",
+          statusline.freshness_suffix(str(fake_checkout)) == "⇣3?",
+          statusline.freshness_suffix(str(fake_checkout)))
+    stamp_path.write_text('{"behind": 0, "fetch_ok": true}', encoding="utf-8")
+    check("a current checkout shows nothing",
+          statusline.freshness_suffix(str(fake_checkout)) == "")
 check(
     "the agent name appears when the session has one",
     "choirmaster" in statusline.status_line_text({**payload, "agent": {"name": "choirmaster"}}),

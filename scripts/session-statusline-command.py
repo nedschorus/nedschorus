@@ -163,6 +163,33 @@ def git_branch(working_directory: str) -> str:
     return head[:8]
 
 
+def freshness_suffix(working_directory: str) -> str:
+    """⇣N when this checkout is behind origin/main, per the freshness stamp.
+
+    The stamp is written by scripts/checkout-freshness-catch-up.py (the Stop
+    hook) into the checkout's git directory; this function only displays it —
+    the status line never fetches anything itself (user-ruled 2026-08-17).
+    Silent when there is no stamp (the hook has not run here) or when the
+    checkout is current; a trailing ? marks a stamp whose last fetch failed,
+    so a behind-count is never mistaken for fresh knowledge.
+    """
+    if not working_directory:
+        return ""
+    head_file = git_head_file(Path(working_directory))
+    if head_file is None:
+        return ""
+    try:
+        stamp = json.loads((head_file.parent / "checkout-freshness-stamp.json")
+                           .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    behind = stamp.get("behind")
+    if not isinstance(behind, int) or behind <= 0:
+        return ""
+    doubt = "" if stamp.get("fetch_ok", True) else "?"
+    return f"⇣{behind}{doubt}"
+
+
 def location_segment(working_directory: str) -> str:
     """host:directory (branch) — where this session is, on which machine."""
     host = os.uname().nodename.split(".")[0]
@@ -176,6 +203,9 @@ def location_segment(working_directory: str) -> str:
     branch = git_branch(working_directory)
     if branch:
         pieces.append(f" ({branch})")
+    freshness = freshness_suffix(working_directory)
+    if freshness:
+        pieces.append(" " + colored(freshness, RED_BOLD))
     return "".join(pieces)
 
 
