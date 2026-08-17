@@ -76,12 +76,45 @@ def next_restart_counter(handoff_path: Path, state_path: Path) -> int:
     return highest_seen + 1
 
 
+def default_agent_name() -> str:
+    """The working directory's name, which is already unique per seat.
+
+    An agent name selects the handoff file, the supervisor state and the lock,
+    so two sessions sharing a name share all three. Nothing enforced
+    uniqueness and the name was a free-text argument, so every hand-started
+    session on this Mac was called `new-vp` and they overwrote each other's
+    handoffs: on 2026-08-16 one session wrote counter 10 and another wrote
+    counter 11 seconds later, and the first was gone — never archived, because
+    retention keeps the last two GENERATIONS of one file, not one file per
+    session.
+
+    A worktree directory name is unique by construction — Claude Code appends
+    a random suffix for exactly that reason — so defaulting to it removes the
+    collision without anyone having to invent a name. An explicit --agent
+    still wins, which is how the launchers name their seats.
+    """
+    return Path.cwd().name
+
+
+def claiming_directory(handoff_path: Path) -> str:
+    """Which directory last wrote this handoff, or '' if it does not say."""
+    if not handoff_path.is_file():
+        return ""
+    return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
+
+
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool) -> None:
     """Write the handoff file in one step, so no reader sees it half-written."""
     lines = [
         f"written-at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
         f"next-step: {next_step}",
         f"restart-counter: {counter}",
+        # Who wrote this, so a collision is detectable rather than silent.
+        # written-in is the discriminator, not the session id: successive
+        # generations of one seat are different sessions in the SAME
+        # directory, while two seats sharing a name are different directories.
+        f"written-in: {Path.cwd()}",
+        f"written-by-session: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
     ]
     if dont_restart:
         lines.append("dont-restart: the user asked to be consulted before a relaunch")
@@ -129,7 +162,16 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--agent", required=True, help="agent name; names the handoff file")
+    parser.add_argument(
+        "--agent", default=None,
+        help="agent name; names the handoff file. Defaults to the working "
+             "directory's name, which is unique per worktree — pass this only "
+             "to name a seat deliberately, as the launchers do.",
+    )
+    parser.add_argument(
+        "--claim", action="store_true",
+        help="write even though another directory holds this agent name, taking the name from it",
+    )
     parser.add_argument(
         "--next-step-file", required=True,
         help="file holding the prompt for the successor; its whitespace is collapsed to one line",
@@ -155,9 +197,32 @@ def main(argv=None) -> int:
         )
         return 2
 
+    agent = arguments.agent or default_agent_name()
     handoff_directory = Path(arguments.handoff_dir).expanduser()
-    handoff_path = handoff_directory / f"{arguments.agent}-handoff.md"
-    state_path = handoff_directory / f"{arguments.agent}-supervisor-state.json"
+    handoff_path = handoff_directory / f"{agent}-handoff.md"
+    state_path = handoff_directory / f"{agent}-supervisor-state.json"
+
+    # Refuse a foreign claim rather than overwrite it. Successive generations
+    # of one seat run in the same directory, so a DIFFERENT directory holding
+    # this name means two seats share it and one handoff is about to be lost
+    # unread -- observed 2026-08-16, counter 10 overwritten by counter 11
+    # seconds later, with no archived copy because retention keeps the last
+    # two generations of the file rather than one file per session.
+    # Compare RESOLVED paths: on macOS /var is a symlink to /private/var, so
+    # the same seat can describe itself two ways and would otherwise look
+    # foreign to itself and refuse its own handoff.
+    held_by = claiming_directory(handoff_path)
+    held_by_resolved = str(Path(held_by).resolve()) if held_by else ""
+    if held_by and held_by_resolved != str(Path.cwd().resolve()) and not arguments.claim:
+        print(
+            f"handoff-write-and-check-supervisor: {handoff_path} belongs to a seat in "
+            f"{held_by}, and this session is in {Path.cwd()}. Nothing was written, because "
+            f"writing would destroy a handoff that seat may not have acted on yet. Either "
+            f"run with --agent <a name of your own> (the default is this directory's name, "
+            f"{default_agent_name()}), or pass --claim to take the name from it.",
+            file=sys.stderr,
+        )
+        return 2
 
     counter = next_restart_counter(handoff_path, state_path)
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart)
