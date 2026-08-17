@@ -19,9 +19,12 @@
 # terminal window never orphans an agent — type the same command to reconnect.
 # Inside the session runs the handoff supervisor, which launches the claude
 # session, recycles it on every handoff, and exits when its agent stops without
-# handing off; the tmux session closes with it, so nothing lingers. A second
-# launch of a running name attaches instead of duplicating, and the supervisor
-# holds a per-agent lock that refuses a second copy even if tmux is bypassed.
+# handing off; the pane then drops into an interactive shell in the agent's
+# directory, so the seat can be resumed in place with `claude --continue` and
+# no hunting for the right cd (user-ruled 2026-08-17) — the tmux session
+# closes when that shell exits. A second launch of a running name attaches
+# instead of duplicating, and the supervisor holds a per-agent lock that
+# refuses a second copy even if tmux is bypassed.
 # Both protections are per-machine, as is every other thing an agent owns, so
 # the same name used on both machines is simply two unrelated agents — no
 # conflict, only a label you cannot tell apart in a listing spanning both.
@@ -159,8 +162,19 @@ if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
 fi
 
+# When the supervisor exits, the pane becomes an interactive shell in the
+# agent's directory rather than closing (user-ruled 2026-08-17): a stopped
+# seat is resumed in place by typing `claude --continue`, with no hunt for
+# the right cd. The tmux session — and so the window — now outlives the
+# supervisor and closes when this shell exits.
+AFTER_EXIT_COMMAND="echo; \
+echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in the seat's directory\"; \
+echo \"  resume the last session:  claude --continue\"; \
+echo \"  fresh supervised seat:    exit, then launch-claude-mac $AGENT_NAME\"; \
+cd '$AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
+
 if [ "$ATTACH" = yes ]; then
-    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND"
+    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND"
 fi
-tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" 2>/dev/null \
+tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" 2>/dev/null \
     || echo "launch-claude-mac: $AGENT_NAME is already running (attach with: launch-claude-mac $AGENT_NAME)"
