@@ -63,6 +63,21 @@ GIT_IN_PROGRESS_MARKERS = (
 )
 
 
+def emit_attention(message: str) -> None:
+    """Force the agent to hear this, at the cost of one extra turn.
+
+    A Stop hook's plain stdout reaches the transcript display but never the
+    agent (verified against the hooks contract, 2026-08-17). For routine
+    events that is right — the stamp and status line carry them for free.
+    The one attention state (a conflicted merge whose cleanup failed, leaving
+    the tree mid-merge) is worth a forced turn: the agent seated in that tree
+    is the right responder, now. Emitting decision:block on a Stop hook makes
+    the agent continue with the reason in hand (user-ruled 2026-08-17:
+    attention states only; everything routine stays display-plus-stamp).
+    """
+    print(json.dumps({"decision": "block", "reason": message}))
+
+
 def run_git(arguments, working_directory: Path, timeout: int = 60):
     """Run git somewhere; never raise, whatever goes wrong."""
     try:
@@ -237,9 +252,12 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             # and someone must look (silent-safety rule).
             stamp["last_action"] = "conflict: ABORT FAILED, tree needs attention"
             write_stamp(stamp_path, stamp)
-            print(f"catch-up: {branch} conflicted with origin/main and the abort "
-                  f"FAILED — the tree is mid-merge and needs manual attention: "
-                  f"{aborted.stderr.strip() or 'no detail'}")
+            emit_attention(
+                f"catch-up: {branch} conflicted with origin/main and the abort "
+                f"FAILED — this checkout is mid-merge and needs attention before "
+                f"other work: inspect `git status`, resolve or abort the merge "
+                f"by hand, and only then continue. Detail: "
+                f"{aborted.stderr.strip() or 'none'}")
             return
         stamp["conflict_pair"] = conflict_pair
         stamp["last_action"] = "conflict: merge aborted cleanly"

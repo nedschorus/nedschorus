@@ -215,6 +215,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "behind" in result.stdout and "ahead" in result.stdout and "fetched" in result.stdout,
           result.stdout)
 
+# The attention emitter must produce Stop-hook JSON that forces a turn —
+# plain text there would reach nobody (the routine lines are plain on
+# purpose; only the attention state pays for delivery).
+import importlib.util
+specification = importlib.util.spec_from_file_location("catch_up_module", SCRIPT_PATH)
+catch_up_module = importlib.util.module_from_spec(specification)
+specification.loader.exec_module(catch_up_module)
+import contextlib, io
+captured = io.StringIO()
+with contextlib.redirect_stdout(captured):
+    catch_up_module.emit_attention("tree needs attention")
+emitted = json.loads(captured.getvalue())
+check("the attention emitter speaks Stop-hook JSON",
+      emitted.get("decision") == "block" and "attention" in emitted.get("reason", ""),
+      captured.getvalue())
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
