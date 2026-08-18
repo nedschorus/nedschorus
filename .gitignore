@@ -13,6 +13,10 @@ CLAUDE.local.md
 # instruction-file-guard override marker: consumed per approved change (.claude/hooks/instruction-file-guard.py)
 .walk-approved
 
+# session-location-write-guard override marker: same consumed-per-write contract
+# (.claude/hooks/session-location-write-guard.py)
+.location-write-approved
+
 # backup-write-guard override marker, LEGACY: the lane was removed 2026-08-17 —
 # backups are never agent-writable — but a stale marker from before the removal
 # must still never be committed (.claude/hooks/backup-and-snapshot-write-guard.py)
