@@ -149,12 +149,49 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "in progress" in result.stdout, result.stdout)
     (seat_git_dir / "BISECT_LOG").unlink()
 
-    # Detached HEAD blocks with its reason.
+    # Detached HEAD blocks with its reason. Advance the remote first so the
+    # detached checkout is genuinely behind — a current one exercises nothing.
+    commit_file(origin, "advance-detached.txt", "detached\n", "advance for detached case")
     detached = tmp / "detached-worktree"
     git(["worktree", "add", "-q", "--detach", str(detached), "main"], reference)
     result = run_catch_up(["--cwd", str(detached)])
-    check("detached HEAD is never merged", "detached HEAD" in result.stdout or result.stdout.strip() == "",
+    check("detached HEAD is named as the blocker", "detached HEAD" in result.stdout,
           result.stdout)
+
+    # Foreign merge state is never aborted: with MERGE_HEAD present the hook
+    # must leave the repository exactly as found (blocking review finding).
+    commit_file(origin, "advance-foreign.txt", "foreign\n", "advance foreign")
+    (seat_git_dir / "MERGE_HEAD").write_text("simulated foreign merge\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a foreign merge in progress blocks the catch-up",
+          "in progress" in result.stdout, result.stdout)
+    check("the foreign merge state survives untouched",
+          (seat_git_dir / "MERGE_HEAD").exists())
+    (seat_git_dir / "MERGE_HEAD").unlink()
+    result = run_catch_up(["--cwd", str(seat)])
+    check("the catch-up resumes once the foreign merge is gone",
+          (seat / "advance-foreign.txt").exists(), result.stdout)
+
+    # A standing conflict is reported, not retried: ORIG_HEAD must not be
+    # clobbered turn after turn for a known answer.
+    commit_file(seat, "shared.txt", "seat again\n", "seat edits shared again")
+    commit_file(origin, "shared.txt", "origin again\n", "origin edits shared again")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("the fresh conflict is attempted and aborted", "would conflict" in result.stdout,
+          result.stdout)
+    orig_head_after_abort = (seat_git_dir / "ORIG_HEAD").read_text(encoding="utf-8") \
+        if (seat_git_dir / "ORIG_HEAD").exists() else "absent"
+    result = run_catch_up(["--cwd", str(seat)])
+    check("the standing conflict is not retried", "not retried" in result.stdout,
+          result.stdout)
+    orig_head_after_repeat = (seat_git_dir / "ORIG_HEAD").read_text(encoding="utf-8") \
+        if (seat_git_dir / "ORIG_HEAD").exists() else "absent"
+    check("ORIG_HEAD survives the repeat unclobbered",
+          orig_head_after_abort == orig_head_after_repeat)
+    git(["merge", "--no-edit", "-X", "theirs", "origin/main"], seat)
+    git(["checkout", "--theirs", "shared.txt"], seat)
+    git(["add", "shared.txt"], seat)
+    git(["commit", "-q", "--no-edit", "--allow-empty", "-m", "resolve second conflict"], seat)
 
     # The reference copy with a local commit is left alone, loudly.
     commit_file(reference, "local-on-main.txt", "local\n", "a commit main does not have")

@@ -101,6 +101,13 @@ with tempfile.TemporaryDirectory() as freshness_directory:
     stamp_path.write_text('{"behind": 0, "fetch_ok": true}', encoding="utf-8")
     check("a current checkout shows nothing",
           statusline.freshness_suffix(str(fake_checkout)) == "")
+    stamp_path.write_text('{"behind": 0, "fetch_ok": false}', encoding="utf-8")
+    check("current-but-unfetched shows doubt, not silence",
+          statusline.freshness_suffix(str(fake_checkout)) == "⇣?",
+          statusline.freshness_suffix(str(fake_checkout)))
+    stamp_path.write_text('{"behind": null, "fetch_ok": true}', encoding="utf-8")
+    check("an unknowable count with a good fetch shows nothing",
+          statusline.freshness_suffix(str(fake_checkout)) == "")
 check(
     "the agent name appears when the session has one",
     "choirmaster" in statusline.status_line_text({**payload, "agent": {"name": "choirmaster"}}),
