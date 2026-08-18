@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Tests for checkout-freshness-catch-up.py.
+
+Run: python3 scripts/checkout-freshness-catch-up-test.py
+Prints one line per case and exits non-zero if any case fails. Every case
+runs against throwaway repositories under a temporary directory; the layout
+mirrors the fleet's: one clone parked on main (the reference copy) carrying
+a linked worktree on its own branch (the seat).
+"""
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SCRIPT_PATH = Path(__file__).with_name("checkout-freshness-catch-up.py")
+
+failures = []
+
+
+def check(case_name, condition, detail=""):
+    if condition:
+        print(f"PASS  {case_name}")
+    else:
+        print(f"FAIL  {case_name}: {detail}")
+        failures.append(case_name)
+
+
+def git(arguments, cwd: Path):
+    return subprocess.run(["git", *arguments], cwd=str(cwd),
+                          capture_output=True, text=True, check=False)
+
+
+def run_catch_up(extra_arguments):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--interval-seconds", "0", *extra_arguments],
+        capture_output=True, text=True, check=False,
+    )
+
+
+def configure_identity(repository: Path):
+    git(["config", "user.email", "test@example.invalid"], repository)
+    git(["config", "user.name", "freshness test"], repository)
+
+
+def commit_file(repository: Path, name: str, content: str, message: str):
+    (repository / name).write_text(content, encoding="utf-8")
+    git(["add", name], repository)
+    git(["commit", "-q", "-m", message], repository)
+
+
+def stamp_of(checkout: Path) -> dict:
+    git_dir = Path(git(["rev-parse", "--absolute-git-dir"], checkout).stdout.strip())
+    try:
+        return json.loads((git_dir / "checkout-freshness-stamp.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+with tempfile.TemporaryDirectory() as temporary_directory:
+    tmp = Path(temporary_directory)
+
+    # The "remote": an ordinary repository reached by path.
+    origin = tmp / "origin-repo"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    configure_identity(origin)
+    commit_file(origin, "shared.txt", "first\n", "first commit")
+
+    # The machine's clone, parked on main, and a seat worktree on its branch.
+    reference = tmp / "reference-clone"
+    git(["clone", "-q", str(origin), str(reference)], tmp)
+    configure_identity(reference)
+    seat = tmp / "seat-worktree"
+    git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
+
+    # Advance the remote past both checkouts.
+    commit_file(origin, "advance-one.txt", "one\n", "advance one")
+
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a clean behind seat is merged", "merged origin/main into seat" in result.stdout,
+          result.stdout + result.stderr)
+    check("the merge names the files it changed", "advance-one.txt" in result.stdout,
+          result.stdout)
+    check("the seat now has the remote commit", (seat / "advance-one.txt").exists())
+    check("the reference clone fast-forwarded on the same pass",
+          "reference checkout" in result.stdout and (reference / "advance-one.txt").exists(),
+          result.stdout)
+    check("the stamp records zero behind after the merge", stamp_of(seat).get("behind") == 0,
+          str(stamp_of(seat)))
+
+    # Throttle: with a fresh stamp and a long interval, no fetch happens, so a
+    # new remote commit stays unseen and the run is silent.
+    commit_file(origin, "advance-two.txt", "two\n", "advance two")
+    quiet = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--interval-seconds", "3600", "--cwd", str(seat)],
+        capture_output=True, text=True, check=False,
+    )
+    check("a fresh stamp suppresses the fetch (throttle)", quiet.stdout.strip() == "",
+          quiet.stdout)
+    check("the throttled run merged nothing", not (seat / "advance-two.txt").exists())
+
+    result = run_catch_up(["--cwd", str(seat)])
+    check("interval zero fetches and merges the new commit",
+          (seat / "advance-two.txt").exists(), result.stdout + result.stderr)
+
+    # A dirty tracked file blocks the merge with its reason.
+    commit_file(origin, "advance-three.txt", "three\n", "advance three")
+    (seat / "shared.txt").write_text("local edit in progress\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("uncommitted tracked changes block the merge",
+          "not merged" in result.stdout and "uncommitted tracked change" in result.stdout,
+          result.stdout)
+    check("the blocked merge changed nothing", not (seat / "advance-three.txt").exists())
+    git(["checkout", "--", "shared.txt"], seat)
+
+    # Untracked-only dirt does not block.
+    (seat / "scratch-note.txt").write_text("scratch\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("untracked-only dirt does not block the merge",
+          (seat / "advance-three.txt").exists(), result.stdout + result.stderr)
+    (seat / "scratch-note.txt").unlink()
+
+    # A conflicting advance: attempted, aborted, tree left exactly as it was.
+    commit_file(seat, "shared.txt", "seat version\n", "seat edits shared")
+    commit_file(origin, "shared.txt", "origin version\n", "origin edits shared")
+    before = git(["rev-parse", "HEAD"], seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a conflicting merge reports instead of landing",
+          "would conflict" in result.stdout, result.stdout + result.stderr)
+    check("the conflict abort restored HEAD", git(["rev-parse", "HEAD"], seat).stdout.strip() == before)
+    check("no merge state is left behind", not (Path(git(["rev-parse", "--absolute-git-dir"], seat).stdout.strip()) / "MERGE_HEAD").exists())
+    check("the tree is clean after the abort", git(["status", "--porcelain"], seat).stdout.strip() == "",
+          git(["status", "--porcelain"], seat).stdout)
+
+    # Resolve the conflict so later cases start clean: take origin's version.
+    git(["merge", "--no-edit", "-X", "theirs", "origin/main"], seat)
+    git(["checkout", "--theirs", "shared.txt"], seat)
+    git(["add", "shared.txt"], seat)
+    git(["commit", "-q", "--no-edit", "--allow-empty", "-m", "resolve for tests"], seat)
+
+    # An in-progress git operation blocks the merge.
+    commit_file(origin, "advance-four.txt", "four\n", "advance four")
+    seat_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], seat).stdout.strip())
+    (seat_git_dir / "BISECT_LOG").write_text("simulated\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("an in-progress operation blocks the merge",
+          "in progress" in result.stdout, result.stdout)
+    (seat_git_dir / "BISECT_LOG").unlink()
+
+    # Detached HEAD blocks with its reason. Advance the remote first so the
+    # detached checkout is genuinely behind — a current one exercises nothing.
+    commit_file(origin, "advance-detached.txt", "detached\n", "advance for detached case")
+    detached = tmp / "detached-worktree"
+    git(["worktree", "add", "-q", "--detach", str(detached), "main"], reference)
+    result = run_catch_up(["--cwd", str(detached)])
+    check("detached HEAD is named as the blocker", "detached HEAD" in result.stdout,
+          result.stdout)
+
+    # Foreign merge state is never aborted: with MERGE_HEAD present the hook
+    # must leave the repository exactly as found (blocking review finding).
+    commit_file(origin, "advance-foreign.txt", "foreign\n", "advance foreign")
+    (seat_git_dir / "MERGE_HEAD").write_text("simulated foreign merge\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a foreign merge in progress blocks the catch-up",
+          "in progress" in result.stdout, result.stdout)
+    check("the foreign merge state survives untouched",
+          (seat_git_dir / "MERGE_HEAD").exists())
+    (seat_git_dir / "MERGE_HEAD").unlink()
+    result = run_catch_up(["--cwd", str(seat)])
+    check("the catch-up resumes once the foreign merge is gone",
+          (seat / "advance-foreign.txt").exists(), result.stdout)
+
+    # A standing conflict is reported, not retried: ORIG_HEAD must not be
+    # clobbered turn after turn for a known answer.
+    commit_file(seat, "shared.txt", "seat again\n", "seat edits shared again")
+    commit_file(origin, "shared.txt", "origin again\n", "origin edits shared again")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("the fresh conflict is attempted and aborted", "would conflict" in result.stdout,
+          result.stdout)
+    orig_head_after_abort = (seat_git_dir / "ORIG_HEAD").read_text(encoding="utf-8") \
+        if (seat_git_dir / "ORIG_HEAD").exists() else "absent"
+    result = run_catch_up(["--cwd", str(seat)])
+    check("the standing conflict is not retried", "not retried" in result.stdout,
+          result.stdout)
+    orig_head_after_repeat = (seat_git_dir / "ORIG_HEAD").read_text(encoding="utf-8") \
+        if (seat_git_dir / "ORIG_HEAD").exists() else "absent"
+    check("ORIG_HEAD survives the repeat unclobbered",
+          orig_head_after_abort == orig_head_after_repeat)
+    git(["merge", "--no-edit", "-X", "theirs", "origin/main"], seat)
+    git(["checkout", "--theirs", "shared.txt"], seat)
+    git(["add", "shared.txt"], seat)
+    git(["commit", "-q", "--no-edit", "--allow-empty", "-m", "resolve second conflict"], seat)
+
+    # The reference copy with a local commit is left alone, loudly.
+    commit_file(reference, "local-on-main.txt", "local\n", "a commit main does not have")
+    commit_file(origin, "advance-five.txt", "five\n", "advance five")
+    result = run_catch_up(["--cwd", str(reference)])
+    check("a reference with local commits is left alone",
+          "left alone" in result.stdout and "local commit" in result.stdout,
+          result.stdout)
+    check("the diverged reference was not moved", not (reference / "advance-five.txt").exists())
+
+    # A session seated outside any repository does nothing, silently.
+    nowhere = tmp / "not-a-repo"
+    nowhere.mkdir()
+    result = run_catch_up(["--cwd", str(nowhere)])
+    check("a non-repository cwd exits silently", result.returncode == 0 and result.stdout.strip() == "",
+          f"rc={result.returncode} {result.stdout}")
+
+    # The report mode states behind/ahead and the fetch age.
+    result = run_catch_up(["--report", "--repo", str(seat)])
+    check("the report names behind, ahead, and fetch age",
+          "behind" in result.stdout and "ahead" in result.stdout and "fetched" in result.stdout,
+          result.stdout)
+
+print()
+if failures:
+    print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
+    sys.exit(1)
+print("all cases passed")
