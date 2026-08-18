@@ -186,10 +186,14 @@ def freshness_suffix(working_directory: str) -> str:
     except (OSError, ValueError):
         return ""
     behind = stamp.get("behind")
-    if not isinstance(behind, int) or behind <= 0:
-        return ""
-    doubt = "" if stamp.get("fetch_ok", True) else "?"
-    return f"⇣{behind}{doubt}"
+    doubt = not stamp.get("fetch_ok", True)
+    if isinstance(behind, int) and behind > 0:
+        return f"⇣{behind}{'?' if doubt else ''}"
+    if doubt:
+        # The last fetch failed, so "current" is a claim off stale refs —
+        # show the doubt rather than nothing (silent-safety rule).
+        return "⇣?"
+    return ""
 
 
 def location_segment(working_directory: str) -> str:
