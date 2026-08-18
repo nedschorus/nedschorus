@@ -69,7 +69,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-SEPARATOR = " │ "
+# Two plain spaces between segments (user-ruled: the │ dividers go — they
+# spent width the narrow panes need, and color already separates segments).
+SEPARATOR = "  "
 
 RESET = "\033[00m"
 GREEN_BOLD = "\033[01;32m"
