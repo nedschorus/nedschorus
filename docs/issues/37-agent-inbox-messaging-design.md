@@ -37,7 +37,18 @@ What already works, and therefore bounds what this design must add:
   idle one. The inbox does not replace it on-machine.
 - **Across machines**: nothing. The 2026-08-17 LAN test failed in both
   directions, and the boss ruled Remote Control not pursued (evidence on
-  #37). This is the gap the inbox closes.
+  #37). This is the gap the inbox closes. **Observed cost, 2026-08-18**
+  (merge-lane seat, reported live): the Mac merge-lane seat held a tested,
+  full-history answer to a question the box's gatekeeper seat had just
+  been asked; ListAgents on the Mac shows only Mac sessions, so the
+  finding could not be handed over — it went through the user by voice,
+  and the gatekeeper seat re-derived the same answer independently.
+  Duplicate work plus an operator interruption, exactly the waste this
+  layer removes. The same incident sharpens the gap's shape: Mac→box
+  *observation* already works (a persistent watcher over ssh reads box
+  seats' dialogs in real time) — what is missing is an addressable
+  receiving endpoint, which is precisely what a polled inbox provides,
+  with no cross-machine peer discovery required.
 - **Non-Claude writers**: nothing. nedsmessenger, watchers, cron jobs, and
   shell scripts have no way to reach a session except keystrokes. The inbox
   gives them one.
