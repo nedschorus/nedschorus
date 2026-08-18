@@ -116,10 +116,48 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a .walk-approved marker does not authorize a location write",
           result.returncode == 2)
 
+    # The landing side (user-walked 2026-08-17): a write from a seat into the
+    # reference checkout is refused; other trees stay out of scope.
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy)
+    check("a seat's write landing in the reference is blocked", result.returncode == 2,
+          str(result.returncode))
+    check("the cross refusal says the session is seated elsewhere",
+          "seated elsewhere" in result.stderr, result.stderr)
+    result = run_hook(seat, str(reference / "brand" / "new" / "dir" / "note.md"), decoy)
+    check("a write creating new directories in the reference is still judged",
+          result.returncode == 2, str(result.returncode))
+    seat_marker = seat / ".location-write-approved"
+    seat_marker.write_text("user approved: the merge lane's cross-tree fix\n", encoding="utf-8")
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy)
+    check("the cross block honours a marker in the SESSION'S own tree",
+          result.returncode == 0, result.stderr)
+    check("the cross marker is consumed", not seat_marker.exists())
+
+    # A second seat's tree is deliberately out of scope: no recorded incident.
+    other_seat = tmp / "other-seat-worktree"
+    git(["worktree", "add", "-q", "-b", "other-seat", str(other_seat), "main"], reference)
+    result = run_hook(seat, str(other_seat / "note.md"), decoy)
+    check("a write into another SEAT'S tree is not blocked (recorded-unbuilt class)",
+          result.returncode == 0, result.stderr)
+
+    # A standalone clone is its own workspace, never "the reference" —
+    # verdict pinned per the #88 review's standalone-clone finding.
+    lone = tmp / "standalone-clone"
+    git(["clone", "-q", str(reference), str(lone)], tmp)
+    result = run_hook(lone, str(lone / "notes.md"), decoy)
+    check("a session seated in a standalone clone writes freely",
+          result.returncode == 0, result.stderr)
+    result = run_hook(seat, str(lone / "notes.md"), decoy)
+    check("a write landing in a standalone clone is not blocked",
+          result.returncode == 0, result.stderr)
+
     nowhere = tmp / "not-a-checkout"
     nowhere.mkdir()
     result = run_hook(nowhere, str(nowhere / "anything.md"), decoy)
     check("a session outside any checkout passes", result.returncode == 0, result.stderr)
+    result = run_hook(nowhere, str(reference / "from-nowhere.md"), decoy)
+    check("a no-checkout session's write landing in the reference is still blocked",
+          result.returncode == 2, str(result.returncode))
 
     result = run_hook(seat, "", decoy)
     check("a payload without a target passes", result.returncode == 0)

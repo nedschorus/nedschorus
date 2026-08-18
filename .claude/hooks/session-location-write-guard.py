@@ -19,12 +19,17 @@ states make a file write into the checkout a mistake regardless of the file:
   the main worktree, and only there, `git rev-parse --absolute-git-dir`
   equals `--git-common-dir`.
 
-Scope: only writes whose target lies inside the session's own checkout are
-blocked. The scratchpad, /tmp, and anything outside the repository stay
-writable from any state — the hazard is work landing in the tree, not the
-session having a tree. Cross-checkout writes (a session in one checkout
-writing into another) are a separate rule with its own machinery; this guard
-judges only where the session itself sits.
+Scope, two questions about one write. Where the session SITS: the two states
+above block writes into the session's own tree; the scratchpad, /tmp, and
+other trees stay writable from any state. And where the write LANDS
+(user-walked 2026-08-17): a write whose target sits inside the reference
+checkout while the session is seated elsewhere is refused — every recorded
+cross-checkout incident (the twelve-document bench of 2026-08-14, the
+misplaced review records, the misplaced walk ledger) targeted exactly that
+copy. Deliberately narrow: writes into scratch worktrees, throwaway clones,
+and other seats' trees are NOT blocked — the first two are ordinary work,
+and the third has no recorded incident (recorded as unbuilt; an incident is
+its build trigger).
 
 The exception lane, designed in from the start: the merge lane legitimately
 edits files in the reference checkout while resolving merge conflicts. The
@@ -63,7 +68,18 @@ REFERENCE_DENY_MESSAGE = (
     "worktree; use it and leave this copy as reference. If this write IS legitimate work "
     "in this checkout — the merge lane resolving conflicts, with the user's approval — "
     "quote his approval words into {marker} at the checkout root and resubmit; the marker "
-    "is consumed by the one call it approves."
+    "is consumed by the one call it approves. Create the marker with a shell command "
+    "(printf/echo): writing it with the Write tool would be refused by this same guard."
+)
+
+CROSS_REFERENCE_DENY_MESSAGE = (
+    "Refusing to write {path}: it lands inside the machine's reference checkout — the main "
+    "worktree other agents read as the truth about main — while this session is seated "
+    "elsewhere. Work belongs in your own worktree; if this write must land there, land it "
+    "through a branch and the merge lane instead. If it IS legitimate direct work — the "
+    "merge lane resolving conflicts, with the user's approval — quote his approval words "
+    "into {marker} at the root of your own checkout and resubmit; the marker is consumed "
+    "by the one call it approves."
 )
 
 
@@ -90,7 +106,16 @@ def is_detached(checkout: Path) -> bool:
 
 
 def is_reference_checkout(checkout: Path) -> bool:
-    """True only in the repository's main worktree — the machine's reference copy.
+    """True only for the machine's reference copy: a main worktree that
+    carries linked worktrees.
+
+    Being the main worktree alone is not enough — a standalone scratch clone
+    is technically its own main worktree, and treating it as "the reference"
+    would block ordinary work in throwaway clones (verdict pinned 2026-08-17,
+    resolving the #88 review's standalone-clone finding: a lone clone is its
+    own workspace). The reference copy is the one other agents hang their
+    seats off, and that is visible structurally: its .git/worktrees/ is
+    non-empty.
 
     git prints --git-common-dir RELATIVE to the checkout when asked from the
     main worktree (a bare `.git`), so both paths are joined against the
@@ -105,9 +130,26 @@ def is_reference_checkout(checkout: Path) -> bool:
         common = Path(common_dir)
         if not common.is_absolute():
             common = checkout / common
-        return Path(git_dir).resolve() == common.resolve()
+        common = common.resolve()
+        if Path(git_dir).resolve() != common:
+            return False
+        linked = common / "worktrees"
+        return linked.is_dir() and any(linked.iterdir())
     except OSError:
         return False
+
+
+def nearest_existing_ancestor(path: Path):
+    """The first existing directory at or above the target, for judging a
+    write that creates its own directories."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return None
+    for candidate in (resolved.parent, *resolved.parent.parents):
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def target_inside(checkout: Path, file_path: str) -> bool:
@@ -143,19 +185,30 @@ def main() -> int:
 
     session_cwd = Path(payload.get("cwd") or os.getcwd())
     checkout = checkout_root_of(session_cwd)
-    if checkout is None:
-        return 0  # a session outside any checkout has no location to judge
-    if not target_inside(checkout, file_path):
-        return 0  # scratchpad, /tmp, other trees: not this guard's business
 
-    if is_detached(checkout):
-        deny_message = DETACHED_DENY_MESSAGE
-    elif is_reference_checkout(checkout):
-        deny_message = REFERENCE_DENY_MESSAGE
+    if checkout is not None and target_inside(checkout, file_path):
+        # The seated questions: writes into the session's own tree.
+        if is_detached(checkout):
+            deny_message = DETACHED_DENY_MESSAGE
+        elif is_reference_checkout(checkout):
+            deny_message = REFERENCE_DENY_MESSAGE
+        else:
+            return 0
+        marker_root = checkout
     else:
-        return 0
+        # The landing question: does this write cross into the reference?
+        anchor = nearest_existing_ancestor(Path(file_path))
+        target_root = checkout_root_of(anchor) if anchor is not None else None
+        if target_root is None or not is_reference_checkout(target_root):
+            return 0
+        if checkout is not None and checkout.resolve() == target_root.resolve():
+            return 0  # same tree; the seated branch above already judged it
+        deny_message = CROSS_REFERENCE_DENY_MESSAGE
+        # The marker belongs in the tree the SESSION owns; only a session
+        # with no checkout at all falls back to the target's root.
+        marker_root = checkout if checkout is not None else target_root
 
-    if consume_approval_marker(checkout / APPROVAL_MARKER_NAME):
+    if consume_approval_marker(marker_root / APPROVAL_MARKER_NAME):
         return 0
     print(deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
     return 2
