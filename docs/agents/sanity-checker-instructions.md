@@ -2,52 +2,48 @@
 
 Your pile — the body of related work this seat owns — is **how this project reviews things, and how well that works.** Read [the seat model](agent-seat-model.md) first: it defines the words used here (pile, seat, walked approval, instruction-class) and explains how seats operate.
 
-**A name that does double duty.** `sanity-checker` is both this seat and the thing it works on: a reviewer *prompt* that reads a design or plan and proposes simplifications. Below, "this seat" means you; "the sanity-checker prompt" means the artifact. They are never the same thing.
+**A name that does double duty.** `sanity-checker` is both this seat and the thing it works on: the project's second review instrument — three attack prompts and the runner that dispatches them. Below, "this seat" means you; "the sanity-checker" means the instrument. They are never the same thing.
 
-**Your work is done when** the grid-seat decision below has been put to the user and ruled, the four un-triaged findings have been verified and routed to the seats that own them, and the PRs listed here are merged or their remaining work is stated. Then write a handoff and stop.
+**Your work is done when** the owed re-review below has run and its findings are walked, the first live run (walk-order item 6) is ruled and executed, and the record directories this work leaves behind are disposed per the house rule. Then write a handoff and stop.
 
-## The decision this pile exists to reach
+## The standing shape (ruled — do not reopen)
 
-**Should the sanity-checker prompt become part of the md-review grid** — the eight-cell reviewer array that `scripts/md-review-grid.py` runs over a document — and if so, as three separate reviewers rather than one?
+- **A separate instrument, never a grid cell** (user-ruled 2026-08-17, on the attack-split validation experiment's scorecard — recoverable at `git show 'ab541cc^':md-review-records/2026-08-12-attack-split-experiment/`).
+- **Three stance attacks, each in its own fresh context**: cut, mechanization, fresh-eyes. The prompts are the instrument's entire instruction surface, at `docs/agents/sanity-checker-{cut,mechanization,fresh-eyes}-attack-prompt.md`, each with a STANDING header; the runner is prompt-free by ruling.
+- **The runner**: `scripts/sanity-check-attacks.py`. Its docstring is the operating-rules home — both runtimes at xhigh, manual call after md-review on actionable (work-directing) MDs only, never automatic, records in `sanity-check-records/` under the house disposal rule.
+- **The 2026-08-17/18 revision**: all three prompts went through a full md-review findings walk, every flagged sentence ruled. Fresh-eyes now runs the instructed-isolation model — the cell is told what not to read (the review request carries off-limits and read-first lists the requester writes; the requester-facing problem-statement section sits above the fresh-eyes divider), and the runner's coined-name leak scan checks the problem statement, the injected instruction files, and each fresh-eyes report, printing LEAK-WARNING lines for triage. Calibration evidence: `md-review-records/2026-08-17-fresh-eyes-canary/`.
+- **Owed before first live use (user-ruled 2026-08-17):** a full md-review grid re-review of all three revised prompts, then the sanity-check run of walk-order item 6.
 
-The proposal is three *stances*, each a differently-framed instance of the prompt: **cut** (what should be removed), **mechanization** (what an English instruction could become deterministic code), and **fresh-eyes** (what a reader without history would misread). The three prompt files are in `git show db917b5:md-review-records/2026-08-12-attack-split-experiment/`, alongside the evidence.
+## Closed history (pointers only)
 
-What is already settled, walked with the user and recorded in the header of `docs/drafts/sanity-checker-prompt-draft.md`: the prompt's scope, its trigger, the order of its sections, **which models it runs on** (Fable and gpt-5.6-sol at xhigh), piecemeal delivery, and who owns triage of its output. **Do not reopen those.** The open question is only whether the prompt takes seats in the grid at all, and as three stances or one.
-
-The evidence is `git show db917b5:md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, also in PR #53. Read it before the walk, because the user's first question will be what its numbers mean, and this file deliberately does not restate them — a summary you cannot defend is worse than none. Note the scorecard's dated 2026-08-15 correction: its headline ratio mixed denominators; the like-for-like counts are in the correction line.
-
-**Disposal at close (user-ruled 2026-08-15):** the experiment's records and `scripts/sanity-checker-attack-experiment.py` already left the tree under the blanket review-records retirement (user-ruled 2026-08-14; recoverable at `git show db917b5:<path>`). What still leaves at the adoption walk's close: the three attack-prompt drafts under `docs/drafts/`, their settled header rulings re-homed first. Deletion is the house disposal: git history is the archive, and the disposing commit's message is the pointer.
-
-**A skill change is walked with the user before it is committed.** That is the part within your power; merging is his Mac-side agent's. So the deliverable here is a walk and a ruling, not an applied change.
-
-## Four findings needing triage before anything is proposed
-
-The attack-split experiment surfaced these beyond what the experiment was scored against. They have never been presented to the user. **Every one was written against an archived snapshot of the code, so each claim must be checked against the repository as it is now** — and each is restated here in full, because the original wording was shorthand no one could act on.
-
-1. **The gatekeeper specification promises checks it does not run.** The spec says that when a test suite exists, the tests run at check-in time. A suite now exists (`scripts/git-gatekeeper-test.py`), but nothing wires it into the check-in path. Note carefully what this does and does not mean: the gate is dormant anyway — no credential, so nothing routes through it — so this is not a live hole today. It is an unimplemented promise that would become a live hole on the day the gate activates. Verify by reading the check-in path in `scripts/git-gatekeeper.py`.
-2. **Nothing stops the gatekeeper approving a change to its own source.** An agent could edit `scripts/git-gatekeeper.py` and check that edit in through the very program it just changed. Build slice 6 is the intended answer, since it would require walked approval for instruction-class files, and the gatekeeper's own source is proposed to join that class — so verify against the slice plan whether this is already covered by a ruling rather than open.
-3. **Agents hand-write 40-character commit ids into records, and mistype them.** The proposal is that whatever writes such a record stamps the id itself rather than an agent transcribing it. No mechanism was designed; the finding is that the manual path exists at all. Verify by looking for hand-written full SHAs in recent records.
-4. **A session can stall without anything noticing.** The handoff system replaces a session when its context runs low, but a session that hangs while still well under that threshold trips nothing — no timer, no liveness check. Verify against `scripts/handoff-supervisor.py` and `scripts/handoff-context-threshold-hook.py`, and note this one cannot be settled by reading code alone: it is a claim about runtime behaviour, so if you cannot verify it, say so rather than manufacturing a code-level test.
-
-**Where each goes after verification.** Findings 1 and 2 belong to the `gatekeeper` seat, 4 to `fleet`, and 3 to whichever seat owns the record-writing path it turns out to touch — decide that when you know, and say why. Seats cannot hand work to each other directly: write the survivor into the receiving seat's brief or a queue document under `docs/issues/queue/`, and tell the user what you routed where. A triage whose output is not written down evaporates, which is precisely how these four went un-presented for two days.
-
-## Background you will need
-
-- `docs/drafts/sanity-checker-prompt-draft.md` — the settled prompt, plus the header recording what has been walked.
-- `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/subtract-cell-prompt-lessons.md` — the requirements record behind it, including the user's verbatim statement of what "simplify" must mean, and a calibration protocol proposed as a precondition for adopting the prompt into the grid. Read that protocol before the walk and form a view: it is a proposal, not a rule, and whether it should gate adoption is part of what the user is deciding.
-- `git show db917b5:md-review-records/2026-08-11-sanity-checker-prompt-draft/` — the md-review of that draft.
-- The grid itself: `.claude/skills/md-review/SKILL.md`, `scripts/md-review-grid.py`, and the per-runtime cell scripts. The grid runs each document past eight reviewers — two runtimes (Claude and Codex) × two model tiers × two cell kinds (defect hunt and restate). The Codex lower tier changed model on 2026-08-13; that affects which model produces those cells and nothing about how the grid is run.
-
-**Pull requests: nothing of yours is outstanding.** [#51](https://github.com/nedschorus/nedschorus/pull/51) (skill rules) and [#53](https://github.com/nedschorus/nedschorus/pull/53) (the attack-split experiment and its scorecard) were closed 2026-08-13 as *already landed* — their content reached main through the choirmaster merge train and was verified byte-for-byte at Mac-side review, so the closure is not a rejection and nothing needs re-doing. Check before assuming otherwise: `gh pr list --repo nedschorus/nedschorus --state open`.
+- The grid-seat decision this pile existed to reach: RULED as above; the scorecard at the `git show` pointer is the evidence.
+- The attack-split experiment's four side findings: verified, routed, closed via PR #77.
+- The parent prompt draft and its predecessors: deleted from `docs/drafts/`; each path's git history is its decision trail.
+- PRs [#51](https://github.com/nedschorus/nedschorus/pull/51) and [#53](https://github.com/nedschorus/nedschorus/pull/53): closed 2026-08-13 as already landed — not rejections.
 
 ## An unowned thread worth claiming
 
-Session `29d66917` (3.67 MB, last active 2026-08-13) drafted a **code-review prompt for reliability improvement** in `~/agents/choirmaster`. No live session, no handoff, mentioned nowhere else — and plainly your subject. Its transcript is `~/.claude/projects/-home-nedlern-agents-choirmaster/29d66917-9767-47cb-a221-d4876d8014cd.jsonl`. Read it before starting any code-review-prompt work; that wheel is partly built.
+Session `29d66917` (3.67 MB, last active 2026-08-13) drafted a **code-review prompt for reliability improvement** in `~/agents/choirmaster`. No live session, no handoff, mentioned nowhere else — and plainly this seat's subject. Its transcript is `~/.claude/projects/-home-nedlern-agents-choirmaster/29d66917-9767-47cb-a221-d4876d8014cd.jsonl`. Read it before starting any code-review-prompt work; that wheel is partly built. (Noted, not claimed — walk-order item 5.)
 
 ## The user's standing bar for reviewers
 
 From the 2026-08-10 walk: *"asking to simplify is like asking to optimize without context."* State the axis. This project's axis is **simple-to-operate over simple-to-build; mechanical guarantees over trained habit; a detector with no consumer is cost without value; never trade a deterministic script for probabilistic agent behavior.**
 
+## Walk order (opened 2026-08-16, doctrine-queue-drain seat — operationalizing the proven attack-split shape; the four-finding triage closed via PR #77)
+
+1. Purpose: finish the sanity-checker — record the ruled shape, make it runnable, close this brief's open items. Nothing settled is reopened.
+   *processed 2026-08-17 → accepted (purpose item; no capture).*
+2. Record the standing ruling: a separate instrument, never a grid cell — three stance attacks in separate contexts, both runtimes, manual call after md-review; evidence the attack-split scorecard.
+   *processed 2026-08-17 → accepted: the standing rule confirmed as stated (separate instrument, never a grid cell; three stance attacks in fresh contexts; both runtimes; manual call after md-review on work-directing MDs only; requester triages, the user rules on every applied change; unsplit form retired). One clause open: the effort tier — xhigh vs max, per runtime, decided by the running probe (cut attack at max on the gatekeeper ground truth, scored against S1–S9; headline question whether max finds S5; the user established codex has a max tier by direct test). Capture: this mark now; the runner and its commit at item 3's landing.*
+3. Operational home: recover the experiment runner from git history and adapt it as the standing runner; the three attack prompts graduate from docs/drafts/ to a durable home.
+   *processed 2026-08-17 → accepted with two user amendments folded (records to the instrument's own sanity-check-records/ directory, not md-review-records/; effort tier xhigh confirmed for both runtimes by the max probe — item 2's open clause closed by the same ruling). Built and committed at 1250104: scripts/sanity-check-attacks.py; prompts promoted to docs/agents/ with STANDING headers; sanity-check-records/ gitignored with the house disposal rule.*
+4. Disposal: the three attack-prompt drafts and the prompt draft leave docs/drafts/ once homed, settled header rulings re-homed first (the ruled disposal).
+   *processed 2026-08-18 → done: the attack-prompt drafts left at promotion (commit 1250104); the parent draft's two orphan rules re-homed into the runner docstring (md-review-first with reason; never-automatic with the suggestion-note rule), then the draft deleted via git rm — its path's git history is the decision trail, as the prompt headers state. The orphaned source file docs/drafts/simplification-review-codex-naming-notes.jsonl deleted under the same disposal (its only citing document was that draft).*
+5. This brief rewritten to its post-decision state (triage done, decision ruled, deleted-record citations replaced); the unowned code-review-prompt thread noted, not claimed.
+   *processed 2026-08-18 → done: this file is the rewrite (user-ruled shape; the pre-rewrite text is this path's git history).*
+6. First live run: target and staffing (the seat is blank; the instrument runs from any seat).
+   *processed 2026-08-18 → RULED: first targets are the instrument's own three prompts — three runs, each prompt as target with its siblings as context, fresh-eyes statements authored per the requester section; run from this seat, after the owed grid re-review and its findings walk. WALK CLOSED 2026-08-18: all six items processed; captures in this brief, the three prompts, the runner, and the md-review dispositions anchor.*
+
 ## First action
 
-Read the scorecard and the prompt draft's header, verify the four findings against current code, and route them. Then offer the user the grid-seat walk. He was asked once which should come first — the walk or the triage — and never answered; do the triage first, since its results may bear on the walk, and say that is what you did.
+Run the owed re-review — the md-review grid over each of the three attack prompts — and walk its findings. Then bring walk-order item 6, the first live run's target and staffing, to the user.
