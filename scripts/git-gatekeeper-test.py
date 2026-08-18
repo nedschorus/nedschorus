@@ -16,6 +16,7 @@ Coverage, against the specification's acceptance-test index:
       fresh; metadata-only changes do not move the digest
   T9  the advisory: undeclared worktree changes are noted, never blocking
   T11 every import defect refuses as import-invalid, facts naming the defect
+  T13 a check-in declaring the gate's own source refuses gatekeeper-source-refused
   T4  concurrent check-ins: the winner is unaware, the loser integrates
   T5  a real conflict refuses, naming the paths, the commits and the fix
   T6  sustained head movement ends at the retry cap, never a spin
@@ -475,6 +476,32 @@ with tempfile.TemporaryDirectory() as workspace_name:
         check(f"{label} exits 1", code == 1, code)
         check(f"{label} states the facts", bool(payload.get("facts")), payload)
         check(f"{label} teaches the next action", bool(payload.get("next_action")), payload)
+
+    # --- T13: the gate refuses its own source (ruled 2026-08-17) -----------
+    # The deployed copy updates itself from main, so the gate must not be the
+    # door its own source comes through; it goes by pull request instead.
+    # docs/issues/3-slice-6-review-evidence-not-built.md
+    (work / "scripts").mkdir(exist_ok=True)
+    (work / "scripts" / "git-gatekeeper.py").write_text("# altered\n", encoding="utf-8")
+    source_cases = [
+        ("alone", ["scripts/git-gatekeeper.py"]),
+        ("mixed with an unrelated path", ["README.md", "scripts/git-gatekeeper.py"]),
+        ("spelled with a leading ./", ["./scripts/git-gatekeeper.py"]),
+    ]
+    for label_fragment, declared in source_cases:
+        code, payload = run_gatekeeper(
+            base_request(work, remote, base, declared), state_home)
+        label = f"T13 own source {label_fragment}"
+        check(f"{label} refuses gatekeeper-source-refused",
+              payload.get("error") == "gatekeeper-source-refused", payload)
+        check(f"{label} exits 1", code == 1, code)
+        check(f"{label} names the path in its facts",
+              "scripts/git-gatekeeper.py" in (payload.get("facts") or ""), payload)
+        check(f"{label} points at the pull-request lane",
+              "pull-request" in (payload.get("next_action") or ""), payload)
+
+    check("T13 refusing the gate's own source moved main for nothing",
+          git(["rev-parse", "main"], remote).stdout.strip() == main_before)
 
     check("T1 no form refusal moved main",
           git(["rev-parse", "main"], remote).stdout.strip() == main_before)

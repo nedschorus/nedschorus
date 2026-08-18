@@ -105,6 +105,15 @@ ISSUE_NUMBER = re.compile(r"^[1-9][0-9]*$")
 # matching any of these classes, so the rule costs nothing today.
 UNSAFE_PATH_MARKER = "->"
 
+# The gate does not check in its own source (user-ruled 2026-08-17,
+# docs/issues/3-slice-6-review-evidence-not-built.md). The deployed copy updates
+# itself from main, so admitting a change to this file would let the gate install
+# its own replacement; and once checks run here, a gate reviewing a change to
+# itself would be reviewing the code performing the review. Both disappear if the
+# path simply never comes through this door: it reaches main by pull request,
+# reviewed before merge.
+GATEKEEPER_SOURCE_PATH = "scripts/git-gatekeeper.py"
+
 # The integration loop is bounded rather than open: refusing beats spinning.
 MAX_INTEGRATION_ROUNDS = 5
 
@@ -220,6 +229,26 @@ def screen_unsafe_path(path: str, position: str) -> None:
     )
 
 
+def screen_gatekeeper_source_path(path: str) -> None:
+    """Refuse a declared path that is the gate's own source (ruled 2026-08-17).
+
+    Not resubmittable: the same request refuses identically every time, which is
+    the point. The next action names the lane that does admit it.
+    """
+    if Path(path).as_posix() != GATEKEEPER_SOURCE_PATH:
+        return
+    raise Refusal(
+        "gatekeeper-source-refused",
+        f"the declared path {GATEKEEPER_SOURCE_PATH!r} is this program's own source, "
+        "which the gatekeeper does not check in",
+        "Take this change through the pull-request lane instead: commit it on a "
+        "branch, push the branch, and open a pull request for review before merge. "
+        "Resubmitting this check-in unchanged refuses again; the refusal is by "
+        "design, not a defect. If the request also carries unrelated paths, "
+        "resubmit those as their own check-in.",
+    )
+
+
 def screen_paths(raw_paths: list[str]) -> list[str]:
     if not raw_paths:
         raise Refusal(
@@ -252,6 +281,7 @@ def screen_paths(raw_paths: list[str]) -> list[str]:
                 "malformed-field", f"the path {path!r} is declared twice",
                 "Resubmit with each path named exactly once.",
             )
+        screen_gatekeeper_source_path(path)
         seen.add(path)
     return sorted(seen)
 
