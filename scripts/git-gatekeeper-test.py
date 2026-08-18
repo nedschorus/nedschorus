@@ -487,6 +487,9 @@ with tempfile.TemporaryDirectory() as workspace_name:
         ("alone", ["scripts/git-gatekeeper.py"]),
         ("mixed with an unrelated path", ["README.md", "scripts/git-gatekeeper.py"]),
         ("spelled with a leading ./", ["./scripts/git-gatekeeper.py"]),
+        # Case variant: refused case-sensitively before 2026-08-18, it landed as a
+        # distinct file that overwrites the real one on any case-insensitive checkout.
+        ("spelled with different case", ["scripts/Git-Gatekeeper.py"]),
     ]
     for label_fragment, declared in source_cases:
         code, payload = run_gatekeeper(
@@ -499,6 +502,16 @@ with tempfile.TemporaryDirectory() as workspace_name:
               "scripts/git-gatekeeper.py" in (payload.get("facts") or ""), payload)
         check(f"{label} points at the pull-request lane",
               "pull-request" in (payload.get("next_action") or ""), payload)
+
+    # The screen must key on the whole path, not a substring of it: these are
+    # ordinary paths that merely contain the gate's name, and they must reach the
+    # later screens instead of being refused here. They do not exist in the
+    # worktree, so `unknown-path` is the proof that this screen let them by.
+    for near_miss in ["other/scripts/git-gatekeeper.py", "scripts/git-gatekeeper.py.bak"]:
+        code, payload = run_gatekeeper(
+            base_request(work, remote, base, [near_miss]), state_home)
+        check(f"T13 {near_miss} is not caught by the own-source screen",
+              payload.get("error") == "unknown-path", payload)
 
     check("T13 refusing the gate's own source moved main for nothing",
           git(["rev-parse", "main"], remote).stdout.strip() == main_before)

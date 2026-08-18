@@ -235,7 +235,15 @@ def screen_gatekeeper_source_path(path: str) -> None:
     Not resubmittable: the same request refuses identically every time, which is
     the point. The next action names the lane that does admit it.
     """
-    if Path(path).as_posix() != GATEKEEPER_SOURCE_PATH:
+    # Case-folded, deliberately (merge-lane review of PR #92, 2026-08-18).
+    # A case-sensitive comparison let `scripts/Git-Gatekeeper.py` through every
+    # screen and land as a distinct file on main; on a case-insensitive checkout
+    # — every Mac clone — an ordinary pull then writes that file over
+    # `scripts/git-gatekeeper.py` on disk. That is exactly the self-replacement
+    # this refusal exists to prevent, defeated by one character. Over-refusing a
+    # differently-cased path costs nothing: there is one such file, and no
+    # legitimate check-in needs a case variant of it.
+    if Path(path).as_posix().casefold() != GATEKEEPER_SOURCE_PATH.casefold():
         return
     raise Refusal(
         "gatekeeper-source-refused",
