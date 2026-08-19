@@ -46,15 +46,37 @@ the instruction-file class
 1). It needs an approval-evidence format that does not exist yet, and the
 in-session tamper guard
 ([`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py))
-covers the same surface today. It becomes slice 6 when that format is
-designed.
+covers the same surface today. It became slice 6 when that format was
+designed — and slice 6 is **NOT BUILT and will not be**, user-ruled
+2026-08-17.
 
-User-ruled 2026-08-10: slice 6 is now a scheduled prerequisite of
-activating the privileged lane. The deployed, root-owned gatekeeper copy
-(C2 as amended) upgrades itself from main, which is safe only once the
-gatekeeper's own source is in the instruction-file class with the evidence
-check enforcing walked approval. Sequence: slices 4 and 5, then the
-approval-evidence format design, then slice 6, then the credential work.
+User-ruled 2026-08-10, now superseded: slice 6 was a scheduled
+prerequisite of activating the privileged lane. The deployed, root-owned
+gatekeeper copy (C2 as amended) upgrades itself from main, which was held
+to be safe only once the gatekeeper's own source was in the
+instruction-file class with an evidence check enforcing walked approval.
+Sequence then planned: slices 4 and 5, then the approval-evidence format
+design, then slice 6, then the credential work.
+
+**User-ruled 2026-08-17 — the format was designed and then declined, and
+slice 6 with it.** The design defended against an agent fabricating the
+user's approval. Tested against the record before adoption, that threat
+is not evidenced: all 128 session transcripts were searched, three
+`.walk-approved` markers exist, two quote the user verbatim, and none was
+fabricated. Meanwhile the check's benefit in ordinary use is thin — when
+the user tells an agent to submit a change, his approval already *is* the
+instruction — and its cost is that no instruction-bearing change could
+ever land unattended.
+
+What replaces it, so C2's reasoning is discharged rather than dropped:
+the gatekeeper **refuses any check-in declaring `scripts/git-gatekeeper.py`**
+(`gatekeeper-source-refused`), so its own source keeps reaching main
+through the reviewed pull-request lane. Prerequisite ruled the same day:
+main's push allow-list keeps the user's own account alongside the
+gatekeeper account, since a pull-request merge is itself a push to main.
+Revised sequence: the credential work, with that refusal built alongside
+it. Full reasoning:
+[`3-slice-6-review-evidence-not-built.md`](3-slice-6-review-evidence-not-built.md).
 
 ### Why the boundaries fall here
 
@@ -871,7 +893,12 @@ automatic integration (clean re-application, the usual case) and `conflict`
    and a separate decision — install the `NedLern` credential for the
    program's use on this box, or run the program on the Mac, or move
    straight to the dedicated-identity rung the design names — turns it
-   live. Not choirmaster's decision to make.
+   live. Not choirmaster's decision to make. **Settled in part, user-ruled
+   2026-08-17:** whichever identity becomes the pusher, main's push
+   allow-list keeps the user's own account alongside it. A pull-request
+   merge is a push to main, so an allow-list naming the pusher alone
+   would close the pull-request lane for everyone — and the gate's own
+   source depends on that lane, since the gate refuses to check it in.
 2. **The `write-test-plan` skill.** Founding plan open question 8 names
    [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18) as
    the first expected candidate-skill pull, triggered by exactly this task.
