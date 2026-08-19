@@ -51,6 +51,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The marker lane lives in a sibling module so both guards share one copy of
+# the contract (extracted 2026-08-19). Resolving this file's own directory
+# explicitly rather than relying on sys.path[0]: this project has been bitten
+# repeatedly by code that assumed the wrong base directory, and a guard that
+# fails to import is a guard that does not run.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guard_approval_marker import consume_approval_marker  # noqa: E402
+
 APPROVAL_MARKER_NAME = ".location-write-approved"
 
 DETACHED_DENY_MESSAGE = (
@@ -158,18 +166,6 @@ def target_inside(checkout: Path, file_path: str) -> bool:
         return True
     except (ValueError, OSError):
         return False
-
-
-def consume_approval_marker(marker_path: Path) -> bool:
-    """One approved write passes; the marker is spent by the call it approves."""
-    try:
-        content = marker_path.read_text(encoding="utf-8").strip()
-    except (FileNotFoundError, OSError):
-        return False
-    if not content:
-        return False
-    marker_path.unlink(missing_ok=True)
-    return True
 
 
 def main() -> int:
