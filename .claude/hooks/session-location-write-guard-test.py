@@ -228,6 +228,31 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("an unreadable HEAD does not spend the seat's marker", stub_marker.exists())
     stub_marker.unlink(missing_ok=True)
 
+    # One-sided git failures must reach "unknown", not a repository state.
+    # Found on PR #103's review, in the replacement for is_detached: with only
+    # symbolic-ref broken the seat read as detached, and with only verify
+    # broken it read as unborn — the same class the replacement was written to
+    # close. Neither is reachable with a real git, so each gets a stub that
+    # breaks exactly one command and passes the rest through.
+    for broken, wrong_state in (("symbolic-ref", "detached HEAD"),
+                                ("rev-parse --verify", "no commits yet")):
+        one_sided = tmp / f"stub-{broken.split()[0]}-{len(broken)}"
+        one_sided.mkdir()
+        stub = one_sided / "git"
+        if broken == "symbolic-ref":
+            failing_case = 'if [ "$1" = "symbolic-ref" ]; then exit 3; fi\n'
+        else:
+            failing_case = ('if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; '
+                            "then exit 3; fi\n")
+        stub.write_text("#!/bin/sh\n" + failing_case + f'exec {real_git} "$@"\n',
+                        encoding="utf-8")
+        stub.chmod(0o755)
+        result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=one_sided)
+        check(f"a healthy seat survives a broken {broken}",
+              result.returncode == 0, result.stderr)
+        check(f"a broken {broken} is not reported as \"{wrong_state}\"",
+              wrong_state not in result.stderr, result.stderr)
+
     # ------------------------------------------------------------------
     # PR #91's review: the .git asymmetry, and marker inertness
     # ------------------------------------------------------------------

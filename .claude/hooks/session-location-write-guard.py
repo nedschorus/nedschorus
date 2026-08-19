@@ -61,6 +61,18 @@ from guard_approval_marker import consume_approval_marker  # noqa: E402
 
 APPROVAL_MARKER_NAME = ".location-write-approved"
 
+# run_git reports a git that never ran with a code git itself cannot return,
+# so "no answer" is never mistaken for an answer.
+GIT_DID_NOT_RUN = -1
+
+# The exit codes each HEAD question is allowed to answer with, measured
+# 2026-08-19 on both fleet machines. Anything else means the question was not
+# answered, whatever the reason.
+SYMBOLIC_REF_ON_A_BRANCH = 0
+SYMBOLIC_REF_NOT_A_BRANCH = 128     # detached HEAD, or no repository
+HEAD_COMMIT_EXISTS = 0
+HEAD_COMMIT_ABSENT = (1, 128)       # unborn repository, or no repository
+
 DETACHED_DENY_MESSAGE = (
     "Refusing to write {path}: this session's checkout is on a detached HEAD — no branch "
     "points at its commits, so anything committed here is unreachable by name and will be "
@@ -112,7 +124,13 @@ def run_git(arguments, working_directory: Path):
             capture_output=True, text=True, check=False, timeout=15,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+        # NOT 1: git itself uses 1 as a real answer (rev-parse --verify --quiet
+        # exits 1 for "HEAD does not exist", which is how an unborn repository
+        # is recognised). Synthesizing 1 here would make "git could not run"
+        # indistinguishable from that answer, and a caller would read a
+        # repository state out of a launch failure.
+        return subprocess.CompletedProcess(arguments, GIT_DID_NOT_RUN, "",
+                                           f"{type(error).__name__}: {error}")
 
 
 def checkout_root_of(directory: Path):
@@ -141,19 +159,40 @@ def head_state_of(checkout: Path):
     healthy seat could be refused and told to fix a state it was not in.
 
     Measured exit codes this depends on (2026-08-19, git 2.x, both fleet
-    machines): `symbolic-ref --short HEAD` exits 0 in an unborn repository and
-    prints the branch name, and exits 128 when detached. It also exits 128
-    outside a repository, so a failure there is confirmed against HEAD itself
-    before being called detached rather than broken.
+    machines):
+
+        state        symbolic-ref   rev-parse --verify --quiet HEAD
+        on branch              0                                  0
+        unborn                 0                                  1
+        detached             128                                  0
+        not a repo           128                                128
+
+    Only those codes count as answers. A command that failed to run, timed
+    out, or returned anything else has told us nothing, and both blocking
+    verdicts require both questions answered — otherwise the state is
+    "unknown", which does not block. The first version of this function got
+    that wrong in the same class it was written to fix: a one-sided failure
+    read as "detached" when symbolic-ref failed, and as "unborn" when verify
+    failed (found on PR #103's review). Note that run_git cannot report a
+    launch failure as 1, because git uses 1 as a real answer here.
     """
     symbolic = run_git(["symbolic-ref", "--short", "HEAD"], checkout)
-    head_exists = run_git(["rev-parse", "--verify", "--quiet", "HEAD"], checkout).returncode == 0
-    if symbolic.returncode == 0:
-        branch = symbolic.stdout.strip() or None
-        return ("branch" if head_exists else "unborn"), branch
-    if head_exists:
-        return "detached", None
-    return "unknown", None
+    verify = run_git(["rev-parse", "--verify", "--quiet", "HEAD"], checkout)
+
+    # Both blocking verdicts need BOTH questions actually answered. A command
+    # that failed to run, timed out, or returned a code it has no business
+    # returning has told us nothing, and a state read out of that is a guess.
+    if symbolic.returncode not in (SYMBOLIC_REF_ON_A_BRANCH, SYMBOLIC_REF_NOT_A_BRANCH):
+        return "unknown", None
+    if verify.returncode != HEAD_COMMIT_EXISTS and verify.returncode not in HEAD_COMMIT_ABSENT:
+        return "unknown", None
+
+    head_exists = verify.returncode == HEAD_COMMIT_EXISTS
+    if symbolic.returncode == SYMBOLIC_REF_ON_A_BRANCH:
+        return ("branch" if head_exists else "unborn"), (symbolic.stdout.strip() or None)
+    # symbolic-ref answered "not a branch". With a commit that is a detached
+    # HEAD; without one there is no repository here to judge.
+    return ("detached" if head_exists else "unknown"), None
 
 
 def checkout_owning_git_directory(path: Path):
