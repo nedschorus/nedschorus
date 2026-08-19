@@ -80,6 +80,11 @@ CODEX_MODEL = "gpt-5.6-sol"
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
 
+# The prompt files' header/body boundary, and the heading the body must open
+# with — checked at startup, so a broken boundary fails before any model cost.
+PROMPT_BODY_MARKER = "<!-- SANITY-CHECK-PROMPT-BODY -->"
+PROMPT_BODY_FIRST_LINE = "## Your assignment"
+
 ATTACKS = ("cut", "mechanization", "fresh-eyes")
 RUNTIMES = ("claude", "codex")
 
@@ -105,19 +110,38 @@ GENERIC_HYPHENATED_WORDS = {
 
 
 def prompt_body(attack: str) -> str:
-    """The prompt below the file's status rule (skipping any YAML frontmatter,
-    whose own `---` pair would otherwise be mistaken for the rule)."""
+    """The prompt below the file's body marker.
+
+    The marker is a line no ordinary edit produces. The boundary was the first
+    `---` line until 2026-08-19, and `---` is ordinary markdown punctuation: a
+    horizontal rule added to the header, or one written inside a code fence,
+    silently moved the split and shipped header text to the cells in place of
+    their instructions. It also forced a YAML-frontmatter special case, since
+    frontmatter is delimited by `---` too. A marker that collides with nothing
+    needs neither the special case nor an editor's memory (user-ruled
+    2026-08-19, on the first live check of the cut prompt, where five of six
+    cells raised the old boundary independently).
+    """
     path = ATTACK_PROMPT_FILES[attack]
-    text = path.read_text(encoding="utf-8")
-    if text.startswith("---\n"):
-        close = text.find("\n---\n", 4)
-        if close == -1:
-            raise SystemExit(f"unterminated frontmatter: {path}")
-        text = text[close + len("\n---\n"):]
-    marker = "\n---\n"
-    if marker not in text:
-        raise SystemExit(f"attack prompt has no status rule: {path}")
-    return text.split(marker, 1)[1].strip()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    # A line that IS the marker, not a line mentioning it: the header names the
+    # marker when it explains the split, and that mention must not be mistaken
+    # for the boundary itself.
+    marker_lines = [i for i, line in enumerate(lines)
+                    if line.strip() == PROMPT_BODY_MARKER]
+    if len(marker_lines) != 1:
+        raise SystemExit(
+            f"attack prompt needs exactly one {PROMPT_BODY_MARKER} line, "
+            f"found {len(marker_lines)}: {path}"
+        )
+    body = "\n".join(lines[marker_lines[0] + 1:]).strip()
+    first_line = body.split("\n", 1)[0].strip()
+    if first_line != PROMPT_BODY_FIRST_LINE:
+        raise SystemExit(
+            f"attack prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
+            f"found {first_line!r}: {path}"
+        )
+    return body
 
 
 def coined_names(target_path: pathlib.Path) -> set:
