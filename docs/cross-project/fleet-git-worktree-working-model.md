@@ -228,9 +228,15 @@ argument inherits R1's registration residue, noted there.)
 BUILT (PR #88, merged 2026-08-17).**
 `.claude/hooks/session-location-write-guard.py`, PreToolUse block on
 Edit/Write/NotebookEdit (including `notebook_path`): a session on detached
-HEAD, or seated in the reference checkout, has its writes into repository
-checkouts refused with the fix taught in the refusal; exception lane via `.location-write-approved`
-holding the user's quoted approval, one write per marker. The adjacent
+HEAD, or seated in the reference checkout, has its writes into *its own*
+checkout refused with the fix taught in the refusal; exception lane via `.location-write-approved`
+holding the user's quoted approval, one write per marker. Scope, corrected
+2026-08-19: the detached-HEAD test sits inside the guard's seated branch
+(`target_inside(checkout, file_path)`), so a detached session writing into
+a *different* checkout is not refused by this rule — only a write landing
+in the reference checkout is, and that block is R6+R7's, which applies to
+any session however its HEAD is set. Writes into another seat's home stay
+unbuilt (R6), detached or not. The adjacent
 *starting-stale* block was ruled **not built**: launch-time sync plus the
 catch-up hook (R15) shrink exposure to one turn, and the motivating
 incident was a stale *read* no write-guard sees. Revisit trigger: a real
@@ -441,13 +447,24 @@ auto-update theory was retracted. A launch-time version check in the
 launchers is queued — see State at close.
 
 **R17. Shared machinery lives in the repository, self-updating at safe
-points — violated twice, fixes queued.** The principle: every deployed
-copy keeps itself current from its source at safe points (launch,
-recycle, invocation), never by swapping under a live consumer. The
-current state falls short of it twice:
-`launch-claude-ubuntu` invokes the supervisor by absolute path into a
-checkout nothing pulls (fix queued on issue #45), and `launch-claude-mac`
-runs from whatever checkout invoked it.
+points — one violation open (corrected 2026-08-19).** The principle: every
+deployed copy keeps itself current from its source at safe points (launch,
+recycle, invocation), never by swapping under a live consumer.
+`launch-claude-ubuntu` satisfies it: its `PREPARE_COMMAND` fast-forwards
+the machine's reference checkout before the session starts
+(`checkout-freshness-catch-up.py --reference-pull`), and it invokes the
+supervisor from that same reference checkout (`$HOME/Projects/nedschorus`),
+so the copy that runs is the copy just freshened. `launch-claude-mac` still
+falls short, and the reason is worth stating exactly: it freshens the
+reference checkout too, but it invokes the supervisor from beside itself —
+whatever checkout the launcher was run out of, which is a seat worktree on
+a seat branch whenever a seat launches it — so the copy freshened and the
+copy that runs need not be the same one. Both launchers wrap the
+freshening step in `|| true`, so a pull that fails launches a stale copy
+without saying so. (This rule previously said the Ubuntu launcher invoked
+the supervisor into "a checkout nothing pulls." That was already untrue
+when written: the reference-pull step was in `launch-claude-ubuntu`
+before this document reached main.)
 
 **R18. Seat hosts are provisioned to survive disconnects — checklist ruled
 (2026-08-17).** The per-host provisioning list: (1) on systemd hosts,
@@ -600,7 +617,7 @@ above; listed here to keep the rule numbering complete.
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
 | R15 | Landed changes reach running seats | default + block (attention) | built, PRs #87/#90 |
 | R16 | Binary updates at launch only | default | built-live; version check queued |
-| R17 | Machinery self-updates at safe points | text (principle) | violated twice; fixes queued (issue #45) |
+| R17 | Machinery self-updates at safe points | text (principle) | one open: `launch-claude-mac` runs the supervisor from the invoking checkout |
 | R18 | Hosts survive disconnects | default | checklist ruled; box done |
 | R19 | Snapshot cadence | default | live: box 10-min, Mac hourly |
 | R20 | Handoff preserves structure | text | fix ruled; build queued |
