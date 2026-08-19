@@ -6,9 +6,15 @@ classification — done, dirty, ignored-files-only, unlanded, occupied, and
 outside the managed area — then asserts the report names each correctly and
 that --remove reaps exactly the done one.
 
+The vacancy check's unusable-answer cases cannot be produced by a real lsof
+on a healthy machine, so they run the reaper with a stub lsof first on PATH.
+Those cases guard the reaper's central promise — ambiguity keeps, never
+reaps — which a worktree holding someone's uncommitted work depends on.
+
 Run: python3 scripts/clean-worktrees-test.py
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -42,6 +48,25 @@ def run_clean(repo, *flags):
     return subprocess.run(
         [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
         capture_output=True, text=True, check=False,
+    )
+
+
+def run_clean_with_stub_lsof(repo, stub_directory, stub_body):
+    """Run the reaper with a fake lsof first on PATH.
+
+    A real lsof exits 0 on both fleet machines even while printing warnings,
+    so the failure paths it is supposed to have — nonzero exit, empty
+    listing — have no natural trigger to test against. The stub supplies one.
+    """
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "lsof"
+    stub.write_text(stub_body, encoding="utf-8")
+    stub.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    return subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo)],
+        capture_output=True, text=True, check=False, env=environment,
     )
 
 
@@ -131,6 +156,39 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--only-done stays silent about kept worktrees",
               "dirty-wt" not in only_done and "unlanded-wt" not in only_done,
               only_done)
+
+        # --- An untrustworthy vacancy answer keeps, and says so honestly ----
+        # Each case below reaps done-wt against the pre-fix implementation,
+        # which read lsof's stdout and never its exit status: no path matched,
+        # so it reported vacant and --remove would have deleted the worktree.
+        stub_home = scratch / "stub-lsof"
+
+        failed_lsof = run_clean_with_stub_lsof(
+            checkout, stub_home / "nonzero", "#!/bin/sh\nexit 1\n").stdout
+        check("an lsof that exits nonzero keeps the worktree",
+              "done-wt: kept" in failed_lsof, failed_lsof)
+        check("a failed vacancy check is reported as untrusted, not as occupancy",
+              "done-wt: kept" in failed_lsof
+              and "vacancy" in failed_lsof
+              and "live process is rooted inside it" not in failed_lsof,
+              failed_lsof)
+
+        empty_lsof = run_clean_with_stub_lsof(
+            checkout, stub_home / "empty", "#!/bin/sh\nexit 0\n").stdout
+        check("an lsof reporting no working directories at all keeps the worktree",
+              "done-wt: kept" in empty_lsof and "no working directories" in empty_lsof,
+              empty_lsof)
+
+        # The converse, so failing closed does not become ignoring the answer:
+        # a listing that names the worktree is occupancy even if lsof exited
+        # nonzero, which is the everyday partial-permissions case.
+        matching_lsof = run_clean_with_stub_lsof(
+            checkout, stub_home / "match",
+            f"#!/bin/sh\necho 'n{done_wt.resolve()}'\nexit 1\n").stdout
+        check("a path match counts as occupancy even when lsof exits nonzero",
+              "done-wt: kept" in matching_lsof
+              and "live process is rooted inside it" in matching_lsof,
+              matching_lsof)
 
         # --- --remove reaps exactly the done worktree ------------------------
         removal = run_clean(checkout, "--remove")
