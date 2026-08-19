@@ -227,28 +227,57 @@ def run_codex(prompt: str) -> tuple:
     return 0, output
 
 
-def worktree_snapshot() -> dict:
+def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     """Path -> content fingerprint for every file git sees as dirty or
     untracked. Content hashes, not porcelain labels: a file already modified
     before the run keeps its ` M` line when a cell modifies it again, so a
-    label comparison would miss the write (Codex finding on PR #98)."""
+    label comparison would miss the write (Codex finding on PR #98).
+
+    The paths come from `--porcelain -z -uall`, because plain porcelain hides
+    writes two ways (both found reviewing PR #102, both silent by
+    construction). Without `-z`, git C-quotes a non-ASCII pathname, and the
+    unquoted result names no file on disk, so it fingerprints as "absent"
+    before and after a cell rewrites it. Without `-uall`, git collapses a
+    wholly-untracked directory into one `dir/` entry, so every file a cell
+    writes underneath it is invisible.
+    """
     completed = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=REPO_ROOT,
+        ["git", "status", "--porcelain", "-z", "-uall"], cwd=repo_root,
         stdout=subprocess.PIPE, text=True, check=False,
     )
     snapshot = {}
-    for line in completed.stdout.splitlines():
-        path = line[3:].split(" -> ")[-1].strip().strip('"')
-        file_path = REPO_ROOT / path
+    fields = completed.stdout.split("\0")
+    index = 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if not entry:
+            continue
+        status, path = entry[:2], entry[3:]
+        # Under -z a rename or copy carries its origin path as the following
+        # field instead of as ` -> origin` inside this one; skipping it keeps
+        # the walk aligned with the entries that follow.
+        if status[0] in ("R", "C"):
+            index += 1
+        file_path = repo_root / path
         if file_path.is_file():
             hashed = subprocess.run(
-                ["git", "hash-object", str(file_path)], cwd=REPO_ROOT,
+                ["git", "hash-object", str(file_path)], cwd=repo_root,
                 stdout=subprocess.PIPE, text=True, check=False,
             ).stdout.strip()
         else:
             hashed = "absent"
         snapshot[path] = hashed
     return snapshot
+
+
+def stray_paths(baseline: dict, now: dict) -> list:
+    """Paths whose fingerprint changed while the cells ran — a codex cell
+    writing to the worktree, which its prompt forbids. Compared over the union
+    of both snapshots, so a file that appears, changes, or disappears all
+    count (Codex finding on PR #98)."""
+    return sorted(path for path in set(now) | set(baseline)
+                  if now.get(path) != baseline.get(path))
 
 
 def fresh_record_dir(target_stem: str) -> pathlib.Path:
@@ -288,9 +317,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     if fresh_eyes:
         leak_scan(design_names, output, f"the {cell} report")
     if runtime == "codex":
-        now = worktree_snapshot()
-        stray = sorted(path for path in set(now) | set(baseline_status)
-                       if now.get(path) != baseline_status.get(path))
+        stray = stray_paths(baseline_status, worktree_snapshot())
         if stray:
             print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
