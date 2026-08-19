@@ -447,24 +447,46 @@ auto-update theory was retracted. A launch-time version check in the
 launchers is queued — see State at close.
 
 **R17. Shared machinery lives in the repository, self-updating at safe
-points — one violation open (corrected 2026-08-19).** The principle: every
-deployed copy keeps itself current from its source at safe points (launch,
-recycle, invocation), never by swapping under a live consumer.
-`launch-claude-ubuntu` satisfies it: its `PREPARE_COMMAND` fast-forwards
-the machine's reference checkout before the session starts
-(`checkout-freshness-catch-up.py --reference-pull`), and it invokes the
-supervisor from that same reference checkout (`$HOME/Projects/nedschorus`),
-so the copy that runs is the copy just freshened. `launch-claude-mac` still
-falls short, and the reason is worth stating exactly: it freshens the
-reference checkout too, but it invokes the supervisor from beside itself —
-whatever checkout the launcher was run out of, which is a seat worktree on
-a seat branch whenever a seat launches it — so the copy freshened and the
-copy that runs need not be the same one. Both launchers wrap the
-freshening step in `|| true`, so a pull that fails launches a stale copy
-without saying so. (This rule previously said the Ubuntu launcher invoked
-the supervisor into "a checkout nothing pulls." That was already untrue
-when written: the reference-pull step was in `launch-claude-ubuntu`
-before this document reached main.)
+points — one wiring violation open, and one silent failure mode both
+launchers share (corrected 2026-08-19).** The principle: every deployed
+copy keeps itself current from its source at safe points (launch, recycle,
+invocation), never by swapping under a live consumer.
+
+*The wiring.* `launch-claude-ubuntu` is wired correctly: its
+`PREPARE_COMMAND` fast-forwards the machine's reference checkout before the
+session starts (`checkout-freshness-catch-up.py --reference-pull`), and it
+invokes the supervisor from that same reference checkout
+(`$HOME/Projects/nedschorus`), so the copy that runs is the copy just
+freshened. `launch-claude-mac` is not, and the reason is worth stating
+exactly: it freshens the reference checkout too — `--reference-pull`
+resolves the repository's main worktree from any checkout it is handed, so
+this holds however the launcher was invoked — but it invokes the supervisor
+from beside itself (`$SCRIPT_DIRECTORY`, derived from `$0`), whatever
+checkout the launcher was run out of, which is a seat worktree on a seat
+branch whenever a seat launches it. The copy freshened and the copy that
+runs need not be the same one. Whether the launcher *should* always operate
+on the reference checkout, or on the checkout it lives in, is an open design
+question routed to the launcher repair on issue #45 — and a separate one
+from that repair's symlink-safety half, since resolving `$0` through
+symlinks does not stop someone invoking a seat worktree's copy by full path.
+
+*The silent failure mode, which is the sharper half and applies to both
+launchers.* Neither launcher can tell whether the freshening worked.
+`--reference-pull` returns success unconditionally: a failed `git fetch` is
+recorded in the checkout's stamp file as `fetch_ok: false` and otherwise
+ignored, the behind-count is then computed against the now-stale
+remote-tracking ref, and a reference that therefore looks current is left
+alone with nothing printed. The `|| true` both launchers wrap the step in
+would swallow a nonzero exit, but no nonzero exit ever arrives. So a launch
+whose fetch failed starts the supervisor from a stale reference checkout and
+says so nowhere — a real gap in this principle, owned by the freshening
+helper rather than by the launchers that call it, and unqueued as of this
+correction.
+
+(This rule previously said the Ubuntu launcher invoked the supervisor into
+"a checkout nothing pulls." That was already untrue when written: the
+reference-pull step was in `launch-claude-ubuntu` before this document
+reached main.)
 
 **R18. Seat hosts are provisioned to survive disconnects — checklist ruled
 (2026-08-17).** The per-host provisioning list: (1) on systemd hosts,
@@ -617,7 +639,7 @@ above; listed here to keep the rule numbering complete.
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
 | R15 | Landed changes reach running seats | default + block (attention) | built, PRs #87/#90 |
 | R16 | Binary updates at launch only | default | built-live; version check queued |
-| R17 | Machinery self-updates at safe points | text (principle) | one open: `launch-claude-mac` runs the supervisor from the invoking checkout |
+| R17 | Machinery self-updates at safe points | text (principle) | two open: `launch-claude-mac` runs the supervisor from the invoking checkout; freshening failures are silent on both launchers |
 | R18 | Hosts survive disconnects | default | checklist ruled; box done |
 | R19 | Snapshot cadence | default | live: box 10-min, Mac hourly |
 | R20 | Handoff preserves structure | text | fix ruled; build queued |
