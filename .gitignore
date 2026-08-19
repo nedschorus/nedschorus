@@ -37,3 +37,9 @@ __pycache__/
 # that produced them are working material, deleted when the work they served
 # lands. Everything deleted stays retrievable: git show db917b5:<path>
 md-review-records/
+
+# sanity-check records: the second review instrument's output
+# (scripts/sanity-check-attacks.py) — same class and disposal as
+# md-review-records: machine-local working material, deleted when the work it
+# served lands; git history is the archive
+sanity-check-records/
