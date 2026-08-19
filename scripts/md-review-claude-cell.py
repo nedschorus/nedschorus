@@ -28,10 +28,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
 
 # Tier -> Claude model id. One place to update as models change. User-picked
-# (good = Opus-class, floor = Sonnet-class, 2026-08-04); exact ids verified
+# (good = Fable-class, floor = Sonnet-class, re-ruled 2026-08-17, replacing
+# the 2026-08-04 Opus-class good tier); exact ids verified
 # against live subagent transcripts 2026-08-04.
 TIER_TO_CLAUDE_MODEL = {
-    "good": "claude-opus-5",
+    "good": "claude-fable-5",
     "floor": "claude-sonnet-5",
 }
 
