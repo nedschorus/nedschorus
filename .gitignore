@@ -1,4 +1,12 @@
+# comms-bridge logs: the two-log coordination channel between the legacy
+# system's agent and this fleet (docs/cross-project/comms-bridge-spec.md).
+# Coordination traffic is working material — anything durable in a log is
+# promoted to a committed file, and the spec rules the active logs stay out
+# of git regardless.
 bridge/*.log.md
+
+# macOS Finder directory metadata: created by the operating system in any
+# directory a user browses, belongs to nobody's work
 .DS_Store
 
 # Obsidian per-vault state (UI panes, workspace, plugin caches) — quarry-proven pattern

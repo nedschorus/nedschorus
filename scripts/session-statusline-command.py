@@ -17,7 +17,7 @@ failing.
 
 The visible line, left to right (user-walked 2026-08-08):
 
-  ned-box:choirmaster (choirmaster) │ Opus 5 · high │ 46% 2h 77% 3d 89%
+  ned-box:choirmaster (choirmaster)  Opus 5 · high  46% 2h 77% 3d 89%
 
   host         green — which machine this session runs on. The user drives
                from a Mac over SSH while the agents run here, so the box name
