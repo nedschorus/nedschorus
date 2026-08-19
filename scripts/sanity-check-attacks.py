@@ -228,10 +228,14 @@ def run_codex(prompt: str) -> tuple:
 
 
 def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
-    """Path -> content fingerprint for every file git sees as dirty or
-    untracked. Content hashes, not porcelain labels: a file already modified
-    before the run keeps its ` M` line when a cell modifies it again, so a
-    label comparison would miss the write (Codex finding on PR #98).
+    """Path -> (index/worktree status, content fingerprint) for every file git
+    sees as dirty or untracked. Both halves are needed, because each catches
+    what the other misses. A file already modified before the run keeps its
+    ` M` line when a cell rewrites it, so a label alone misses that write
+    (Codex finding on PR #98); staging a file changes its status without
+    changing its bytes, so a fingerprint alone misses `git add` (found by
+    `codex exec review` on PR #102, where the fingerprint-only version was a
+    regression against the label comparison it replaced).
 
     The paths come from `--porcelain -z -uall`, because plain porcelain hides
     writes two ways (both found reviewing PR #102, both silent by
@@ -267,31 +271,37 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
             ).stdout.strip()
         else:
             hashed = "absent"
-        snapshot[path] = hashed
+        snapshot[path] = (status, hashed)
     return snapshot
 
 
 def stray_paths(baseline: dict, now: dict) -> list:
-    """Paths whose fingerprint changed while the cells ran — a codex cell
-    writing to the worktree, which its prompt forbids. Compared over the union
-    of both snapshots, so a file that appears, changes, or disappears all
-    count (Codex finding on PR #98)."""
+    """Paths whose status or fingerprint changed while the cells ran — a codex
+    cell writing to the worktree, which its prompt forbids. Compared over the
+    union of both snapshots, so a file that appears, changes, or disappears
+    all count (Codex finding on PR #98)."""
     return sorted(path for path in set(now) | set(baseline)
                   if now.get(path) != baseline.get(path))
 
 
 def fresh_record_dir(target_stem: str) -> pathlib.Path:
     """A record directory this run owns alone: the date-stem name, suffixed
-    -2, -3, ... when reports already sit there — a same-day second pass or
-    re-run never overwrites earlier reports (Codex finding on PR #98)."""
+    -2, -3, ... when that name is taken — a same-day second pass or re-run
+    never overwrites earlier reports (Codex finding on PR #98).
+
+    The directory is claimed by creating it, not by testing first and creating
+    after: two runs starting together on the same target and date both pass a
+    look-then-create test and return the same path, and the second overwrites
+    the first (found by `codex exec review` on PR #102)."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
-    out_dir = base
-    counter = 2
-    while out_dir.exists() and any(out_dir.iterdir()):
-        out_dir = pathlib.Path(f"{base}-{counter}")
-        counter += 1
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
+    counter = 1
+    while True:
+        out_dir = base if counter == 1 else pathlib.Path(f"{base}-{counter}")
+        try:
+            out_dir.mkdir(parents=True)
+            return out_dir
+        except FileExistsError:
+            counter += 1
 
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
