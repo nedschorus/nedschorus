@@ -46,6 +46,7 @@ Modes:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -79,11 +80,21 @@ def emit_attention(message: str) -> None:
 
 
 def run_git(arguments, working_directory: Path, timeout: int = 60):
-    """Run git somewhere; never raise, whatever goes wrong."""
+    """Run git somewhere; never raise, whatever goes wrong.
+
+    LC_ALL=C because this script READS git's prose. The merge path decides
+    whether it owns a conflict by looking for the word "CONFLICT" in git's
+    output, and git translates that word: a German-locale host prints
+    "KONFLIKT", the test fails to match, and the cleanup that should abort the
+    merge is skipped — leaving the seat's tree parked mid-merge (PR #87's
+    review). Forcing the C locale makes every message this script matches on
+    stable, whatever the host is configured for.
+    """
     try:
         return subprocess.run(
             ["git", *arguments], cwd=str(working_directory),
             capture_output=True, text=True, check=False, timeout=timeout,
+            env={**os.environ, "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError) as error:
         return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
@@ -305,6 +316,10 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int) -> N
 
     counts = counts_against_main(reference)
     if counts is None:
+        # Unknowable is not "still whatever it was" — same silent-safety rule
+        # the seat's own path applies. Leaving the previous numbers in place
+        # renders a stale count as knowledge (PR #87's review).
+        stamp["behind"] = stamp["ahead"] = None
         write_stamp(stamp_path, stamp)
         return
     behind, ahead = counts
@@ -351,6 +366,10 @@ def report_line(checkout: Path, interval_seconds: int) -> str:
     stamp = fetch_if_stale(checkout, stamp_path, interval_seconds)
     counts = counts_against_main(checkout)
     if counts is None:
+        # Same rule again: the line about to be printed says the comparison
+        # could not be made, so the stamp behind it must not keep claiming a
+        # number (PR #87's review).
+        stamp["behind"] = stamp["ahead"] = None
         write_stamp(stamp_path, stamp)
         return f"freshness: {checkout} has no origin/main to compare against"
     behind, ahead = counts
