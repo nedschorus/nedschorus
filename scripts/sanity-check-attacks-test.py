@@ -109,7 +109,20 @@ def main():
               unicode_name in found,
               f"stray list was {found}; baseline was {baseline}")
 
-    # Case 4: a quiet run reports nothing.
+    # Case 4: a cell stages an already-dirty file. Staging changes the index
+    # status without changing the file's bytes, so a content fingerprint alone
+    # sees nothing — `git add` is exactly the write the detector exists to
+    # catch, and the label comparison this replaced did catch it.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / "tracked.md").write_text("dirty before the run\n", encoding="utf-8")
+        baseline = snapshot(repo)
+        git(repo, "add", "tracked.md")
+        found = strays(baseline, snapshot(repo))
+        check("an already-dirty file staged by a cell is detected",
+              "tracked.md" in found, f"stray list was {found}; baseline was {baseline}")
+
+    # Case 5: a quiet run reports nothing.
     with tempfile.TemporaryDirectory() as scratch:
         repo = new_repo(pathlib.Path(scratch))
         (repo / "untracked-dir").mkdir()
@@ -119,7 +132,7 @@ def main():
         check("a run that writes nothing produces no stray", found == [],
               f"stray list was {found}")
 
-    # Case 5: a staged rename must not desynchronize the field walk. Under -z
+    # Case 6: a staged rename must not desynchronize the field walk. Under -z
     # the origin path is its own field, so a parser expecting " -> " consumes
     # one field too few and mistakes the origin path for the next entry.
     with tempfile.TemporaryDirectory() as scratch:
@@ -133,6 +146,21 @@ def main():
         found = strays(baseline, snapshot(repo))
         check("a write after a staged rename is still detected",
               "zz-last.md" in found, f"stray list was {found}; baseline was {baseline}")
+
+    # Case 7: two runs starting together must not be handed the same record
+    # directory. A look-then-create claim passes both when neither has written
+    # its first report yet, and the second run overwrites the first.
+    records_root = getattr(runner, "RECORDS_ROOT", None)
+    with tempfile.TemporaryDirectory() as scratch:
+        runner.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
+        first = runner.fresh_record_dir("same-target")
+        second = runner.fresh_record_dir("same-target")
+        check("a second run for the same target and date gets its own directory",
+              first != second, f"both runs got {first}")
+        check("the second directory is suffixed", second.name.endswith("-2"),
+              f"second directory was {second}")
+    if records_root is not None:
+        runner.RECORDS_ROOT = records_root
 
     print()
     if failures:
