@@ -31,9 +31,11 @@ Operating rules, all user-ruled:
   targeted reads, merges the runtimes' reports, and walks the survivors with
   the user (walk-me-through). Findings are design changes; none is applied
   without his ruling.
-- Reports land in `sanity-check-records/<date>-<target-stem>/` — machine-local
-  working material, gitignored, deleted when the work it served lands; git
-  history is the archive.
+- Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
+  -3, ... when reports already sit there, so a same-day second pass or re-run
+  never overwrites earlier reports) — machine-local working material,
+  gitignored, deleted when the work it served lands; git history is the
+  archive.
 
 Usage:
 
@@ -225,13 +227,42 @@ def run_codex(prompt: str) -> tuple:
     return 0, output
 
 
-def worktree_status() -> set:
-    """The worktree's porcelain status lines, for the codex write check."""
+def worktree_snapshot() -> dict:
+    """Path -> content fingerprint for every file git sees as dirty or
+    untracked. Content hashes, not porcelain labels: a file already modified
+    before the run keeps its ` M` line when a cell modifies it again, so a
+    label comparison would miss the write (Codex finding on PR #98)."""
     completed = subprocess.run(
         ["git", "status", "--porcelain"], cwd=REPO_ROOT,
         stdout=subprocess.PIPE, text=True, check=False,
     )
-    return set(completed.stdout.splitlines())
+    snapshot = {}
+    for line in completed.stdout.splitlines():
+        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        file_path = REPO_ROOT / path
+        if file_path.is_file():
+            hashed = subprocess.run(
+                ["git", "hash-object", str(file_path)], cwd=REPO_ROOT,
+                stdout=subprocess.PIPE, text=True, check=False,
+            ).stdout.strip()
+        else:
+            hashed = "absent"
+        snapshot[path] = hashed
+    return snapshot
+
+
+def fresh_record_dir(target_stem: str) -> pathlib.Path:
+    """A record directory this run owns alone: the date-stem name, suffixed
+    -2, -3, ... when reports already sit there — a same-day second pass or
+    re-run never overwrites earlier reports (Codex finding on PR #98)."""
+    base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
+    out_dir = base
+    counter = 2
+    while out_dir.exists() and any(out_dir.iterdir()):
+        out_dir = pathlib.Path(f"{base}-{counter}")
+        counter += 1
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
 
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
@@ -247,13 +278,19 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     except subprocess.TimeoutExpired:
         print(f"FAILED: {cell} (timeout after {CELL_TIMEOUT_SECONDS}s)", flush=True)
         return cell, False
+    except OSError as exc:
+        # A missing or unexecutable CLI fails this cell, never the whole run.
+        print(f"FAILED: {cell} (launcher error: {exc})", flush=True)
+        return cell, False
     if code != 0:
         print(f"FAILED: {cell} exit {code}", flush=True)
         return cell, False
     if fresh_eyes:
         leak_scan(design_names, output, f"the {cell} report")
     if runtime == "codex":
-        stray = sorted(worktree_status() - baseline_status)
+        now = worktree_snapshot()
+        stray = sorted(path for path in set(now) | set(baseline_status)
+                       if now.get(path) != baseline_status.get(path))
         if stray:
             print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
@@ -304,9 +341,8 @@ def main() -> int:
             leak_scan(design_names, path.read_text(encoding="utf-8"),
                       f"an injected instruction file ({path})")
 
-    out_dir = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_path.stem}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    baseline_status = worktree_status()
+    out_dir = fresh_record_dir(target_path.stem)
+    baseline_status = worktree_snapshot()
 
     attacks = tuple(dict.fromkeys(args.attack)) if args.attack else ATTACKS
     cells = []
