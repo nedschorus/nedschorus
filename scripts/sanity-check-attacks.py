@@ -31,9 +31,11 @@ Operating rules, all user-ruled:
   targeted reads, merges the runtimes' reports, and walks the survivors with
   the user (walk-me-through). Findings are design changes; none is applied
   without his ruling.
-- Reports land in `sanity-check-records/<date>-<target-stem>/` — machine-local
-  working material, gitignored, deleted when the work it served lands; git
-  history is the archive.
+- Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
+  -3, ... when reports already sit there, so a same-day second pass or re-run
+  never overwrites earlier reports) — machine-local working material,
+  gitignored, deleted when the work it served lands; git history is the
+  archive.
 
 Usage:
 
@@ -225,13 +227,81 @@ def run_codex(prompt: str) -> tuple:
     return 0, output
 
 
-def worktree_status() -> set:
-    """The worktree's porcelain status lines, for the codex write check."""
+def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
+    """Path -> (index/worktree status, content fingerprint) for every file git
+    sees as dirty or untracked. Both halves are needed, because each catches
+    what the other misses. A file already modified before the run keeps its
+    ` M` line when a cell rewrites it, so a label alone misses that write
+    (Codex finding on PR #98); staging a file changes its status without
+    changing its bytes, so a fingerprint alone misses `git add` (found by
+    `codex exec review` on PR #102, where the fingerprint-only version was a
+    regression against the label comparison it replaced).
+
+    The paths come from `--porcelain -z -uall`, because plain porcelain hides
+    writes two ways (both found reviewing PR #102, both silent by
+    construction). Without `-z`, git C-quotes a non-ASCII pathname, and the
+    unquoted result names no file on disk, so it fingerprints as "absent"
+    before and after a cell rewrites it. Without `-uall`, git collapses a
+    wholly-untracked directory into one `dir/` entry, so every file a cell
+    writes underneath it is invisible.
+    """
     completed = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=REPO_ROOT,
+        ["git", "status", "--porcelain", "-z", "-uall"], cwd=repo_root,
         stdout=subprocess.PIPE, text=True, check=False,
     )
-    return set(completed.stdout.splitlines())
+    snapshot = {}
+    fields = completed.stdout.split("\0")
+    index = 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if not entry:
+            continue
+        status, path = entry[:2], entry[3:]
+        # Under -z a rename or copy carries its origin path as the following
+        # field instead of as ` -> origin` inside this one; skipping it keeps
+        # the walk aligned with the entries that follow.
+        if status[0] in ("R", "C"):
+            index += 1
+        file_path = repo_root / path
+        if file_path.is_file():
+            hashed = subprocess.run(
+                ["git", "hash-object", str(file_path)], cwd=repo_root,
+                stdout=subprocess.PIPE, text=True, check=False,
+            ).stdout.strip()
+        else:
+            hashed = "absent"
+        snapshot[path] = (status, hashed)
+    return snapshot
+
+
+def stray_paths(baseline: dict, now: dict) -> list:
+    """Paths whose status or fingerprint changed while the cells ran — a codex
+    cell writing to the worktree, which its prompt forbids. Compared over the
+    union of both snapshots, so a file that appears, changes, or disappears
+    all count (Codex finding on PR #98)."""
+    return sorted(path for path in set(now) | set(baseline)
+                  if now.get(path) != baseline.get(path))
+
+
+def fresh_record_dir(target_stem: str) -> pathlib.Path:
+    """A record directory this run owns alone: the date-stem name, suffixed
+    -2, -3, ... when that name is taken — a same-day second pass or re-run
+    never overwrites earlier reports (Codex finding on PR #98).
+
+    The directory is claimed by creating it, not by testing first and creating
+    after: two runs starting together on the same target and date both pass a
+    look-then-create test and return the same path, and the second overwrites
+    the first (found by `codex exec review` on PR #102)."""
+    base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
+    counter = 1
+    while True:
+        out_dir = base if counter == 1 else pathlib.Path(f"{base}-{counter}")
+        try:
+            out_dir.mkdir(parents=True)
+            return out_dir
+        except FileExistsError:
+            counter += 1
 
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
@@ -247,13 +317,17 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     except subprocess.TimeoutExpired:
         print(f"FAILED: {cell} (timeout after {CELL_TIMEOUT_SECONDS}s)", flush=True)
         return cell, False
+    except OSError as exc:
+        # A missing or unexecutable CLI fails this cell, never the whole run.
+        print(f"FAILED: {cell} (launcher error: {exc})", flush=True)
+        return cell, False
     if code != 0:
         print(f"FAILED: {cell} exit {code}", flush=True)
         return cell, False
     if fresh_eyes:
         leak_scan(design_names, output, f"the {cell} report")
     if runtime == "codex":
-        stray = sorted(worktree_status() - baseline_status)
+        stray = stray_paths(baseline_status, worktree_snapshot())
         if stray:
             print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
@@ -304,9 +378,8 @@ def main() -> int:
             leak_scan(design_names, path.read_text(encoding="utf-8"),
                       f"an injected instruction file ({path})")
 
-    out_dir = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_path.stem}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    baseline_status = worktree_status()
+    out_dir = fresh_record_dir(target_path.stem)
+    baseline_status = worktree_snapshot()
 
     attacks = tuple(dict.fromkeys(args.attack)) if args.attack else ATTACKS
     cells = []
