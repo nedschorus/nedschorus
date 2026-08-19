@@ -1,7 +1,7 @@
 {
   "statusLine": {
     "type": "command",
-    "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/session-statusline-command.py"
+    "command": "p=scripts/session-statusline-command.py; [ -f \"$p\" ] || p=\"${CLAUDE_PROJECT_DIR:-.}/$p\"; exec python3 \"$p\""
   },
   "permissions": {
     "defaultMode": "bypassPermissions",
@@ -15,11 +15,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/handoff-context-threshold-hook.py"
+            "command": "p=scripts/handoff-context-threshold-hook.py; [ -f \"$p\" ] || p=\"$CLAUDE_PROJECT_DIR/$p\"; exec python3 \"$p\""
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/checkout-freshness-catch-up.py"
+            "command": "p=scripts/checkout-freshness-catch-up.py; [ -f \"$p\" ] || p=\"$CLAUDE_PROJECT_DIR/$p\"; exec python3 \"$p\""
           }
         ]
       }
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/synthetic-keystroke-guard-hook.py",
+            "command": "p=scripts/synthetic-keystroke-guard-hook.py; [ -f \"$p\" ] || p=\"$CLAUDE_PROJECT_DIR/$p\"; exec python3 \"$p\"",
             "timeout": 30
           }
         ]
@@ -40,15 +40,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/instruction-file-guard.py"
+            "command": "p=.claude/hooks/instruction-file-guard.py; [ -f \"$p\" ] || p=\"$CLAUDE_PROJECT_DIR/$p\"; exec python3 \"$p\""
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-location-write-guard.py"
+            "command": "p=.claude/hooks/session-location-write-guard.py; [ -f \"$p\" ] || p=\"$CLAUDE_PROJECT_DIR/$p\"; exec python3 \"$p\""
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/backup-and-snapshot-write-guard.py"
+            "command": "p=.claude/hooks/backup-and-snapshot-write-guard.py; [ -f \"$p\" ] || p=\"$CLAUDE_PROJECT_DIR/$p\"; exec python3 \"$p\""
           }
         ]
       }
