@@ -341,10 +341,13 @@ guarded paths themselves stay agent-unwritable.
 ### Q3 — How does work reach main?
 
 **R12. Agents never push to main; one door — partial.** Branch protection
-is live (pushes to main restricted to one GitHub account, enforce-admins
-on, force-push and deletion blocked) — rung 1 at the account tier only: any
-process holding that credential can push, so today "agents never push" is
-instructed, not impossible. The gatekeeper's C2 credential design is where
+is live (pushes to main restricted to two GitHub accounts — the user's
+own, `nedlern`, and `ned-review-merge`, the merge seat's identity added
+2026-08-19 so a merge is approved under an identity that is not the
+author of what it merges; enforce-admins on, force-push and deletion
+blocked) — rung 1 at the account tier only: any process holding either
+credential can push, so today "agents never push" is instructed, not
+impossible. The gatekeeper's C2 credential design is where
 it becomes impossible; the gate stays dormant until its credential work
 lands and it can review what passes through it (the gatekeeper design is
 canonical for activation status). Its `audit` subcommand checks live
