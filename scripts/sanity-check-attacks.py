@@ -38,7 +38,11 @@ Operating rules, all user-ruled:
 Usage:
 
   scripts/sanity-check-attacks.py --target <path> [--context <path> ...] \
-      [--problem-statement <path>]
+      [--problem-statement <path>] [--attack <name> ...]
+
+`--attack` (repeatable; default all three) runs a subset — the fresh-eyes
+second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
+failed cell pair reruns without repeating the others.
 
 Run it as a background task and arm a Monitor on its output: it prints one
 line per cell — `saved: <path>` or `FAILED: <cell> exit <code>` — as each
@@ -48,7 +52,11 @@ that attack works from the problem statement alone. A fresh-eyes run also
 prints `LEAK-WARNING: ...` lines — the design's coined names found in the
 problem statement, in instruction files the cell CLIs inject on their own,
 or in a fresh-eyes report. Information for triage, never a gate (user-ruled
-2026-08-17). Exit 0 when every launched cell saved, 1 otherwise.
+2026-08-17). Every cell may reach the internet to check facts (user-ruled
+2026-08-18): claude cells carry web tools and no write tools; codex cells run
+workspace-write with network on, writes forbidden by prompt — a codex cell
+that modifies the worktree is reported as `WARNING: <cell> modified the
+worktree: <paths>`. Exit 0 when every launched cell saved, 1 otherwise.
 """
 
 import argparse
@@ -169,18 +177,17 @@ def assemble_prompt(attack: str, target: str, context: list, problem_statement: 
     return prompt_body(attack) + "\n\n---\n\n" + "\n".join(request_lines)
 
 
-def run_claude(prompt: str, fresh_eyes: bool) -> tuple:
-    # Fresh-eyes isolation is instructed and checked, not enforced (user-ruled
-    # 2026-08-17): the prompt forbids reading the design, the leak scan
-    # checks, and the cell may otherwise consult the repository and the
-    # internet — so it gets the web tools its siblings have no use for.
-    tools = "Read,Grep,Glob,WebSearch,WebFetch" if fresh_eyes else "Read,Grep"
+def run_claude(prompt: str) -> tuple:
+    # Every cell may check facts on the internet (user-ruled 2026-08-18);
+    # isolation and write discipline are instructed in the prompts and
+    # checked (leak scan; worktree check), never enforced here. The tool set
+    # still omits every write tool, so claude cells cannot write at all.
     command = [
         "claude", "-p",
         "--model", CLAUDE_MODEL,
         "--effort", REASONING_EFFORT,
         "--output-format", "text",
-        "--allowedTools", tools,
+        "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch",
     ]
     completed = subprocess.run(
         command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -189,16 +196,17 @@ def run_claude(prompt: str, fresh_eyes: bool) -> tuple:
     return completed.returncode, completed.stdout
 
 
-def run_codex(prompt: str, fresh_eyes: bool) -> tuple:
-    # fresh_eyes changes nothing here: isolation is instructed in the prompt,
-    # and the read-only sandbox has no network, so the codex cell cannot reach
-    # the internet the prompt offers — a known, accepted asymmetry with the
-    # claude cell.
-    del fresh_eyes
+def run_codex(prompt: str) -> tuple:
+    # workspace-write plus network: the cells may reach the internet and
+    # GitHub to check facts (user-ruled 2026-08-18; the read-only sandbox
+    # blocks even DNS, measured that day). Disk writes become possible and
+    # are forbidden by the prompts; run_cell's worktree check detects strays
+    # — containment over prevention, the house doctrine.
     last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="attack-cell-")[1])
     command = [
         "codex", "exec",
-        "--sandbox", "read-only",
+        "--sandbox", "workspace-write",
+        "-c", "sandbox_workspace_write.network_access=true",
         "-C", str(REPO_ROOT),
         "--output-last-message", str(last_message_path),
         "-m", CODEX_MODEL,
@@ -217,16 +225,25 @@ def run_codex(prompt: str, fresh_eyes: bool) -> tuple:
     return 0, output
 
 
+def worktree_status() -> set:
+    """The worktree's porcelain status lines, for the codex write check."""
+    completed = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, text=True, check=False,
+    )
+    return set(completed.stdout.splitlines())
+
+
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
-             design_names: set) -> tuple:
+             design_names: set, baseline_status: set) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
     prompt = assemble_prompt(attack, target, context, problem_statement)
     fresh_eyes = attack == "fresh-eyes"
     runner = run_claude if runtime == "claude" else run_codex
     try:
-        code, output = runner(prompt, fresh_eyes)
+        code, output = runner(prompt)
     except subprocess.TimeoutExpired:
         print(f"FAILED: {cell} (timeout after {CELL_TIMEOUT_SECONDS}s)", flush=True)
         return cell, False
@@ -235,6 +252,10 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         return cell, False
     if fresh_eyes:
         leak_scan(design_names, output, f"the {cell} report")
+    if runtime == "codex":
+        stray = sorted(worktree_status() - baseline_status)
+        if stray:
+            print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
     out_path = out_dir / f"{cell}.md"
     out_path.write_text(
@@ -257,8 +278,10 @@ def main() -> int:
     parser.add_argument("--context", action="append", default=[],
                         help="repo-relative context document (repeatable)")
     parser.add_argument("--problem-statement", type=pathlib.Path, default=None,
-                        help="problem-statement file for the fresh-eyes attack; "
+                        help="review-request file for the fresh-eyes attack; "
                              "without it the fresh-eyes cells are SKIPPED, loudly")
+    parser.add_argument("--attack", action="append", choices=list(ATTACKS), default=None,
+                        help="run only this attack (repeatable); default: all three")
     args = parser.parse_args()
 
     target_path = REPO_ROOT / args.target
@@ -283,9 +306,11 @@ def main() -> int:
 
     out_dir = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_path.stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    baseline_status = worktree_status()
 
+    attacks = tuple(dict.fromkeys(args.attack)) if args.attack else ATTACKS
     cells = []
-    for attack in ATTACKS:
+    for attack in attacks:
         if attack == "fresh-eyes" and args.problem_statement is None:
             for runtime in RUNTIMES:
                 print(f"SKIPPED: {attack}-{runtime} (no --problem-statement)", flush=True)
@@ -297,7 +322,7 @@ def main() -> int:
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
         futures = [
             pool.submit(run_cell, attack, runtime, args.target, args.context,
-                        args.problem_statement, out_dir, design_names)
+                        args.problem_statement, out_dir, design_names, baseline_status)
             for attack, runtime in cells
         ]
         for future in concurrent.futures.as_completed(futures):
