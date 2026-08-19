@@ -47,9 +47,26 @@ import os
 import sys
 from pathlib import Path
 
+# The marker lane lives in a sibling module so both guards share one copy of
+# the contract (extracted 2026-08-19). Resolving this file's own directory
+# explicitly rather than relying on sys.path[0]: this project has been bitten
+# repeatedly by code that assumed the wrong base directory, and a guard that
+# fails to import is a guard that does not run.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guard_approval_marker import consume_approval_marker  # noqa: E402
+
 PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
 PROTECTED_DIRECTORY = ".claude"
 APPROVAL_MARKER_NAME = ".walk-approved"
+
+MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
+    "Refusing to modify {path}: this session's working directory ({cwd}) does not exist, so "
+    "there is no session checkout to resolve an approval marker from. A seat whose worktree "
+    "was removed while the session ran reaches this state. Move to a directory that exists, "
+    "then resubmit. The approval lane is deliberately closed here rather than falling back to "
+    "the target file's own repository: that fallback would let a marker left lying in an "
+    "unrelated checkout approve this write."
+)
 
 DENY_MESSAGE = (
     "Before modifying {path}, get the user's approval on your change: instruction files "
@@ -82,16 +99,28 @@ def enclosing_repository_root(path: Path):
     return None
 
 
+def session_directory_of(payload: dict) -> Path:
+    """Where the session says it is working."""
+    return Path(payload.get("cwd") or os.getcwd())
+
+
 def marker_root(payload: dict, file_path: str):
     """The session's own checkout root; the target's repository as fallback.
 
     The payload's cwd is the session's own view of where it works, which is
     correct in forked sessions where $CLAUDE_PROJECT_DIR is not (rider 6).
-    The fallback covers a session seated outside any checkout: the only root
-    left to honour is the target file's own.
+    The fallback covers a session seated outside any checkout — a real
+    directory that simply is not in a repository — where the only root left to
+    honour is the target file's own.
+
+    Callers must establish that the session directory EXISTS before calling
+    this (PR #86's review). A vanished directory is a broken payload rather
+    than a session seated outside a repository, and the two are
+    indistinguishable here: both find no enclosing repository, so both would
+    take the fallback and let a marker in the target's repository approve a
+    write the session never earned.
     """
-    session_cwd = payload.get("cwd") or os.getcwd()
-    root = enclosing_repository_root(Path(session_cwd))
+    root = enclosing_repository_root(session_directory_of(payload))
     if root is not None:
         return root
     return enclosing_repository_root(Path(file_path).parent)
@@ -116,26 +145,24 @@ def is_protected(file_path: str) -> bool:
     return False
 
 
-def consume_approval_marker(marker_path: Path) -> bool:
-    """One approved change passes; the marker is spent by the call it approves."""
-    try:
-        content = marker_path.read_text(encoding="utf-8").strip()
-    except (FileNotFoundError, OSError):
-        return False
-    if not content:
-        return False
-    marker_path.unlink(missing_ok=True)
-    return True
-
-
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
         return 0
-    file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+    tool_input = payload.get("tool_input") or {}
+    # NotebookEdit carries its target in notebook_path where Edit and Write use
+    # file_path. This guard is registered on NotebookEdit, so reading only
+    # file_path left every notebook write unguarded (PR #86's review).
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
     if not file_path or not is_protected(file_path):
         return 0
+
+    session_directory = session_directory_of(payload)
+    if not session_directory.is_dir():
+        print(MISSING_SESSION_DIRECTORY_DENY_MESSAGE.format(
+            path=file_path, cwd=session_directory), file=sys.stderr)
+        return 2
 
     root = marker_root(payload, file_path)
     if root is not None and consume_approval_marker(root / APPROVAL_MARKER_NAME):

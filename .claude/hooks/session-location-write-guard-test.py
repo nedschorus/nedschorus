@@ -29,13 +29,24 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = False):
+def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = False,
+             path_prefix: Path = None, process_cwd: Path = None):
+    """Invoke the guard.
+
+    path_prefix puts a directory first on PATH, so a stub git can drive states
+    a real git will not produce on demand. process_cwd runs the hook from
+    somewhere other than the session's directory, which is how a relative
+    target proves it is judged against the session and not against the hook.
+    """
     key = "notebook_path" if notebook else "file_path"
     payload = json.dumps({"cwd": str(session_cwd), "tool_input": {key: file_path}})
     environment = dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy))
+    if path_prefix is not None:
+        environment["PATH"] = f"{path_prefix}{os.pathsep}{environment.get('PATH', '')}"
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)], input=payload,
         capture_output=True, text=True, check=False, env=environment,
+        cwd=str(process_cwd) if process_cwd is not None else None,
     )
 
 
@@ -161,6 +172,156 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     result = run_hook(seat, "", decoy)
     check("a payload without a target passes", result.returncode == 0)
+
+    # ------------------------------------------------------------------
+    # PR #88's review: the two HEAD states the old reading got wrong
+    # ------------------------------------------------------------------
+    # A repository created by `git init` with nothing committed. The old
+    # reading called this detached, because `rev-parse --abbrev-ref HEAD`
+    # prints "HEAD" there while exiting 128, and the exit status was ignored.
+    unborn = tmp / "unborn-repository"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "main"], unborn)
+    result = run_hook(unborn, str(unborn / "first.md"), decoy)
+    check("an unborn repository is not reported as detached HEAD",
+          "detached HEAD" not in result.stderr, result.stderr)
+    check("the unborn refusal says the repository has no commits yet",
+          "no commits yet" in result.stderr, result.stderr)
+    check("the unborn refusal names the branch HEAD points at",
+          "main" in result.stderr, result.stderr)
+
+    # A healthy seat whose HEAD lookups fail. The old reading treated ANY
+    # failure of its one git command as detached, so a transient fault refused
+    # a seat that was on a perfectly good branch and told it to fix a state it
+    # was not in. A stub git fails exactly the two HEAD questions and delegates
+    # everything else, so the repository still resolves.
+    import shutil as _shutil
+    real_git = _shutil.which("git")
+    stub_directory = tmp / "stub-git"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  symbolic-ref) exit 128 ;;\n"
+        "esac\n"
+        'if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; then exit 128; fi\n'
+        # --abbrev-ref is what the OLD reading used. Breaking only the new
+        # commands would let the pre-fix guard pass this case for the wrong
+        # reason; the realistic fault is a git that cannot answer about HEAD
+        # at all, while --show-toplevel still resolves the repository.
+        'if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then exit 128; fi\n'
+        f'exec {real_git} "$@"\n',
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+    # With no marker present the old reading's refusal is visible directly.
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory)
+    check("an unreadable HEAD does not refuse a healthy seat as detached",
+          result.returncode == 0, result.stderr)
+    check("an unreadable HEAD does not claim the seat is on a detached HEAD",
+          "detached HEAD" not in result.stderr, result.stderr)
+    # And with one present, the old reading spent it to let the write through —
+    # the seat paid an approval for a state it was never in.
+    stub_marker = seat / ".location-write-approved"
+    stub_marker.write_text("an approval that must not be spent here\n", encoding="utf-8")
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory)
+    check("an unreadable HEAD does not spend the seat's marker", stub_marker.exists())
+    stub_marker.unlink(missing_ok=True)
+
+    # One-sided git failures must reach "unknown", not a repository state.
+    # Found on PR #103's review, in the replacement for is_detached: with only
+    # symbolic-ref broken the seat read as detached, and with only verify
+    # broken it read as unborn — the same class the replacement was written to
+    # close. Neither is reachable with a real git, so each gets a stub that
+    # breaks exactly one command and passes the rest through.
+    for broken, wrong_state in (("symbolic-ref", "detached HEAD"),
+                                ("rev-parse --verify", "no commits yet")):
+        one_sided = tmp / f"stub-{broken.split()[0]}-{len(broken)}"
+        one_sided.mkdir()
+        stub = one_sided / "git"
+        if broken == "symbolic-ref":
+            failing_case = 'if [ "$1" = "symbolic-ref" ]; then exit 3; fi\n'
+        else:
+            failing_case = ('if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; '
+                            "then exit 3; fi\n")
+        stub.write_text("#!/bin/sh\n" + failing_case + f'exec {real_git} "$@"\n',
+                        encoding="utf-8")
+        stub.chmod(0o755)
+        result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=one_sided)
+        check(f"a healthy seat survives a broken {broken}",
+              result.returncode == 0, result.stderr)
+        check(f"a broken {broken} is not reported as \"{wrong_state}\"",
+              wrong_state not in result.stderr, result.stderr)
+
+    # ------------------------------------------------------------------
+    # PR #91's review: the .git asymmetry, and marker inertness
+    # ------------------------------------------------------------------
+    # git will not answer --show-toplevel from inside a .git directory, so the
+    # reference checkout's own machinery resolved to no owner and passed, while
+    # an ordinary file one level up was refused. .git/hooks/ is executable code.
+    result = run_hook(seat, str(reference / ".git" / "hooks" / "pre-commit"), decoy)
+    check("a seat's write into the reference's .git/hooks is blocked",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(seat, str(reference / ".git" / "config"), decoy)
+    check("a seat's write into the reference's .git/config is blocked",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(seat, str(seat / ".git"), decoy)
+    check("a seat's write to its OWN .git is not this guard's business",
+          result.returncode == 0, result.stderr)
+
+    # The detached refusal must teach marker creation by shell, because such a
+    # session cannot write the marker with the tool this guard blocks.
+    result = run_hook(detached, str(detached / "notes.md"), decoy)
+    check("the detached refusal says to create the marker with a shell command",
+          "printf" in result.stderr or "echo" in result.stderr, result.stderr)
+
+    # A marker sitting at the TARGET's root must stay inert and unspent for a
+    # normally-seated session: without this, an implementation that wrongly
+    # honoured the target's marker would still pass every other case here.
+    target_side_marker = reference / ".location-write-approved"
+    target_side_marker.write_text("an approval lying in the target tree\n", encoding="utf-8")
+    result = run_hook(seat, str(reference / "still-blocked.md"), decoy)
+    check("a marker at the TARGET's root does not approve a cross write",
+          result.returncode == 2, str(result.returncode))
+    check("a marker at the TARGET's root is left unspent", target_side_marker.exists())
+    target_side_marker.unlink()
+
+    # ------------------------------------------------------------------
+    # PR #88's review: the remaining test gaps
+    # ------------------------------------------------------------------
+    # A relative target is judged against the SESSION's directory. The hook runs
+    # from somewhere else entirely, so a guard resolving against its own cwd
+    # would reach the wrong tree.
+    result = run_hook(reference, "docs-relative.md", decoy, process_cwd=tmp)
+    check("a relative target is judged against the session's directory",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook(seat, "notes-relative.md", decoy, process_cwd=reference)
+    check("a relative target does not inherit the hook process's directory",
+          result.returncode == 0, result.stderr)
+
+    # A session seated in a SUBDIRECTORY of its checkout is still that checkout.
+    reference_subdirectory = reference / "nested" / "deeper"
+    reference_subdirectory.mkdir(parents=True)
+    result = run_hook(reference_subdirectory, str(reference / "from-subdir.md"), decoy)
+    check("a session in a subdirectory of the reference is still seated there",
+          result.returncode == 2, str(result.returncode))
+    seat_subdirectory = seat / "nested"
+    seat_subdirectory.mkdir()
+    result = run_hook(seat_subdirectory, str(seat / "ok.md"), decoy)
+    check("a session in a subdirectory of a seat writes freely",
+          result.returncode == 0, result.stderr)
+
+    # An explicitly symlinked path must be judged by where it LANDS.
+    symlink_to_reference = tmp / "link-to-reference"
+    symlink_to_reference.symlink_to(reference, target_is_directory=True)
+    result = run_hook(seat, str(symlink_to_reference / "through-a-link.md"), decoy)
+    check("a write reaching the reference through a symlink is blocked",
+          result.returncode == 2, str(result.returncode))
+
+    # The allowed side of NotebookEdit: the field is read, not merely blocked.
+    result = run_hook(seat, str(seat / "analysis.ipynb"), decoy, notebook=True)
+    check("a seat's own notebook write passes through notebook_path",
+          result.returncode == 0, result.stderr)
 
 print()
 if failures:

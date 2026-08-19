@@ -51,7 +51,27 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The marker lane lives in a sibling module so both guards share one copy of
+# the contract (extracted 2026-08-19). Resolving this file's own directory
+# explicitly rather than relying on sys.path[0]: this project has been bitten
+# repeatedly by code that assumed the wrong base directory, and a guard that
+# fails to import is a guard that does not run.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guard_approval_marker import consume_approval_marker  # noqa: E402
+
 APPROVAL_MARKER_NAME = ".location-write-approved"
+
+# run_git reports a git that never ran with a code git itself cannot return,
+# so "no answer" is never mistaken for an answer.
+GIT_DID_NOT_RUN = -1
+
+# The exit codes each HEAD question is allowed to answer with, measured
+# 2026-08-19 on both fleet machines. Anything else means the question was not
+# answered, whatever the reason.
+SYMBOLIC_REF_ON_A_BRANCH = 0
+SYMBOLIC_REF_NOT_A_BRANCH = 128     # detached HEAD, or no repository
+HEAD_COMMIT_EXISTS = 0
+HEAD_COMMIT_ABSENT = (1, 128)       # unborn repository, or no repository
 
 DETACHED_DENY_MESSAGE = (
     "Refusing to write {path}: this session's checkout is on a detached HEAD — no branch "
@@ -59,7 +79,21 @@ DETACHED_DENY_MESSAGE = (
     "lost with the worktree. Get onto a branch first (git switch -c <a-branch-name>), or "
     "move to your own seat worktree, then resubmit. If the user has approved writing from "
     "this exact state, quote his approval words into {marker} at the checkout root and "
-    "resubmit — the marker is consumed by the one call it approves."
+    "resubmit — the marker is consumed by the one call it approves. Create the marker with a "
+    "shell command (printf/echo): writing it with the Write tool would be refused by this "
+    "same guard."
+)
+
+UNBORN_DENY_MESSAGE = (
+    "Refusing to write {path}: this session's checkout is a repository with no commits yet. "
+    "HEAD names the branch {branch}, but that branch does not exist until something is "
+    "committed, so this is not the seat you were meant to be working in — most often it is a "
+    "stray `git init` directory. Check you are in the right checkout. If this really is where "
+    "the work belongs, make the first commit (git commit --allow-empty -m 'initial') and "
+    "resubmit. If the user has approved writing from this exact state, quote his approval "
+    "words into {marker} at the checkout root and resubmit — create it with a shell command "
+    "(printf/echo), because writing it with the Write tool would be refused by this same "
+    "guard."
 )
 
 REFERENCE_DENY_MESSAGE = (
@@ -90,7 +124,13 @@ def run_git(arguments, working_directory: Path):
             capture_output=True, text=True, check=False, timeout=15,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+        # NOT 1: git itself uses 1 as a real answer (rev-parse --verify --quiet
+        # exits 1 for "HEAD does not exist", which is how an unborn repository
+        # is recognised). Synthesizing 1 here would make "git could not run"
+        # indistinguishable from that answer, and a caller would read a
+        # repository state out of a launch failure.
+        return subprocess.CompletedProcess(arguments, GIT_DID_NOT_RUN, "",
+                                           f"{type(error).__name__}: {error}")
 
 
 def checkout_root_of(directory: Path):
@@ -100,9 +140,76 @@ def checkout_root_of(directory: Path):
     return Path(result.stdout.strip())
 
 
-def is_detached(checkout: Path) -> bool:
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout).stdout.strip()
-    return branch in ("", "HEAD")
+def head_state_of(checkout: Path):
+    """(state, branch-name-or-None) for a checkout's HEAD.
+
+    state is one of:
+      "branch"   — HEAD names a branch that has at least one commit.
+      "unborn"   — HEAD names a branch that does not exist yet: a repository
+                   created by `git init` with nothing committed.
+      "detached" — HEAD points straight at a commit, on no branch.
+      "unknown"  — neither question could be answered.
+
+    The reading this replaced was `rev-parse --abbrev-ref HEAD`, taking any
+    output of "HEAD" or "" as detached while ignoring the exit status, which
+    got two states wrong (PR #88's review). In an unborn repository that
+    command exits 128 AND prints "HEAD", so a fresh `git init` was reported as
+    detached. And because the exit status was ignored, ANY failure of that one
+    command — a git that could not run, a timeout — also read as detached, so a
+    healthy seat could be refused and told to fix a state it was not in.
+
+    Measured exit codes this depends on (2026-08-19, git 2.x, both fleet
+    machines):
+
+        state        symbolic-ref   rev-parse --verify --quiet HEAD
+        on branch              0                                  0
+        unborn                 0                                  1
+        detached             128                                  0
+        not a repo           128                                128
+
+    Only those codes count as answers. A command that failed to run, timed
+    out, or returned anything else has told us nothing, and both blocking
+    verdicts require both questions answered — otherwise the state is
+    "unknown", which does not block. The first version of this function got
+    that wrong in the same class it was written to fix: a one-sided failure
+    read as "detached" when symbolic-ref failed, and as "unborn" when verify
+    failed (found on PR #103's review). Note that run_git cannot report a
+    launch failure as 1, because git uses 1 as a real answer here.
+    """
+    symbolic = run_git(["symbolic-ref", "--short", "HEAD"], checkout)
+    verify = run_git(["rev-parse", "--verify", "--quiet", "HEAD"], checkout)
+
+    # Both blocking verdicts need BOTH questions actually answered. A command
+    # that failed to run, timed out, or returned a code it has no business
+    # returning has told us nothing, and a state read out of that is a guess.
+    if symbolic.returncode not in (SYMBOLIC_REF_ON_A_BRANCH, SYMBOLIC_REF_NOT_A_BRANCH):
+        return "unknown", None
+    if verify.returncode != HEAD_COMMIT_EXISTS and verify.returncode not in HEAD_COMMIT_ABSENT:
+        return "unknown", None
+
+    head_exists = verify.returncode == HEAD_COMMIT_EXISTS
+    if symbolic.returncode == SYMBOLIC_REF_ON_A_BRANCH:
+        return ("branch" if head_exists else "unborn"), (symbolic.stdout.strip() or None)
+    # symbolic-ref answered "not a branch". With a commit that is a detached
+    # HEAD; without one there is no repository here to judge.
+    return ("detached" if head_exists else "unknown"), None
+
+
+def checkout_owning_git_directory(path: Path):
+    """The checkout whose .git directory contains this path, or None.
+
+    git refuses to answer `rev-parse --show-toplevel` from inside a .git
+    directory — "this operation must be run in a work tree" — so a write
+    targeting the reference checkout's .git resolved to no owning checkout at
+    all and passed every check, while an ordinary file write one level up was
+    refused (PR #91's review). .git/hooks/ holds executable code that git runs
+    during ordinary commands, which makes it a stronger target than the working
+    tree beside it, not a weaker one.
+    """
+    for candidate in (path, *path.parents):
+        if candidate.name == ".git" and candidate.parent != candidate:
+            return candidate.parent
+    return None
 
 
 def is_reference_checkout(checkout: Path) -> bool:
@@ -160,18 +267,6 @@ def target_inside(checkout: Path, file_path: str) -> bool:
         return False
 
 
-def consume_approval_marker(marker_path: Path) -> bool:
-    """One approved write passes; the marker is spent by the call it approves."""
-    try:
-        content = marker_path.read_text(encoding="utf-8").strip()
-    except (FileNotFoundError, OSError):
-        return False
-    if not content:
-        return False
-    marker_path.unlink(missing_ok=True)
-    return True
-
-
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -184,33 +279,56 @@ def main() -> int:
         return 0
 
     session_cwd = Path(payload.get("cwd") or os.getcwd())
+    # A relative target is relative to the SESSION's directory, not to wherever
+    # this hook process happens to be running. PR #88's review listed relative
+    # paths as an untested gap; leaving them to Path.resolve() would judge them
+    # against the hook's own working directory, which is the wrong-base class of
+    # bug this project keeps finding.
+    if not Path(file_path).is_absolute():
+        file_path = str(session_cwd / file_path)
     checkout = checkout_root_of(session_cwd)
 
     if checkout is not None and target_inside(checkout, file_path):
         # The seated questions: writes into the session's own tree.
-        if is_detached(checkout):
+        head_state, branch_name = head_state_of(checkout)
+        message_fields = {}
+        if head_state == "detached":
             deny_message = DETACHED_DENY_MESSAGE
+        elif head_state == "unborn":
+            deny_message = UNBORN_DENY_MESSAGE
+            message_fields["branch"] = branch_name or "(unnamed)"
         elif is_reference_checkout(checkout):
             deny_message = REFERENCE_DENY_MESSAGE
         else:
+            # "branch" is the healthy case. "unknown" means the repository root
+            # resolved but neither HEAD question could be answered, which is
+            # evidence of nothing: refusing here would stop a healthy seat on a
+            # transient git failure, which is exactly the false refusal PR #88's
+            # review found. The reference-checkout test above still applies, so
+            # only the detached rule goes unenforced in that window.
             return 0
         marker_root = checkout
     else:
         # The landing question: does this write cross into the reference?
         anchor = nearest_existing_ancestor(Path(file_path))
         target_root = checkout_root_of(anchor) if anchor is not None else None
+        if target_root is None and anchor is not None:
+            # A path inside a .git directory has no work tree to resolve from.
+            target_root = checkout_owning_git_directory(anchor)
         if target_root is None or not is_reference_checkout(target_root):
             return 0
         if checkout is not None and checkout.resolve() == target_root.resolve():
             return 0  # same tree; the seated branch above already judged it
         deny_message = CROSS_REFERENCE_DENY_MESSAGE
+        message_fields = {}
         # The marker belongs in the tree the SESSION owns; only a session
         # with no checkout at all falls back to the target's root.
         marker_root = checkout if checkout is not None else target_root
 
     if consume_approval_marker(marker_root / APPROVAL_MARKER_NAME):
         return 0
-    print(deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME), file=sys.stderr)
+    print(deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME,
+                              **message_fields), file=sys.stderr)
     return 2
 
 

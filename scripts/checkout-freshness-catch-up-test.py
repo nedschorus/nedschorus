@@ -231,6 +231,87 @@ check("the attention emitter speaks Stop-hook JSON",
       emitted.get("decision") == "block" and "attention" in emitted.get("reason", ""),
       captured.getvalue())
 
+# ---------------------------------------------------------------------------
+# PR #87's review: git's prose must be read in a stable locale
+# ---------------------------------------------------------------------------
+# The merge path decides whether it owns a conflict by looking for the word
+# "CONFLICT" in git's output. git translates that word — a German-locale host
+# prints "KONFLIKT" — so on such a host the match fails, the cleanup that
+# should abort the merge is skipped, and the seat's tree is left parked
+# mid-merge. A stub git reports the locale it was handed.
+import os as _os
+import shutil as _shutil
+import tempfile as _tempfile
+
+with _tempfile.TemporaryDirectory() as locale_scratch:
+    locale_scratch = Path(locale_scratch)
+    stub_directory = locale_scratch / "stub"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s" "${{LC_ALL-UNSET}}" > {locale_scratch / "seen-locale"}\n'
+        "exit 128\n",
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+    environment = dict(_os.environ)
+    environment["PATH"] = f"{stub_directory}{_os.pathsep}{environment.get('PATH', '')}"
+    environment["LC_ALL"] = "de_DE.UTF-8"
+    subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--interval-seconds", "0",
+         "--report", "--repo", str(locale_scratch)],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    seen_locale = (locale_scratch / "seen-locale")
+    check("git is run in the C locale, so its prose is stable to match on",
+          seen_locale.exists() and seen_locale.read_text(encoding="utf-8") == "C",
+          seen_locale.read_text(encoding="utf-8") if seen_locale.exists() else "stub never ran")
+
+# ---------------------------------------------------------------------------
+# PR #87's review: an unknowable count must not leave the old number standing
+# ---------------------------------------------------------------------------
+# The seat's own path already nulls behind/ahead when the comparison cannot be
+# made, because a preserved stale count renders as knowledge. The reference
+# path and the report path kept the previous numbers.
+with tempfile.TemporaryDirectory() as unknowable_scratch:
+    unknowable_scratch = Path(unknowable_scratch)
+    lone = unknowable_scratch / "lone-checkout"
+    lone.mkdir()
+    git(["init", "-q", "-b", "main"], lone)
+    configure_identity(lone)
+    commit_file(lone, "a.txt", "one\n", "first")
+
+    def seed_stale_counts(checkout: Path):
+        """Put numbers in the stamp that a later run must not leave standing."""
+        git_dir = Path(git(["rev-parse", "--absolute-git-dir"], checkout).stdout.strip())
+        stamp_file = git_dir / "checkout-freshness-stamp.json"
+        stamp = {}
+        try:
+            stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        stamp["behind"], stamp["ahead"] = 7, 3
+        stamp_file.write_text(json.dumps(stamp), encoding="utf-8")
+
+    # There is no origin/main here at all, so the comparison is unknowable.
+    seed_stale_counts(lone)
+    run_catch_up(["--reference-pull", "--repo", str(lone)])
+    stamp = stamp_of(lone)
+    check("an unknowable count nulls the reference checkout's recorded behind",
+          stamp.get("behind") is None, json.dumps(stamp))
+    check("an unknowable count nulls the reference checkout's recorded ahead",
+          stamp.get("ahead") is None, json.dumps(stamp))
+
+    seed_stale_counts(lone)
+    result = run_catch_up(["--report", "--repo", str(lone)])
+    stamp = stamp_of(lone)
+    check("the report says the comparison could not be made",
+          "no origin/main" in result.stdout, result.stdout)
+    check("an unknowable count nulls the behind the report leaves behind",
+          stamp.get("behind") is None, json.dumps(stamp))
+    check("an unknowable count nulls the ahead the report leaves behind",
+          stamp.get("ahead") is None, json.dumps(stamp))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

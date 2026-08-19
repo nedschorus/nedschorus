@@ -25,8 +25,10 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_hook(session_cwd: Path, file_path: str):
-    payload = json.dumps({"cwd": str(session_cwd), "tool_input": {"file_path": file_path}})
+def run_hook(session_cwd: Path, file_path: str, path_field: str = "file_path"):
+    """path_field selects which tool_input key carries the target: Edit and
+    Write use file_path, NotebookEdit uses notebook_path."""
+    payload = json.dumps({"cwd": str(session_cwd), "tool_input": {path_field: file_path}})
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)], input=payload,
         capture_output=True, text=True, check=False, env=dict(os.environ),
@@ -92,6 +94,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (workspace / ".walk-approved").write_text("approved\n", encoding="utf-8")
     result = run_hook(workspace, "/mnt/backup/timeshift/x")
     check("an instruction-file approval does not carry to backups", result.returncode == 2)
+
+    # --- NotebookEdit carries its target in notebook_path (PR #86's review) ---
+    # This guard is registered on NotebookEdit, so reading only file_path left
+    # a notebook write into backup state entirely unguarded.
+    result = run_hook(workspace, "/mnt/backup/timeshift/snapshot/notes.ipynb",
+                      path_field="notebook_path")
+    check("a notebook write into Timeshift's backup drive is blocked",
+          result.returncode == 2, result.stderr)
+    result = run_hook(workspace, "/Volumes/TM/Backups.backupdb/mac/notes.ipynb",
+                      path_field="notebook_path")
+    check("a notebook write into a Time Machine store is blocked",
+          result.returncode == 2, result.stderr)
+    result = run_hook(workspace, str(workspace / "ordinary.ipynb"),
+                      path_field="notebook_path")
+    check("an ordinary notebook still passes through notebook_path",
+          result.returncode == 0, result.stderr)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
