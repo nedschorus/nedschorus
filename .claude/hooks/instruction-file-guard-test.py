@@ -31,8 +31,11 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_hook(decoy_project_directory: Path, session_cwd: Path, file_path: str):
-    payload = json.dumps({"cwd": str(session_cwd), "tool_input": {"file_path": file_path}})
+def run_hook(decoy_project_directory: Path, session_cwd: Path, file_path: str,
+             path_field: str = "file_path"):
+    """Invoke the guard. path_field selects which tool_input key carries the
+    target: Edit and Write use file_path, NotebookEdit uses notebook_path."""
+    payload = json.dumps({"cwd": str(session_cwd), "tool_input": {path_field: file_path}})
     environment = dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy_project_directory))
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)], input=payload,
@@ -140,6 +143,61 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("no-checkout session falls back to the target's repository marker",
           result.returncode == 0, result.stderr)
     check("the fallback marker is consumed", not marker.exists())
+
+    # --- NotebookEdit carries its target in notebook_path (PR #86's review) ---
+    # The guard is registered on NotebookEdit, so reading only file_path left
+    # every notebook write unguarded — it saw no target and passed.
+    result = run_hook(decoy, workspace, str(workspace / ".claude" / "notes.ipynb"),
+                      path_field="notebook_path")
+    check("a notebook write under .claude/ is blocked through notebook_path",
+          result.returncode == 2, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"),
+                      path_field="notebook_path")
+    check("a notebook write to an instruction file is blocked through notebook_path",
+          result.returncode == 2, result.stderr)
+    result = run_hook(decoy, workspace, str(workspace / "docs" / "ordinary.ipynb"),
+                      path_field="notebook_path")
+    check("an ordinary notebook still passes through notebook_path",
+          result.returncode == 0, result.stderr)
+
+    # --- The session's checkout decides, even when the target has one too ----
+    # The discriminating case PR #86's review found missing: BOTH roots exist
+    # and BOTH hold a marker, so an implementation resolving from the target
+    # instead of the session still passes every other case in this file.
+    other_checkout = tmp / "another-checkout"
+    (other_checkout / ".git").mkdir(parents=True)
+    other_marker = other_checkout / ".walk-approved"
+    other_marker.write_text("approval belonging to the other checkout\n", encoding="utf-8")
+    session_marker = workspace / ".walk-approved"
+    session_marker.write_text("user approved: the cross-checkout edit\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(other_checkout / "CLAUDE.md"))
+    check("a write into another checkout is approved by the SESSION's marker",
+          result.returncode == 0, result.stderr)
+    check("the session's marker is the one consumed", not session_marker.exists())
+    check("the target checkout's own marker is left untouched", other_marker.exists())
+    other_marker.unlink()
+
+    # --- A working directory that no longer exists must refuse, not fall back -
+    # A seat whose worktree was removed under it still sends its old cwd. The
+    # fallback is for a session seated OUTSIDE any checkout, which is a real
+    # place; a vanished directory is a broken payload, and falling back let it
+    # spend a marker sitting in the target's repository.
+    vanished = tmp / "removed-worktree"
+    vanished.mkdir()
+    (vanished / ".git").mkdir()
+    vanished_target_marker = workspace / ".walk-approved"
+    vanished_target_marker.write_text("user approved: something else entirely\n",
+                                      encoding="utf-8")
+    import shutil as _shutil
+    _shutil.rmtree(vanished)
+    result = run_hook(decoy, vanished, str(workspace / "CLAUDE.md"))
+    check("a session whose working directory no longer exists is refused",
+          result.returncode == 2, result.stderr)
+    check("the refusal says the working directory is the problem",
+          "working directory" in result.stderr, result.stderr)
+    check("a marker in the target's repository is NOT spent by that refusal",
+          vanished_target_marker.exists())
+    vanished_target_marker.unlink(missing_ok=True)
 
 print()
 if failures:

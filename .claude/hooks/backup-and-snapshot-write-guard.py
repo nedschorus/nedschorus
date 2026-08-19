@@ -85,7 +85,12 @@ def main() -> int:
         payload = json.loads(sys.stdin.read() or "{}")
     except json.JSONDecodeError:
         return 0
-    file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+    tool_input = payload.get("tool_input") or {}
+    # NotebookEdit carries its target in notebook_path where Edit and Write use
+    # file_path. This guard is registered on NotebookEdit, so reading only
+    # file_path left a notebook write into backup state unguarded (PR #86's
+    # review).
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
     if not file_path or not is_protected(file_path):
         return 0
 
