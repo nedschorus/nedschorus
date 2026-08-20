@@ -29,8 +29,8 @@ Hunt each explicitly:
 - **Detectors or outputs with no consumer** — something is computed, emitted, or recorded, and nothing and no one reads it (see the forcing-function guard before concluding this). The real cost is the machinery that must read what was recorded and act on it; a detector whose output feeds no such machinery — and none planned — is a cut candidate even when detection sounds prudent.
 - **Duplicated normative homes** — the same rule stated authoritatively in two places, which will drift apart.
 - **Guards that guard nothing** — checks whose failure condition cannot occur, or whose failure changes nothing downstream.
-- **Dead code** — code no execution path reaches; the test is reachability, and the finding quotes the search that found no path in.
-- **Dead distinctions** — a name, field, or category that marks a difference nothing and no one acts on; the test is the consumer hunt, and the forcing-function guard applies — a human forced to decide because the distinction exists is a consumer.
+- **Dead code** — code no execution path reaches. A search shows that no path was found, not that none exists: dispatch through a name assembled at run time, an entry point named only in configuration, generated call sites, and consumers outside this repository all survive a literal search. The finding quotes the search it ran, names the scope it covered, and says what would defeat it; it claims what it found, not what exists.
+- **Dead distinctions** — a name, field, or category that marks a difference nothing and no one acts on; the test is the consumer hunt, under the same evidence rule as dead code, and the forcing-function guard applies — a human forced to decide because the distinction exists is a consumer.
 - **A broken mechanism reopens the Delete question** — when you find a mechanism broken, unwired, or incomplete (a dead trigger, an unreachable path, a promised name that doesn't exist), do not propose completing it first. Search the documents for what depends on it; if nothing named depends on it, deletion is the first candidate and repair the second. Either way, quote what you found or failed to find.
 
 ## The guards
