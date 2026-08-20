@@ -170,12 +170,30 @@ def directory_occupancy_keep_reason(directory: Path):
     return "no live process is rooted in the seat directory"
 
 
+def run_tmux(*arguments_after_tmux):
+    """Run one tmux command, or return None when tmux cannot be run at all.
+
+    Every tmux call here goes through this. subprocess raises FileNotFoundError
+    for a missing binary rather than returning a failure code, so an unguarded
+    call crashes on a machine without tmux -- including under --dry-run and
+    --prepare-only, which promise to change nothing and must not traceback.
+    The lsof check above already had this guard; tmux never got the sibling
+    treatment.
+    """
+    if shutil.which("tmux") is None:
+        return None
+    try:
+        return subprocess.run(
+            ["tmux", *arguments_after_tmux],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 def tmux_session_exists(name: str) -> bool:
-    completed = subprocess.run(
-        ["tmux", "has-session", "-t", f"={name}"],
-        capture_output=True, text=True, check=False,
-    )
-    return completed.returncode == 0
+    completed = run_tmux("has-session", "-t", f"={name}")
+    return completed is not None and completed.returncode == 0
 
 
 def launcher_for(machine: str) -> Path:
@@ -232,7 +250,15 @@ def resupervise_box_seat(arguments) -> int:
     print(f"resupervise-seat: box side is clear; running {launcher.name} {arguments.name}")
     sys.stdout.flush()  # exec discards the buffer; see the note on the mac path
     sys.stderr.flush()
-    os.execv(str(launcher), [str(launcher), arguments.name])
+    # Carry --agent-box into the launcher, which reads it as NEDSCHORUS_AGENT_BOX
+    # and otherwise defaults to its own alias. Without this the flag steers both
+    # ssh checks above and is then ignored at the decisive step: a non-default
+    # box would be cleared, and the successor launched on the default one.
+    os.execve(
+        str(launcher),
+        [str(launcher), arguments.name],
+        {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box},
+    )
 
 
 def main(argv=None) -> int:
@@ -319,11 +345,9 @@ def main(argv=None) -> int:
     # happens whenever recovery is attempted from a shell in the very seat
     # being recovered -- which is exactly where an operator lands after a
     # supervisor exits, since the launcher leaves a shell in the seat.
-    current_session = subprocess.run(
-        ["tmux", "display-message", "-p", "#{session_name}"],
-        capture_output=True, text=True, check=False,
-    )
-    if current_session.returncode == 0 and current_session.stdout.strip() == arguments.name:
+    current_session = run_tmux("display-message", "-p", "#{session_name}")
+    if (current_session is not None and current_session.returncode == 0
+            and current_session.stdout.strip() == arguments.name):
         return refuse(
             f"this command is running inside the {arguments.name} tmux session, and clearing "
             "that session would kill the terminal doing the clearing. Run it from another "
@@ -344,14 +368,12 @@ def main(argv=None) -> int:
     # successor at all. Killing it is also what keeps the recovered seat to one
     # window -- the decoy of 2026-08-18 was a second window left behind.
     if stale_session:
-        killed = subprocess.run(
-            ["tmux", "kill-session", "-t", f"={arguments.name}"],
-            capture_output=True, text=True, check=False,
-        )
-        if killed.returncode != 0:
+        killed = run_tmux("kill-session", "-t", f"={arguments.name}")
+        if killed is None or killed.returncode != 0:
+            detail = "tmux could not be run" if killed is None else (
+                killed.stderr.strip() or "no detail")
             return refuse(
-                f"could not kill the stale tmux session {arguments.name}: "
-                f"{killed.stderr.strip() or 'no detail'}"
+                f"could not kill the stale tmux session {arguments.name}: {detail}"
             )
         print(f"resupervise-seat: killed the stale tmux session {arguments.name}")
     else:

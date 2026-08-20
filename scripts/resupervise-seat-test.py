@@ -16,6 +16,7 @@ Run: python3 scripts/resupervise-seat-test.py
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -273,6 +274,46 @@ def run_end_to_end_case(workspace: Path):
                        capture_output=True, check=False)
 
 
+def run_missing_tmux_case(workspace: Path):
+    """With tmux absent the script must refuse, never traceback.
+
+    subprocess raises FileNotFoundError for a missing binary rather than
+    returning a failure code, so an unguarded call crashes -- and it would crash
+    under --dry-run and --prepare-only too, which promise to change nothing. Run
+    with a PATH holding only the python interpreter's directory, so tmux really
+    is unreachable.
+    """
+    isolated = workspace / "isolated"
+    stub_path = workspace / "empty-path"
+    stub_path.mkdir(exist_ok=True)
+    write_handoff(workspace, "notmux", counter=1)
+    environment = dict(os.environ)
+    environment["PATH"] = str(stub_path)
+    result = subprocess.run(
+        [sys.executable, str(isolated / "resupervise-seat.py"), "notmux", "--prepare-only",
+         "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    check("a machine without tmux does not traceback",
+          "Traceback" not in result.stderr, result.stderr)
+    check("a machine without tmux still exits cleanly",
+          result.returncode in (0, 1), f"exit {result.returncode}")
+
+
+def run_agent_box_case(workspace: Path):
+    """--agent-box must reach the launcher, not just the ssh checks.
+
+    The launcher reads NEDSCHORUS_AGENT_BOX and otherwise defaults to its own
+    alias, so a flag honored by the checks and dropped at the launch would clear
+    one host and seat the successor on another. Asserted by reading the source:
+    the launch is an exec, which cannot be observed from a subprocess run here.
+    """
+    source = (workspace / "isolated" / "resupervise-seat.py").read_text(encoding="utf-8")
+    check("the box launch passes NEDSCHORUS_AGENT_BOX through",
+          "NEDSCHORUS_AGENT_BOX" in source and "os.execve" in source,
+          "the box launch does not carry --agent-box")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="resupervise-seat-test-") as scratch:
         workspace = Path(scratch)
@@ -284,6 +325,8 @@ def main() -> int:
         run_missing_launcher_case(workspace)
         run_prepare_only_case(workspace)
         run_end_to_end_case(workspace)
+        run_missing_tmux_case(workspace)
+        run_agent_box_case(workspace)
 
     print()
     if failures:

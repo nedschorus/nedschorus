@@ -243,13 +243,22 @@ def main(argv=None) -> int:
     # branch is reporting, a seat running with nothing watching it. The launcher
     # is the supervised path, and scripts/resupervise-seat.py performs the whole
     # procedure (it refuses unless this handoff is genuinely waiting).
+    # --machine is printed explicitly, never left to the default. The same agent
+    # name is permitted on both machines and means two unrelated seats, so a box
+    # seat printing the bare command would have the operator run it on the Mac
+    # against a same-named MAC seat: the recovery would refuse only if that Mac
+    # seat had no waiting handoff of its own, which is not something this advice
+    # may assume. Linux here means the box, since that is the fleet's only
+    # non-Mac machine; the flag is stated on both so the printed line is
+    # copy-paste-correct wherever it is read.
+    machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "
         f"recycle it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
         "Tell the user: to seat a supervised successor, run "
-        f"`scripts/resupervise-seat.py {agent}` — it clears this seat's stale tmux session and "
-        "relaunches, and the supervisor ignites from the handoff. Relaunching `claude` by hand "
-        "instead produces another unsupervised seat. Until then, keep working."
+        f"`scripts/resupervise-seat.py {agent} --machine {machine}` — it clears this seat's stale "
+        "tmux session and relaunches, and the supervisor ignites from the handoff. Relaunching "
+        "`claude` by hand instead produces another unsupervised seat. Until then, keep working."
     )
     return 1
 
