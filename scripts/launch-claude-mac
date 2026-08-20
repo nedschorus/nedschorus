@@ -196,7 +196,7 @@ AFTER_EXIT_COMMAND="echo; \
 echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in the seat's directory\"; \
 echo \"  fresh supervised seat:  exit, then launch-claude-mac $AGENT_NAME\"; \
 echo \"  resume this dialog:     claude --continue — starts NO supervisor, so that\"; \
-echo \"                          seat can never recycle and must be recovered by hand\"; \
+echo \"                          seat can never recycle until it is recovered\"; \
 cd '$AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
 if [ "$ATTACH" = yes ]; then
