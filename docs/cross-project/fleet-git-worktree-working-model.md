@@ -222,9 +222,13 @@ visibility.
 (PR #91, merged 2026-08-17).** The session-location guard's second
 condition: a write *landing* in the reference checkout from a session
 seated elsewhere is refused, same marker lane. Scoped to the demonstrated
-class: all four recorded cross-checkout incidents (2026-08-14/15, restated
-in this file's git history at the original R6) targeted the reference;
-zero targeted another seat's home or a scratch worktree. Writes into
+class — all four recorded cross-checkout incidents targeted the reference.
+The four, so the evidence outlives the walk papers: on 2026-08-14 a
+session seated in its own worktree edited twelve documents and staged 235
+deletions in the reference checkout; md-review records were later written
+into it; a git branch was created in it, twice; and on 2026-08-15 a walk's
+working ledger was written into it. Zero incidents targeted another seat's
+home or a scratch worktree. Writes into
 *another seat's* home are recorded-unbuilt with an incident as the build
 trigger; a session's own scratch worktrees are deliberately untouched.
 Block outranked detect-and-reverse because the undo is imperfect exactly
@@ -318,11 +322,11 @@ activation: a push is a shell operation no file-write hook sees.
 
 **R15. A landed change reaches every running seat — BUILT (PR #87, merged
 2026-08-17; delivery ruling PR #90).**
-`scripts/checkout-freshness-catch-up.py` runs as a Stop hook at every turn
-boundary; the status line's `⇣N` reads the stamp file it writes; the
-launchers fast-forward the reference checkout at boot; the supervisor's
-launch-time sync remains the floor. Coverage stated exactly: delivery
-happens at turn boundaries when the seat is clean and conflict-free — a
+`scripts/checkout-freshness-catch-up.py` is the delivery; the status
+line's `⇣N` shows the lag; the launchers freshen the reference checkout
+at boot; the supervisor's launch-time sync remains the floor. Coverage
+stated exactly: delivery happens at turn boundaries when the seat is
+clean and conflict-free — a
 seat that lags says so on its status line rather than silently. **Who
 hears it** (ruled 2026-08-17): exactly one state forces an agent turn — a
 conflict whose cleanup failed, leaving the tree mid-merge; routine events
@@ -334,9 +338,9 @@ add`, commit. The candidate launch-reset of fully-merged seat branches
 stays unruled (cherry-picks break ancestry, so the predicate needs care).
 
 **R16. Binary updates at launch, never in background — built-live
-(accreted, no single PR).** Both launchers run `claude update` with a
-timeout, warn-and-proceed; their guarantee is that *they* never swap the
-binary under a live session. The box's `DISABLE_AUTOUPDATER=1` flag was
+(accreted, no single PR).** Both launchers update the binary at launch,
+warn-and-proceed on failure; their guarantee is that *they* never swap it
+under a live session. The box's `DISABLE_AUTOUPDATER=1` flag was
 removed 2026-08-17 (dated backup beside it); issue #62's auto-update
 theory was retracted. A launch-time version check is queued — State at
 close.
@@ -391,9 +395,9 @@ per design-first.
 
 **R21. Session worktrees are reaped when clean, landed, and vacant —
 built-live (PR #73); vacancy made provable (PR #100, merged 2026-08-19).**
-`scripts/clean-worktrees.py`: three mechanical checks; anything failing
-or ambiguous is kept with its reason; `--only-done` runs at launcher
-launch; `--remove` is a separate deliberate call. The posture it set,
+`scripts/clean-worktrees.py`: anything failing or ambiguous is kept with
+its reason; the launcher runs only the safe subset at boot; removal is a
+separate deliberate call, never automatic. The posture it set,
 reused across this model: mechanical predicates, ambiguity keeps, report
 before remove. PR #100 closed the gap where an untrustworthy vacancy
 answer read as vacant: vacancy is now proven by a usable answer or the
@@ -420,9 +424,11 @@ survey that cannot reach the remote says so. Evidence: a prune list built
 from unfetched refs missed four merged branches (2026-08-17).
 
 **R25. Dead worktree registrations get surfaced — ruled (2026-08-18),
-build queued.** The `clean-worktrees.py` report gains one line naming
-dead registrations and the prune command — report only; the prune stays
-deliberate.
+build queued.** A worktree registered under a temporary directory
+(`/private/tmp` on macOS, `/tmp` on the box) leaves a dead entry when the
+temp area clears, and `git worktree prune` is manual. The
+`clean-worktrees.py` report gains one line naming dead registrations and
+the prune command — report only; the prune stays deliberate.
 
 **R26. New MDs land in approved homes — ruled-unbuilt (issue #11).** A
 PreToolUse *remind* hook on MD writes outside the approved homes, symmetric
