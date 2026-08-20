@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """Flag places a diff silences an error channel it may later trust.
 
-The failure shape this hunts, seen four times on 2026-08-19/20 in four
-different authors' work: an error silenced, then the result trusted. The
-instances: `2>/dev/null` on a freshening pull that then launched a stale
-copy silently; a suppressed `git checkout` stderr that turned a dirty
-index into a wrong review finding; a test guard whose success condition
-held while the thing under test failed; a fail-first case that crashed
-instead of failing and was almost reported as a clean result. Prose did
-not stop the fourth author, who had spent the day naming the pattern —
-hence this program (user-ruled 2026-08-19: prose yields to code).
+The failure shape this hunts, recurring across the fleet's authors on
+2026-08-19/20: an error silenced, then the result trusted. Among the
+recorded instances: `2>/dev/null` on a freshening pull that then launched
+a stale copy silently; a suppressed `git checkout` stderr that turned a
+dirty index into a wrong review finding; a test guard whose success
+condition held while the thing under test failed; a fail-first case that
+crashed instead of failing and was almost reported as a clean result.
+The tally kept growing while this file was being written — no census
+here; counts stale, the shape does not. That growth is the argument for
+the program (user-ruled 2026-08-19: prose yields to code).
 
 What it flags, line by line, in the files or diff it is given:
 
   - `2>/dev/null` and `2>&-` in shell text (including shell strings
     inside Python and inside YAML/JSON command registrations);
-  - `stderr=subprocess.DEVNULL` and `stderr=DEVNULL` in Python.
+  - `>/dev/null 2>&1`, where stderr follows stdout into the sink — the
+    reversed order `2>&1 >/dev/null` leaves stderr visible and is NOT
+    flagged — and the bash both-channel forms `&>/dev/null` and
+    `&>>/dev/null`;
+  - `stderr=subprocess.DEVNULL`, `stderr=DEVNULL`, and module-aliased
+    spellings like `stderr=sp.DEVNULL` in Python.
 
 What it deliberately does not flag: `check=False` — this codebase uses
 it pervasively and correctly, inspecting returncode afterward, and
@@ -38,9 +44,13 @@ import re
 import sys
 
 SILENCED_STDERR = re.compile(
-    r"2>\s*/dev/null"      # shell: discard stderr
-    r"|2>&-"               # shell: close stderr
-    r"|stderr\s*=\s*(?:subprocess\.)?DEVNULL"  # python: discard stderr
+    r"2>\s*/dev/null"         # shell: discard stderr directly
+    r"|2>&-"                  # shell: close stderr
+    r"|>\s*/dev/null\s+2>&1"  # shell: stdout to the sink, then stderr follows
+                              # it; the reverse order leaves stderr visible
+    r"|&>>?\s*/dev/null"      # bash: both channels at once
+    r"|stderr\s*=\s*(?:[A-Za-z_][A-Za-z0-9_.]*\.)?DEVNULL"  # python, module
+                              # aliases included (sp.DEVNULL)
 )
 
 
