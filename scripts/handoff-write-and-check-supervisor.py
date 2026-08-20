@@ -10,13 +10,38 @@ supervisor is actually watching and tells the agent what that means for it.
 
 Usage:
   handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
-                                        [--dont-restart]
+                                        [--dont-restart] [--claim]
+
+`--claim` is for one situation, and it is worth knowing before you meet it:
+this seat's FIRST handoff under a name that a handoff file already holds from
+a DIFFERENT directory. The refusal exists because two seats sharing a name
+means one handoff is about to be lost unread (observed 2026-08-16, counter 10
+overwritten by counter 11 seconds later). But a seat legitimately inherits a
+name when it moves directories or is re-founded elsewhere, and then the
+refusal is the only thing standing between it and its own first handoff.
+`--claim` takes the name, overwriting whatever handoff stands, with no
+approval check: the refusal text is the guard and the typed flag in the
+transcript is the audit trail (R9). Read the refusal before passing it — it
+names the directory currently holding the name, which is what tells you
+whether you are inheriting or colliding.
 
 The next step arrives as a FILE rather than an argument so that backticks,
 quotes, and newlines survive: a shell mangles all three inside an inline
-argument. Newlines are collapsed to single spaces here, because the
-supervisor reads the handoff as `key: value` lines and a value spanning
-several lines would be silently truncated at the first one.
+argument.
+
+A multi-line next step is written TWICE, and this is deliberate (R20; format
+specified in docs/cross-project/fast-handoff-design.md). `next-step:` is
+always the whitespace-collapsed single line, because that is what every
+reader already handles — including a supervisor process that started before
+this format existed and is still running. When the text spans lines, a
+`next-step-verbatim:` block carrying it unaltered is appended LAST, after
+every computed field, so a content line that happens to look like
+`key: value` cannot shadow a real field: the real fields precede it and the
+reader takes the first occurrence of a key.
+
+Writing the marker on the `next-step:` line instead would be the obvious
+design and is wrong: an older supervisor would boot its successor with the
+marker string as its entire instruction, silently.
 
 The liveness report is part of this script rather than a second command
 because the two are one decision: a handoff nobody is watching must not stop
@@ -44,9 +69,33 @@ supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
 
+NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
+NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
+NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
+
+
 def collapse_to_one_line(text: str) -> str:
     """Collapse every run of whitespace into a single space."""
     return re.sub(r"\s+", " ", text).strip()
+
+
+def verbatim_block_lines(text: str):
+    """The lines of a multi-line next step, or [] when it does not need a block.
+
+    Blank lines between the first and last non-blank lines are kept — they are
+    part of what the agent wrote. Blank lines before the first and after the
+    last are not written at all.
+    """
+    if "\n" not in text.strip("\n"):
+        # One line of content, however much surrounding whitespace: the
+        # collapsed `next-step:` field already carries it exactly.
+        return []
+    lines = text.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines if len(lines) > 1 else []
 
 
 def consumed_counter_from_state(state_path: Path):
@@ -103,7 +152,8 @@ def claiming_directory(handoff_path: Path) -> str:
     return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
 
 
-def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool) -> None:
+def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
+                       verbatim_lines=()) -> None:
     """Write the handoff file in one step, so no reader sees it half-written."""
     lines = [
         f"written-at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -118,6 +168,13 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
     ]
     if dont_restart:
         lines.append("dont-restart: the user asked to be consulted before a relaunch")
+
+    # LAST, always: a block's content lines can look like fields, and only the
+    # position guarantees they cannot shadow one.
+    if verbatim_lines:
+        lines.append(f"{NEXT_STEP_VERBATIM_FIELD}: {NEXT_STEP_BLOCK_OPENING_MARKER}")
+        lines.extend(verbatim_lines)
+        lines.append(NEXT_STEP_BLOCK_TERMINATOR)
 
     handoff_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = handoff_path.with_suffix(handoff_path.suffix + ".partial")
@@ -174,7 +231,8 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--next-step-file", required=True,
-        help="file holding the prompt for the successor; its whitespace is collapsed to one line",
+        help="file holding the prompt for the successor; written collapsed to one line, and "
+             "also verbatim when it spans several lines",
     )
     parser.add_argument(
         "--dont-restart", action="store_true",
@@ -188,11 +246,26 @@ def main(argv=None) -> int:
         print(f"handoff-write-and-check-supervisor: no such file: {next_step_path}", file=sys.stderr)
         return 2
 
-    next_step = collapse_to_one_line(next_step_path.read_text(encoding="utf-8"))
+    next_step_text = next_step_path.read_text(encoding="utf-8")
+    next_step = collapse_to_one_line(next_step_text)
     if not next_step:
         print(
             "handoff-write-and-check-supervisor: the next-step file is empty — the successor would boot "
             "with no instruction, so nothing was written",
+            file=sys.stderr,
+        )
+        return 2
+
+    # The empty refusal above is applied to the COLLAPSED value, before any
+    # block is considered, so a next step that is only whitespace is refused
+    # rather than written as an empty block.
+    verbatim_lines = verbatim_block_lines(next_step_text)
+    offending = [line for line in verbatim_lines if line.strip() == NEXT_STEP_BLOCK_TERMINATOR]
+    if offending:
+        print(
+            "handoff-write-and-check-supervisor: the next step contains a line equal to the block "
+            f"terminator ({NEXT_STEP_BLOCK_TERMINATOR}), which would end the block early and change "
+            "what the successor reads. Reword that line and rerun. Nothing was written.",
             file=sys.stderr,
         )
         return 2
@@ -225,7 +298,8 @@ def main(argv=None) -> int:
         return 2
 
     counter = next_restart_counter(handoff_path, state_path)
-    write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart)
+    write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart,
+                       verbatim_lines=verbatim_lines)
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
