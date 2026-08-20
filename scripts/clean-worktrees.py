@@ -27,11 +27,20 @@ Anything that fails a check is KEPT, with the failing reason. Worktrees
 outside <repo>/.claude/worktrees/ — agent seat homes, manual checkouts — are
 always kept: their lifecycles belong to their owners, not to this script.
 
+Separately from the worktrees themselves, the report ends with one line
+naming dead registrations — worktrees git still lists whose directory is
+gone, which is what a temp-area clearing leaves behind — and the command
+that removes them, `git worktree prune`. The line prints in every mode and
+is report only: the prune stays a deliberate human act (ruled 2026-08-18;
+R25 in docs/cross-project/fleet-git-worktree-working-model.md).
+
 Modes:
   (default)    report every worktree, one line each
-  --only-done  print only the done ones, nothing when there are none
-               (the launchers run this at boot, so a reapable worktree is
-               named at the moment someone is looking)
+  --only-done  print only what needs someone's attention — done worktrees,
+               and the dead-registration line when there are any; nothing
+               otherwise (the launchers run this at boot, so a reapable
+               worktree or a dead registration is named at the moment
+               someone is looking)
   --remove     re-check and remove the done worktrees; each removal also
                deletes the worktree's fully-merged branch (git branch -d,
                which refuses anything unmerged). Never --force.
@@ -86,6 +95,25 @@ def list_worktrees(repo, main_checkout):
                 worktrees.append((path, branch))
             path, branch = None, None
     return worktrees
+
+
+def dead_worktree_registrations(repo):
+    """Absolute paths of the registrations `git worktree prune` would remove:
+    worktrees git still lists whose directory is gone. Deadness is git's own
+    judgment — the `prunable` annotation of `git worktree list --porcelain`
+    (git >= 2.36) — so a registration whose directory merely still exists is
+    never named, and neither is a locked one, because prune would skip it
+    too."""
+    listing = run_git(repo, "worktree", "list", "--porcelain")
+    dead = []
+    path = None
+    for line in listing.stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line.split(" ", 1)[1]
+        elif (line == "prunable" or line.startswith("prunable ")) and path:
+            dead.append(path)
+            path = None
+    return dead
 
 
 def worktree_vacancy_keep_reason(worktree):
@@ -222,6 +250,12 @@ def main(argv=None):
         else:
             state = "done" if done else "kept"
             print(f"{worktree.name}: {state} — {reason}")
+
+    dead_registrations = dead_worktree_registrations(repo)
+    if dead_registrations:
+        print("dead registration(s), directory gone but git still lists it: "
+              + ", ".join(dead_registrations)
+              + " — remove with: git worktree prune")
 
     return 1 if failures else 0
 
