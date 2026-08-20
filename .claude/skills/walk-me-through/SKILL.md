@@ -63,6 +63,8 @@ After each user response, classify the item: accepted, rejected, revised, or ope
 
 The same duties cover conclusions the discussion itself produces — a side ruling, a direction the user sets, a question the exchange settles — even when they are not the item's own decision: capture each in its durable home before the walk advances. Never advance past an important question the discussion raised but left unanswered — resolve it or record it as open first.
 
+Approval is a pass, not a silencing. The user's word means the item passed his judgment; it does not settle how the change reads to the agents who must act on it. When an agent objects to what a walk adopted — especially to how its words are interpreted — that objection gets a hearing rather than being closed by citing the walk. Bring it back to the user in the objector's own words; often the outcome is wording that satisfies both. This applies while the walk runs too: an item built on an agent's objection is presented as that agent stated it, not as the presenting agent's preferred repair of it.
+
 Capture the decision, never the meeting: the durable record carries the ruling's substance, date, and reasoning, and reads correctly to someone who does not know a walk happened. Walk framing ("item 6", "the user said") stays out of decision records — issue bodies, commits, governing documents. The anchor is the sanctioned exception: its disposition marks and walk-order block are walk records by design.
 
 ## Re-planning
