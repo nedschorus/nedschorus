@@ -115,13 +115,20 @@ def main(argv=None) -> int:
             print(f"  codex: {line}", file=sys.stderr)
 
     if completed.returncode != 0:
+        # Codex may have written the report before dying; remove it so a
+        # report file exists if and only if the run succeeded — an
+        # existence-checking caller must never trust a partial report.
+        output_path.unlink(missing_ok=True)
         print(f"code-review-codex-cell: codex exec review failed (exit {completed.returncode}); "
-              "no report was written", file=sys.stderr)
+              "no report survives a failed run", file=sys.stderr)
         stderr_tail()
         return completed.returncode
     if not output_path.is_file() or not output_path.read_text(encoding="utf-8").strip():
         # A run that "succeeded" without a report is a silent absence, and
-        # absence must never read as a clean review.
+        # absence must never read as a clean review. An empty file is
+        # removed for the same invariant: a report exists iff the run
+        # succeeded.
+        output_path.unlink(missing_ok=True)
         print("code-review-codex-cell: codex exited 0 but wrote no report; treat as failed",
               file=sys.stderr)
         stderr_tail()
