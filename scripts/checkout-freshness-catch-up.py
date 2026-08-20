@@ -53,6 +53,14 @@ import time
 from pathlib import Path
 
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
+
+# A git that never ran reports a code git itself cannot return, so "no answer"
+# can never be read as an answer. NOT 1: git uses 1 as a real answer in this
+# project's guards (`rev-parse --verify --quiet HEAD` exits 1 for "HEAD does
+# not exist"), and synthesizing 1 for a launch failure made the two
+# indistinguishable — the defect found on PR #103. Aligned here so the same
+# function name does not mean two different things in two files.
+GIT_DID_NOT_RUN = -1
 DEFAULT_FETCH_INTERVAL_SECONDS = 300
 CHANGED_FILES_NAMED_LIMIT = 8
 
@@ -97,7 +105,8 @@ def run_git(arguments, working_directory: Path, timeout: int = 60):
             env={**os.environ, "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError) as error:
-        return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
+        return subprocess.CompletedProcess(arguments, GIT_DID_NOT_RUN, "",
+                                           f"{type(error).__name__}: {error}")
 
 
 def checkout_root(directory: Path):
