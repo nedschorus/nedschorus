@@ -14,6 +14,15 @@ Operating rules, all user-ruled:
   its records, and may otherwise read the repository and the internet; the
   leak scan below is the check; triage diffs its sketch against the real
   one). Prompts: `docs/agents/sanity-checker-<attack>-attack-prompt.md`.
+- Each prompt file is split at its `<!-- SANITY-CHECK-PROMPT-BODY -->`
+  line: above it a header for maintainers that no cell ever sees, below it the
+  prompt itself. The runner refuses to start unless every prompt it will use
+  carries exactly one such line with `## Your assignment` directly below it, so
+  a broken boundary fails before any model cost is spent. The boundary was the
+  first `---` line until 2026-08-19; `---` is ordinary markdown, so a
+  horizontal rule added to a header — or written inside a code fence — silently
+  moved the split and shipped header text to the cells in place of their
+  instructions (user-ruled 2026-08-19, on the first live check).
 - Both runtimes on every attack: claude-fable-5 and gpt-5.6-sol, at xhigh.
   (Tier probe 2026-08-17: max found no missed ground-truth cut on either
   runtime and covered less on codex — xhigh stands.)
