@@ -66,9 +66,14 @@ from git history or the web). Without `--problem-statement` the fresh-eyes cells
 `SKIPPED: <cell> (no --problem-statement)` — loudly, never silently — since
 that attack works from the problem statement alone. A fresh-eyes run also
 prints `LEAK-WARNING: ...` lines — the design's coined names found in the
-problem statement, in instruction files the cell CLIs inject on their own,
-or in a fresh-eyes report. Information for triage, never a gate (user-ruled
-2026-08-17). Every cell may reach the internet to check facts (user-ruled
+problem statement or in instruction files the cell CLIs inject on their own:
+a check on what the requester sends, which the cell cannot check for itself,
+since it does not know the design's vocabulary. The cell's own report is not
+scanned — isolation is the cell's job, explained in its prompt, and its
+disclosures are the check (user-ruled 2026-08-19; the scan itself ruled
+2026-08-17). Information for triage, never a gate. Expect hits on every run:
+the off-limits list must name the design's paths to forbid them, and those
+paths are coined names. Every cell may reach the internet to check facts (user-ruled
 2026-08-18): claude cells carry web tools and no write tools; codex cells run
 workspace-write with network on, writes forbidden by prompt — a codex cell
 that modifies the worktree is reported as `WARNING: <cell> modified the
@@ -168,7 +173,9 @@ def coined_names(target_path: pathlib.Path) -> set:
         # A plain lowercase word is vocabulary, not coinage: the project's
         # naming rule makes invented names multi-part, so single words
         # (`main`, `none`, `status`) only produce scan noise.
+        # Bare punctuation (`---`) is markdown, not a coinage.
         if (len(span) >= 3 and " " not in span and not span.isdigit()
+                and any(ch.isalnum() for ch in span)
                 and not (span.isalpha() and span.islower())):
             names.add(span)
     for token in re.findall(r"[A-Za-z]\w*(?:-\w+)+", text):
@@ -409,7 +416,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
-             design_names: set, baseline_status: set, corpus: str) -> tuple:
+             baseline_status: set, corpus: str) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
     prompt = assemble_prompt(attack, target, context, problem_statement)
@@ -427,9 +434,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     if code != 0:
         print(f"FAILED: {cell} exit {code}", flush=True)
         return cell, False
-    if fresh_eyes:
-        leak_scan(design_names, output, f"the {cell} report")
-    else:
+    if not fresh_eyes:
         quote_scan(corpus, output, cell)
     if runtime == "codex":
         stray = stray_paths(baseline_status, worktree_snapshot())
@@ -503,8 +508,7 @@ def main() -> int:
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
         futures = [
             pool.submit(run_cell, attack, runtime, args.target, args.context,
-                        args.problem_statement, out_dir, design_names, baseline_status,
-                        corpus)
+                        args.problem_statement, out_dir, baseline_status, corpus)
             for attack, runtime in cells
         ]
         for future in concurrent.futures.as_completed(futures):
