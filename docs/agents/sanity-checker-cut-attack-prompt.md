@@ -52,6 +52,8 @@ These rules are what separate a sound cut from a reckless one. A candidate becom
 
 ## Report format
 
+Open your report by listing the referenced documents you read and those you did not, so triage knows this review's reach before weighing its findings.
+
 Findings ordered deepest first — whole-mechanism removals before single-rule removals. For each:
 
 - **WHAT** — the precise cut.
