@@ -293,6 +293,103 @@ def run_lock_cases(workspace: Path):
     lock_path.unlink(missing_ok=True)
 
 
+def run_multi_line_next_step_cases(workspace: Path, recent: str):
+    """R20's reader half: a verbatim block is parsed, preferred, and survives.
+
+    Format in docs/cross-project/fast-handoff-design.md. The block is the last
+    thing in the file and its lines are taken verbatim; an unterminated block
+    is a damaged handoff and falls back to the collapsed line rather than
+    handing over a partial instruction.
+    """
+    handoff = workspace / "block-handoff.md"
+    handoff.write_text(
+        "written-at: " + recent + "\n"
+        "next-step: FIRST ACTION: run it. THEN: fix the locale case.\n"
+        "restart-counter: 7\n"
+        "written-in: /Users/el/agents/git-infra\n"
+        "next-step-verbatim: <<END-OF-NEXT-STEP\n"
+        "FIRST ACTION: run it.\n"
+        "\n"
+        "THEN: fix the locale case.\n"
+        "restart-counter: 999\n"
+        "END-OF-NEXT-STEP\n",
+        encoding="utf-8")
+    fields = supervisor.parse_handoff_file(handoff)
+
+    check("the verbatim block is parsed with its line breaks intact",
+          fields.get("next-step-verbatim")
+          == "FIRST ACTION: run it.\n\nTHEN: fix the locale case.\nrestart-counter: 999",
+          repr(fields.get("next-step-verbatim")))
+    check("a field-shaped line INSIDE the block does not shadow the real field",
+          fields.get("restart-counter") == "7", fields.get("restart-counter"))
+    check("the collapsed next-step is still parsed alongside the block",
+          fields.get("next-step", "").startswith("FIRST ACTION: run it. THEN:"),
+          fields.get("next-step"))
+    check("a terminated block sets no unterminated flag",
+          "next-step-verbatim-unterminated" not in fields, str(sorted(fields)))
+
+    prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), fields, 0)
+    check("the ignition prompt carries the block's line breaks",
+          "FIRST ACTION: run it.\n\nTHEN: fix the locale case." in prompt, repr(prompt))
+    check("the ignition prompt prefers the verbatim block over the collapsed line",
+          "run it. THEN: fix" not in prompt, repr(prompt))
+
+    # An unterminated block is damaged: the collapsed line is always present,
+    # so the fallback is a correct instruction rather than a partial one.
+    truncated = workspace / "truncated-handoff.md"
+    truncated.write_text(
+        "written-at: " + recent + "\n"
+        "next-step: the collapsed instruction survives\n"
+        "next-step-verbatim: <<END-OF-NEXT-STEP\n"
+        "a first line that never ends\n",
+        encoding="utf-8")
+    truncated_fields = supervisor.parse_handoff_file(truncated)
+    check("an unterminated block yields no verbatim value at all",
+          "next-step-verbatim" not in truncated_fields, str(sorted(truncated_fields)))
+    check("an unterminated block is recorded as unterminated",
+          truncated_fields.get("next-step-verbatim-unterminated") == "yes",
+          str(truncated_fields))
+    truncated_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), truncated_fields, 0)
+    check("an unterminated block falls back to the collapsed next-step",
+          "the collapsed instruction survives" in truncated_prompt, repr(truncated_prompt))
+    check("an unterminated block tells the successor what happened",
+          "unterminated" in truncated_prompt, repr(truncated_prompt))
+
+    # A handoff written before this format existed has no block and must be
+    # read exactly as it always was.
+    legacy = workspace / "legacy-handoff.md"
+    legacy.write_text("written-at: " + recent + "\nnext-step: do the old thing\n", encoding="utf-8")
+    legacy_prompt = supervisor.build_ignition_prompt(
+        Path("/tmp/d.md"), supervisor.parse_handoff_file(legacy), 0)
+    check("a handoff with no block still ignites from next-step",
+          "do the old thing" in legacy_prompt, repr(legacy_prompt))
+
+    # End to end: what the writer wrote is what the reader hands over.
+    writer_script = Path(__file__).with_name("handoff-write-and-check-supervisor.py")
+    original = ("FIRST ACTION: read the anchor.\n"
+                "\n"
+                "THEN: present item 3, and keep the indentation:\n"
+                "    - a nested bullet\n"
+                "CONTEXT: nothing else.")
+    next_step_file = workspace / "round-trip-next-step.txt"
+    next_step_file.write_text(original + "\n", encoding="utf-8")
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")}
+    environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
+    subprocess.run(
+        [sys.executable, str(writer_script), "--agent", "roundtrip",
+         "--next-step-file", str(next_step_file), "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False, env=environment)
+    round_tripped = supervisor.parse_handoff_file(workspace / "roundtrip-handoff.md")
+    # The preference rule is inlined rather than calling next_step_from, so this
+    # case fails cleanly against a base that has no such function instead of
+    # crashing the suite. What it is testing is text preservation end to end;
+    # the function itself is covered by the ignition-prompt cases above.
+    carried = round_tripped.get("next-step-verbatim") or round_tripped.get("next-step", "")
+    check("writer to reader round trip preserves the next step exactly",
+          carried == original, repr(carried))
+
+
 def run_launch_and_retention_cases(workspace: Path, recent: str):
     # --- Ignition prompt --------------------------------------------------
     prompt = supervisor.build_ignition_prompt(
@@ -574,6 +671,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_boot_ignition_case(Path(temporary_directory))
     run_first_prompt_file_cases(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))
+    run_multi_line_next_step_cases(Path(temporary_directory), recent_timestamp)
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:

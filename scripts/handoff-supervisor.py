@@ -61,17 +61,58 @@ HEARTBEAT_INTERVAL_SECONDS = 10.0
 HEARTBEAT_STALE_SECONDS = 60.0
 
 
+NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
+NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
+NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
+NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
+
+
 def parse_handoff_file(handoff_path: Path) -> dict:
-    """Read the agent-written handoff into a dict of its `key: value` lines."""
+    """Read the agent-written handoff into a dict of its `key: value` lines.
+
+    One field may span lines: `next-step-verbatim`, whose value is the opening
+    marker followed by the successor's instruction verbatim, ended by a line
+    that is exactly the terminator (R20; format in
+    docs/cross-project/fast-handoff-design.md). The writer appends that block
+    last, after every computed field, so the lines inside it cannot shadow a
+    real field — first occurrence still wins, and the real fields came first.
+
+    An unterminated block is a damaged handoff. It is NOT returned as a value:
+    the field is left absent so every caller's "prefer verbatim when present"
+    is literally true, and a separate flag records that the block was seen
+    unterminated, so the successor can be told rather than silently handed the
+    collapsed form.
+    """
     fields = {}
-    for line in handoff_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
+    lines = handoff_path.read_text(encoding="utf-8").splitlines()
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        index += 1
         if not stripped or stripped.startswith("#") or ":" not in stripped:
             continue
         key, _, value = stripped.partition(":")
         key = key.strip().lower()
+        value = value.strip()
+
+        if key == NEXT_STEP_VERBATIM_FIELD and value == NEXT_STEP_BLOCK_OPENING_MARKER:
+            block, terminated = [], False
+            while index < len(lines):
+                candidate = lines[index]
+                index += 1
+                if candidate.strip() == NEXT_STEP_BLOCK_TERMINATOR:
+                    terminated = True
+                    break
+                block.append(candidate)
+            if terminated:
+                if key not in fields:
+                    fields[key] = "\n".join(block)
+            else:
+                fields[NEXT_STEP_BLOCK_UNTERMINATED_FIELD] = "yes"
+            continue
+
         if key not in fields:  # first occurrence wins; later prose cannot overwrite a field
-            fields[key] = value.strip()
+            fields[key] = value
     return fields
 
 
@@ -208,9 +249,20 @@ def extract_dialog(session_id: str, working_directory: Path, output_path: Path) 
     return result.returncode == 0
 
 
+def next_step_from(handoff_fields: dict) -> str:
+    """The successor's instruction: the verbatim block when it is present and
+    terminated, otherwise the collapsed single line.
+
+    The collapsed line is always written, so the fallback is a correct
+    instruction rather than a partial one.
+    """
+    verbatim = handoff_fields.get(NEXT_STEP_VERBATIM_FIELD, "").strip("\n").rstrip()
+    return verbatim or handoff_fields.get("next-step", "").strip()
+
+
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
                           queue_status: str = "") -> str:
-    next_step = handoff_fields.get("next-step", "").strip()
+    next_step = next_step_from(handoff_fields)
     elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
     lines = [
         f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
@@ -220,11 +272,16 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: 
         # The rot-visibility duty (#32): the successor is the one reader every
         # supervisor mode has — a detached supervisor's console is a log file.
         lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
-    if next_step:
-        lines.append(f"Then take the next step: {next_step}")
-    else:
-        lines.append("Then continue from where that dialog ends.")
-    return " ".join(lines)
+    preamble = " ".join(lines)
+    if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
+        preamble += (" NOTE: this handoff's verbatim next-step block was unterminated, so what "
+                     "follows is the collapsed one-line form and may have lost structure.")
+    if not next_step:
+        return preamble + " Then continue from where that dialog ends."
+    # The next step keeps its own line breaks: it is handed to the successor as
+    # one argv element, so newlines survive delivery. Joining it into the
+    # preamble would flatten exactly what the block form exists to preserve.
+    return f"{preamble}\n\nThen take the next step:\n{next_step}"
 
 
 def prune_old_generations(directory: Path, stem: str) -> None:
@@ -575,7 +632,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # alone rather than discarding the handoff.
                 successor_session_id = str(uuid.uuid4())
                 ignition = (
-                    f"{boot_fields.get('next-step', '')} (Recovered at supervisor boot: the "
+                    f"{next_step_from(boot_fields)}\n\n(Recovered at supervisor boot: the "
                     "previous session's dialog extract is unavailable; this next-step and the "
                     "repository are your whole context.)"
                 )

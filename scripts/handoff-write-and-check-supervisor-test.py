@@ -65,6 +65,72 @@ def run_collapse_cases():
     check("whitespace-only text collapses to empty", writer.collapse_to_one_line(" \n\t ") == "")
 
 
+def handoff_text(workspace: Path, agent: str) -> str:
+    return (workspace / f"{agent}-handoff.md").read_text(encoding="utf-8")
+
+
+def run_multi_line_next_step_cases(workspace: Path):
+    """R20: a multi-line next step survives, without changing what old readers see.
+
+    Format in docs/cross-project/fast-handoff-design.md. `next-step:` stays the
+    collapsed single line every existing reader handles; a verbatim block is
+    appended LAST when, and only when, the text spans lines.
+    """
+    multi_line = (
+        "FIRST ACTION: run the suite.\n"
+        "THEN: fix only the locale case.\n"
+        "\n"
+        "CONTEXT: PRs 86-91 are merged.\n"
+    )
+    run_writer(workspace, multi_line, "--agent", "blockcase")
+    written = handoff_text(workspace, "blockcase")
+    lines = written.splitlines()
+
+    check("a multi-line next step still writes a collapsed next-step line",
+          "next-step: FIRST ACTION: run the suite. THEN: fix only the locale case. "
+          "CONTEXT: PRs 86-91 are merged." in written, written)
+    check("a multi-line next step adds the verbatim block",
+          "next-step-verbatim: <<END-OF-NEXT-STEP" in written, written)
+    check("the block is written LAST, so its lines cannot shadow a real field",
+          lines[-1] == "END-OF-NEXT-STEP"
+          and lines.index("next-step-verbatim: <<END-OF-NEXT-STEP")
+          > max(index for index, line in enumerate(lines) if line.startswith("written-in:")),
+          written)
+    check("the block preserves the interior blank line",
+          "THEN: fix only the locale case.\n\nCONTEXT:" in written, written)
+    check("the block does not carry a trailing blank line",
+          "\n\nEND-OF-NEXT-STEP" not in written, written)
+
+    # The common case must not change shape at all.
+    run_writer(workspace, "one line only\n", "--agent", "singlecase")
+    check("a single-line next step writes no block at all",
+          "next-step-verbatim" not in handoff_text(workspace, "singlecase"),
+          handoff_text(workspace, "singlecase"))
+
+    run_writer(workspace, "\n\n  one line  \n\n", "--agent", "paddedcase")
+    check("one line of content wrapped in blank lines writes no block",
+          "next-step-verbatim" not in handoff_text(workspace, "paddedcase"),
+          handoff_text(workspace, "paddedcase"))
+
+    # A line equal to the terminator would end the block early, so the value
+    # would read back as something other than what was given.
+    refused = run_writer(workspace, "do the thing\nEND-OF-NEXT-STEP\nand then this\n",
+                         "--agent", "terminatorcase")
+    check("a next step containing the terminator line is refused",
+          refused.returncode == 2, str(refused.returncode))
+    check("the terminator refusal names the terminator",
+          "END-OF-NEXT-STEP" in refused.stderr, refused.stderr)
+    check("the terminator refusal writes nothing",
+          not (workspace / "terminatorcase-handoff.md").exists())
+
+    # The empty refusal is applied to the COLLAPSED value, before any block is
+    # considered, so whitespace-only input is refused rather than written as an
+    # empty block.
+    whitespace_only = run_writer(workspace, "\n   \n\t\n", "--agent", "whitespacecase")
+    check("a whitespace-only multi-line next step is still refused",
+          whitespace_only.returncode == 2, str(whitespace_only.returncode))
+
+
 def run_counter_cases(workspace: Path):
     handoff_path = workspace / "counter-handoff.md"
     state_path = workspace / "counter-supervisor-state.json"
@@ -268,6 +334,7 @@ def run_agent_name_and_claim_cases(workspace: Path):
 
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
+    run_multi_line_next_step_cases(Path(temporary_directory))
     run_counter_cases(Path(temporary_directory))
     run_invocation_cases(Path(temporary_directory))
     run_liveness_report_cases(Path(temporary_directory))
