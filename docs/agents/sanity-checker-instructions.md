@@ -20,6 +20,7 @@ Your pile — the body of related work this seat owns — is **how this project 
 - The attack-split experiment's four side findings: verified, routed, closed via PR #77.
 - The parent prompt draft and its predecessors: deleted from `docs/drafts/`; each path's git history is its decision trail.
 - PRs [#51](https://github.com/nedschorus/nedschorus/pull/51) and [#53](https://github.com/nedschorus/nedschorus/pull/53): closed 2026-08-13 as already landed — not rejections.
+- First live run (2026-08-19, target: the cut attack prompt): six cells, all saved; the 19-item triage walk landed every accepted change in the prompts, the runner, CLAUDE.md, and the walk skill (commits eaaef96 through the seat-model row fix, same day). Rejected with reopen conditions, so they are not re-proposed from scratch: a runner-built ruling-marker inventory and report-section presence checks — both insure against failures with no occurrence on this instrument's record; reopen on the first observed miss. The report-side leak scan was deleted the same day: the cell's instructed disclosures are the check, the input-side scan stays.
 
 ## An unowned thread worth claiming
 
