@@ -201,7 +201,7 @@ R6+R7's block, which applies to any session however its HEAD is set.
 Writes into another seat's home stay unbuilt (R6). The adjacent
 *starting-stale* block was ruled **not built**: launch-time sync plus the
 catch-up hook (R15) shrink exposure to one turn, and the motivating
-incident was a stale *read*. Revisit trigger: a real incident traced to
+incident was a stale *read*, which no write-guard sees. Revisit trigger: a real incident traced to
 the one-turn window.
 
 **R4. Stale base — absorbed (ruled 2026-08-17).** The original rule
@@ -377,17 +377,15 @@ outside R11's guarded class. The Mac stays at OS-default hourly: no
 recorded Mac-side loss. What it buys, honestly: minutes-cadence never
 reaches the seconds class (R9's guard closed that class).
 
-**R20. The handoff channel preserves structure end to end — fix ruled
-(2026-08-18); build in review (PR #108).** The ruled fix touches both
-ends — the writer (`scripts/handoff-write-and-check-supervisor.py`) emits
-a delimited multi-line block *and* the reader
-(`scripts/handoff-supervisor.py`) parses it; a reader-only fix cannot
-restore newlines already destroyed.
-The format specification lives in
-`docs/cross-project/fast-handoff-design.md`. Until the build lands,
-writer discipline is the honest interim: label parts in ALL CAPS inside
-the single line, because capitals survive flattening where line breaks do
-not.
+**R20. The handoff channel preserves structure end to end — BUILT
+(PR #108, merged 2026-08-20; fix ruled 2026-08-18).** Both ends: the
+writer (`scripts/handoff-write-and-check-supervisor.py`) emits a
+delimited multi-line block and the reader
+(`scripts/handoff-supervisor.py`) parses it — a reader-only fix could not
+have restored newlines already destroyed. The format specification, and
+the exact-terminator trade it records, live in
+`docs/cross-project/fast-handoff-design.md`, md-reviewed before the build
+per design-first.
 
 ### Q5 — What piles up, and who sweeps it?
 
