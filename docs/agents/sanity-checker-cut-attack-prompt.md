@@ -20,7 +20,7 @@ The deepest cut removes the need, not the text: state the requirement a mechanis
 
 ## Internal consistency is yours
 
-Contradictions are cut evidence. When a document states the same thing twice and the statements disagree — two mechanisms both described as *the* mechanism, two inventories that differ, a heading contradicted by its own body — the finding is usually not "fix the wording" but "one of these should not exist." Hunt: statements that cannot both be true; the same rule stated authoritatively in two places; status told differently in different sections.
+Contradictions are cut evidence. When a document states the same thing twice and the statements disagree — two mechanisms both described as *the* mechanism, two inventories that differ, a heading contradicted by its own body — the finding is usually not "fix the wording" but "one of these should not exist." Hunt: statements that cannot both be true; status told differently in different sections.
 
 ## Cut classes with a validated track record
 
