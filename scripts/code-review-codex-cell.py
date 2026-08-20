@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Run Codex's built-in code review over a git range, pinned and captured.
+
+One cell of the merge lane's review: `codex exec review` is Codex's own
+diff reviewer (finding rubric, P0-P3 priorities, changed-line locations).
+This wrapper exists so invoking it is a committed, reviewable program
+rather than a shell line in one seat's transcript, and so the pins that
+must not drift are pinned:
+
+  - model and reasoning effort, explicit (the tier convention of
+    scripts/md-review-codex-cell.py: good = gpt-5.6-sol at xhigh);
+  - the sandbox, read-only AT THE PARENT LEVEL -- this machine's Codex
+    config defaults to workspace-write, so a reviewer that forgets this
+    flag can write (the nested `review` parser rejects --sandbox; parent
+    placement is the accepted form, verified on codex-cli 0.147.0);
+  - the base, as a SHA the caller resolved -- `--base origin/main` drifts
+    under a moving remote, so the review's subject is recorded exactly;
+  - the output, captured to a file the caller names.
+
+What this deliberately does not do: accept custom review instructions.
+On codex-cli 0.147.0 a [PROMPT] is mutually exclusive with --base and
+switches to custom-review mode, losing the built-in rubric (measured
+2026-08-19). Durable repository review rules belong in AGENTS.md per
+Codex's documented mechanism; merge-decision checks belong to the
+deferred pr-merge-decision component (nedschorus#105).
+
+Exit codes: 0 the review ran and wrote the report -- WHICH SAYS NOTHING
+ABOUT THE VERDICT: codex exits 0 while reporting defects, so a gate must
+read the report, never this exit code (measured 2026-08-19, PR #102's
+review). 2 bad invocation. Anything else is codex exec's own failure,
+passed through -- and a failed run writes no report, so absence of the
+report file is detectable and must never be read as a clean review.
+
+Usage:
+  scripts/code-review-codex-cell.py --base <SHA> --output <FILE> [--repo DIR]
+  scripts/code-review-codex-cell.py --commit <SHA> --output <FILE> [--repo DIR]
+"""
+
+import argparse
+import pathlib
+import subprocess
+import sys
+
+# One place to update as models change, matching md-review-codex-cell.py's
+# good tier (user-picked 2026-08-03; xhigh "OK for codex" same date).
+CODEX_MODEL = "gpt-5.6-sol"
+REASONING_EFFORT = "xhigh"
+REVIEW_TIMEOUT_SECONDS = 1800
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Codex built-in code review over a git range, pinned and captured.",
+        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--base", help="review the diff from this SHA to the worktree's HEAD")
+    scope.add_argument("--commit", help="review the changes introduced by this one commit")
+    parser.add_argument("--output", required=True, help="file the final review report is written to")
+    parser.add_argument("--repo", default=".", help="the checkout to review in (default: current directory)")
+    parser.add_argument("--model", default=CODEX_MODEL, help="explicit Codex model id override")
+    arguments = parser.parse_args(argv)
+
+    repo = pathlib.Path(arguments.repo).resolve()
+    if not (repo / ".git").exists():
+        print(f"code-review-codex-cell: {repo} is not a checkout", file=sys.stderr)
+        return 2
+
+    # The subject must be a resolved SHA, not a moving ref: record exactly
+    # what was reviewed, so the report can be tied to it later.
+    subject = arguments.base or arguments.commit
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{subject}^{{commit}}"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if resolved.returncode != 0:
+        print(f"code-review-codex-cell: {subject} does not resolve to a commit in {repo}",
+              file=sys.stderr)
+        return 2
+    subject_sha = resolved.stdout.strip()
+
+    output_path = pathlib.Path(arguments.output)
+    scope_flag = ["--base", subject_sha] if arguments.base else ["--commit", subject_sha]
+    command = [
+        "codex", "exec",
+        "--sandbox", "read-only",       # parent level; the nested parser rejects it
+        "review",
+        *scope_flag,
+        "-m", arguments.model,
+        "-c", f"model_reasoning_effort={REASONING_EFFORT}",
+        "--output-last-message", str(output_path),
+    ]
+    try:
+        completed = subprocess.run(
+            command, cwd=repo, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=REVIEW_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"code-review-codex-cell: codex could not run: {type(error).__name__}: {error}",
+              file=sys.stderr)
+        return 1
+    if completed.returncode != 0:
+        print(f"code-review-codex-cell: codex exec review failed (exit {completed.returncode}); "
+              "no report was written", file=sys.stderr)
+        return completed.returncode
+    if not output_path.is_file() or not output_path.read_text(encoding="utf-8").strip():
+        # A run that "succeeded" without a report is a silent absence, and
+        # absence must never read as a clean review.
+        print("code-review-codex-cell: codex exited 0 but wrote no report; treat as failed",
+              file=sys.stderr)
+        return 1
+
+    # Provenance header, so a report read later is pinned to its inputs
+    # (the md-review cells' convention, user-required 2026-08-04).
+    report = output_path.read_text(encoding="utf-8")
+    kind = "base" if arguments.base else "commit"
+    output_path.write_text(
+        f"<!-- provenance: runtime=codex-exec-review model={arguments.model} "
+        f"effort={REASONING_EFFORT} {kind}={subject_sha} repo={repo} -->\n" + report,
+        encoding="utf-8",
+    )
+    print(f"code-review-codex-cell: report written to {output_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
