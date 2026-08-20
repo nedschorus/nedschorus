@@ -23,63 +23,100 @@ Each script's module docstring says what it does and why it is shaped that way; 
 
 ## The handoff file format
 
+**Status: the block form below is QUEUED, not built** (R20 in
+`fleet-git-worktree-working-model.md`; the document's `status: built`
+frontmatter covers the rest of the system, not this). Today the writer
+collapses every whitespace run in the next step to a single space, and the
+supervisor parses one `key: value` line at a time with no block parser — so a
+multi-line next step reaches the successor as a dense chain. This section
+specifies what both ends will do, because a reader-only change cannot restore
+line breaks a writer has already destroyed.
+
 The handoff file is a short list of `key: value` lines, written whole — the
 writer renders it to a `.partial` file and renames, so no reader ever sees it
 half-written. The supervisor reads those lines into fields and the first
-occurrence of a key wins, so prose appearing later cannot overwrite a field.
+occurrence of a key wins.
 
-One field may need more than one line: `next-step`. This section specifies how,
-because the two ends must agree exactly — a reader-only change cannot restore
-line breaks a writer has already destroyed (R20 in
-`fleet-git-worktree-working-model.md`).
+### The shape
 
-**Single-line form — the default, and unchanged.** When the next step is one
-line, it is written as an ordinary field and read as one:
+The `next-step` field does not change. It stays the collapsed single line it is
+today, and every reader — including a supervisor that predates this format —
+keeps reading it exactly as it does now. When the agent's next step spans
+several lines, the writer adds a second field carrying the text verbatim, and
+writes it LAST:
 
-    next-step: read the anchor at docs/issues/45-...md and present item 3
-
-**Block form — used only when the next step contains a line break.** The value
-is the opening marker `<<END-OF-NEXT-STEP`; the lines that follow are the value,
-verbatim, until a line that is exactly the terminator:
-
-    next-step: <<END-OF-NEXT-STEP
+    written-at: 2026-08-19T17:04:11Z
+    next-step: FIRST ACTION: run the suite. THEN: fix only the locale case.
+    restart-counter: 7
+    written-in: /Users/el/agents/git-infra
+    next-step-verbatim: <<END-OF-NEXT-STEP
     FIRST ACTION: run the suite and read the three failures.
-    THEN: fix only the locale case; leave the other two for the design walk.
-    CONTEXT: PRs 86-91 are merged; the branch is behind main by two commits.
+    THEN: fix only the locale case; leave the other two for the
+    design walk on docs/issues/45-remote-named-agent-launch-and-reattach.md@3406ac3.
     END-OF-NEXT-STEP
 
-Rules the two ends must both honour:
+The opening marker is `<<END-OF-NEXT-STEP`, on the `next-step-verbatim:` line.
+The terminator is `END-OF-NEXT-STEP` alone, with no `<<`, on a line by itself.
+The lines between them are the value.
 
-- **The writer chooses the form**, using the block only when the text contains a
-  line break. A single-line next step produces a file byte-identical to what it
-  produces today.
-- **Content is verbatim between the markers** — no indentation is added or
-  stripped, no whitespace is collapsed, and blank lines inside the block are
-  part of the value. Leading and trailing blank lines are removed.
+Writing the block last, after every computed field, is what makes it safe: a
+content line that happens to look like `key: value` cannot shadow a real field,
+because the real fields precede it and the first occurrence of a key wins.
+
+### Rules the two ends must both honour
+
+- **The writer adds `next-step-verbatim` only when the text contains a line
+  break**, and always writes `next-step` as it does today. A single-line next
+  step produces a file byte-identical to today's.
+- **Content between the markers is verbatim** — no indentation added or
+  stripped, no whitespace collapsed. The one exception, stated so it cannot be
+  read two ways: blank lines that fall between the first and last non-blank
+  lines are preserved; blank lines before the first and after the last are not
+  written at all.
+- **The empty-next-step refusal is applied to the collapsed `next-step` value**,
+  before any block is considered. A next step that is only whitespace is
+  therefore refused, rather than written as an empty block.
 - **The writer refuses** a next step containing a line equal to the terminator,
-  naming the offending line. The same discipline as its existing refusal of an
-  empty next step: a writer that cannot represent what it was given says so,
-  rather than writing a file that reads back as something else.
-- **The reader treats an unterminated block as a broken handoff**: it uses the
-  lines it has and states in the ignition prompt that the block was
-  unterminated, so the successor knows its instruction may be incomplete.
-  Silence here is the failure the whole change exists to remove.
-- **Any other field stays single-line.** Only `next-step` may take the block
-  form, so a stray `<<` in another value is an ordinary value, not a mode
-  switch.
+  naming the offending line. The same discipline as its refusal of an empty next
+  step: a writer that cannot represent what it was given says so, rather than
+  writing a file that reads back as something else.
+- **The reader prefers `next-step-verbatim` when it is present and terminated**,
+  and uses `next-step` otherwise. An unterminated block is a damaged handoff:
+  the reader falls back to `next-step` — which is always present and correct —
+  and says in the ignition prompt that the verbatim block was unterminated, so
+  the successor knows it received the collapsed form.
+- **Only `next-step-verbatim` takes the block form.** A `<<` in any other value,
+  `next-step` included, is ordinary text.
 
-**Compatibility.** Every handoff file already on disk uses the single-line form
-and is read by the rule above, unchanged: a `next-step` whose value is anything
-other than the opening marker is a single-line value. Nothing needs migrating,
-and a supervisor that predates this format still reads a single-line handoff
-correctly.
+### Compatibility, in both directions
 
-**Relationship to the whitespace-collapse ruling below.** The writer collapses
-newlines today because the reader would otherwise truncate a multi-line value at
-its first line. That mechanism answered a real failure, and this format answers
-the same failure at both ends instead of at one — so the collapse applies only
-to the single-line form, where it still guards against a value that would break
-the field syntax.
+The direction that matters is a new writer's file reaching an old reader, not
+the reverse. Supervisors are long-running per-agent processes, so one started
+before an upgrade will read files written after it.
+
+- **Old supervisor, new file:** it reads `next-step` exactly as it does today,
+  and ignores `next-step-verbatim` as an unknown key. The block's content lines
+  can only add junk fields that nothing reads, since the real fields precede
+  them. The successor gets today's behavior — a collapsed instruction — which is
+  a degradation, not a failure.
+- **New supervisor, old file:** no `next-step-verbatim` is present, so it uses
+  `next-step`. Nothing needs migrating.
+- **A hand-written file** with neither field well-formed is unchanged in
+  treatment: `next-step` is whatever its line says.
+
+This is why the marker does not go on the `next-step:` line. Putting it there
+would make an old supervisor boot its successor with the marker string as its
+entire instruction — silently, which is the failure this whole change exists to
+remove.
+
+### Relationship to the whitespace collapse
+
+The writer's whitespace collapse is one of the mechanisms recorded in the
+2026-08-06 writer ruling under Rulings below. It exists because a multi-line
+value would otherwise be truncated at its first line by the reader. It keeps
+that job here and is not weakened: `next-step` is still collapsed, which is
+exactly what makes it safe for every reader. What changes is that the collapsed
+line is no longer the only copy — the verbatim text travels beside it.
 
 ## Rulings
 
