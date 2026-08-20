@@ -23,7 +23,11 @@
 # shell in the agent's directory (surviving a Ctrl-C aimed at the supervisor),
 # so the seat can be resumed in place with `claude --continue` and no hunting
 # for the right cd (user-ruled 2026-08-17) — the tmux session closes when that
-# shell exits. A seat born with --no-attach keeps the old close-on-exit
+# shell exits. That shell offers the SUPERVISED relaunch first and states what
+# `claude --continue` costs: it resumes the dialog with no supervisor, so the
+# seat can never recycle. The old ordering advertised --continue first, and on
+# 2026-08-18 two seats ran unsupervised for about 25 hours because it was the
+# only listed option that worked (nedschorus#45). A seat born with --no-attach keeps the old close-on-exit
 # behavior instead, even if attached later: its pane command is fixed at
 # creation. A second launch of a running name attaches instead of
 # duplicating, and the supervisor holds a per-agent lock that refuses a
@@ -174,8 +178,9 @@ fi
 
 # When the supervisor exits, the pane becomes an interactive shell in the
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
-# seat is resumed in place by typing `claude --continue`, with no hunt for
-# the right cd. The tmux session — and so the window — now outlives the
+# seat is relaunched in place, with no hunt for the right cd. The options are
+# printed supervised-first, because `claude --continue` starts no supervisor
+# and its seat can never recycle (nedschorus#45). The tmux session — and so the window — now outlives the
 # supervisor and closes when this shell exits. Re-running the launcher on
 # such a session ATTACHES to that shell (new-session -A ignores the command
 # for an existing name); the printed options cover it. The leading trap lets
@@ -189,8 +194,9 @@ fi
 # automation acts on (review finding, 2026-08-17).
 AFTER_EXIT_COMMAND="echo; \
 echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in the seat's directory\"; \
-echo \"  resume the last session:  claude --continue\"; \
-echo \"  fresh supervised seat:    exit, then launch-claude-mac $AGENT_NAME\"; \
+echo \"  fresh supervised seat:  exit, then launch-claude-mac $AGENT_NAME\"; \
+echo \"  resume this dialog:     claude --continue — starts NO supervisor, so that\"; \
+echo \"                          seat can never recycle until it is recovered\"; \
 cd '$AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
 if [ "$ATTACH" = yes ]; then
