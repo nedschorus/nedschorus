@@ -77,7 +77,10 @@ paths are coined names. Every cell may reach the internet to check facts (user-r
 2026-08-18): claude cells carry web tools and no write tools; codex cells run
 workspace-write with network on, writes forbidden by prompt — a codex cell
 that modifies the worktree is reported as `WARNING: <cell> modified the
-worktree: <paths>`. Exit 0 when every launched cell saved, 1 otherwise.
+worktree: <paths>`. While the cells run, make no changes in this worktree
+yourself — the write detector cannot tell your edits from a cell's, and one
+stray edit turns its report into noise; work elsewhere until the run
+completes. Exit 0 when every launched cell saved, 1 otherwise.
 """
 
 import argparse
