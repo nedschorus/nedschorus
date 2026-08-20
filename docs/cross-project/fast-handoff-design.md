@@ -21,6 +21,66 @@ Each script's module docstring says what it does and why it is shaped that way; 
 - `scripts/handoff-supervisor.py` — the supervisor: watch, kill, extract, pre-seed tasks, launch the successor with the ignition prompt; one per agent, self-registered, lock-guarded.
 - `scripts/handoff-extract-conversation.py` — the extractor: carries the word-floor tail of the dialog verbatim to the successor.
 
+## The handoff file format
+
+The handoff file is a short list of `key: value` lines, written whole — the
+writer renders it to a `.partial` file and renames, so no reader ever sees it
+half-written. The supervisor reads those lines into fields and the first
+occurrence of a key wins, so prose appearing later cannot overwrite a field.
+
+One field may need more than one line: `next-step`. This section specifies how,
+because the two ends must agree exactly — a reader-only change cannot restore
+line breaks a writer has already destroyed (R20 in
+`fleet-git-worktree-working-model.md`).
+
+**Single-line form — the default, and unchanged.** When the next step is one
+line, it is written as an ordinary field and read as one:
+
+    next-step: read the anchor at docs/issues/45-...md and present item 3
+
+**Block form — used only when the next step contains a line break.** The value
+is the opening marker `<<END-OF-NEXT-STEP`; the lines that follow are the value,
+verbatim, until a line that is exactly the terminator:
+
+    next-step: <<END-OF-NEXT-STEP
+    FIRST ACTION: run the suite and read the three failures.
+    THEN: fix only the locale case; leave the other two for the design walk.
+    CONTEXT: PRs 86-91 are merged; the branch is behind main by two commits.
+    END-OF-NEXT-STEP
+
+Rules the two ends must both honour:
+
+- **The writer chooses the form**, using the block only when the text contains a
+  line break. A single-line next step produces a file byte-identical to what it
+  produces today.
+- **Content is verbatim between the markers** — no indentation is added or
+  stripped, no whitespace is collapsed, and blank lines inside the block are
+  part of the value. Leading and trailing blank lines are removed.
+- **The writer refuses** a next step containing a line equal to the terminator,
+  naming the offending line. The same discipline as its existing refusal of an
+  empty next step: a writer that cannot represent what it was given says so,
+  rather than writing a file that reads back as something else.
+- **The reader treats an unterminated block as a broken handoff**: it uses the
+  lines it has and states in the ignition prompt that the block was
+  unterminated, so the successor knows its instruction may be incomplete.
+  Silence here is the failure the whole change exists to remove.
+- **Any other field stays single-line.** Only `next-step` may take the block
+  form, so a stray `<<` in another value is an ordinary value, not a mode
+  switch.
+
+**Compatibility.** Every handoff file already on disk uses the single-line form
+and is read by the rule above, unchanged: a `next-step` whose value is anything
+other than the opening marker is a single-line value. Nothing needs migrating,
+and a supervisor that predates this format still reads a single-line handoff
+correctly.
+
+**Relationship to the whitespace-collapse ruling below.** The writer collapses
+newlines today because the reader would otherwise truncate a multi-line value at
+its first line. That mechanism answered a real failure, and this format answers
+the same failure at both ends instead of at one — so the collapse applies only
+to the single-line form, where it still guards against a value that would break
+the field syntax.
+
 ## Rulings
 
 Dated decisions and their reasons — the part of the design a reader cannot recover from code.
