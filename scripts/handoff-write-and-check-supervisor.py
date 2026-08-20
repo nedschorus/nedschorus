@@ -237,11 +237,19 @@ def main(argv=None) -> int:
         )
         return 0
 
+    # What to tell the user changed on 2026-08-14, when the supervisor learned to
+    # ignite from an unconsumed handoff at boot: the old advice here — relaunch
+    # claude by hand and point it at the file — rebuilds the very state this
+    # branch is reporting, a seat running with nothing watching it. The launcher
+    # is the supervised path, and scripts/resupervise-seat.py performs the whole
+    # procedure (it refuses unless this handoff is genuinely waiting).
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "
-        "recycle it. The handoff is written; nothing will act on it by itself. Tell the user: to "
-        f"continue in a fresh session, relaunch claude here and point it at {handoff_path} "
-        "(“read the handoff file and continue”). Until then, keep working."
+        f"recycle it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
+        "Tell the user: to seat a supervised successor, run "
+        f"`scripts/resupervise-seat.py {agent}` — it clears this seat's stale tmux session and "
+        "relaunches, and the supervisor ignites from the handoff. Relaunching `claude` by hand "
+        "instead produces another unsupervised seat. Until then, keep working."
     )
     return 1
 

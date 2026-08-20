@@ -152,10 +152,12 @@ def run_liveness_report_cases(workspace: Path):
           "keep working" in result.stdout, result.stdout)
     check("with no supervisor, the write still happened",
           (workspace / "tester-handoff.md").is_file(), "handoff missing")
-    check("with no supervisor, the agent is told the by-hand relaunch path",
-          "relaunch claude here" in result.stdout
+    check("with no supervisor, the agent is told the supervised recovery path",
+          "resupervise-seat.py tester" in result.stdout
           and str(workspace / "tester-handoff.md") in result.stdout,
           result.stdout)
+    check("with no supervisor, the by-hand relaunch is named as the wrong path",
+          "another unsupervised seat" in result.stdout, result.stdout)
     check("no supervisor is started for an unseated session",
           not (workspace / "tester-supervisor.log").is_file()
           and "Stop working now and wait" not in result.stdout,
@@ -193,8 +195,8 @@ def run_console_identity_case(workspace: Path):
     check("a session with environment identity still gets no supervisor",
           result.returncode == 1 and not (workspace / "identcase-supervisor.log").is_file(),
           result.stdout + result.stderr)
-    check("the identity path also names the by-hand relaunch",
-          "relaunch claude here" in result.stdout, result.stdout)
+    check("the identity path also names the supervised recovery path",
+          "resupervise-seat.py identcase" in result.stdout, result.stdout)
 
 
 def run_agent_name_and_claim_cases(workspace: Path):
