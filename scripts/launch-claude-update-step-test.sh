@@ -96,6 +96,56 @@ case "$box_command" in
     (*) check "ubuntu box command carries the warn-and-proceed branch" 1 ;;
 esac
 
+# The after-exit prompt, both twins. When a supervisor exits, its shell offers
+# the operator a choice, and the ordering is load-bearing: `claude --continue`
+# runs but starts NO supervisor, so the seat it resumes can never recycle. It
+# was listed first until 2026-08-19, and on 2026-08-18 two seats ran
+# unsupervised for about 25 hours because it was the only listed option that
+# worked (nedschorus#45). Asserted on the emitted command text of both
+# launchers -- the box twin's shell text only ever exists as the string it
+# hands ssh, so the string is the only place the box's prompt can be checked
+# from this Mac.
+assert_supervised_option_is_first() {
+    twin_name="$1"
+    # Collapse to one line first: these command strings span several lines, and
+    # a per-line index would compare offsets within different lines.
+    emitted=$(printf '%s' "$2" | tr '\n' ' ')
+    supervised_position=$(awk -v haystack="$emitted" \
+        'BEGIN { print index(haystack, "fresh supervised seat") }')
+    continue_position=$(awk -v haystack="$emitted" \
+        'BEGIN { print index(haystack, "resume this dialog") }')
+    if [ "$supervised_position" -gt 0 ] && [ "$continue_position" -gt 0 ] \
+       && [ "$supervised_position" -lt "$continue_position" ]; then
+        check "$twin_name lists the supervised relaunch before claude --continue" 0
+    else
+        check "$twin_name lists the supervised relaunch before claude --continue" 1
+    fi
+    case "$emitted" in
+        (*"never recycle"*) check "$twin_name states what claude --continue costs" 0 ;;
+        (*) check "$twin_name states what claude --continue costs" 1 ;;
+    esac
+}
+
+# The ATTACHED form is the one to inspect: a --no-attach seat deliberately keeps
+# close-on-exit and never reaches the after-exit shell, so its box command
+# carries no prompt at all. Asserting on the detached string would pass an empty
+# haystack for a prompt that does not exist there.
+PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-ubuntu" seatub \
+    > "$WORKSPACE/out-ubuntu-attached" 2>&1
+assert_supervised_option_is_first "ubuntu box command" "$(cat "$WORKSPACE/out-ubuntu-attached")"
+
+# The Mac twin's prompt rides in the command it hands tmux, which the tmux stub
+# logs. --no-attach never reaches the after-exit shell (a detached seat keeps
+# close-on-exit), so the attached form is the one to inspect; the tmux stub
+# returns immediately rather than seating anything.
+: > "$WORKSPACE/tmux-calls-afterexit"
+TMUX_CALL_LOG="$WORKSPACE/tmux-calls-afterexit" \
+CLAUDE_UPDATE_MARKER="$WORKSPACE/update-ran-afterexit" \
+NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
+PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-mac" seatprompt \
+    > "$WORKSPACE/out-mac-prompt" 2>&1
+assert_supervised_option_is_first "mac tmux command" "$(cat "$WORKSPACE/tmux-calls-afterexit")"
+
 echo
 if [ "$FAILURES" -gt 0 ]; then echo "$FAILURES case(s) failed"; exit 1; fi
 echo "all cases passed"
