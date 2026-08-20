@@ -79,7 +79,13 @@ def main(argv=None) -> int:
         return 2
     subject_sha = resolved.stdout.strip()
 
-    output_path = pathlib.Path(arguments.output)
+    # Resolved, because codex runs with cwd=repo: a relative path would name
+    # one file on the caller's side and a different one on codex's side, and
+    # a stale caller-side file would then be stamped as this run's review.
+    output_path = pathlib.Path(arguments.output).resolve()
+    # A pre-existing file at the output path must not survive into the
+    # post-run checks: after this, a file that exists is provably this run's.
+    output_path.unlink(missing_ok=True)
     scope_flag = ["--base", subject_sha] if arguments.base else ["--commit", subject_sha]
     command = [
         "codex", "exec",
@@ -91,24 +97,34 @@ def main(argv=None) -> int:
         "--output-last-message", str(output_path),
     ]
     try:
+        # stderr is captured, not discarded: on failure its tail is the only
+        # explanation anyone gets. On success it stays unprinted.
         completed = subprocess.run(
             command, cwd=repo, stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
             timeout=REVIEW_TIMEOUT_SECONDS, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"code-review-codex-cell: codex could not run: {type(error).__name__}: {error}",
               file=sys.stderr)
         return 1
+
+    def stderr_tail():
+        lines = (completed.stderr or "").strip().splitlines()
+        for line in lines[-10:]:
+            print(f"  codex: {line}", file=sys.stderr)
+
     if completed.returncode != 0:
         print(f"code-review-codex-cell: codex exec review failed (exit {completed.returncode}); "
               "no report was written", file=sys.stderr)
+        stderr_tail()
         return completed.returncode
     if not output_path.is_file() or not output_path.read_text(encoding="utf-8").strip():
         # A run that "succeeded" without a report is a silent absence, and
         # absence must never read as a clean review.
         print("code-review-codex-cell: codex exited 0 but wrote no report; treat as failed",
               file=sys.stderr)
+        stderr_tail()
         return 1
 
     # Provenance header, so a report read later is pinned to its inputs
