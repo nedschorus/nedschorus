@@ -142,6 +142,8 @@ with tempfile.TemporaryDirectory() as scratch:
         if occupied_wt is not None:
             check("a live process keeps a worktree",
                   "occupied-wt: kept" in report and "live process" in report, report)
+        check("no dead-registration line while every directory exists",
+              "git worktree prune" not in report, report)
 
         # --- Anchoring: a copy run from inside a worktree sees the same repo -
         from_inside = run_clean(dirty_wt).stdout
@@ -190,6 +192,48 @@ with tempfile.TemporaryDirectory() as scratch:
               and "live process is rooted inside it" in matching_lsof,
               matching_lsof)
 
+        # --- Dead registrations are named, with the prune command ------------
+        # A worktree registered under a temp directory leaves a dead entry
+        # when the temp area clears (R25, ruled 2026-08-18). Simulate the
+        # clearing: delete the directory behind git's back, so the
+        # registration outlives it.
+        dead_wt = add_worktree("dead-registration-wt", where=scratch)
+        shutil.rmtree(dead_wt)
+        dead_report = run_clean(checkout).stdout
+        dead_line = next((line for line in dead_report.splitlines()
+                          if "git worktree prune" in line), "")
+        check("a dead registration is named with the prune command",
+              "dead-registration-wt" in dead_line, dead_report)
+        # dead_line must be non-empty here, or this check would pass against
+        # an empty haystack — asserting absence in a line that never printed.
+        check("living worktrees are not named on the dead-registration line",
+              dead_line != "" and "done-wt" not in dead_line
+              and "dirty-wt" not in dead_line, dead_report)
+        check("the dead-registration line carries git's own reason",
+              "gitdir file points to non-existent location" in dead_line, dead_line)
+        dead_only_done = run_clean(checkout, "--only-done").stdout
+        check("--only-done carries the dead-registration line (the launchers' boot mode)",
+              "dead-registration-wt" in dead_only_done
+              and "git worktree prune" in dead_only_done, dead_only_done)
+
+        # A prunable registration whose directory still EXISTS: only its inner
+        # .git file is gone. git calls this prunable too, so the report must
+        # name it — and must not claim the directory is gone, a condition it
+        # never checked. Pruning here discards the registration for a
+        # directory still holding uncommitted work, which is why the reason
+        # the human reads has to be git's own.
+        surviving_wt = add_worktree("dotgit-deleted-wt", where=scratch)
+        (surviving_wt / "recoverable-file.txt").write_text("work\n", encoding="utf-8")
+        (surviving_wt / ".git").unlink()
+        surviving_report = run_clean(checkout).stdout
+        surviving_line = next((line for line in surviving_report.splitlines()
+                               if "git worktree prune" in line), "")
+        check("a prunable registration whose directory survives is named too",
+              "dotgit-deleted-wt" in surviving_line, surviving_report)
+        check("the line claims git's judgment, never that the directory is gone",
+              surviving_line != "" and "directory gone" not in surviving_line
+              and surviving_wt.exists(), surviving_line)
+
         # --- --remove reaps exactly the done worktree ------------------------
         removal = run_clean(checkout, "--remove")
         check("--remove removes the done worktree",
@@ -205,6 +249,12 @@ with tempfile.TemporaryDirectory() as scratch:
               removal.stdout)
         check("--remove exits 0 when nothing failed", removal.returncode == 0,
               str(removal.returncode))
+        check("--remove reports the dead registration too",
+              "dead-registration-wt" in removal.stdout
+              and "git worktree prune" in removal.stdout, removal.stdout)
+        still_listed = git(checkout, "worktree", "list", "--porcelain")
+        check("the dead registration survives --remove — the prune stays deliberate",
+              "dead-registration-wt" in still_listed, still_listed)
     finally:
         if occupant is not None:
             occupant.kill()

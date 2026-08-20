@@ -27,11 +27,21 @@ Anything that fails a check is KEPT, with the failing reason. Worktrees
 outside <repo>/.claude/worktrees/ — agent seat homes, manual checkouts — are
 always kept: their lifecycles belong to their owners, not to this script.
 
+Separately from the worktrees themselves, the report ends with one line
+naming dead registrations — the ones `git worktree prune` would remove,
+typically because the worktree's directory is gone, which is what a
+temp-area clearing leaves behind — each with git's own reason, and the
+prune command. The line prints in every mode and is report only: the prune
+stays a deliberate human act (ruled 2026-08-18; R25 in
+docs/cross-project/fleet-git-worktree-working-model.md).
+
 Modes:
   (default)    report every worktree, one line each
-  --only-done  print only the done ones, nothing when there are none
-               (the launchers run this at boot, so a reapable worktree is
-               named at the moment someone is looking)
+  --only-done  print only what needs someone's attention — done worktrees,
+               and the dead-registration line when there are any; nothing
+               otherwise (the launchers run this at boot, so a reapable
+               worktree or a dead registration is named at the moment
+               someone is looking)
   --remove     re-check and remove the done worktrees; each removal also
                deletes the worktree's fully-merged branch (git branch -d,
                which refuses anything unmerged). Never --force.
@@ -86,6 +96,33 @@ def list_worktrees(repo, main_checkout):
                 worktrees.append((path, branch))
             path, branch = None, None
     return worktrees
+
+
+def dead_worktree_registrations(repo):
+    """(path, git's reason) for each registration `git worktree prune` would
+    remove — typically because the worktree's directory is gone, which is what
+    a temp-area clearing leaves behind.
+
+    Deadness is git's own judgment, read from the `prunable` annotation of
+    `git worktree list --porcelain` (git >= 2.36), never from a filesystem
+    check of our own, and git's reason is carried rather than restated. The
+    two are not the same claim: a directory that still exists but has lost
+    its `.git` file is prunable too (verified, git 2.55.0), and pruning it
+    discards the registration for a directory that may still hold someone's
+    uncommitted work — so the reason the human reads must be the one git
+    actually gave. A locked registration is never named, because prune skips
+    it too."""
+    listing = run_git(repo, "worktree", "list", "--porcelain")
+    dead = []
+    path = None
+    for line in listing.stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line.split(" ", 1)[1]
+        elif (line == "prunable" or line.startswith("prunable ")) and path:
+            reason = line[len("prunable"):].strip() or "no reason given"
+            dead.append((path, reason))
+            path = None
+    return dead
 
 
 def worktree_vacancy_keep_reason(worktree):
@@ -222,6 +259,12 @@ def main(argv=None):
         else:
             state = "done" if done else "kept"
             print(f"{worktree.name}: {state} — {reason}")
+
+    dead_registrations = dead_worktree_registrations(repo)
+    if dead_registrations:
+        print("dead registration(s) git would prune: "
+              + ", ".join(f"{path} ({reason})" for path, reason in dead_registrations)
+              + " — remove with: git worktree prune")
 
     return 1 if failures else 0
 
