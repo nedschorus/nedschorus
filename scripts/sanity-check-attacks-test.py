@@ -206,6 +206,24 @@ def main():
               body.startswith(heading) and "Status text." not in body,
               f"body began {body[:60]!r}")
 
+    # The quote scan: a verbatim quote is silent, words in no tracked file warn.
+    import contextlib
+    import io
+    runner_scan = load_runner()
+    corpus = runner_scan.normalized_for_quote_match(
+        "the gate records every legacy import cleanly")
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        runner_scan.quote_scan(corpus, 'It says "records every legacy import cleanly" here.', "q1")
+    check("a verbatim quote raises no warning", buffer.getvalue() == "",
+          f"output was {buffer.getvalue()!r}")
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        runner_scan.quote_scan(corpus, 'It says "words that appear in no file at all" here.', "q2")
+    check("a quote found nowhere warns",
+          "quote found in no tracked file" in buffer.getvalue(),
+          f"output was {buffer.getvalue()!r}")
+
     # The three standing prompts must each split cleanly.
     runner_fresh = load_runner()
     for attack in runner_fresh.ATTACKS:
