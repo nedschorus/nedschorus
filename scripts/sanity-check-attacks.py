@@ -308,6 +308,26 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     return snapshot
 
 
+def reviewed_revision(baseline: dict) -> str:
+    """The revision each report describes, for its provenance line.
+
+    Cells read the working tree, not a commit, so the commit alone identifies
+    the text reviewed only when the tree is clean; `worktree=dirty(N)` says N
+    paths differed from it and the commit will not reproduce what the cell saw.
+    Recorded by the runner rather than asked of the reviewer: the machine holds
+    this fact exactly, and a document moves under a walk — every quote in the
+    first live check's reports pointed at a version that no longer existed
+    before the walk on them finished (user-ruled 2026-08-19).
+    """
+    completed = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
+    )
+    commit = completed.stdout.strip() or "unknown"
+    worktree = "clean" if not baseline else f"dirty({len(baseline)})"
+    return f"commit={commit} worktree={worktree}"
+
+
 def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a codex
     cell writing to the worktree, which its prompt forbids. Compared over the
@@ -364,11 +384,13 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         if stray:
             print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
+    revision = reviewed_revision(baseline_status)
     out_path = out_dir / f"{cell}.md"
     out_path.write_text(
         f"<!-- provenance: runtime={runtime} model={model} effort={REASONING_EFFORT} "
         f"attack={attack} target={target} "
-        f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} -->\n\n"
+        f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
+        f"{revision} -->\n\n"
         + output,
         encoding="utf-8",
     )
