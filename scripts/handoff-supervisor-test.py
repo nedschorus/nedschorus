@@ -355,6 +355,42 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     check("an unterminated block tells the successor what happened",
           "unterminated" in truncated_prompt, repr(truncated_prompt))
 
+    # A trailing double space is a markdown hard break: the one function whose
+    # purpose is carrying text unaltered must not strip it (PR #108 review).
+    hard_break = workspace / "hardbreak-handoff.md"
+    hard_break.write_text(
+        "written-at: " + recent + "\n"
+        "next-step: collapsed\n"
+        "next-step-verbatim: <<END-OF-NEXT-STEP\n"
+        "FIRST ACTION: read the anchor.\n"
+        "THEN: present item 3.  \n"
+        "END-OF-NEXT-STEP\n",
+        encoding="utf-8")
+    hard_break_fields = supervisor.parse_handoff_file(hard_break)
+    check("a trailing markdown hard break survives to the successor",
+          supervisor.next_step_from(hard_break_fields)
+          == "FIRST ACTION: read the anchor.\nTHEN: present item 3.  ",
+          repr(supervisor.next_step_from(hard_break_fields)))
+
+    # The terminator is matched as an EXACT line on both ends. An indented
+    # lookalike — one inside a fenced code block, say — is content, and the
+    # writer refuses on the same comparison, so the ends cannot disagree.
+    lookalike = workspace / "lookalike-handoff.md"
+    lookalike.write_text(
+        "written-at: " + recent + "\n"
+        "next-step: collapsed\n"
+        "next-step-verbatim: <<END-OF-NEXT-STEP\n"
+        "line one\n"
+        "    END-OF-NEXT-STEP\n"
+        "line two\n"
+        "END-OF-NEXT-STEP\n",
+        encoding="utf-8")
+    lookalike_fields = supervisor.parse_handoff_file(lookalike)
+    check("an indented terminator lookalike does not end the block",
+          lookalike_fields.get("next-step-verbatim")
+          == "line one\n    END-OF-NEXT-STEP\nline two",
+          repr(lookalike_fields.get("next-step-verbatim")))
+
     # A handoff written before this format existed has no block and must be
     # read exactly as it always was.
     legacy = workspace / "legacy-handoff.md"

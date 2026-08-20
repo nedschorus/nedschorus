@@ -260,7 +260,10 @@ def main(argv=None) -> int:
     # block is considered, so a next step that is only whitespace is refused
     # rather than written as an empty block.
     verbatim_lines = verbatim_block_lines(next_step_text)
-    offending = [line for line in verbatim_lines if line.strip() == NEXT_STEP_BLOCK_TERMINATOR]
+    # EXACT match, the same comparison the reader ends a block on. A stripped
+    # match here would refuse indented lookalikes the reader would have kept as
+    # content, and the two ends must agree on exactly one rule.
+    offending = [line for line in verbatim_lines if line == NEXT_STEP_BLOCK_TERMINATOR]
     if offending:
         print(
             "handoff-write-and-check-supervisor: the next step contains a line equal to the block "
