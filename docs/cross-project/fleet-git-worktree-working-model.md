@@ -423,11 +423,11 @@ merged: `git fetch --prune origin` and read remote-tracking refs; a
 survey that cannot reach the remote says so. Evidence: a prune list built
 from unfetched refs missed four merged branches (2026-08-17).
 
-**R25. Dead worktree registrations get surfaced — ruled (2026-08-18),
-build queued.** A worktree registered under a temporary directory
+**R25. Dead worktree registrations get surfaced — BUILT (PR #112, merged
+2026-08-20).** A worktree registered under a temporary directory
 (`/private/tmp` on macOS, `/tmp` on the box) leaves a dead entry when the
 temp area clears, and `git worktree prune` is manual. The
-`clean-worktrees.py` report gains one line naming dead registrations and
+`clean-worktrees.py` report carries one line naming dead registrations and
 the prune command — report only; the prune stays deliberate.
 
 **R26. New MDs land in approved homes — ruled-unbuilt (issue #11).** A
@@ -477,7 +477,7 @@ rulings; listed here to keep the numbering complete.
 | R22 | Junk ignored by pattern | default | ruled closed; issue #50 closed |
 | R23 | Scratch lives in the scratchpad | default | satisfied by runtime default |
 | R24 | Surveys fetch before concluding | text | encode into R22's cleanup script when built |
-| R25 | Dead registrations surfaced | remind (report) | ruled; build queued |
+| R25 | Dead registrations surfaced | remind (report) | built, PR #112 |
 | R26 | New MDs land in approved homes | remind | ruled-unbuilt, issue #11 |
 | R27 | Machine-local stays uncommitted | default | built-live |
 | R28 | Rules delivered at trigger | principle | governs all rows |
@@ -502,7 +502,8 @@ pull request.
    merged 2026-08-20; design section md-reviewed in
    `fast-handoff-design.md` first, per design-first).
 3. **R25** — the dead-registration report line in `clean-worktrees.py` —
-   queued.
+   LANDED (PR #112, merged 2026-08-20), with the review discussion
+   permanent on the pull request.
 4. **Launcher version check** (user-ruled 2026-08-17) — queued; settle
    first via the claude-code-guide agent whether the auto-updater and
    `claude update` respect `autoUpdatesChannel`. That answer decides
