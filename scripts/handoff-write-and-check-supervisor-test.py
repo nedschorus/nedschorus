@@ -123,6 +123,20 @@ def run_multi_line_next_step_cases(workspace: Path):
     check("the terminator refusal writes nothing",
           not (workspace / "terminatorcase-handoff.md").exists())
 
+    # The refusal is on an EXACT line match, matching the reader. An indented
+    # lookalike is ordinary content and must be written, not refused.
+    lookalike = run_writer(workspace, "line one\n    END-OF-NEXT-STEP\nline two\n",
+                           "--agent", "lookalikecase")
+    # Read through exists() rather than handoff_text(): against an implementation
+    # that refuses this input there is no file, and a missing-file traceback is
+    # not a test result. A crash cannot be told apart from a failure by anyone
+    # reading the output.
+    lookalike_file = workspace / "lookalikecase-handoff.md"
+    check("an indented terminator lookalike is written as content, not refused",
+          lookalike_file.exists()
+          and "    END-OF-NEXT-STEP" in lookalike_file.read_text(encoding="utf-8"),
+          lookalike.stderr or "no file written")
+
     # The empty refusal is applied to the COLLAPSED value, before any block is
     # considered, so whitespace-only input is refused rather than written as an
     # empty block.

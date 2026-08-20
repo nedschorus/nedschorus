@@ -100,7 +100,11 @@ def parse_handoff_file(handoff_path: Path) -> dict:
             while index < len(lines):
                 candidate = lines[index]
                 index += 1
-                if candidate.strip() == NEXT_STEP_BLOCK_TERMINATOR:
+                # EXACT line, not a stripped match. An indented lookalike —
+                # a terminator inside a fenced code block, say — is content,
+                # and the writer refuses on the same exact comparison, so the
+                # two ends cannot disagree about where a block ends.
+                if candidate == NEXT_STEP_BLOCK_TERMINATOR:
                     terminated = True
                     break
                 block.append(candidate)
@@ -255,9 +259,17 @@ def next_step_from(handoff_fields: dict) -> str:
 
     The collapsed line is always written, so the fallback is a correct
     instruction rather than a partial one.
+
+    The block is returned EXACTLY as parsed. Stripping it here would be the
+    quiet kind of wrong: a trailing double space is a markdown hard break, so
+    a bare .rstrip() deletes formatting the agent chose, in the one function
+    whose whole purpose is carrying the text unaltered. Emptiness is tested
+    on a stripped copy; the value returned is never the stripped one.
     """
-    verbatim = handoff_fields.get(NEXT_STEP_VERBATIM_FIELD, "").strip("\n").rstrip()
-    return verbatim or handoff_fields.get("next-step", "").strip()
+    verbatim = handoff_fields.get(NEXT_STEP_VERBATIM_FIELD, "")
+    if verbatim.strip():
+        return verbatim
+    return handoff_fields.get("next-step", "").strip()
 
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,

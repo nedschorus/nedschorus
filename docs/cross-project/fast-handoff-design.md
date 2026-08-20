@@ -59,6 +59,16 @@ The opening marker is `<<END-OF-NEXT-STEP`, on the `next-step-verbatim:` line.
 The terminator is `END-OF-NEXT-STEP` alone, with no `<<`, on a line by itself.
 The lines between them are the value.
 
+**The terminator is matched as an exact line**, on both ends: no leading or
+trailing whitespace is tolerated, and the writer refuses on the same exact
+comparison the reader ends a block on. This is what makes an indented
+lookalike — a terminator inside a fenced code block, say — ordinary content
+rather than a truncation: the writer writes it and the reader keeps it, and
+the two ends cannot disagree about where a block ends. The cost is that a
+hand-written terminator carrying trailing whitespace does not terminate; that
+lands in the unterminated case below, which falls back to the collapsed line
+and says so, rather than silently dropping content.
+
 Writing the block last, after every computed field, is what makes it safe: a
 content line that happens to look like `key: value` cannot shadow a real field,
 because the real fields precede it and the first occurrence of a key wins.
@@ -69,7 +79,10 @@ because the real fields precede it and the first occurrence of a key wins.
   break**, and always writes `next-step` as it does today. A single-line next
   step produces a file byte-identical to today's.
 - **Content between the markers is verbatim** — no indentation added or
-  stripped, no whitespace collapsed. The one exception, stated so it cannot be
+  stripped, no whitespace collapsed, and no trailing whitespace removed from
+  the last line. A trailing double space is a markdown hard break, so the
+  reader must hand the block over exactly as parsed; emptiness may be tested
+  on a stripped copy, but the value passed on is never the stripped one. The one exception, stated so it cannot be
   read two ways: blank lines that fall between the first and last non-blank
   lines are preserved; blank lines before the first and after the last are not
   written at all.
