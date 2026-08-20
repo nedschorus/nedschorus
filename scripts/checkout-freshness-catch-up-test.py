@@ -9,6 +9,7 @@ a linked worktree on its own branch (the seat).
 """
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -311,6 +312,33 @@ with tempfile.TemporaryDirectory() as unknowable_scratch:
           stamp.get("behind") is None, json.dumps(stamp))
     check("an unknowable count nulls the ahead the report leaves behind",
           stamp.get("ahead") is None, json.dumps(stamp))
+
+# ---------------------------------------------------------------------------
+# A git that never ran must not be readable as a real answer
+# ---------------------------------------------------------------------------
+# run_git synthesizes a CompletedProcess when git cannot be launched at all.
+# It used to synthesize returncode 1 — which git uses as a genuine answer
+# elsewhere in this project ("HEAD does not exist"), so a launch failure and a
+# real "no" were the same value. That collision was a live defect in the
+# session-location guard (PR #103); it is only latent here, because every
+# caller in this file tests `!= 0`. Pinned so the two files keep one meaning.
+with tempfile.TemporaryDirectory() as no_git_scratch:
+    no_git_scratch = Path(no_git_scratch)
+    empty_path_directory = no_git_scratch / "no-git-here"
+    empty_path_directory.mkdir()
+    saved_path = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = str(empty_path_directory)
+        unlaunchable = catch_up_module.run_git(["status"], no_git_scratch, timeout=5)
+    finally:
+        os.environ["PATH"] = saved_path
+    check("a git that cannot be launched reports GIT_DID_NOT_RUN",
+          unlaunchable.returncode == catch_up_module.GIT_DID_NOT_RUN,
+          str(unlaunchable.returncode))
+    check("a git that cannot be launched does not report 1, which git uses as an answer",
+          unlaunchable.returncode != 1, str(unlaunchable.returncode))
+    check("callers still see it as a failure",
+          unlaunchable.returncode != 0, str(unlaunchable.returncode))
 
 print()
 if failures:
