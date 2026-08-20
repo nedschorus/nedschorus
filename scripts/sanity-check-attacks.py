@@ -36,9 +36,10 @@ Operating rules, all user-ruled:
   sanity-checked may have a check suggested — a note, never a gate; a
   one-line walked edit to a never-checked file is not taxed with a full
   review.
-- The requesting agent triages: verifies quotes, resolves code hedges by
-  targeted reads, merges the runtimes' reports, and walks the survivors with
-  the user (walk-me-through). Findings are design changes; none is applied
+- The requesting agent triages: follows up the quote-scan warnings (a
+  flagged quote may still live in git history or on the web — or nowhere),
+  resolves code hedges by targeted reads, merges the runtimes' reports, and
+  walks the survivors with the user (walk-me-through). Findings are design changes; none is applied
   without his ruling.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... when reports already sit there, so a same-day second pass or re-run
@@ -57,7 +58,11 @@ failed cell pair reruns without repeating the others.
 
 Run it as a background task and arm a Monitor on its output: it prints one
 line per cell — `saved: <path>` or `FAILED: <cell> exit <code>` — as each
-finishes. Without `--problem-statement` the fresh-eyes cells print
+finishes. Cut and mechanization reports also get a quote scan: every quoted
+span of four or more words is searched for across the tracked files, and a
+span found in none prints `WARNING: <cell> quote found in no tracked file:
+...` — information for triage, never a gate (a quote may legitimately come
+from git history or the web). Without `--problem-statement` the fresh-eyes cells print
 `SKIPPED: <cell> (no --problem-statement)` — loudly, never silently — since
 that attack works from the problem statement alone. A fresh-eyes run also
 prints `LEAK-WARNING: ...` lines — the design's coined names found in the
@@ -308,6 +313,51 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     return snapshot
 
 
+QUOTE_MINIMUM_WORDS = 4
+
+
+def normalized_for_quote_match(text: str) -> str:
+    """Whitespace and markdown emphasis vary freely between a quote and its
+    source; both sides are compared with them normalized away (the same rule
+    as scripts/md-drift-lint.py)."""
+    return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text)).strip()
+
+
+def tracked_files_corpus() -> str:
+    """Every tracked text file's content, normalized, as one searchable body.
+    Built once per run, before the cells launch."""
+    listed = subprocess.run(
+        ["git", "ls-files"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, text=True, check=False,
+    )
+    pieces = []
+    for name in listed.stdout.splitlines():
+        path = REPO_ROOT / name
+        try:
+            pieces.append(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+    return normalized_for_quote_match("\n".join(pieces))
+
+
+def quote_scan(corpus: str, report: str, cell: str) -> None:
+    """Print a WARNING per quoted span in a report that appears in no tracked
+    file. A quote is a search string: found anywhere, it is verbatim; found
+    nowhere, it is the one failure that matters — words that exist in no file.
+    No attribution convention is asked of the cells (user-ruled 2026-08-19).
+    Information for triage, never a gate: a quote may legitimately come from
+    git history or the web, and the warning says where it was not found."""
+    for match in re.finditer(r'"([^"\n]+)"|\u201c([^\u201d\n]+)\u201d', report):
+        quote = match.group(1) or match.group(2)
+        for fragment in re.split(r"\.\.\.|\u2026", quote):
+            fragment = fragment.strip().rstrip("?.!,;:")
+            if len(fragment.split()) < QUOTE_MINIMUM_WORDS:
+                continue
+            if normalized_for_quote_match(fragment) not in corpus:
+                print(f'WARNING: {cell} quote found in no tracked file: '
+                      f'"{fragment[:60]}"', flush=True)
+
+
 def reviewed_revision(baseline: dict) -> str:
     """The revision each report describes, for its provenance line.
 
@@ -359,7 +409,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
-             design_names: set, baseline_status: set) -> tuple:
+             design_names: set, baseline_status: set, corpus: str) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
     prompt = assemble_prompt(attack, target, context, problem_statement)
@@ -379,6 +429,8 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         return cell, False
     if fresh_eyes:
         leak_scan(design_names, output, f"the {cell} report")
+    else:
+        quote_scan(corpus, output, cell)
     if runtime == "codex":
         stray = stray_paths(baseline_status, worktree_snapshot())
         if stray:
@@ -435,6 +487,7 @@ def main() -> int:
 
     out_dir = fresh_record_dir(target_path.stem)
     baseline_status = worktree_snapshot()
+    corpus = tracked_files_corpus()
 
     attacks = tuple(dict.fromkeys(args.attack)) if args.attack else ATTACKS
     cells = []
@@ -450,7 +503,8 @@ def main() -> int:
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
         futures = [
             pool.submit(run_cell, attack, runtime, args.target, args.context,
-                        args.problem_statement, out_dir, design_names, baseline_status)
+                        args.problem_statement, out_dir, design_names, baseline_status,
+                        corpus)
             for attack, runtime in cells
         ]
         for future in concurrent.futures.as_completed(futures):
