@@ -52,7 +52,14 @@ Operating rules, all user-ruled:
 Usage:
 
   scripts/sanity-check-attacks.py --target <path> [--context <path> ...] \
-      [--problem-statement <path>] [--attack <name> ...]
+      [--problem-statement <path>] [--attack <name> ...] [--print <surface>]
+
+`--print` writes a review surface to stdout instead of running cells:
+`cut`, `mechanization`, or `fresh-eyes` prints that attack's assembled cell
+prompt (body plus the review request built from the other arguments) — the
+exact text a cell receives, which is the reviewable form of the cell-facing
+surface; `requester` prints the requesting agent's manual — this docstring
+followed by the fresh-eyes requester section — and needs no other arguments.
 
 `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
 second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
@@ -464,8 +471,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--target", required=True,
-                        help="repo-relative path of the document under review")
+    parser.add_argument("--target", default=None,
+                        help="repo-relative path of the document under review "
+                             "(required except with --print requester)")
     parser.add_argument("--context", action="append", default=[],
                         help="repo-relative context document (repeatable)")
     parser.add_argument("--problem-statement", type=pathlib.Path, default=None,
@@ -473,7 +481,30 @@ def main() -> int:
                              "without it the fresh-eyes cells are SKIPPED, loudly")
     parser.add_argument("--attack", action="append", choices=list(ATTACKS), default=None,
                         help="run only this attack (repeatable); default: all three")
+    parser.add_argument("--print", dest="print_surface",
+                        choices=list(ATTACKS) + ["requester"], default=None,
+                        help="print a review surface to stdout instead of running: "
+                             "an attack's assembled cell prompt, or the requester manual")
     args = parser.parse_args()
+
+    if args.print_surface == "requester":
+        fresh_eyes_text = ATTACK_PROMPT_FILES["fresh-eyes"].read_text(encoding="utf-8")
+        heading = "## Writing the problem statement"
+        start = fresh_eyes_text.find(heading)
+        # The marker as its own line, not the header sentence that names it.
+        end = fresh_eyes_text.find("\n" + PROMPT_BODY_MARKER + "\n")
+        if start == -1 or end == -1 or start >= end:
+            print("requester section not found in the fresh-eyes prompt", file=sys.stderr)
+            return 2
+        print("# The requesting agent's manual\n")
+        print("## The runner's operating rules (its docstring)\n")
+        print(__doc__.strip())
+        print("\n## The fresh-eyes requester section\n")
+        print(fresh_eyes_text[start:end].strip())
+        return 0
+
+    if args.target is None:
+        parser.error("--target is required except with --print requester")
 
     target_path = REPO_ROOT / args.target
     if not target_path.is_file():
@@ -486,6 +517,14 @@ def main() -> int:
     if args.problem_statement and not args.problem_statement.is_file():
         print(f"problem statement not found: {args.problem_statement}", file=sys.stderr)
         return 2
+
+    if args.print_surface:
+        if args.print_surface == "fresh-eyes" and args.problem_statement is None:
+            print("--print fresh-eyes needs --problem-statement", file=sys.stderr)
+            return 2
+        print(assemble_prompt(args.print_surface, args.target, args.context,
+                              args.problem_statement))
+        return 0
 
     design_names = coined_names(target_path)
     if args.problem_statement:
