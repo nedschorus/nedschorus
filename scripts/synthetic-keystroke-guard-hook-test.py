@@ -59,6 +59,23 @@ class StubRunner:
         return subprocess.CompletedProcess(argv, self.returncode, self.stdout, self.stderr)
 
 
+class ScriptedProbeRunner(StubRunner):
+    """A probe runner whose calls each consume the next scripted
+    (stdout, stderr, returncode) — for the per-seat-server cases, where the
+    first and second probes must answer differently. Running out of script
+    raises, which fails the case loudly."""
+
+    def __init__(self, results):
+        super().__init__()
+        self.results = list(results)
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        self.call_kwargs.append(kwargs)
+        stdout, stderr, returncode = self.results.pop(0)
+        return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
+
+
 class TickingClock:
     """A clock the test advances by hand."""
 
@@ -386,6 +403,99 @@ check("repeated targets are probed once (cached per host and target)",
       decide("tmux send-keys -t seat-a x; tmux send-keys -t seat-a y", runner) is None
       and len(runner.calls) == 1,
       runner.calls)
+
+# --- per-seat tmux servers (2026-08-21): which server the probe dials ---
+# Fleet seats each run their own tmux server (-L <seat>), so "no server
+# running" on the default socket says nothing about the seat's own server —
+# a probe that stopped there would read an attached per-seat session as
+# safe to type into.
+
+no_server_probe_answer = ("", "no server running on /private/tmp/tmux-501/default", 1)
+
+runner = ScriptedProbeRunner([no_server_probe_answer, ("1\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("per-seat: default-unknown then per-seat-attached denies",
+      reason is not None and "attached client" in reason, reason)
+check("per-seat: the first probe carries no socket flag (the command's own plain dial)",
+      runner.calls[0] == ["tmux", "display-message", "-p", "-t", "seat-a",
+                          "#{session_attached}"],
+      runner.calls)
+check("per-seat: the fallback probe dials the seat's own socket, exact argv",
+      runner.calls[1] == ["tmux", "-L", "seat-a", "display-message", "-p",
+                          "-t", "seat-a", "#{session_attached}"],
+      runner.calls)
+
+runner = ScriptedProbeRunner([no_server_probe_answer, ("0\n", "", 0)])
+check("per-seat: default-unknown then per-seat-detached allows after both probes",
+      decide("tmux send-keys -t seat-a x", runner) is None
+      and len(runner.calls) == 2, runner.calls)
+
+runner = ScriptedProbeRunner([no_server_probe_answer, no_server_probe_answer])
+check("per-seat: a session no probed server knows is allowed (types nowhere)",
+      decide("tmux send-keys -t seat-a x", runner) is None
+      and len(runner.calls) == 2, runner.calls)
+
+runner = StubRunner(stdout="1\n")
+reason = decide("tmux -L seat-b send-keys -t seat-b x", runner)
+check("per-seat: a command-carried -L rides the probe and an attached answer denies",
+      reason is not None and "attached client" in reason
+      and runner.calls[0][:3] == ["tmux", "-L", "seat-b"],
+      (reason, runner.calls))
+
+runner = ScriptedProbeRunner([no_server_probe_answer])
+check("per-seat: a command-carried -L is probed exclusively — no second-socket shopping",
+      decide("tmux -L seat-b send-keys -t seat-b x", runner) is None
+      and len(runner.calls) == 1, runner.calls)
+
+runner = StubRunner(stdout="1\n")
+reason = decide("tmux -Lseat-b send-keys -t seat-b x", runner)
+check("per-seat: the glued -Lseat-b form still rides the probe",
+      reason is not None and runner.calls[0][:3] == ["tmux", "-L", "seat-b"],
+      (reason, runner.calls))
+
+runner = StubRunner(stdout="1\n")
+reason = decide("tmux -S /tmp/custom.sock send-keys -t seat-b x", runner)
+check("per-seat: a command-carried -S socket path rides the probe",
+      reason is not None
+      and runner.calls[0][:3] == ["tmux", "-S", "/tmp/custom.sock"],
+      (reason, runner.calls))
+
+runner = ScriptedProbeRunner([no_server_probe_answer, ("1\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a:1.0 x", runner)
+check("per-seat: a window-qualified target derives the socket from its session part",
+      reason is not None and runner.calls[1][:3] == ["tmux", "-L", "seat-a"]
+      and "seat-a:1.0" in runner.calls[1],
+      (reason, runner.calls))
+
+runner = ScriptedProbeRunner([no_server_probe_answer, ("1\n", "", 0)])
+reason = decide("ssh ned 'tmux send-keys -t gatekeeper x'", runner)
+check("per-seat: the ssh-wrapped fallback probe carries -L to the box",
+      reason is not None and "attached client" in reason
+      and runner.calls[1][0] == "ssh" and "-L gatekeeper" in runner.calls[1][-1],
+      (reason, runner.calls))
+
+runner = StubRunner(stdout="1\n")
+reason = decide("ssh ned 'tmux -L gatekeeper send-keys -t gatekeeper x'", runner)
+check("per-seat: a command-carried -L inside the ssh remote command rides that probe",
+      reason is not None and runner.calls[0][0] == "ssh"
+      and "-L gatekeeper" in runner.calls[0][-1],
+      (reason, runner.calls))
+
+runner = ScriptedProbeRunner([
+    ("", "ssh: connect to host ned: Operation timed out", 255)])
+reason = decide("ssh ned 'tmux send-keys -t gatekeeper x'", runner)
+check("per-seat: an unverifiable first probe denies without shopping to a second socket",
+      reason is not None and "could not verify" in reason
+      and len(runner.calls) == 1,
+      (reason, runner.calls))
+
+reason = decide("tmux send-keys -t seat-a x",
+                StubRunner(stderr="server exited unexpectedly", returncode=2))
+check("per-seat: the unverifiable denial teaches the per-seat probe recipe too",
+      reason is not None and "could not verify" in reason
+      and "tmux -L seat-a display-message" in reason,
+      reason)
+
 
 # F2/F3: things that look like heredoc markers but are not, and real
 # terminators the old splitter missed — later lines must stay visible.

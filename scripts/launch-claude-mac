@@ -36,6 +36,13 @@
 # the same name used on both machines is simply two unrelated agents — no
 # conflict, only a label you cannot tell apart in a listing spanning both.
 #
+# Every seat runs on its OWN tmux server (`tmux -L <name>`, one socket per
+# seat under /tmp/tmux-<uid>/), so one server crash cannot take the whole
+# per-machine fleet down: on 2026-08-21 the Mac's single default tmux server
+# died and killed all three Mac seats at once. Seats launched before that
+# change still live on the default server; the socket selection below reaches
+# them there instead of starting a duplicate.
+#
 # --no-attach creates the session without attaching this terminal (for scripts
 # and checks); attach later by running the plain form.
 #
@@ -62,7 +69,15 @@ usage() {
     echo "files. Running a name that is already up ATTACHES to that agent — you cannot" >&2
     echo "start a second copy of one." >&2
     echo >&2
-    running=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')
+    # Per-seat tmux servers: one list-sessions cannot see every seat, so walk
+    # every socket in tmux's socket directory — per-seat servers and the
+    # default server (where pre-2026-08-21 seats still live) alike. A dead
+    # socket's listing fails and is skipped.
+    running=$(
+        for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do
+            [ -S "$seat_socket_path" ] || continue
+            tmux -S "$seat_socket_path" list-sessions -F '#{session_name}' 2>/dev/null || true
+        done | sort -u | tr '\n' ' ')
     if [ -n "$running" ]; then
         echo "Agent tmux sessions on this Mac now (live seats or after-exit shells): $running" >&2
     else
@@ -161,11 +176,20 @@ python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
 # sessions, and never blocks a launch.
 python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" 2>/dev/null || true
 
-# tmux tells the terminal the session name, so the tab reads the seat's name
-# rather than the command that happened to start it. Global option, harmless
-# to repeat on each launch.
-tmux set-option -g set-titles on 2>/dev/null || true
-tmux set-option -g set-titles-string '#S' 2>/dev/null || true
+# Per-seat tmux servers (2026-08-21): every seat runs on its OWN tmux server,
+# socket `-L <name>`, because the Mac's single default server died that day
+# and took all three Mac seats down at once — one server crash must not kill
+# the whole per-machine fleet. Transition rule: seats launched before this
+# change still live on the DEFAULT server, so when the seat's own server does
+# not hold its session but the default one does, this launch reaches it there
+# — otherwise attach-or-create would start a duplicate seat beside the
+# running one. `-L default` names the default socket, so one variable serves
+# both cases.
+SEAT_TMUX_SOCKET="$AGENT_NAME"
+if ! tmux -L "$AGENT_NAME" has-session -t "=$AGENT_NAME" 2>/dev/null \
+        && tmux -L default has-session -t "=$AGENT_NAME" 2>/dev/null; then
+    SEAT_TMUX_SOCKET=default
+fi
 
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
@@ -199,9 +223,17 @@ echo \"  resume this dialog:     claude --continue — starts NO supervisor, so 
 echo \"                          seat can never recycle until it is recovered\"; \
 cd '$AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
+# The chained set-option calls tell the terminal the session name, so the
+# tab reads the seat's name rather than the command that happened to start
+# it. They ride the same tmux invocation (\; separates tmux commands, not
+# shell ones) because the seat's server does not exist before its first
+# session does — a standalone set-option beforehand would find no server —
+# and repeating them on an attach is harmless.
 if [ "$ATTACH" = yes ]; then
-    exec tmux new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
-        "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND"
+    exec tmux -L "$SEAT_TMUX_SOCKET" new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
+        "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" \; \
+        set-option -g set-titles on \; set-option -g set-titles-string '#S'
 fi
-tmux new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" 2>/dev/null \
+tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
+        set-option -g set-titles on \; set-option -g set-titles-string '#S' 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"
