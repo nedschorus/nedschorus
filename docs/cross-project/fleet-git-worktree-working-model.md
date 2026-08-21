@@ -264,9 +264,10 @@ named and ruled unguarded** (2026-08-17): every recorded bypass was
 accidental, not adversarial. Build trigger: an actually observed
 shell-route bypass. A periodic drift sweep was rejected: it
 false-positives on seats legitimately carrying approved-but-unmerged
-changes. Codex has no instruction file in this repository today; if it
-gains one, that file is not in this guard's list — a known fact, not a
-decision.
+changes. Codex's instruction file — `AGENTS.md` at the repository root,
+added 2026-08-20 — is not in this guard's list: a known fact, not a
+decision, and consistent with the reviewer rule that landed alongside it
+(no recorded incident, no guard).
 
 **R11. Backup stores are read-only to agents — built-live; lane removed
 (user-ruled 2026-08-17).**
