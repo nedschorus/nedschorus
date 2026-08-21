@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""restart-claude — bring agent seats back after a machine restart.
+
+Why this exists: a reboot destroys every tmux session on a machine, and
+nothing recreates the seats. On 2026-08-20 ned-box rebooted under
+unattended-upgrades and its gatekeeper seat simply vanished; the Mac has the
+same gap and carries more seats (nedschorus#116).
+
+Run it after rebooting. It relaunches each seat through the project's normal
+supervised launcher, so every seat comes back with a supervisor and resumes
+from its own handoff. A seat that is already alive is left alone.
+
+  restart-claude                 restore this Mac's seats
+  restart-claude --box           restore ned-box's seats
+  restart-claude --all           both machines
+  restart-claude gatekeeper ...  only the named seats
+  restart-claude --list          show what is alive and what is not
+  restart-claude --dry-run       print the launches, run none
+  restart-claude --record        save the currently-live seats as the set to
+                                 restore later, and do nothing else
+
+WHICH SEATS: the recorded set from a previous --record, when one exists.
+Without a record it falls back to every seat home directory and says so --
+that can start a seat that was not running, which costs an idle session, not
+damage.
+
+BOTH MACHINES FROM HERE: launch-claude-ubuntu reaches the box over ssh, so
+this script restores box seats while running on the Mac. The box cannot yet
+restore its own seats at boot, because that launcher has no local mode; that
+is open work under nedschorus#116.
+"""
+
+import argparse
+import json
+import os
+import platform
+import subprocess
+import sys
+from pathlib import Path
+
+BOX_SSH_HOST = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+
+MAC = "mac"
+BOX = "box"
+
+
+def record_path(machine):
+    return Path.home() / ".claude" / f"fleet-live-seats-{machine}.json"
+
+
+def agents_root(machine):
+    if machine == MAC:
+        return Path(
+            os.environ.get("NEDSCHORUS_AGENTS_ROOT", str(Path.home() / "agents"))
+        )
+    return Path("agents")  # resolved on the box, relative to its home
+
+
+def run(command, timeout=60, **kwargs):
+    """subprocess.run with this script's defaults. timeout is overridable:
+    a seat launch runs `claude update` first and needs far longer than a
+    tmux query. Passing timeout through **kwargs instead would collide with
+    the default and raise TypeError -- which it did, on 2026-08-20."""
+    return subprocess.run(
+        command, capture_output=True, text=True, timeout=timeout, **kwargs
+    )
+
+
+def live_sessions(machine):
+    """Names of tmux sessions currently on the machine. [] when none."""
+    listing = ["tmux", "list-sessions", "-F", "#{session_name}"]
+    if machine == BOX:
+        listing = [
+            "ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+            BOX_SSH_HOST, "tmux list-sessions -F '#{session_name}'",
+        ]
+    finished = run(listing)
+    if finished.returncode != 0:
+        return []
+    return [line.strip() for line in finished.stdout.splitlines() if line.strip()]
+
+
+def seat_homes(machine):
+    """Every directory that looks like a seat home."""
+    if machine == MAC:
+        root = agents_root(machine)
+        if not root.is_dir():
+            return []
+        return sorted(p.name for p in root.iterdir() if p.is_dir())
+    finished = run([
+        "ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+        BOX_SSH_HOST, "ls -1 ~/agents 2>/dev/null",
+    ])
+    if finished.returncode != 0:
+        return []
+    return [line.strip() for line in finished.stdout.splitlines() if line.strip()]
+
+
+def seats_to_restore(machine):
+    """Return (names, source) — source explains where the list came from."""
+    path = record_path(machine)
+    if path.exists():
+        try:
+            recorded = json.loads(path.read_text())
+            names = [str(n) for n in recorded.get("seats", [])]
+            if names:
+                return names, f"recorded {recorded.get('recorded_at', 'earlier')}"
+        except (OSError, ValueError) as exc:
+            print(f"restart-claude: could not read {path} ({exc}); "
+                  "falling back to seat homes", file=sys.stderr)
+    return seat_homes(machine), "seat home directories (no recorded set)"
+
+
+def launcher_for(machine):
+    name = "launch-claude-mac" if machine == MAC else "launch-claude-ubuntu"
+    return SCRIPT_DIRECTORY / name
+
+
+def restore(machine, only, dry_run):
+    """Relaunch the machine's dead seats. Returns the number launched."""
+    alive = set(live_sessions(machine))
+    if only:
+        names, source = list(only), "named on the command line"
+    else:
+        names, source = seats_to_restore(machine)
+    if not names:
+        print(f"restart-claude [{machine}]: no seats found ({source})")
+        return 0
+
+    # fleet-anchor is a bare tmux session that keeps the box's tmux server
+    # alive; it is not a seat and its own systemd unit recreates it.
+    names = [n for n in names if n != "fleet-anchor"]
+
+    dead = [n for n in names if n not in alive]
+    print(f"restart-claude [{machine}]: {len(names)} seat(s) from {source}; "
+          f"{len(names) - len(dead)} already alive, {len(dead)} to start")
+    launcher = launcher_for(machine)
+    if dead and not launcher.exists():
+        print(f"restart-claude [{machine}]: launcher missing at {launcher}",
+              file=sys.stderr)
+        return 0
+
+    launched = 0
+    for name in dead:
+        command = [str(launcher), name, "--no-attach"]
+        if dry_run:
+            print(f"  would run: {' '.join(command)}")
+            continue
+        print(f"  starting {name}")
+        finished = run(command, timeout=300)
+        if finished.returncode != 0:
+            detail = (finished.stderr or finished.stdout or "").strip()
+            print(f"  FAILED {name}: {detail}", file=sys.stderr)
+            continue
+        launched += 1
+    return launched
+
+
+def record(machine):
+    names = [n for n in live_sessions(machine) if n != "fleet-anchor"]
+    path = record_path(machine)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = run(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"]).stdout.strip()
+    path.write_text(json.dumps(
+        {"machine": machine, "recorded_at": stamp, "seats": names}, indent=2
+    ) + "\n")
+    print(f"restart-claude [{machine}]: recorded {len(names)} live seat(s) "
+          f"to {path}" + (f" — {', '.join(names)}" if names else ""))
+
+
+def show(machine):
+    alive = set(live_sessions(machine))
+    names, source = seats_to_restore(machine)
+    print(f"restart-claude [{machine}]: set from {source}")
+    for name in sorted(set(names) | alive):
+        if name == "fleet-anchor":
+            continue
+        mark = "alive" if name in alive else "DEAD"
+        known = "" if name in names else "  (running, not in the set)"
+        print(f"  {mark:5}  {name}{known}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Bring agent seats back after a machine restart."
+    )
+    parser.add_argument("seats", nargs="*", help="restore only these seats")
+    parser.add_argument("--box", action="store_true", help="ned-box's seats")
+    parser.add_argument("--all", action="store_true", help="both machines")
+    parser.add_argument("--list", action="store_true", help="show state only")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the launches without running them")
+    parser.add_argument("--record", action="store_true",
+                        help="save the currently-live seats as the set")
+    args = parser.parse_args(argv)
+
+    if platform.system() != "Darwin":
+        print("restart-claude: this script runs on the Mac — "
+              "launch-claude-ubuntu reaches the box over ssh from here. "
+              "Box-local relaunch at boot is open work (nedschorus#116).",
+              file=sys.stderr)
+        return 2
+
+    machines = [MAC, BOX] if args.all else ([BOX] if args.box else [MAC])
+    if args.seats and len(machines) > 1:
+        parser.error("name seats for one machine at a time")
+
+    for machine in machines:
+        if args.record:
+            record(machine)
+        elif args.list:
+            show(machine)
+        else:
+            restore(machine, args.seats, args.dry_run)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
