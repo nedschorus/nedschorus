@@ -224,6 +224,25 @@ def main():
           "quote found in no tracked file" in buffer.getvalue(),
           f"output was {buffer.getvalue()!r}")
 
+    # The print modes: each surface arrives on stdout, and the requester
+    # surface carries both of its sources.
+    import subprocess as sp
+    requester = sp.run([str(RUNNER_SCRIPT), "--print", "requester"],
+                       capture_output=True, text=True)
+    check("--print requester emits the docstring and the requester section",
+          requester.returncode == 0
+          and "three stance attacks x two runtimes" in requester.stdout
+          and "Writing the problem statement" in requester.stdout,
+          f"rc={requester.returncode}")
+    cell_view = sp.run([str(RUNNER_SCRIPT), "--print", "cut",
+                        "--target", "docs/agents/sanity-checker-cut-attack-prompt.md"],
+                       capture_output=True, text=True)
+    check("--print cut emits the assembled cell prompt",
+          cell_view.returncode == 0
+          and cell_view.stdout.startswith("## Your assignment")
+          and "Document under review:" in cell_view.stdout,
+          f"rc={cell_view.returncode}, began {cell_view.stdout[:40]!r}")
+
     # The three standing prompts must each split cleanly.
     runner_fresh = load_runner()
     for attack in runner_fresh.ATTACKS:
