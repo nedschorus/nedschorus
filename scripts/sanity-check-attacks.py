@@ -2,7 +2,8 @@
 """Run a sanity-check: independent review checks, each on both runtimes, over one document.
 
 The sanity-check is this project's second review instrument, separate from
-md-review and never one of its grid cells. Three checks, each in its own
+md-review (`scripts/md-review-grid.py`, the prose-and-clarity review) and
+never part of it. Three checks, each in its own
 fresh context:
 
 - **cut** — what here should be deleted.
@@ -31,17 +32,20 @@ fails before any model cost is spent.
 
 Operating rules:
 
-- Both runtimes on every check — claude-fable-5 and gpt-5.6-sol, at xhigh
-  reasoning effort.
+- Both runtimes on every check — claude-fable-5 (the claude CLI) and
+  gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each check
+  therefore runs as two review agents, one per runtime, named
+  `<check>-<runtime>` in this runner's output.
 - The check runs only when a person or agent deliberately decides to run it:
   never automatically, and a revision of an already-checked document earns no
   automatic re-check. Run it after md-review has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
-  plans — never records. "md-review passed" is the natural moment to ask
+  plans — never records (documents that only report what happened).
+  "md-review passed" is the natural moment to ask
   whether a document deserves its check; a PR carrying a never-checked
   actionable MD may have a check suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
-  resolves code hedges by targeted reads, merges the runtimes' reports, and
+  settles hedged claims about code by reading the code, merges the runtimes' reports, and
   walks the survivors with the user (walk-me-through). Findings are design
   changes; none is applied without his ruling.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
@@ -54,40 +58,43 @@ Usage:
   scripts/sanity-check-attacks.py --target <path> [--context <path> ...]
       [--problem-statement <path>] [--attack <name> ...] [--print <surface>]
 
-`--attack` (repeatable; default all three) runs a subset — the fresh-eyes
+`--context` names companion documents the reading checks receive alongside
+the target. `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
 second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
-failed cell pair reruns without repeating the others.
+failed check reruns without repeating the others.
 
 `--print` writes a review surface to stdout instead of running: `cut`,
-`mechanization`, or `fresh-eyes` prints that check's assembled prompt (body
-plus the review request built from the other arguments) — the exact text a
-review agent receives; `requester` prints the requesting agent's manual —
+`mechanization`, or `fresh-eyes` prints that check's assembled prompt — body plus the review request: for
+the reading checks the request names the target and context paths, for
+fresh-eyes it is the problem-statement file; `requester` prints the requesting agent's manual —
 this docstring followed by the fresh-eyes requester section — and needs no
 other arguments.
 
 Running a check, and reading its output:
 
-- Run it as a background task and arm a Monitor on its output; it prints one
-  line per cell as each finishes — `saved: <path>` or `FAILED: <cell> exit
-  <code>`. Exit 0 when every launched cell saved; 1 when any launched cell
-  failed (a skipped cell is not launched); 2 when the invocation itself is
+- Run it as a background task and arm a Monitor (the harness's watch tool)
+  on its output; it prints a status line per review agent as each finishes —
+  `saved: <path>`, `FAILED: <check>-<runtime> exit <code>`, or `SKIPPED:` —
+  plus the warning lines described below. Exit 0 when every launched agent saved; 1 when any launched agent
+  failed (a skipped agent is not launched); 2 when the invocation itself is
   unusable — a missing file, a broken prompt boundary, a bad flag.
-- Without `--problem-statement` the fresh-eyes cells print `SKIPPED`, loudly,
+- Without `--problem-statement` the fresh-eyes agents print `SKIPPED`, loudly,
   never silently — that check works from the problem statement alone.
 - Cut and mechanization reports get a quote scan: every quoted span of four
   or more words is searched for across the tracked files, and a span found in
-  none prints `WARNING: <cell> quote found in no tracked file: ...` — triage
+  none prints `WARNING: <check>-<runtime> quote found in no tracked file: ...` — triage
   information, never a gate; a quote may legitimately come from git history
   or the web.
 - Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
   described above. Expect hits on every run: the off-limits list must name
   the design's paths to forbid them, and those paths are coined names.
-- Every cell may reach the internet to check facts: claude cells carry web
-  tools and no write tools; codex cells run workspace-write with network on,
-  writes forbidden by prompt — a codex cell that modifies the worktree is
-  reported as `WARNING: <cell> modified the worktree: <paths>`. While the
-  cells run, make no changes in this worktree yourself — the write detector
-  cannot tell your edits from a cell's; work elsewhere until the run
+- Every review agent may reach the internet to check facts: claude agents
+  carry web tools and no write tools; codex agents run workspace-write with
+  network on, writes forbidden by prompt — a codex agent that modifies the
+  worktree is reported as `WARNING: <check>-<runtime> modified the worktree:
+  <paths>`. While the agents run, make no changes in this worktree yourself —
+  the write detector cannot tell your edits from a review agent's; work
+  elsewhere until the run
   completes.
 - Each saved report opens with a provenance line: runtime, model, effort,
   check, target, and the commit and worktree state at review time, so quotes
@@ -581,7 +588,8 @@ def main() -> int:
 
     print(
         f"sanity-check complete: reports in {out_dir}. Triage each report "
-        "(verify quotes, resolve code hedges by targeted reads, merge the "
+        "(follow up the warnings above, settle hedged claims about code by "
+        "reading the code, merge the "
         "runtimes), then walk the survivors with the user (walk-me-through). "
         "Delete the record directory when the work it served lands.",
         flush=True,
