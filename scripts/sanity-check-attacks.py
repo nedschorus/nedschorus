@@ -12,8 +12,10 @@ Operating rules, all user-ruled:
   **fresh-eyes** (an independent design built from the problem statement —
   the cell is instructed never to read the design, its implementation, or
   its records, and may otherwise read the repository and the internet; the
-  leak scan below is the check; triage diffs its sketch against the real
-  one). Prompts: `docs/agents/sanity-checker-<attack>-attack-prompt.md`.
+  leak scan below is the check; triage compares the two designs on their
+  merits — differences become questions, absent worries become findings, the
+  stronger parts of either feed a best-of-both proposal, every adoption
+  walked to the user). Prompts: `docs/agents/sanity-checker-<attack>-attack-prompt.md`.
 - Each prompt file is split at its `<!-- SANITY-CHECK-PROMPT-BODY -->`
   line: above it a header for maintainers that no cell ever sees, below it the
   prompt itself. The runner refuses to start unless every prompt it will use
