@@ -231,7 +231,7 @@ def main():
                        capture_output=True, text=True)
     check("--print requester emits the docstring and the requester section",
           requester.returncode == 0
-          and "three stance attacks x two runtimes" in requester.stdout
+          and "second review instrument" in requester.stdout
           and "Writing the problem statement" in requester.stdout,
           f"rc={requester.returncode}")
     cell_view = sp.run([str(RUNNER_SCRIPT), "--print", "cut",
