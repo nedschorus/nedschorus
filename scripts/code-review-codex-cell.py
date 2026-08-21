@@ -105,6 +105,10 @@ def main(argv=None) -> int:
             timeout=REVIEW_TIMEOUT_SECONDS, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
+        # A timeout can fire after codex has already written the file, so the
+        # unlink belongs here too: every failure path leaves no report, which
+        # is what lets absence be read as failure.
+        output_path.unlink(missing_ok=True)
         print(f"code-review-codex-cell: codex could not run: {type(error).__name__}: {error}",
               file=sys.stderr)
         return 1
