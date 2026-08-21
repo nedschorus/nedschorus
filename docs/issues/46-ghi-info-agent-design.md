@@ -292,4 +292,4 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 6. Both box credentials survive unattended operation (the box's auth has expired before) — the sweep checks validity and flags expiry before it bites.
 7. Comment-fetch cost at real volume (measured once: 0.42 s for one issue with comments).
 
-**Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: `BODY_WORD_LIMIT` 500 (in the write tool; the sweep imports it); closes-since-birth recycle threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
+**Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: `BODY_WORD_LIMIT` 1000 (in the write tool; the sweep imports it); closes-since-birth recycle threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
