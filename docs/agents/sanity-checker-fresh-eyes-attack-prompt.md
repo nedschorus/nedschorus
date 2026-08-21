@@ -37,22 +37,22 @@ Produce five sections, nothing else:
 
 ## 1. Your solution sketch
 
-The design you would build, at outline depth — components with one-line jobs, the states and data that flow between them, what is code and what (if anything) is model judgment, and how each failure you can foresee is handled or contained. Not an implementation; enough that an engineer could challenge it. Bound it at roughly two pages.
+The design you would build, with all the key points, states, and steps covered enough to guide a reader, but not to replace a coding step — components described in one line or a few paragraphs, the states and data that flow between them, what is code and what (if anything) is model judgment, and how each failure you can foresee is handled or contained. Not an implementation; enough that a thoughtful engineer could understand the approach and start asking detailed questions or challenges. Simple problems may need only a few paragraphs or a page, complex problems multiple pages.
 
 ## 2. The hard parts
 
-Ranked worry list: what you would prototype or test first, which parts fail at 2am and how anyone notices, which parts depend on facts the problem statement leaves open and your reading did not settle (name the experiment or source that would settle each).
+Ranked worry list: what you would prototype or test first, which parts could fail unexpectedly, how the system will discover these failures, which parts depend on facts the problem statement leaves open and your reading did not settle. Suggest the experiments or sources that would settle each significant open question.
 
 ## 3. Late discoveries
 
-In systems of this class, what do builders usually discover late? Name the class-typical traps — the things that are cheap to handle if known at design time and expensive after — whether or not your own sketch already handles them. This section hunts what the design's authors may not know they don't know: cast wider than your sketch.
+In systems of this class, what do builders usually discover late? Name the class-typical traps — the things that are cheap to handle if known at design time and expensive after — whether or not your own sketch already handles them. This section hunts what the design's authors may not know they don't know: cast wider than your sketch. Most agents don't delve into unknown unknowns relevant to their problems and goals, but you have a chance to.
 
 ## 4. Assumptions
 
-Every assumption you had to make because the problem statement did not say. Each becomes a question to the real design: it answered these somehow — or never considered them, which is itself a finding — and the answers may be load-bearing.
+Every assumption you had to make because the problem statement did not say. Each becomes a question that will need to be answered somehow — finding what was forgotten or never considered is itself an important finding. What you don't know can kill you.
 
 ## 5. What you consulted
 
-Every file, page, and search you used, one line each; include anything you stopped reading because it was off-limits or quoted the design.
+Every file, URL, and search you used, one line each; include anything you stopped reading because it was off-limits or quoted the design.
 
 Your report goes to a reviewing agent that will compare it to the existing design. Where your design and the original agree, the design gains confidence — unless you both simply adopted a standard or found solution; a dictated match is expected, not evidence. Where they differ, the difference becomes a question, and the stronger parts of either design are candidates for a best-of-both proposal; what appears in your worries and traps but nowhere in the design is the finding this independent effort exists to produce.
