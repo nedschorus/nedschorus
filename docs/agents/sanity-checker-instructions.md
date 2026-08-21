@@ -2,16 +2,16 @@
 
 Your pile — the body of related work this seat owns — is **how this project reviews things, and how well that works.** Read [the seat model](agent-seat-model.md) first: it defines the words used here (pile, seat, walked approval, instruction-class) and explains how seats operate.
 
-**A name that does double duty.** `sanity-checker` is both this seat and the thing it works on: the project's second review instrument — three attack prompts and the runner that dispatches them. Below, "this seat" means you; "the sanity-checker" means the instrument. They are never the same thing.
+**A name that does double duty.** `sanity-checker` is both this seat and the thing it works on: the project's second review instrument — three audit prompts and the runner that dispatches them. Below, "this seat" means you; "the sanity-checker" means the instrument. They are never the same thing.
 
 **Your work is done when** the owed re-review below has run and its findings are walked, the first live run (walk-order item 6) is ruled and executed, and the record directories this work leaves behind are disposed per the house rule. Then write a handoff and stop.
 
 ## The standing shape (ruled — do not reopen)
 
 - **A separate instrument, never a grid cell** (user-ruled 2026-08-17, on the attack-split validation experiment's scorecard — recoverable at `git show 'ab541cc^':md-review-records/2026-08-12-attack-split-experiment/`).
-- **Three stance attacks, each in its own fresh context**: cut, mechanization, fresh-eyes. The prompts are the instrument's entire instruction surface, at `docs/agents/sanity-checker-{cut,mechanization,fresh-eyes}-attack-prompt.md`, each with a STANDING header; the runner is prompt-free by ruling.
+- **Three stance audits, each in its own fresh context**: cut, mechanization, fresh-eyes. The prompts are the instrument's entire instruction surface, at `docs/agents/sanity-checker-{cut,mechanization,fresh-eyes}-attack-prompt.md`, each with a STANDING header; the runner is prompt-free by ruling.
 - **The runner**: `scripts/sanity-check-attacks.py`. Its docstring is the operating-rules home — both runtimes at xhigh, manual call after md-review on actionable (work-directing) MDs only, never automatic, records in `sanity-check-records/` under the house disposal rule.
-- **The 2026-08-17/18 revision**: all three prompts went through a full md-review findings walk, every flagged sentence ruled. Fresh-eyes now runs the instructed-isolation model — the cell is told what not to read (the review request carries off-limits and read-first lists the requester writes; the requester-facing problem-statement section sits above the fresh-eyes divider), and the runner's coined-name leak scan checks the problem statement and the injected instruction files, printing LEAK-WARNING lines for triage (the cell's own report is not scanned — its instructed disclosures are the check, user-ruled 2026-08-19). Calibration evidence: `md-review-records/2026-08-17-fresh-eyes-canary/`.
+- **The 2026-08-17/18 revision**: all three prompts went through a full md-review findings walk, every flagged sentence ruled. Fresh-eyes now runs the instructed-isolation model — the agent is told what not to read (the review request carries off-limits and read-first lists the requester writes; the requester-facing problem-statement section sits above the fresh-eyes divider), and the runner's coined-name leak scan checks the problem statement and the injected instruction files, printing LEAK-WARNING lines for triage (the agent's own report is not scanned — its instructed disclosures are the check, user-ruled 2026-08-19). Calibration evidence: `md-review-records/2026-08-17-fresh-eyes-canary/`.
 - **Owed before first live use (user-ruled 2026-08-17):** a full md-review grid re-review of all three revised prompts, then the sanity-check run of walk-order item 6.
 
 ## Closed history (pointers only)
@@ -48,4 +48,4 @@ From the 2026-08-10 walk: *"asking to simplify is like asking to optimize withou
 
 ## First action
 
-Run the owed re-review — the md-review grid over each of the three attack prompts — and walk its findings. Then bring walk-order item 6, the first live run's target and staffing, to the user.
+Run the owed re-review — the md-review grid over each of the three audit prompts — and walk its findings. Then bring walk-order item 6, the first live run's target and staffing, to the user.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run a sanity-check: independent review checks, each on both runtimes, over one document.
+"""Run a sanity-check: independent audits, each on both runtimes, over one document.
 
 The sanity-check is this project's second review instrument, separate from
 md-review (`scripts/md-review-grid.py`, the prose-and-clarity review) and
-never part of it. Three checks, each in its own
+never part of it. Three audits, each in its own
 fresh context:
 
 - **cut** — what here should be deleted.
@@ -27,7 +27,7 @@ fresh context:
   can feed a best-of-both proposal; every adoption is reviewed and ruled on
   by the user, one item at a time.
 
-Prompts: `docs/agents/sanity-checker-<check>-attack-prompt.md`. Each file is
+Prompts: `docs/agents/sanity-checker-<audit>-attack-prompt.md`. Each file is
 split at its `<!-- SANITY-CHECK-PROMPT-BODY -->` line: above it a header for
 maintainers that the runner never sends to a review agent, below it the
 prompt itself. The
@@ -37,17 +37,17 @@ fails before any model cost is spent.
 
 Operating rules:
 
-- Both runtimes on every check — claude-fable-5 (the claude CLI) and
-  gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each check
+- Both runtimes on every audit — claude-fable-5 (the claude CLI) and
+  gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
-  `<check>-<runtime>` in this runner's output.
+  `<audit>-<runtime>` in this runner's output.
 - Run it only by deliberate decision — never wire it into automation. A
-  revision of an already-checked document earns no automatic re-check. Run it after md-review has passed, not before. It
+  revision of an already-sanity-checked document earns no automatic rerun. Run it after md-review has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
   plans — never records (documents that only report what happened).
   "md-review passed" is the natural moment to ask
-  whether a document deserves its check; a PR carrying an actionable MD with
-  no sign of a past check may have one suggested — a note, never a gate.
+  whether a document deserves its sanity-check; a PR carrying an actionable MD with
+  no sign of a past sanity-check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
   settles hedged claims about code by reading the code, merges the runtimes' reports, and
   presents the surviving findings to the user one at a time for his ruling
@@ -66,31 +66,31 @@ Usage:
   scripts/sanity-check-attacks.py --target <path> [--context <path> ...]
       [--problem-statement <path>] [--attack <name> ...] [--print <surface>]
 
-`--context` names companion documents the reading checks receive alongside
+`--context` names companion documents the reading audits receive alongside
 the target. `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
 second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
-failed check reruns without repeating the others.
+failed audit reruns without repeating the others.
 
 `--print` writes a review surface to stdout instead of running: `cut`,
-`mechanization`, or `fresh-eyes` prints that check's assembled prompt — body plus the review request: for
-the reading checks the request names the target and context paths, for
+`mechanization`, or `fresh-eyes` prints that audit's assembled prompt — body plus the review request: for
+the reading audits the request names the target and context paths, for
 fresh-eyes it is the problem-statement file; `requester` prints the requesting agent's manual —
 this docstring followed by the fresh-eyes requester section — and needs no
 other arguments.
 
-Running a check, and reading its output:
+Running a sanity-check, and reading its output:
 
 - Run it as a background task and arm a Monitor (the harness's watch tool)
   on its output; it prints a status line per review agent as each finishes —
-  `saved: <path>`, `FAILED: <check>-<runtime> exit <code>`, or `SKIPPED:` —
+  `saved: <path>`, `FAILED: <audit>-<runtime> exit <code>`, or `SKIPPED:` —
   plus the warning lines described below. Exit 0 when every launched agent saved; 1 when any launched agent
   failed (a skipped agent is not launched); 2 when the invocation itself is
   unusable — a missing file, a broken prompt boundary, a bad flag.
 - Without `--problem-statement` the fresh-eyes agents print `SKIPPED`, loudly,
-  never silently — that check works from the problem statement alone.
+  never silently — that audit works from the problem statement alone.
 - Cut and mechanization reports get a quote scan: every quoted span of four
   or more words is searched for across the tracked files, and a span found in
-  none prints `WARNING: <check>-<runtime> quote found in no tracked file: ...` — triage
+  none prints `WARNING: <audit>-<runtime> quote found in no tracked file: ...` — triage
   information, never a gate; a quote may legitimately come from git history
   or the web.
 - Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
@@ -99,14 +99,14 @@ Running a check, and reading its output:
 - Every review agent may reach the internet to check facts: claude agents
   carry web tools and no write tools; codex agents run workspace-write with
   network on, writes forbidden by prompt — a codex agent that modifies the
-  worktree is reported as `WARNING: <check>-<runtime> modified the worktree:
+  worktree is reported as `WARNING: <audit>-<runtime> modified the worktree:
   <paths>` — with two codex agents running, the writer may be either; the
-  warning names the agent whose check saw it. While the agents run, make no changes in this worktree yourself —
+  warning names the agent whose audit saw it. While the agents run, make no changes in this worktree yourself —
   the write detector cannot tell your edits from a review agent's; work
   elsewhere until the run
   completes.
 - Each saved report opens with a provenance line: runtime, model, effort,
-  check, target, and the commit and worktree state at review time, so quotes
+  audit, target, and the commit and worktree state at review time, so quotes
   can be checked against the commit the agent read — exact when the worktree
   was clean; `dirty(N)` warns that N files differed from it.
 """
@@ -499,14 +499,14 @@ def main() -> int:
     parser.add_argument("--context", action="append", default=[],
                         help="repo-relative context document (repeatable)")
     parser.add_argument("--problem-statement", type=pathlib.Path, default=None,
-                        help="review-request file for the fresh-eyes attack; "
-                             "without it the fresh-eyes cells are SKIPPED, loudly")
+                        help="review-request file for the fresh-eyes audit; "
+                             "without it the fresh-eyes agents are SKIPPED, loudly")
     parser.add_argument("--attack", action="append", choices=list(ATTACKS), default=None,
-                        help="run only this attack (repeatable); default: all three")
+                        help="run only this audit (repeatable); default: all three")
     parser.add_argument("--print", dest="print_surface",
                         choices=list(ATTACKS) + ["requester"], default=None,
                         help="print a review surface to stdout instead of running: "
-                             "an attack's assembled cell prompt, or the requester manual")
+                             "an audit's assembled prompt, or the requester manual")
     args = parser.parse_args()
 
     if args.print_surface == "requester":
@@ -599,7 +599,8 @@ def main() -> int:
         f"sanity-check complete: reports in {out_dir}. Triage each report "
         "(follow up the warnings above, settle hedged claims about code by "
         "reading the code, merge the "
-        "runtimes), then walk the survivors with the user (walk-me-through). "
+        "runtimes), then present the surviving findings to the user one at a "
+        "time for his ruling (the walk-me-through skill). "
         "Delete the record directory when the work it served lands.",
         flush=True,
     )
