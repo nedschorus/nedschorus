@@ -20,9 +20,11 @@ fresh context:
   for the design's coined names, printing a LEAK-WARNING per hit. The
   agent returns a five-section report — sketch, hard parts, late
   discoveries, assumptions, what it consulted — and triage compares the
-  original and the fresh design on their merits: differences become
-  questions, absent worries become findings, the stronger parts of either
-  feed a best-of-both proposal, and every adoption is walked to the user.
+  original and the fresh design on their merits: a substantive difference
+  becomes a question, a worry the fresh design raises that the original
+  never addresses is a candidate finding, and the stronger parts of either
+  can feed a best-of-both proposal; every adoption is reviewed and ruled on
+  by the user, one item at a time.
 
 Prompts: `docs/agents/sanity-checker-<check>-attack-prompt.md`. Each file is
 split at its `<!-- SANITY-CHECK-PROMPT-BODY -->` line: above it a header for
@@ -47,8 +49,11 @@ Operating rules:
   no sign of a past check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
   settles hedged claims about code by reading the code, merges the runtimes' reports, and
-  walks the survivors with the user (walk-me-through). Findings are design
-  changes; none is applied without his ruling.
+  presents the surviving findings to the user one at a time for his ruling
+  (the walk-me-through skill). Findings are design changes; none is applied
+  without the user's ruling. Triage is complete when every warning and every
+  finding has either been brought to the user for a ruling or been set aside
+  with a stated reason.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
   earlier reports) — machine-local working material, gitignored, deleted when
