@@ -52,7 +52,7 @@ Operating rules:
 
 Usage:
 
-  scripts/sanity-check-attacks.py --target <path> [--context <path> ...] \
+  scripts/sanity-check-attacks.py --target <path> [--context <path> ...]
       [--problem-statement <path>] [--attack <name> ...] [--print <surface>]
 
 `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
@@ -70,7 +70,9 @@ Running a check, and reading its output:
 
 - Run it as a background task and arm a Monitor on its output; it prints one
   line per cell as each finishes — `saved: <path>` or `FAILED: <cell> exit
-  <code>`. Exit 0 when every launched cell saved, 1 otherwise.
+  <code>`. Exit 0 when every launched cell saved; 1 when any launched cell
+  failed (a skipped cell is not launched); 2 when the invocation itself is
+  unusable — a missing file, a broken prompt boundary, a bad flag.
 - Without `--problem-statement` the fresh-eyes cells print `SKIPPED`, loudly,
   never silently — that check works from the problem statement alone.
 - Cut and mechanization reports get a quote scan: every quoted span of four
@@ -344,8 +346,8 @@ def normalized_for_quote_match(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text)).strip()
 
 
-def tracked_files_corpus() -> str:
-    """Every tracked text file's content, normalized, as one searchable body.
+def tracked_files_corpus() -> tuple:
+    """Every tracked text file's content, normalized, one entry per file.
     Built once per run, before the cells launch."""
     listed = subprocess.run(
         ["git", "ls-files"], cwd=REPO_ROOT,
@@ -355,13 +357,15 @@ def tracked_files_corpus() -> str:
     for name in listed.stdout.splitlines():
         path = REPO_ROOT / name
         try:
-            pieces.append(path.read_text(encoding="utf-8"))
+            pieces.append(normalized_for_quote_match(path.read_text(encoding="utf-8")))
         except (OSError, UnicodeDecodeError):
             continue
-    return normalized_for_quote_match("\n".join(pieces))
+    # One entry per file, never concatenated: a joined corpus would let a quote
+    # match across a file boundary (md-review finding, verified by construction).
+    return tuple(pieces)
 
 
-def quote_scan(corpus: str, report: str, cell: str) -> None:
+def quote_scan(corpus: tuple, report: str, cell: str) -> None:
     """Print a WARNING per quoted span in a report that appears in no tracked
     file. A quote is a search string: found anywhere, it is verbatim; found
     nowhere, it is the one failure that matters — words that exist in no file.
@@ -374,7 +378,8 @@ def quote_scan(corpus: str, report: str, cell: str) -> None:
             fragment = fragment.strip().rstrip("?.!,;:")
             if len(fragment.split()) < QUOTE_MINIMUM_WORDS:
                 continue
-            if normalized_for_quote_match(fragment) not in corpus:
+            normalized = normalized_for_quote_match(fragment)
+            if not any(normalized in file_text for file_text in corpus):
                 print(f'WARNING: {cell} quote found in no tracked file: '
                       f'"{fragment[:60]}"', flush=True)
 
@@ -498,11 +503,18 @@ def main() -> int:
         if start == -1 or end == -1 or start >= end:
             print("requester section not found in the fresh-eyes prompt", file=sys.stderr)
             return 2
+        section = fresh_eyes_text[start:end].strip()
+        # The section's closing sentence points at the marker and body below
+        # it, which this surface deliberately omits — printed here it would
+        # dangle (md-review finding).
+        tail_start = section.rfind("\n\nEverything below the marker")
+        if tail_start != -1:
+            section = section[:tail_start].rstrip()
         print("# The requesting agent's manual\n")
         print("## The runner's operating rules (its docstring)\n")
         print(__doc__.strip())
-        print("\n## The fresh-eyes requester section\n")
-        print(fresh_eyes_text[start:end].strip())
+        print()
+        print(section)
         return 0
 
     if args.target is None:
@@ -529,12 +541,6 @@ def main() -> int:
         return 0
 
     design_names = coined_names(target_path)
-    if args.problem_statement:
-        leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
-                  f"the problem statement ({args.problem_statement})")
-        for path in injected_instruction_files():
-            leak_scan(design_names, path.read_text(encoding="utf-8"),
-                      f"an injected instruction file ({path})")
 
     out_dir = fresh_record_dir(target_path.stem)
     baseline_status = worktree_snapshot()
@@ -549,6 +555,19 @@ def main() -> int:
             continue
         for runtime in RUNTIMES:
             cells.append((attack, runtime))
+
+    if args.problem_statement and any(a == "fresh-eyes" for a, _ in cells):
+        leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
+                  f"the problem statement ({args.problem_statement})")
+        for path in injected_instruction_files():
+            leak_scan(design_names, path.read_text(encoding="utf-8"),
+                      f"an injected instruction file ({path})")
+
+    # Validate every prompt this run will use before any cell launches, so a
+    # broken boundary fails before model cost — as documented; until 2026-08-21
+    # validation ran lazily inside each cell (md-review finding, verified).
+    for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
+        prompt_body(attack)
 
     ok = True
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
