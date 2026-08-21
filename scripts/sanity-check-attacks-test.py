@@ -210,8 +210,8 @@ def main():
     import contextlib
     import io
     runner_scan = load_runner()
-    corpus = runner_scan.normalized_for_quote_match(
-        "the gate records every legacy import cleanly")
+    corpus = (runner_scan.normalized_for_quote_match(
+        "the gate records every legacy import cleanly"),)
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         runner_scan.quote_scan(corpus, 'It says "records every legacy import cleanly" here.', "q1")
