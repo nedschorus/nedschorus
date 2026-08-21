@@ -15,8 +15,11 @@ The cell's final message prints to stdout after a provenance stamp; progress
 stays on stderr. Exit codes: 0 cell ran, 2 bad invocation, else claude's code.
 
 The cell runs with this repository as its working directory, so its
-instruction floor (the checkout's CLAUDE.md / AGENTS.md, when present) is
-identical to the Codex cells' — never the invoking session's project.
+instruction floor is the checkout's — never the invoking session's
+project. The floor is CLAUDE.md only: Claude Code does not read
+AGENTS.md (verified 2026-08-20, tools-disallowed probe), which is why a
+rule meant for both runtimes is duplicated into both files rather than
+shared through one.
 """
 
 import argparse

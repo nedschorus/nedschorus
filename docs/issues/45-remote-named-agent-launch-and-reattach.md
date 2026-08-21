@@ -16,6 +16,29 @@ The launcher shipped, and the work grew from "reach an agent by name" into how t
 - **`docs/issues/queue/45-session-seat-and-isolation-riders.md`** — five ideas raised and deliberately not built, each with its reasoning: the one-live-session-per-directory guard (whose obvious `/proc` detection was tried and proved unreliable), a `--directory` flag for the launchers, a branch-per-session CLAUDE.md rule, an md-review of the paths reference, and the deferred `choirmaster` rename.
 - **`docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md`** — a 2026-08-13 snapshot of every open thread on the box, its context file, and the proposed seat split. Operational, so its PR and issue rows go stale; the thread map and context paths do not.
 
+## Seat supervision: recycling, recovery, and why live adoption is not built (2026-08-19)
+
+A seat recycles only while a supervisor watches it. `scripts/handoff-supervisor.py` waits for the handoff file the agent writes, ends the spent session, and starts its successor on the same terminal. A session started any other way — `claude` or `claude --continue` typed by hand — has no supervisor and can never recycle. A seat can also *become* unsupervised: the supervisor is a separate process and can die while its agent keeps working, which is what happened on 2026-08-18 when two Mac seats ran unwatched for about 25 hours.
+
+Two defects behind that incident were fixed on 2026-08-19.
+
+**The launchers advertised the unsupervised path first.** When a supervisor exits, its shell offers the operator a choice, and both twins listed `claude --continue` before the supervised relaunch. On 2026-08-18 the supervised alternative was also on no PATH, so the only option that both appeared first and worked was the one that loses supervision. PR [#107](https://github.com/nedschorus/nedschorus/pull/107) reorders both twins and states the cost of the alternative in the prompt itself.
+
+**Recovery was an unscripted hand procedure.** Each recovery therefore left whatever state the operator improvised; the 2026-08-18 recovery left the seat's stale tmux window as the ACTIVE one, and a healthy seat was read as dead for a day. `scripts/resupervise-seat.py` (PR [#106](https://github.com/nedschorus/nedschorus/pull/106)) performs it identically every time. It **retires** the unsupervised session rather than adopting it: the agent hands off, the stale tmux session is cleared, and the launcher runs so the supervisor ignites from the waiting handoff. It refuses unless that handoff is genuinely unconsumed, unless a launcher exists to seat a successor, when a supervisor is already alive, and when run from inside the very tmux session it would clear. Tests: `scripts/resupervise-seat-test.py`.
+
+### Live adoption: built, unreachable, and deliberately left that way
+
+`handoff-supervisor.py` accepts `--adopt-session-id` and `--adopt-process-id`, and `AdoptedSession` can poll, terminate and kill a session the supervisor did not start. The flags are tested and called by nothing. Adoption puts a supervisor onto a session already running, so the seat recycles **without** the running session ending.
+
+What it would buy is narrower than it first appears. It lets a *working* unsupervised agent keep its current context and recycle on its own schedule, where `resupervise-seat.py` retires it now — a comfort improvement, not a capability the fleet lacks. It specifically does **not** rescue a wedged agent: every supervisor, adopting or not, recycles by waiting for a handoff file, so an agent too stuck to write one is equally unrecoverable either way. (An earlier note claiming otherwise was wrong.)
+
+Two costs blocked it, both measured rather than estimated:
+
+- **Discovery is a guess.** A supervisor-started agent carries its id in its command line (`claude --session-id <uuid> …`); a hand-started one — `claude --continue`, which is exactly the kind needing adoption — carries nothing. The id must be inferred from the most recently written transcript in the seat's directory under `~/.claude/projects/`. A wrong inference is silent and expensive: the supervisor would watch the right process, then extract the wrong transcript, and the successor would wake carrying another session's memory. tmux is not a safe index either — on 2026-08-19 the `mac-ubuntu-bridge` tmux session held a supervisor while its live agent ran outside tmux entirely.
+- **The seat becomes permanently two-paned.** A successor inherits the supervisor's terminal, and a supervisor with no terminal refuses to recycle at all (ruled 2026-08-14, commit `db49f1e`, after successors launched from detached supervisors died at their first need for input). So an adopting supervisor cannot share the adopted agent's pane: pane A holds the live agent, pane B the waiting supervisor, and at the next recycle the successor is born in B while A becomes a stale shell that still looks like the seat. That is the decoy which misled a reader on 2026-08-18, and it is structural — a fix can manage it (make the live pane active, reap the stale one) but not remove it.
+
+**The condition that should trigger building it:** unsupervised seats continuing to occur after the symlink fix lands. PR #107 and that fix attack the cause; if they hold, the state adoption serves becomes rare, and building discovery heuristics plus two-pane management for it would be machinery aimed at a shrinking target. If seats keep losing their supervisors anyway, the cause is not what we think and adoption earns its cost.
+
 ## The harness's `--agent` mechanism, and what adopting it would cost (2026-08-08)
 
 Moved here from the issue body 2026-08-13, when that body was condensed to the summary the routing doctrine asks of it. No decision was taken; the roster design owns it.
