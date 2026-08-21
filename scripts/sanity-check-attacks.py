@@ -12,11 +12,12 @@ fresh context:
   statement alone. The agent is instructed not to read the existing design,
   its implementation, or its records, but may research the best approach
   independently — this repository, the internet, reputable repositories on
-  GitHub. Isolation is instructed, not enforced, and checked two ways: the
-  agent's report lists everything it consulted and discloses anything
-  off-limits it strayed into, and the runner scans what the requester sends
-  (the problem statement, and the instruction files the CLIs inject on their
-  own) for the design's coined names, printing a LEAK-WARNING per hit. The
+  GitHub. Isolation is instructed, not enforced, and checked, best-effort, two ways:
+  the agent's report lists everything it consulted and discloses anything
+  off-limits it strayed into (self-reported), and the runner scans what the
+  requester sends — the problem statement, and the instruction files the
+  CLIs inject on their own (conventional paths, not a proven enumeration) —
+  for the design's coined names, printing a LEAK-WARNING per hit. The
   agent returns a five-section report — sketch, hard parts, late
   discoveries, assumptions, what it consulted — and triage compares the
   original and the fresh design on their merits: differences become
@@ -25,7 +26,8 @@ fresh context:
 
 Prompts: `docs/agents/sanity-checker-<check>-attack-prompt.md`. Each file is
 split at its `<!-- SANITY-CHECK-PROMPT-BODY -->` line: above it a header for
-maintainers that no review agent ever sees, below it the prompt itself. The
+maintainers that the runner never sends to a review agent, below it the
+prompt itself. The
 runner refuses to start unless every prompt it will use carries exactly one
 such line with `## Your assignment` directly below it, so a broken boundary
 fails before any model cost is spent.
@@ -36,22 +38,22 @@ Operating rules:
   gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each check
   therefore runs as two review agents, one per runtime, named
   `<check>-<runtime>` in this runner's output.
-- The check runs only when a person or agent deliberately decides to run it:
-  never automatically, and a revision of an already-checked document earns no
-  automatic re-check. Run it after md-review has passed, not before. It
+- Run it only by deliberate decision — never wire it into automation. A
+  revision of an already-checked document earns no automatic re-check. Run it after md-review has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
   plans — never records (documents that only report what happened).
   "md-review passed" is the natural moment to ask
-  whether a document deserves its check; a PR carrying a never-checked
-  actionable MD may have a check suggested — a note, never a gate.
+  whether a document deserves its check; a PR carrying an actionable MD with
+  no sign of a past check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
   settles hedged claims about code by reading the code, merges the runtimes' reports, and
   walks the survivors with the user (walk-me-through). Findings are design
   changes; none is applied without his ruling.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
-  -3, ... when that name is taken, so a same-day second pass never overwrites
+  -3, ... claimed by creation, so a same-day second pass never overwrites
   earlier reports) — machine-local working material, gitignored, deleted when
-  the work it served lands; git history is the archive.
+  the work it served lands. What survives is what landed — the reports
+  themselves are archived nowhere.
 
 Usage:
 
@@ -92,14 +94,15 @@ Running a check, and reading its output:
   carry web tools and no write tools; codex agents run workspace-write with
   network on, writes forbidden by prompt — a codex agent that modifies the
   worktree is reported as `WARNING: <check>-<runtime> modified the worktree:
-  <paths>`. While the agents run, make no changes in this worktree yourself —
+  <paths>` — with two codex agents running, the writer may be either; the
+  warning names the agent whose check saw it. While the agents run, make no changes in this worktree yourself —
   the write detector cannot tell your edits from a review agent's; work
   elsewhere until the run
   completes.
 - Each saved report opens with a provenance line: runtime, model, effort,
   check, target, and the commit and worktree state at review time, so quotes
-  can be verified against the text the agent actually read even after the
-  document moves.
+  can be checked against the commit the agent read — exact when the worktree
+  was clean; `dirty(N)` warns that N files differed from it.
 """
 
 import argparse
