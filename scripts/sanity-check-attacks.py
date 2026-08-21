@@ -35,12 +35,11 @@ Operating rules:
   reasoning effort.
 - The check runs only when a person or agent deliberately decides to run it:
   never automatically, and a revision of an already-checked document earns no
-  automatic re-check. It runs after md-review, so its findings go to the
-  design rather than to prose md-review fixes more cheaply, and only on
-  actionable (work-directing) MDs — designs, specs, skills, plans; never
-  records. "md-review passed" is the natural moment to ask whether a document
-  deserves its check; a PR carrying a never-checked actionable MD may have a
-  check suggested — a note, never a gate.
+  automatic re-check. Run it after md-review has passed, not before. It
+  applies only to actionable (work-directing) MDs — designs, specs, skills,
+  plans — never records. "md-review passed" is the natural moment to ask
+  whether a document deserves its check; a PR carrying a never-checked
+  actionable MD may have a check suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
   resolves code hedges by targeted reads, merges the runtimes' reports, and
   walks the survivors with the user (walk-me-through). Findings are design
