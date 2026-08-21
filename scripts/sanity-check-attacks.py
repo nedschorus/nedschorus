@@ -57,9 +57,10 @@ Operating rules:
   with a stated reason.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
-  earlier reports) — machine-local working material, gitignored, deleted when
-  the work it served lands. What survives is what landed — the reports
-  themselves are archived nowhere.
+  earlier reports) — machine-local working material, gitignored; the
+  requesting agent deletes the directory when the work it served lands, or
+  when nothing further will use it. What survives is what landed — the
+  reports themselves are archived nowhere.
 
 Usage:
 
@@ -601,7 +602,8 @@ def main() -> int:
         "reading the code, merge the "
         "runtimes), then present the surviving findings to the user one at a "
         "time for his ruling (the walk-me-through skill). "
-        "Delete the record directory when the work it served lands.",
+        "Delete the record directory when the work it served lands, "
+        "or when nothing further will use it.",
         flush=True,
     )
     return 0 if ok else 1
