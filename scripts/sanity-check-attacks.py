@@ -1,95 +1,97 @@
 #!/usr/bin/env python3
-"""Run a sanity-check: three stance attacks x two runtimes over one document.
+"""Run a sanity-check: independent review checks, each on both runtimes, over one document.
 
 The sanity-check is this project's second review instrument, separate from
-md-review and never one of its grid cells (user-ruled 2026-08-17, on the
-attack-split validation experiment's scorecard; experiment records at
-`git show db917b5:md-review-records/2026-08-12-attack-split-experiment/`).
-Operating rules, all user-ruled:
+md-review and never one of its grid cells. Three checks, each in its own
+fresh context:
 
-- Three attacks, each in its own fresh context: **cut** (what should be
-  deleted), **mechanization** (what English instruction should become code),
-  **fresh-eyes** (an independent design built from the problem statement —
-  the cell is instructed never to read the design, its implementation, or
-  its records, and may otherwise read the repository and the internet; the
-  leak scan below is the check; triage compares the two designs on their
-  merits — differences become questions, absent worries become findings, the
-  stronger parts of either feed a best-of-both proposal, every adoption
-  walked to the user). Prompts: `docs/agents/sanity-checker-<attack>-attack-prompt.md`.
-- Each prompt file is split at its `<!-- SANITY-CHECK-PROMPT-BODY -->`
-  line: above it a header for maintainers that no cell ever sees, below it the
-  prompt itself. The runner refuses to start unless every prompt it will use
-  carries exactly one such line with `## Your assignment` directly below it, so
-  a broken boundary fails before any model cost is spent. The boundary was the
-  first `---` line until 2026-08-19; `---` is ordinary markdown, so a
-  horizontal rule added to a header — or written inside a code fence — silently
-  moved the split and shipped header text to the cells in place of their
-  instructions (user-ruled 2026-08-19, on the first live check).
-- Both runtimes on every attack: claude-fable-5 and gpt-5.6-sol, at xhigh.
-  (Tier probe 2026-08-17: max found no missed ground-truth cut on either
-  runtime and covered less on codex — xhigh stands.)
-- Manual call, after md-review (the check reads the post-review text, so its
-  findings go to the design, not to prose md-review fixes more cheaply), on
-  actionable (work-directing) MDs only — designs, specs, skills, plans; never
-  on records. "md-review passed" is the natural moment to ask whether a
-  document deserves its check.
-- Never automatic, never repeated on revisions: a re-check is a deliberate
-  call. At most, a PR carrying an actionable MD that has never been
-  sanity-checked may have a check suggested — a note, never a gate; a
-  one-line walked edit to a never-checked file is not taxed with a full
-  review.
-- The requesting agent triages: follows up the quote-scan warnings (a
-  flagged quote may still live in git history or on the web — or nowhere),
+- **cut** — what here should be deleted.
+- **mechanization** — what English instruction here should become code.
+- **fresh-eyes** — an independent, competitive design built from a problem
+  statement alone. The agent is instructed not to read the existing design,
+  its implementation, or its records, but may research the best approach
+  independently — this repository, the internet, reputable repositories on
+  GitHub. Isolation is instructed, not enforced, and checked two ways: the
+  agent's report lists everything it consulted and discloses anything
+  off-limits it strayed into, and the runner scans what the requester sends
+  (the problem statement, and the instruction files the CLIs inject on their
+  own) for the design's coined names, printing a LEAK-WARNING per hit. The
+  agent returns a five-section report — sketch, hard parts, late
+  discoveries, assumptions, what it consulted — and triage compares the
+  original and the fresh design on their merits: differences become
+  questions, absent worries become findings, the stronger parts of either
+  feed a best-of-both proposal, and every adoption is walked to the user.
+
+Prompts: `docs/agents/sanity-checker-<check>-attack-prompt.md`. Each file is
+split at its `<!-- SANITY-CHECK-PROMPT-BODY -->` line: above it a header for
+maintainers that no review agent ever sees, below it the prompt itself. The
+runner refuses to start unless every prompt it will use carries exactly one
+such line with `## Your assignment` directly below it, so a broken boundary
+fails before any model cost is spent.
+
+Operating rules:
+
+- Both runtimes on every check — claude-fable-5 and gpt-5.6-sol, at xhigh
+  reasoning effort.
+- The check runs only when a person or agent deliberately decides to run it:
+  never automatically, and a revision of an already-checked document earns no
+  automatic re-check. It runs after md-review, so its findings go to the
+  design rather than to prose md-review fixes more cheaply, and only on
+  actionable (work-directing) MDs — designs, specs, skills, plans; never
+  records. "md-review passed" is the natural moment to ask whether a document
+  deserves its check; a PR carrying a never-checked actionable MD may have a
+  check suggested — a note, never a gate.
+- The requesting agent triages: follows up the warnings described below,
   resolves code hedges by targeted reads, merges the runtimes' reports, and
-  walks the survivors with the user (walk-me-through). Findings are design changes; none is applied
-  without his ruling.
+  walks the survivors with the user (walk-me-through). Findings are design
+  changes; none is applied without his ruling.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
-  -3, ... when reports already sit there, so a same-day second pass or re-run
-  never overwrites earlier reports) — machine-local working material,
-  gitignored, deleted when the work it served lands; git history is the
-  archive.
+  -3, ... when that name is taken, so a same-day second pass never overwrites
+  earlier reports) — machine-local working material, gitignored, deleted when
+  the work it served lands; git history is the archive.
 
 Usage:
 
   scripts/sanity-check-attacks.py --target <path> [--context <path> ...] \
       [--problem-statement <path>] [--attack <name> ...] [--print <surface>]
 
-`--print` writes a review surface to stdout instead of running cells:
-`cut`, `mechanization`, or `fresh-eyes` prints that attack's assembled cell
-prompt (body plus the review request built from the other arguments) — the
-exact text a cell receives, which is the reviewable form of the cell-facing
-surface; `requester` prints the requesting agent's manual — this docstring
-followed by the fresh-eyes requester section — and needs no other arguments.
-
 `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
 second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
 failed cell pair reruns without repeating the others.
 
-Run it as a background task and arm a Monitor on its output: it prints one
-line per cell — `saved: <path>` or `FAILED: <cell> exit <code>` — as each
-finishes. Cut and mechanization reports also get a quote scan: every quoted
-span of four or more words is searched for across the tracked files, and a
-span found in none prints `WARNING: <cell> quote found in no tracked file:
-...` — information for triage, never a gate (a quote may legitimately come
-from git history or the web). Without `--problem-statement` the fresh-eyes cells print
-`SKIPPED: <cell> (no --problem-statement)` — loudly, never silently — since
-that attack works from the problem statement alone. A fresh-eyes run also
-prints `LEAK-WARNING: ...` lines — the design's coined names found in the
-problem statement or in instruction files the cell CLIs inject on their own:
-a check on what the requester sends, which the cell cannot check for itself,
-since it does not know the design's vocabulary. The cell's own report is not
-scanned — isolation is the cell's job, explained in its prompt, and its
-disclosures are the check (user-ruled 2026-08-19; the scan itself ruled
-2026-08-17). Information for triage, never a gate. Expect hits on every run:
-the off-limits list must name the design's paths to forbid them, and those
-paths are coined names. Every cell may reach the internet to check facts (user-ruled
-2026-08-18): claude cells carry web tools and no write tools; codex cells run
-workspace-write with network on, writes forbidden by prompt — a codex cell
-that modifies the worktree is reported as `WARNING: <cell> modified the
-worktree: <paths>`. While the cells run, make no changes in this worktree
-yourself — the write detector cannot tell your edits from a cell's, and one
-stray edit turns its report into noise; work elsewhere until the run
-completes. Exit 0 when every launched cell saved, 1 otherwise.
+`--print` writes a review surface to stdout instead of running: `cut`,
+`mechanization`, or `fresh-eyes` prints that check's assembled prompt (body
+plus the review request built from the other arguments) — the exact text a
+review agent receives; `requester` prints the requesting agent's manual —
+this docstring followed by the fresh-eyes requester section — and needs no
+other arguments.
+
+Running a check, and reading its output:
+
+- Run it as a background task and arm a Monitor on its output; it prints one
+  line per cell as each finishes — `saved: <path>` or `FAILED: <cell> exit
+  <code>`. Exit 0 when every launched cell saved, 1 otherwise.
+- Without `--problem-statement` the fresh-eyes cells print `SKIPPED`, loudly,
+  never silently — that check works from the problem statement alone.
+- Cut and mechanization reports get a quote scan: every quoted span of four
+  or more words is searched for across the tracked files, and a span found in
+  none prints `WARNING: <cell> quote found in no tracked file: ...` — triage
+  information, never a gate; a quote may legitimately come from git history
+  or the web.
+- Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
+  described above. Expect hits on every run: the off-limits list must name
+  the design's paths to forbid them, and those paths are coined names.
+- Every cell may reach the internet to check facts: claude cells carry web
+  tools and no write tools; codex cells run workspace-write with network on,
+  writes forbidden by prompt — a codex cell that modifies the worktree is
+  reported as `WARNING: <cell> modified the worktree: <paths>`. While the
+  cells run, make no changes in this worktree yourself — the write detector
+  cannot tell your edits from a cell's; work elsewhere until the run
+  completes.
+- Each saved report opens with a provenance line: runtime, model, effort,
+  check, target, and the commit and worktree state at review time, so quotes
+  can be verified against the text the agent actually read even after the
+  document moves.
 """
 
 import argparse
