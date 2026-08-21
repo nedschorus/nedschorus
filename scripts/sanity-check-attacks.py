@@ -8,8 +8,9 @@ fresh context:
 
 - **cut** — what here should be deleted.
 - **mechanization** — what English instruction here should become code.
-- **fresh-eyes** — an independent, competitive design built from a problem
-  statement alone. The agent is instructed not to read the existing design,
+- **fresh-eyes** — an independent, competitive design built from the review
+  request alone — a problem statement plus reading lists — never from the
+  design. The agent is instructed not to read the existing design,
   its implementation, or its records, but may research the best approach
   independently — this repository, the internet, reputable repositories on
   GitHub. Isolation is instructed, not enforced, and checked, best-effort, two ways:
