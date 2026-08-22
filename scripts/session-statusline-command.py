@@ -17,7 +17,7 @@ failing.
 
 The visible line, left to right (user-walked 2026-08-08):
 
-  ned-box:choirmaster (choirmaster) │ Opus 5 · high │ 46% 2h 77% 3d 89%
+  ned-box:choirmaster (choirmaster)  Opus 5 · high  46% 2h 77% 3d 89%
 
   host         green — which machine this session runs on. The user drives
                from a Mac over SSH while the agents run here, so the box name
@@ -69,7 +69,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-SEPARATOR = " │ "
+# Two plain spaces between segments (user-ruled: the │ dividers go — they
+# spent width the narrow panes need, and color already separates segments).
+SEPARATOR = "  "
 
 RESET = "\033[00m"
 GREEN_BOLD = "\033[01;32m"
@@ -163,6 +165,37 @@ def git_branch(working_directory: str) -> str:
     return head[:8]
 
 
+def freshness_suffix(working_directory: str) -> str:
+    """⇣N when this checkout is behind origin/main, per the freshness stamp.
+
+    The stamp is written by scripts/checkout-freshness-catch-up.py (the Stop
+    hook) into the checkout's git directory; this function only displays it —
+    the status line never fetches anything itself (user-ruled 2026-08-17).
+    Silent when there is no stamp (the hook has not run here) or when the
+    checkout is current; a trailing ? marks a stamp whose last fetch failed,
+    so a behind-count is never mistaken for fresh knowledge.
+    """
+    if not working_directory:
+        return ""
+    head_file = git_head_file(Path(working_directory))
+    if head_file is None:
+        return ""
+    try:
+        stamp = json.loads((head_file.parent / "checkout-freshness-stamp.json")
+                           .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    behind = stamp.get("behind")
+    doubt = not stamp.get("fetch_ok", True)
+    if isinstance(behind, int) and behind > 0:
+        return f"⇣{behind}{'?' if doubt else ''}"
+    if doubt:
+        # The last fetch failed, so "current" is a claim off stale refs —
+        # show the doubt rather than nothing (silent-safety rule).
+        return "⇣?"
+    return ""
+
+
 def location_segment(working_directory: str) -> str:
     """host:directory (branch) — where this session is, on which machine."""
     host = os.uname().nodename.split(".")[0]
@@ -176,6 +209,9 @@ def location_segment(working_directory: str) -> str:
     branch = git_branch(working_directory)
     if branch:
         pieces.append(f" ({branch})")
+    freshness = freshness_suffix(working_directory)
+    if freshness:
+        pieces.append(" " + colored(freshness, RED_BOLD))
     return "".join(pieces)
 
 

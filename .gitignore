@@ -1,4 +1,12 @@
+# comms-bridge logs: the two-log coordination channel between the legacy
+# system's agent and this fleet (docs/cross-project/comms-bridge-spec.md).
+# Coordination traffic is working material — anything durable in a log is
+# promoted to a committed file, and the spec rules the active logs stay out
+# of git regardless.
 bridge/*.log.md
+
+# macOS Finder directory metadata: created by the operating system in any
+# directory a user browses, belongs to nobody's work
 .DS_Store
 
 # Obsidian per-vault state (UI panes, workspace, plugin caches) — quarry-proven pattern
@@ -13,7 +21,13 @@ CLAUDE.local.md
 # instruction-file-guard override marker: consumed per approved change (.claude/hooks/instruction-file-guard.py)
 .walk-approved
 
-# backup-write-guard override marker: same consumed-per-change contract (.claude/hooks/backup-and-snapshot-write-guard.py)
+# session-location-write-guard override marker: same consumed-per-write contract
+# (.claude/hooks/session-location-write-guard.py)
+.location-write-approved
+
+# backup-write-guard override marker, LEGACY: the lane was removed 2026-08-17 —
+# backups are never agent-writable — but a stale marker from before the removal
+# must still never be committed (.claude/hooks/backup-and-snapshot-write-guard.py)
 .backup-write-approved
 
 # Python bytecode caches: the test scripts import modules by path, which

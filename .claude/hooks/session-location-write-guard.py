@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""Block file writes from a session seated in the wrong place
+(user-walked 2026-08-17, git-infra rules walk).
+
+Wired as a PreToolUse hook on Edit, Write, and NotebookEdit, third alongside
+instruction-file-guard.py and backup-and-snapshot-write-guard.py. Two session
+states make a file write into the checkout a mistake regardless of the file:
+
+* **Detached HEAD** — the checkout is parked on a raw commit, on no branch.
+  A commit made here is mechanically fine and practically lost: no branch
+  name points at it, nothing will push it, and the work evaporates with the
+  worktree. The session is told to get onto a branch first.
+
+* **The reference checkout** — the machine's primary working copy, the main
+  worktree of the repository, which every other agent reads as "what main
+  looks like". Working in it corrupts the readers, not just the bench:
+  observed 2026-08-14, twelve documents edited and 235 deletions staged
+  there by a session seated elsewhere's task. Recognized structurally: in
+  the main worktree, and only there, `git rev-parse --absolute-git-dir`
+  equals `--git-common-dir`.
+
+Scope, two questions about one write. Where the session SITS: the two states
+above block writes into the session's own tree; the scratchpad, /tmp, and
+other trees stay writable from any state. And where the write LANDS
+(user-walked 2026-08-17): a write whose target sits inside the reference
+checkout while the session is seated elsewhere is refused — every recorded
+cross-checkout incident (the twelve-document bench of 2026-08-14, the
+misplaced review records, the misplaced walk ledger) targeted exactly that
+copy. Deliberately narrow: writes into scratch worktrees, throwaway clones,
+and other seats' trees are NOT blocked — the first two are ordinary work,
+and the third has no recorded incident (recorded as unbuilt; an incident is
+its build trigger).
+
+The exception lane, designed in from the start: the merge lane legitimately
+edits files in the reference checkout while resolving merge conflicts. The
+user's approval for that specific work, quoted into .location-write-approved
+at the root of the session's checkout, passes exactly one write per marker —
+the same consumed-marker contract as the sibling guards, with its own marker
+file so an instruction-file approval and a location approval can never
+consume each other.
+
+Like its siblings, this is a tool-call block and cannot see a write made
+through a shell command; the rule binds either way. Session location is
+resolved from the hook payload's cwd, never from $CLAUDE_PROJECT_DIR, which
+lies in forked sessions (rider 6; fixed for all guards 2026-08-17).
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+# The marker lane lives in a sibling module so both guards share one copy of
+# the contract (extracted 2026-08-19). Resolving this file's own directory
+# explicitly rather than relying on sys.path[0]: this project has been bitten
+# repeatedly by code that assumed the wrong base directory, and a guard that
+# fails to import is a guard that does not run.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guard_approval_marker import consume_approval_marker  # noqa: E402
+
+APPROVAL_MARKER_NAME = ".location-write-approved"
+
+# run_git reports a git that never ran with a code git itself cannot return,
+# so "no answer" is never mistaken for an answer.
+GIT_DID_NOT_RUN = -1
+
+# The exit codes each HEAD question is allowed to answer with, measured
+# 2026-08-19 on both fleet machines. Anything else means the question was not
+# answered, whatever the reason.
+SYMBOLIC_REF_ON_A_BRANCH = 0
+SYMBOLIC_REF_NOT_A_BRANCH = 128     # detached HEAD, or no repository
+HEAD_COMMIT_EXISTS = 0
+HEAD_COMMIT_ABSENT = (1, 128)       # unborn repository, or no repository
+
+DETACHED_DENY_MESSAGE = (
+    "Refusing to write {path}: this session's checkout is on a detached HEAD — no branch "
+    "points at its commits, so anything committed here is unreachable by name and will be "
+    "lost with the worktree. Get onto a branch first (git switch -c <a-branch-name>), or "
+    "move to your own seat worktree, then resubmit. If the user has approved writing from "
+    "this exact state, quote his approval words into {marker} at the checkout root and "
+    "resubmit — the marker is consumed by the one call it approves. Create the marker with a "
+    "shell command (printf/echo): writing it with the Write tool would be refused by this "
+    "same guard."
+)
+
+UNBORN_DENY_MESSAGE = (
+    "Refusing to write {path}: this session's checkout is a repository with no commits yet. "
+    "HEAD names the branch {branch}, but that branch does not exist until something is "
+    "committed, so this is not the seat you were meant to be working in — most often it is a "
+    "stray `git init` directory. Check you are in the right checkout. If this really is where "
+    "the work belongs, make the first commit (git commit --allow-empty -m 'initial') and "
+    "resubmit. If the user has approved writing from this exact state, quote his approval "
+    "words into {marker} at the checkout root and resubmit — create it with a shell command "
+    "(printf/echo), because writing it with the Write tool would be refused by this same "
+    "guard."
+)
+
+REFERENCE_DENY_MESSAGE = (
+    "Refusing to write {path}: this session sits in the machine's reference checkout — the "
+    "main worktree other agents read as the truth about main. Work belongs in your own "
+    "worktree; use it and leave this copy as reference. If this write IS legitimate work "
+    "in this checkout — the merge lane resolving conflicts, with the user's approval — "
+    "quote his approval words into {marker} at the checkout root and resubmit; the marker "
+    "is consumed by the one call it approves. Create the marker with a shell command "
+    "(printf/echo): writing it with the Write tool would be refused by this same guard."
+)
+
+CROSS_REFERENCE_DENY_MESSAGE = (
+    "Refusing to write {path}: it lands inside the machine's reference checkout — the main "
+    "worktree other agents read as the truth about main — while this session is seated "
+    "elsewhere. Work belongs in your own worktree; if this write must land there, land it "
+    "through a branch and the merge lane instead. If it IS legitimate direct work — the "
+    "merge lane resolving conflicts, with the user's approval — quote his approval words "
+    "into {marker} at the root of your own checkout and resubmit; the marker is consumed "
+    "by the one call it approves."
+)
+
+
+def run_git(arguments, working_directory: Path):
+    try:
+        return subprocess.run(
+            ["git", *arguments], cwd=str(working_directory),
+            capture_output=True, text=True, check=False, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        # NOT 1: git itself uses 1 as a real answer (rev-parse --verify --quiet
+        # exits 1 for "HEAD does not exist", which is how an unborn repository
+        # is recognised). Synthesizing 1 here would make "git could not run"
+        # indistinguishable from that answer, and a caller would read a
+        # repository state out of a launch failure.
+        return subprocess.CompletedProcess(arguments, GIT_DID_NOT_RUN, "",
+                                           f"{type(error).__name__}: {error}")
+
+
+def checkout_root_of(directory: Path):
+    result = run_git(["rev-parse", "--show-toplevel"], directory)
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip())
+
+
+def head_state_of(checkout: Path):
+    """(state, branch-name-or-None) for a checkout's HEAD.
+
+    state is one of:
+      "branch"   — HEAD names a branch that has at least one commit.
+      "unborn"   — HEAD names a branch that does not exist yet: a repository
+                   created by `git init` with nothing committed.
+      "detached" — HEAD points straight at a commit, on no branch.
+      "unknown"  — neither question could be answered.
+
+    The reading this replaced was `rev-parse --abbrev-ref HEAD`, taking any
+    output of "HEAD" or "" as detached while ignoring the exit status, which
+    got two states wrong (PR #88's review). In an unborn repository that
+    command exits 128 AND prints "HEAD", so a fresh `git init` was reported as
+    detached. And because the exit status was ignored, ANY failure of that one
+    command — a git that could not run, a timeout — also read as detached, so a
+    healthy seat could be refused and told to fix a state it was not in.
+
+    Measured exit codes this depends on (2026-08-19, git 2.x, both fleet
+    machines):
+
+        state        symbolic-ref   rev-parse --verify --quiet HEAD
+        on branch              0                                  0
+        unborn                 0                                  1
+        detached             128                                  0
+        not a repo           128                                128
+
+    Only those codes count as answers. A command that failed to run, timed
+    out, or returned anything else has told us nothing, and both blocking
+    verdicts require both questions answered — otherwise the state is
+    "unknown", which does not block. The first version of this function got
+    that wrong in the same class it was written to fix: a one-sided failure
+    read as "detached" when symbolic-ref failed, and as "unborn" when verify
+    failed (found on PR #103's review). Note that run_git cannot report a
+    launch failure as 1, because git uses 1 as a real answer here.
+    """
+    symbolic = run_git(["symbolic-ref", "--short", "HEAD"], checkout)
+    verify = run_git(["rev-parse", "--verify", "--quiet", "HEAD"], checkout)
+
+    # Both blocking verdicts need BOTH questions actually answered. A command
+    # that failed to run, timed out, or returned a code it has no business
+    # returning has told us nothing, and a state read out of that is a guess.
+    if symbolic.returncode not in (SYMBOLIC_REF_ON_A_BRANCH, SYMBOLIC_REF_NOT_A_BRANCH):
+        return "unknown", None
+    if verify.returncode != HEAD_COMMIT_EXISTS and verify.returncode not in HEAD_COMMIT_ABSENT:
+        return "unknown", None
+
+    head_exists = verify.returncode == HEAD_COMMIT_EXISTS
+    if symbolic.returncode == SYMBOLIC_REF_ON_A_BRANCH:
+        return ("branch" if head_exists else "unborn"), (symbolic.stdout.strip() or None)
+    # symbolic-ref answered "not a branch". With a commit that is a detached
+    # HEAD; without one there is no repository here to judge.
+    return ("detached" if head_exists else "unknown"), None
+
+
+def checkout_owning_git_directory(path: Path):
+    """The checkout whose .git directory contains this path, or None.
+
+    git refuses to answer `rev-parse --show-toplevel` from inside a .git
+    directory — "this operation must be run in a work tree" — so a write
+    targeting the reference checkout's .git resolved to no owning checkout at
+    all and passed every check, while an ordinary file write one level up was
+    refused (PR #91's review). .git/hooks/ holds executable code that git runs
+    during ordinary commands, which makes it a stronger target than the working
+    tree beside it, not a weaker one.
+    """
+    for candidate in (path, *path.parents):
+        if candidate.name == ".git" and candidate.parent != candidate:
+            return candidate.parent
+    return None
+
+
+def is_reference_checkout(checkout: Path) -> bool:
+    """True only for the machine's reference copy: a main worktree that
+    carries linked worktrees.
+
+    Being the main worktree alone is not enough — a standalone scratch clone
+    is technically its own main worktree, and treating it as "the reference"
+    would block ordinary work in throwaway clones (verdict pinned 2026-08-17,
+    resolving the #88 review's standalone-clone finding: a lone clone is its
+    own workspace). The reference copy is the one other agents hang their
+    seats off, and that is visible structurally: its .git/worktrees/ is
+    non-empty.
+
+    git prints --git-common-dir RELATIVE to the checkout when asked from the
+    main worktree (a bare `.git`), so both paths are joined against the
+    checkout before comparing — resolving against this process's own cwd
+    would be the wrong-base class of bug this project keeps finding.
+    """
+    git_dir = run_git(["rev-parse", "--absolute-git-dir"], checkout).stdout.strip()
+    common_dir = run_git(["rev-parse", "--git-common-dir"], checkout).stdout.strip()
+    if not git_dir or not common_dir:
+        return False
+    try:
+        common = Path(common_dir)
+        if not common.is_absolute():
+            common = checkout / common
+        common = common.resolve()
+        if Path(git_dir).resolve() != common:
+            return False
+        linked = common / "worktrees"
+        return linked.is_dir() and any(linked.iterdir())
+    except OSError:
+        return False
+
+
+def nearest_existing_ancestor(path: Path):
+    """The first existing directory at or above the target, for judging a
+    write that creates its own directories."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return None
+    for candidate in (resolved.parent, *resolved.parent.parents):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def target_inside(checkout: Path, file_path: str) -> bool:
+    try:
+        Path(file_path).resolve().relative_to(checkout.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def main() -> int:
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        return 0
+    tool_input = payload.get("tool_input") or {}
+    # NotebookEdit carries notebook_path where the others carry file_path.
+    file_path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    if not file_path:
+        return 0
+
+    session_cwd = Path(payload.get("cwd") or os.getcwd())
+    # A relative target is relative to the SESSION's directory, not to wherever
+    # this hook process happens to be running. PR #88's review listed relative
+    # paths as an untested gap; leaving them to Path.resolve() would judge them
+    # against the hook's own working directory, which is the wrong-base class of
+    # bug this project keeps finding.
+    if not Path(file_path).is_absolute():
+        file_path = str(session_cwd / file_path)
+    checkout = checkout_root_of(session_cwd)
+
+    if checkout is not None and target_inside(checkout, file_path):
+        # The seated questions: writes into the session's own tree.
+        head_state, branch_name = head_state_of(checkout)
+        message_fields = {}
+        if head_state == "detached":
+            deny_message = DETACHED_DENY_MESSAGE
+        elif head_state == "unborn":
+            deny_message = UNBORN_DENY_MESSAGE
+            message_fields["branch"] = branch_name or "(unnamed)"
+        elif is_reference_checkout(checkout):
+            deny_message = REFERENCE_DENY_MESSAGE
+        else:
+            # "branch" is the healthy case. "unknown" means the repository root
+            # resolved but neither HEAD question could be answered, which is
+            # evidence of nothing: refusing here would stop a healthy seat on a
+            # transient git failure, which is exactly the false refusal PR #88's
+            # review found. The reference-checkout test above still applies, so
+            # only the detached rule goes unenforced in that window.
+            return 0
+        marker_root = checkout
+    else:
+        # The landing question: does this write cross into the reference?
+        anchor = nearest_existing_ancestor(Path(file_path))
+        target_root = checkout_root_of(anchor) if anchor is not None else None
+        if target_root is None and anchor is not None:
+            # A path inside a .git directory has no work tree to resolve from.
+            target_root = checkout_owning_git_directory(anchor)
+        if target_root is None or not is_reference_checkout(target_root):
+            return 0
+        if checkout is not None and checkout.resolve() == target_root.resolve():
+            return 0  # same tree; the seated branch above already judged it
+        deny_message = CROSS_REFERENCE_DENY_MESSAGE
+        message_fields = {}
+        # The marker belongs in the tree the SESSION owns; only a session
+        # with no checkout at all falls back to the target's root.
+        marker_root = checkout if checkout is not None else target_root
+
+    if consume_approval_marker(marker_root / APPROVAL_MARKER_NAME):
+        return 0
+    print(deny_message.format(path=file_path, marker=APPROVAL_MARKER_NAME,
+                              **message_fields), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

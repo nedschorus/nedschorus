@@ -105,6 +105,15 @@ ISSUE_NUMBER = re.compile(r"^[1-9][0-9]*$")
 # matching any of these classes, so the rule costs nothing today.
 UNSAFE_PATH_MARKER = "->"
 
+# The gate does not check in its own source (user-ruled 2026-08-17,
+# docs/issues/3-slice-6-review-evidence-not-built.md). The deployed copy updates
+# itself from main, so admitting a change to this file would let the gate install
+# its own replacement; and once checks run here, a gate reviewing a change to
+# itself would be reviewing the code performing the review. Both disappear if the
+# path simply never comes through this door: it reaches main by pull request,
+# reviewed before merge.
+GATEKEEPER_SOURCE_PATH = "scripts/git-gatekeeper.py"
+
 # The integration loop is bounded rather than open: refusing beats spinning.
 MAX_INTEGRATION_ROUNDS = 5
 
@@ -220,6 +229,34 @@ def screen_unsafe_path(path: str, position: str) -> None:
     )
 
 
+def screen_gatekeeper_source_path(path: str) -> None:
+    """Refuse a declared path that is the gate's own source (ruled 2026-08-17).
+
+    Not resubmittable: the same request refuses identically every time, which is
+    the point. The next action names the lane that does admit it.
+    """
+    # Case-folded, deliberately (merge-lane review of PR #92, 2026-08-18).
+    # A case-sensitive comparison let `scripts/Git-Gatekeeper.py` through every
+    # screen and land as a distinct file on main; on a case-insensitive checkout
+    # — every Mac clone — an ordinary pull then writes that file over
+    # `scripts/git-gatekeeper.py` on disk. That is exactly the self-replacement
+    # this refusal exists to prevent, defeated by one character. Over-refusing a
+    # differently-cased path costs nothing: there is one such file, and no
+    # legitimate check-in needs a case variant of it.
+    if Path(path).as_posix().casefold() != GATEKEEPER_SOURCE_PATH.casefold():
+        return
+    raise Refusal(
+        "gatekeeper-source-refused",
+        f"the declared path {GATEKEEPER_SOURCE_PATH!r} is this program's own source, "
+        "which the gatekeeper does not check in",
+        "Take this change through the pull-request lane instead: commit it on a "
+        "branch, push the branch, and open a pull request for review before merge. "
+        "Resubmitting this check-in unchanged refuses again; the refusal is by "
+        "design, not a defect. If the request also carries unrelated paths, "
+        "resubmit those as their own check-in.",
+    )
+
+
 def screen_paths(raw_paths: list[str]) -> list[str]:
     if not raw_paths:
         raise Refusal(
@@ -252,6 +289,7 @@ def screen_paths(raw_paths: list[str]) -> list[str]:
                 "malformed-field", f"the path {path!r} is declared twice",
                 "Resubmit with each path named exactly once.",
             )
+        screen_gatekeeper_source_path(path)
         seen.add(path)
     return sorted(seen)
 
@@ -951,6 +989,19 @@ def signal_worker(pid: int, signal_number: int) -> None:
     detached" flag would be exactly the data that goes stale, tears, or names a
     recycled process.
     """
+    # pid 1 is init, and pids 0 and below address process groups or — at -1 —
+    # every process this account may signal: killpg(pgrp) resolves to
+    # kill(-pgrp) in glibc and Apple libc alike (POSIX leaves pgrp <= 1
+    # undefined), so killpg(1) is kill(-1), the broadcast. On both Linux and
+    # macOS os.getpgid(1) succeeds and returns 1, so pid 1 sailed through the
+    # leads-own-group check below and the "cancel an unstoppable worker" test
+    # case broadcast SIGTERM to every process this account owned — the whole
+    # agent fleet, the tmux server, and the systemd user manager (ned-box,
+    # twice on 2026-08-17; nedschorus#62). A recorded worker can never be a
+    # pid below 2, so refuse them all here; the worker then still reads as
+    # alive and cancel walks its wait to cancel-failed, the truthful outcome.
+    if pid < 2:
+        return
     try:
         leads_own_group = os.getpgid(pid) == pid
     except (OSError, ProcessLookupError, PermissionError):

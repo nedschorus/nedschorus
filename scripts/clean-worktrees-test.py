@@ -6,9 +6,15 @@ classification — done, dirty, ignored-files-only, unlanded, occupied, and
 outside the managed area — then asserts the report names each correctly and
 that --remove reaps exactly the done one.
 
+The vacancy check's unusable-answer cases cannot be produced by a real lsof
+on a healthy machine, so they run the reaper with a stub lsof first on PATH.
+Those cases guard the reaper's central promise — ambiguity keeps, never
+reaps — which a worktree holding someone's uncommitted work depends on.
+
 Run: python3 scripts/clean-worktrees-test.py
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -42,6 +48,25 @@ def run_clean(repo, *flags):
     return subprocess.run(
         [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
         capture_output=True, text=True, check=False,
+    )
+
+
+def run_clean_with_stub_lsof(repo, stub_directory, stub_body):
+    """Run the reaper with a fake lsof first on PATH.
+
+    A real lsof exits 0 on both fleet machines even while printing warnings,
+    so the failure paths it is supposed to have — nonzero exit, empty
+    listing — have no natural trigger to test against. The stub supplies one.
+    """
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "lsof"
+    stub.write_text(stub_body, encoding="utf-8")
+    stub.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    return subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo)],
+        capture_output=True, text=True, check=False, env=environment,
     )
 
 
@@ -117,6 +142,8 @@ with tempfile.TemporaryDirectory() as scratch:
         if occupied_wt is not None:
             check("a live process keeps a worktree",
                   "occupied-wt: kept" in report and "live process" in report, report)
+        check("no dead-registration line while every directory exists",
+              "git worktree prune" not in report, report)
 
         # --- Anchoring: a copy run from inside a worktree sees the same repo -
         from_inside = run_clean(dirty_wt).stdout
@@ -131,6 +158,81 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--only-done stays silent about kept worktrees",
               "dirty-wt" not in only_done and "unlanded-wt" not in only_done,
               only_done)
+
+        # --- An untrustworthy vacancy answer keeps, and says so honestly ----
+        # Each case below reaps done-wt against the pre-fix implementation,
+        # which read lsof's stdout and never its exit status: no path matched,
+        # so it reported vacant and --remove would have deleted the worktree.
+        stub_home = scratch / "stub-lsof"
+
+        failed_lsof = run_clean_with_stub_lsof(
+            checkout, stub_home / "nonzero", "#!/bin/sh\nexit 1\n").stdout
+        check("an lsof that exits nonzero keeps the worktree",
+              "done-wt: kept" in failed_lsof, failed_lsof)
+        check("a failed vacancy check is reported as untrusted, not as occupancy",
+              "done-wt: kept" in failed_lsof
+              and "vacancy" in failed_lsof
+              and "live process is rooted inside it" not in failed_lsof,
+              failed_lsof)
+
+        empty_lsof = run_clean_with_stub_lsof(
+            checkout, stub_home / "empty", "#!/bin/sh\nexit 0\n").stdout
+        check("an lsof reporting no working directories at all keeps the worktree",
+              "done-wt: kept" in empty_lsof and "no working directories" in empty_lsof,
+              empty_lsof)
+
+        # The converse, so failing closed does not become ignoring the answer:
+        # a listing that names the worktree is occupancy even if lsof exited
+        # nonzero, which is the everyday partial-permissions case.
+        matching_lsof = run_clean_with_stub_lsof(
+            checkout, stub_home / "match",
+            f"#!/bin/sh\necho 'n{done_wt.resolve()}'\nexit 1\n").stdout
+        check("a path match counts as occupancy even when lsof exits nonzero",
+              "done-wt: kept" in matching_lsof
+              and "live process is rooted inside it" in matching_lsof,
+              matching_lsof)
+
+        # --- Dead registrations are named, with the prune command ------------
+        # A worktree registered under a temp directory leaves a dead entry
+        # when the temp area clears (R25, ruled 2026-08-18). Simulate the
+        # clearing: delete the directory behind git's back, so the
+        # registration outlives it.
+        dead_wt = add_worktree("dead-registration-wt", where=scratch)
+        shutil.rmtree(dead_wt)
+        dead_report = run_clean(checkout).stdout
+        dead_line = next((line for line in dead_report.splitlines()
+                          if "git worktree prune" in line), "")
+        check("a dead registration is named with the prune command",
+              "dead-registration-wt" in dead_line, dead_report)
+        # dead_line must be non-empty here, or this check would pass against
+        # an empty haystack — asserting absence in a line that never printed.
+        check("living worktrees are not named on the dead-registration line",
+              dead_line != "" and "done-wt" not in dead_line
+              and "dirty-wt" not in dead_line, dead_report)
+        check("the dead-registration line carries git's own reason",
+              "gitdir file points to non-existent location" in dead_line, dead_line)
+        dead_only_done = run_clean(checkout, "--only-done").stdout
+        check("--only-done carries the dead-registration line (the launchers' boot mode)",
+              "dead-registration-wt" in dead_only_done
+              and "git worktree prune" in dead_only_done, dead_only_done)
+
+        # A prunable registration whose directory still EXISTS: only its inner
+        # .git file is gone. git calls this prunable too, so the report must
+        # name it — and must not claim the directory is gone, a condition it
+        # never checked. Pruning here discards the registration for a
+        # directory still holding uncommitted work, which is why the reason
+        # the human reads has to be git's own.
+        surviving_wt = add_worktree("dotgit-deleted-wt", where=scratch)
+        (surviving_wt / "recoverable-file.txt").write_text("work\n", encoding="utf-8")
+        (surviving_wt / ".git").unlink()
+        surviving_report = run_clean(checkout).stdout
+        surviving_line = next((line for line in surviving_report.splitlines()
+                               if "git worktree prune" in line), "")
+        check("a prunable registration whose directory survives is named too",
+              "dotgit-deleted-wt" in surviving_line, surviving_report)
+        check("the line claims git's judgment, never that the directory is gone",
+              surviving_line != "" and "directory gone" not in surviving_line
+              and surviving_wt.exists(), surviving_line)
 
         # --- --remove reaps exactly the done worktree ------------------------
         removal = run_clean(checkout, "--remove")
@@ -147,6 +249,12 @@ with tempfile.TemporaryDirectory() as scratch:
               removal.stdout)
         check("--remove exits 0 when nothing failed", removal.returncode == 0,
               str(removal.returncode))
+        check("--remove reports the dead registration too",
+              "dead-registration-wt" in removal.stdout
+              and "git worktree prune" in removal.stdout, removal.stdout)
+        still_listed = git(checkout, "worktree", "list", "--porcelain")
+        check("the dead registration survives --remove — the prune stays deliberate",
+              "dead-registration-wt" in still_listed, still_listed)
     finally:
         if occupant is not None:
             occupant.kill()
