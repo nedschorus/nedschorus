@@ -152,29 +152,44 @@ esac
 # P2-3 (PR #122 review): the socket-selection string contains `;`, which
 # un-grouped would END the && list on the box — a failed prepare would no
 # longer abort, and tmux would launch with an empty -L socket name. The
-# brace group keeps it one && operand; prove it by RUNNING the box command
-# with the prepare forced to fail: nothing after it may execute.
+# brace group keeps it one && operand. Proven by EXECUTION, not sed surgery
+# (the first probe here was vacuous — a greedy sed left a dangling quote and
+# the dead probe passed on both trees, caught in re-review): the captured
+# box command runs with HOME sandboxed and python3 stubbed to fail, so the
+# pre-trust prepare step hard-fails; with correct grouping nothing after it
+# may run. A negative control un-braces the selection and asserts tmux IS
+# reached — the harness detects the defect shape it exists to catch.
 case "$box_command" in
     (*'{ SEAT_TMUX_SOCKET='*'; }'*) check "ubuntu box socket selection is brace-grouped (one && operand)" 0 ;;
     (*) check "ubuntu box socket selection is brace-grouped (one && operand)" 1 ;;
 esac
-severed_probe=$(printf '%s\n' "$box_command" | sed 's/^.*claude update/false/; s/&& mkdir[^&]*//' )
-# A private stub directory, prepended: the shared $STUBS/tmux serves later
-# mac-side checks and must not be overwritten here.
 P23_STUBS="$WORKSPACE/p23-stubs"; mkdir -p "$P23_STUBS"
+P23_HOME="$WORKSPACE/p23-home"; mkdir -p "$P23_HOME"
 cat > "$P23_STUBS/tmux" << 'EOF'
 #!/bin/sh
-echo "TMUX-RAN $*" >> "$TMUX_RAN_LOG"
+echo "TMUX-RAN $*" >> "${TMUX_RAN_LOG:?}"
 exit 0
 EOF
-chmod +x "$P23_STUBS/tmux"
+cat > "$P23_STUBS/python3" << 'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$P23_STUBS/tmux" "$P23_STUBS/python3"
 TMUX_RAN_LOG="$WORKSPACE/tmux-ran-log"; export TMUX_RAN_LOG
 : > "$TMUX_RAN_LOG"
-PATH="$P23_STUBS:$STUBS:$PATH" sh -c "$severed_probe" > /dev/null 2>&1 || true
+HOME="$P23_HOME" PATH="$P23_STUBS:$STUBS:$PATH" sh -c "$box_command" > /dev/null 2>&1 || true
 if [ -s "$TMUX_RAN_LOG" ]; then
     check "ubuntu box command: a failed prepare reaches NO tmux invocation" 1
 else
     check "ubuntu box command: a failed prepare reaches NO tmux invocation" 0
+fi
+unbraced_box_command=$(printf '%s\n' "$box_command" | sed 's/{ SEAT_TMUX_SOCKET/SEAT_TMUX_SOCKET/; s/fi; }/fi/')
+: > "$TMUX_RAN_LOG"
+HOME="$P23_HOME" PATH="$P23_STUBS:$STUBS:$PATH" sh -c "$unbraced_box_command" > /dev/null 2>&1 || true
+if [ -s "$TMUX_RAN_LOG" ]; then
+    check "ubuntu box command negative control: un-braced selection DOES reach tmux (harness has teeth)" 0
+else
+    check "ubuntu box command negative control: un-braced selection DOES reach tmux (harness has teeth)" 1
 fi
 
 case "$box_command" in
