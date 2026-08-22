@@ -105,7 +105,12 @@ EMPTY_SUCCESSOR_MAX_BYTES = 100_000
 
 
 def default_agents_root() -> Path:
-    return Path("~/agents").expanduser()
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as both launchers resolve it.
+    Resolving differently means, on a machine where that variable is set,
+    assessing ~/agents while every seat lives elsewhere — recovery then
+    refuses on "no seat directory" (PR #131 round-4 review note; user-ruled
+    2026-08-22: allowed overrides must work)."""
+    return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
 def default_handoff_directory() -> Path:

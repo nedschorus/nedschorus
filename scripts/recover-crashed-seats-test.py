@@ -668,6 +668,26 @@ with tempfile.TemporaryDirectory() as temporary:
           and "--resume-session-id 'abc-123'" in box_command,
           box_command)
 
+    # Round-4 review note (user-ruled 2026-08-22: allowed overrides must
+    # work): default_agents_root resolves the same way the launchers do —
+    # ${NEDSCHORUS_AGENTS_ROOT:-~/agents}. Resolving differently assesses a
+    # root no seat lives in, and recovery refuses on "no seat directory".
+    saved_root = os.environ.get("NEDSCHORUS_AGENTS_ROOT")
+    try:
+        os.environ["NEDSCHORUS_AGENTS_ROOT"] = str(root / "custom-agents")
+        check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
+              recovery.default_agents_root() == root / "custom-agents",
+              recovery.default_agents_root())
+        os.environ["NEDSCHORUS_AGENTS_ROOT"] = ""
+        check("an empty NEDSCHORUS_AGENTS_ROOT falls back to ~/agents (the :- rule)",
+              recovery.default_agents_root() == Path("~/agents").expanduser(),
+              recovery.default_agents_root())
+    finally:
+        if saved_root is None:
+            os.environ.pop("NEDSCHORUS_AGENTS_ROOT", None)
+        else:
+            os.environ["NEDSCHORUS_AGENTS_ROOT"] = saved_root
+
     import subprocess as real_subprocess
     completed = real_subprocess.run(
         [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")),

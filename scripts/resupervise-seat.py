@@ -84,7 +84,15 @@ supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
-AGENTS_ROOT_DEFAULT = Path.home() / "agents"
+
+
+def default_agents_root() -> Path:
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as both launchers resolve it —
+    the same read as recover-crashed-seats.py's default_agents_root, for the
+    same reason: checks that resolve the root one way while the launcher
+    resolves it another act on different seats (user-ruled 2026-08-22:
+    allowed overrides must work)."""
+    return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
 def refuse(message: str) -> int:
@@ -237,6 +245,13 @@ def resupervise_box_seat(arguments) -> int:
     operator unchanged: nothing is re-judged on this side.
     """
     remote_arguments = ["--prepare-only", "--machine", "ubuntu"]
+    # The override flags are machine-local paths — for a box seat, box-local —
+    # so they travel verbatim (unexpanded, box expands its own ~) and only
+    # when the operator gave them; the defaults stay each machine's own.
+    if arguments.handoff_dir:
+        remote_arguments += ["--handoff-dir", f"'{arguments.handoff_dir}'"]
+    if arguments.agents_root:
+        remote_arguments += ["--agents-root", f"'{arguments.agents_root}'"]
     if arguments.dry_run:
         remote_arguments.append("--dry-run")
     remote = subprocess.run(
@@ -278,11 +293,18 @@ def resupervise_box_seat(arguments) -> int:
     # and otherwise defaults to its own alias. Without this the flag steers both
     # ssh checks above and is then ignored at the decisive step: a non-default
     # box would be cleared, and the successor launched on the default one.
-    os.execve(
-        str(launcher),
-        [str(launcher), arguments.name],
-        {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box},
-    )
+    # The directory overrides ride the same way when given (box-local paths,
+    # verbatim): the launcher reads NEDSCHORUS_AGENTS_ROOT, and its
+    # extra-arguments hook hands --handoff-dir to the box-side supervisor —
+    # the same closes recover-crashed-seats.py's codex findings A/B made on
+    # the mac side (user-ruled 2026-08-22: allowed overrides must work).
+    environment = {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
+    if arguments.agents_root:
+        environment["NEDSCHORUS_AGENTS_ROOT"] = arguments.agents_root
+    if arguments.handoff_dir:
+        environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
+            f"--handoff-dir '{arguments.handoff_dir}'")
+    os.execve(str(launcher), [str(launcher), arguments.name], environment)
 
 
 def main(argv=None) -> int:
@@ -296,10 +318,16 @@ def main(argv=None) -> int:
         "--machine", default="mac", choices=("mac", "ubuntu"),
         help="which launcher seats the successor (default: mac)",
     )
-    parser.add_argument("--handoff-dir", default="~/.claude/handoffs",
-                        help="machine-local handoff directory")
-    parser.add_argument("--agents-root", default=str(AGENTS_ROOT_DEFAULT),
-                        help="where seat directories live (default: ~/agents)")
+    # Both defaults are empty so a box seat can tell "operator gave a value"
+    # from "use the machine's own default": these are machine-local paths, and
+    # forwarding a Mac-expanded default to the box would name a Mac directory
+    # on a machine where it means nothing.
+    parser.add_argument("--handoff-dir", default="",
+                        help="machine-local handoff directory "
+                             "(default ~/.claude/handoffs)")
+    parser.add_argument("--agents-root", default="",
+                        help="where seat directories live "
+                             "(default $NEDSCHORUS_AGENTS_ROOT, else ~/agents)")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="report whether the seat is recoverable and what would happen; change nothing",
@@ -322,10 +350,12 @@ def main(argv=None) -> int:
     if arguments.machine == "ubuntu" and not arguments.prepare_only:
         return resupervise_box_seat(arguments)
 
-    handoff_directory = Path(arguments.handoff_dir).expanduser()
+    handoff_directory = Path(arguments.handoff_dir or "~/.claude/handoffs").expanduser()
     handoff_path = handoff_directory / f"{arguments.name}-handoff.md"
     state_path = handoff_directory / f"{arguments.name}-supervisor-state.json"
-    seat_directory = Path(arguments.agents_root).expanduser() / arguments.name
+    agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
+                   else default_agents_root())
+    seat_directory = agents_root / arguments.name
 
     # A live supervisor means the seat is not in the state this script repairs.
     # Its own lock would refuse the second copy anyway; refusing here says why,
@@ -436,7 +466,19 @@ def main(argv=None) -> int:
     # what was killed and why (measured 2026-08-19).
     sys.stdout.flush()
     sys.stderr.flush()
-    os.execv(str(launcher), [str(launcher), arguments.name])
+    # Carry the directories the checks above used into the launch, the same
+    # way the box path carries --agent-box: the launcher re-resolves the
+    # agents root itself (NEDSCHORUS_AGENTS_ROOT) and the supervisor it
+    # starts re-resolves the handoff directory, so a value that steered
+    # steps 1-4 and stopped here would clear one seat and watch another —
+    # the pattern recover-crashed-seats.py's launch_seat closes the same way
+    # (PR #131 round-3 codex findings A/B; user-ruled 2026-08-22: allowed
+    # overrides must work).
+    environment = dict(os.environ)
+    environment["NEDSCHORUS_AGENTS_ROOT"] = str(agents_root)
+    environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
+        f"--handoff-dir '{handoff_directory}'")
+    os.execve(str(launcher), [str(launcher), arguments.name], environment)
 
 
 if __name__ == "__main__":
