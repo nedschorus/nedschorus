@@ -609,9 +609,20 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     """Launch, watch, and recycle sessions until one ends without a handoff."""
     state = read_supervisor_state(settings.state_path)
     generation = state.get("generation", 0)
-    prompt = settings.first_prompt or (
-        f"You are {settings.agent}. No handoff exists yet; ask what to work on."
-    )
+    if settings.first_prompt:
+        prompt = settings.first_prompt
+    elif settings.resume_session_id:
+        # A resumed session holds its full pre-crash context; the no-handoff
+        # default would tell it to ask for work it already has (PR #131
+        # review round 3, P3-4 — the recovery script writes a richer prompt
+        # file, and this default makes the by-hand flag equally truthful).
+        prompt = (
+            "This session was resumed by crash recovery (nedschorus#120): the "
+            "previous incarnation died without a handoff. Re-verify in-flight "
+            "state before trusting it, then continue the work underway."
+        )
+    else:
+        prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
 
     adopted = settings.adopted_session
     # A fresh start always mints a new session id. Reusing the one in the state

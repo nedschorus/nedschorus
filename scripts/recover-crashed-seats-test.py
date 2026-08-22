@@ -365,21 +365,22 @@ with tempfile.TemporaryDirectory() as temporary:
     ignition_shape = write_transcript(
         workspace.project_directory(), "supervisor-ignition",
         "Read /x/y-dialog-0002.md — it is the dialog from the session you are "
-        "continuing, written 0 minutes ago.")
+        "continuing, written 0 minutes ago.", records=1)  # died before working
     verdict, detail = workspace.assess()
-    check("F3: a small supervisor-ignition successor is skipped too",
+    check("F3/P2: a supervisor-ignition successor that died before working is skipped",
           verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
 
-    # F8: the supervisor-marker literal is asserted against the supervisor's
-    # actual default prompt, so a wording change there fails HERE.
-    default_prompt = f"You are seat-a. No handoff exists yet; ask what to work on."
-    supervisor_default = None
-    import re as _re
+    # F8: every cross-file literal the filter relies on is asserted against
+    # the supervisor's actual source, so a wording change there fails HERE
+    # (round-3 P3-3: the round-2 assertion covered only the first marker).
     source = SCRIPT_PATH.with_name("handoff-supervisor.py").read_text(encoding="utf-8")
-    match = _re.search(r'No handoff exists yet', source)
     check("F8: the no-handoff marker is verbatim in handoff-supervisor.py",
-          match is not None and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
+          "No handoff exists yet" in source
+          and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
           recovery.EMPTY_SUCCESSOR_MARKERS)
+    check("F8: the ignition-opener literal is verbatim in handoff-supervisor.py",
+          "it is the dialog from the session you are continuing" in source,
+          "opener literal missing from supervisor source")
 
     # Q2: an unparseable handoff counter refuses with both paths named.
     workspace = Workspace(root / "r7")
@@ -453,6 +454,78 @@ with tempfile.TemporaryDirectory() as temporary:
           state_seen_at_launch.get("consumed_counter") == 7
           and state_seen_at_launch.get("resume_flag") is True,
           state_seen_at_launch)
+
+    # Round 3 P1: an underscore-named seat's transcripts are FOUND — the
+    # mangling is the harness's (every non-alphanumeric becomes a dash),
+    # delegated to watch-agent-dialogs' probe-verified rule.
+    workspace = Workspace(root / "r10", name="under_score_seat")
+    all_dead()
+    mangled = recovery.harness_project_directory(workspace.seat_directory,
+                                                 workspace.projects)
+    check("P1: underscore in the seat path mangles to a dash (harness rule)",
+          "under-score-seat" in mangled.name and "_" not in mangled.name,
+          mangled.name)
+    write_transcript(mangled, "underscore-real", "real work here", records=6)
+    verdict, detail = workspace.assess()
+    check("P1: an underscore-named seat's intact transcript is found and resumed",
+          verdict == "resume" and detail[0] == "underscore-real", (verdict, detail))
+
+    # Round 3 P2: a recycled successor that crashed AFTER doing real work is
+    # resumed, not skipped for its handed-off parent; one that died before
+    # doing anything is skipped. Both under 100KB — turns decide, not bytes.
+    ignition_opener = ("Read /x/seat-a-dialog-0003.md — it is the dialog from "
+                      "the session you are continuing, written 0 minutes ago.")
+    workspace = Workspace(root / "r11")
+    all_dead()
+    write_transcript(workspace.project_directory(), "generation-3-handed-off",
+                     "older real work", age_seconds=7200, records=8)
+    write_transcript(workspace.project_directory(), "generation-4-crashed",
+                     ignition_opener, records=9)  # 8 assistant turns: real work
+    verdict, detail = workspace.assess()
+    check("P2: a crashed recycled successor WITH real work is resumed, not its parent",
+          verdict == "resume" and detail[0] == "generation-4-crashed",
+          (verdict, detail))
+
+    workspace = Workspace(root / "r12")
+    all_dead()
+    write_transcript(workspace.project_directory(), "generation-3-handed-off",
+                     "older real work", age_seconds=7200, records=8)
+    write_transcript(workspace.project_directory(), "generation-4-stillborn",
+                     ignition_opener, records=1)  # no assistant turns at all
+    verdict, detail = workspace.assess()
+    check("P2: a recycled successor that died before working is skipped for its parent",
+          verdict == "resume" and detail[0] == "generation-3-handed-off",
+          (verdict, detail))
+
+    # P3-4: the supervisor's own default prompt on a resume launch is the
+    # truthful crash-recovery text, not ask-for-work.
+    launched_prompts = []
+    def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False):
+        launched_prompts.append((prompt, resume))
+        raise StopIteration()
+    sup = supervisor_module
+    original_launch2 = sup.launch_agent_session
+    original_sync2 = sup.sync_working_branch_with_main
+    try:
+        sup.launch_agent_session = prompt_probe
+        sup.sync_working_branch_with_main = lambda d: "sync skipped (probe)"
+        ws = Workspace(root / "r13")
+        settings = sup.SupervisorSettings(
+            agent="seat-a", working_directory=ws.seat_directory,
+            handoff_directory=ws.handoffs, agent_command="claude",
+            first_prompt="", resume_session_id="resume-me")
+        try:
+            sup.supervise_sessions(settings)
+        except StopIteration:
+            pass
+    finally:
+        sup.launch_agent_session = original_launch2
+        sup.sync_working_branch_with_main = original_sync2
+    check("P3-4: a by-hand resume launch defaults to the crash-recovery prompt",
+          launched_prompts and launched_prompts[0][1] is True
+          and "resumed by crash recovery" in launched_prompts[0][0]
+          and "No handoff exists yet" not in launched_prompts[0][0],
+          launched_prompts)
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(

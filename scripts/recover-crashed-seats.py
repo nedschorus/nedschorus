@@ -68,6 +68,12 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
+_watcher_spec = importlib.util.spec_from_file_location(
+    "watch_agent_dialogs", Path(__file__).with_name("watch-agent-dialogs.py")
+)
+watcher = importlib.util.module_from_spec(_watcher_spec)
+_watcher_spec.loader.exec_module(watcher)
+
 # First-turn shapes of sessions this machinery itself starts fresh — any of
 # them, when SMALL, is a failed successor rather than the seat's real work
 # (PR #131 review, finding 3: the first build recognized only the supervisor's
@@ -79,8 +85,15 @@ EMPTY_SUCCESSOR_MARKERS = (
     "No handoff exists yet",            # handoff-supervisor's default first prompt
     "crash recovery, nedschorus#120",   # this script's ignition prompt
     "resumed by crash recovery",        # this script's resume prompt
-    "it is the dialog from the session you are continuing",  # build_ignition_prompt
 )
+# build_ignition_prompt's opener is deliberately NOT in the marker set: every
+# recycled successor starts with it, and a successor that crashed after doing
+# real sub-100KB work must be resumed, not skipped for its handed-off parent
+# (PR #131 review round 3, P2 — the round-2 fix over-widened). What separates
+# a failed ignition from a crashed-but-working successor is whether the
+# session ever produced work: substantive_turn_count() below counts assistant
+# turns, and a small transcript with none is the failed-successor shape.
+SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
 # The size guard: a seat's first-ever session legitimately starts with the
 # no-handoff prompt and can then do real work (observed live 2026-08-22 —
 # fixer1's 1880KB genuine session began exactly so, and a marker-only filter
@@ -102,13 +115,16 @@ def default_handoff_directory() -> Path:
 def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path:
     """The harness's transcript directory for sessions run in this seat.
 
-    The harness keys transcripts by the session's working directory with
-    path separators and dots flattened to dashes, under ~/.claude/projects/.
-    Derived, not configured — the same convention the 2026-08-21 hand
-    recovery read by eye.
+    Delegates to watch-agent-dialogs.py's project_directory_for_seat — the
+    one probe-verified statement of the harness's mangling rule (every
+    character outside ASCII [a-zA-Z0-9] becomes a dash, underscores
+    included). The first build re-derived the rule locally as
+    replace("/","-").replace(".","-"), which preserves underscores — and an
+    underscore-named seat's intact transcript became invisible, routing
+    recovery to ignite beside the prize (PR #131 review round 2, P1;
+    CLAUDE.md's use-the-existing-name rule applies to functions too).
     """
-    flattened = str(seat_directory.resolve()).replace("/", "-").replace(".", "-")
-    return projects_root / flattened
+    return watcher.project_directory_for_seat(seat_directory, projects_root)
 
 
 def run_tmux(*arguments_after_tmux, socket_name=None):
@@ -203,6 +219,32 @@ def first_user_turn_text(transcript_path: Path) -> str:
     return ""
 
 
+def substantive_turn_count(transcript_path: Path) -> int:
+    """Assistant turns carrying text — the working measure of "this session
+    did something". A failed successor dies at or before its first reply; a
+    crashed-but-working one has replies after the opener."""
+    count = 0
+    try:
+        with transcript_path.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if record.get("type") != "assistant":
+                    continue
+                content = (record.get("message") or {}).get("content")
+                if isinstance(content, str) and content.strip():
+                    count += 1
+                elif isinstance(content, list) and any(
+                        x.get("type") == "text" and x.get("text", "").strip()
+                        for x in content if isinstance(x, dict)):
+                    count += 1
+    except OSError:
+        pass
+    return count
+
+
 def newest_real_transcript(project_directory: Path):
     """(session_id, transcript_path) of the newest transcript that is not an
     empty-successor session, or (None, reason).
@@ -223,6 +265,10 @@ def newest_real_transcript(project_directory: Path):
                 continue  # small with no readable user turn: not real work
             if any(marker in first_turn for marker in EMPTY_SUCCESSOR_MARKERS):
                 continue  # a failed successor of this very machinery
+            if ("it is the dialog from the session you are continuing" in first_turn
+                    and substantive_turn_count(transcript)
+                        < SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM):
+                continue  # a recycled successor that died before doing anything
         return transcript.stem, transcript
     return None, ("every transcript is an empty-successor session; nothing "
                   "worth resuming")
