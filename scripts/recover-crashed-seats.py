@@ -22,10 +22,10 @@ What it does, per seat:
      landed with PR #106) — so this script hands over to the launcher
      rather than duplicating that logic.
   3. Find the seat's most recent real transcript under the harness project
-     directory: newest *.jsonl by mtime, skipping empty-successor sessions
-     (a first user turn carrying "No handoff exists yet") — the shape the
-     2026-08-21 relaunches minted, which must never shadow the real
-     transcript they were born beside.
+     directory: newest *.jsonl by mtime, skipping failed successors — small
+     sessions whose first turn this machinery itself composed and which
+     never produced work — the shape the 2026-08-21 relaunches minted,
+     which must never shadow the real transcript they were born beside.
   4. Relaunch the seat through its launcher with the supervisor resuming
      that session id (handoff-supervisor.py --resume-session-id, riding the
      launcher's LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS hook): the
@@ -74,25 +74,25 @@ _watcher_spec = importlib.util.spec_from_file_location(
 watcher = importlib.util.module_from_spec(_watcher_spec)
 _watcher_spec.loader.exec_module(watcher)
 
-# First-turn shapes of sessions this machinery itself starts fresh — any of
-# them, when SMALL, is a failed successor rather than the seat's real work
-# (PR #131 review, finding 3: the first build recognized only the supervisor's
-# no-handoff prompt, and recovery's own ignition sessions — marker-less —
-# shadowed the pre-crash transcript on a second run, the exact #120
-# regression). The supervisor marker is asserted against the supervisor's
-# actual default in the test suite, so a wording change there fails loudly.
+# First-turn shapes of sessions this machinery itself composes — the
+# supervisor's no-handoff prompt, its recycle ignition opener, and this
+# script's own ignition and resume prompts. A marker alone writes nothing
+# off: a first-ever session legitimately opens with the no-handoff prompt
+# and then works (observed live 2026-08-22), and a recycled or ignited
+# successor can crash mid-work — both must be resumed, not skipped for an
+# older parent. What marks a failed successor is a marker AND no work:
+# substantive_turn_count() below measures work, and the gate applies to
+# every marker uniformly (PR #131 review round 3 P2 gated the opener;
+# round 4 finding 1 extended the gate to the rest — markers 1 and 2 were
+# measured skipping real work on size alone). The supervisor-owned
+# literals are asserted against the supervisor's actual source in the
+# test suite, so a wording change there fails loudly.
 EMPTY_SUCCESSOR_MARKERS = (
     "No handoff exists yet",            # handoff-supervisor's default first prompt
+    "it is the dialog from the session you are continuing",  # its recycle opener
     "crash recovery, nedschorus#120",   # this script's ignition prompt
     "resumed by crash recovery",        # this script's resume prompt
 )
-# build_ignition_prompt's opener is deliberately NOT in the marker set: every
-# recycled successor starts with it, and a successor that crashed after doing
-# real sub-100KB work must be resumed, not skipped for its handed-off parent
-# (PR #131 review round 3, P2 — the round-2 fix over-widened). What separates
-# a failed ignition from a crashed-but-working successor is whether the
-# session ever produced work: substantive_turn_count() below counts assistant
-# turns, and a small transcript with none is the failed-successor shape.
 SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
 # The size guard: a seat's first-ever session legitimately starts with the
 # no-handoff prompt and can then do real work (observed live 2026-08-22 —
@@ -220,9 +220,12 @@ def first_user_turn_text(transcript_path: Path) -> str:
 
 
 def substantive_turn_count(transcript_path: Path) -> int:
-    """Assistant turns carrying text — the working measure of "this session
-    did something". A failed successor dies at or before its first reply; a
-    crashed-but-working one has replies after the opener."""
+    """Assistant turns carrying text or tool use — the working measure of
+    "this session did something". A failed successor dies at or before its
+    first reply; a crashed-but-working one replied or called tools after the
+    opener. Tool calls count because a terse tool-heavy stint is an ordinary
+    seat shape (PR #131 review round 3, finding 2: text-only counting wrote
+    off a successor whose work was 12 tool calls and one reply)."""
     count = 0
     try:
         with transcript_path.open(encoding="utf-8") as stream:
@@ -237,7 +240,8 @@ def substantive_turn_count(transcript_path: Path) -> int:
                 if isinstance(content, str) and content.strip():
                     count += 1
                 elif isinstance(content, list) and any(
-                        x.get("type") == "text" and x.get("text", "").strip()
+                        x.get("type") == "tool_use"
+                        or (x.get("type") == "text" and x.get("text", "").strip())
                         for x in content if isinstance(x, dict)):
                     count += 1
     except OSError:
@@ -263,12 +267,10 @@ def newest_real_transcript(project_directory: Path):
             first_turn = first_user_turn_text(transcript)
             if not first_turn.strip():
                 continue  # small with no readable user turn: not real work
-            if any(marker in first_turn for marker in EMPTY_SUCCESSOR_MARKERS):
-                continue  # a failed successor of this very machinery
-            if ("it is the dialog from the session you are continuing" in first_turn
+            if (any(marker in first_turn for marker in EMPTY_SUCCESSOR_MARKERS)
                     and substantive_turn_count(transcript)
                         < SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM):
-                continue  # a recycled successor that died before doing anything
+                continue  # machinery-composed opener and no work: failed successor
         return transcript.stem, transcript
     return None, ("every transcript is an empty-successor session; nothing "
                   "worth resuming")
@@ -309,8 +311,8 @@ def launcher_path():
     return None
 
 
-def launch_seat(name: str, seat_directory: Path, extra_supervisor_arguments: str,
-                first_prompt_file: Path = None):
+def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
+                extra_supervisor_arguments: str, first_prompt_file: Path = None):
     """Start the seat detached under its supervisor, on its own tmux server.
 
     On the Mac this rides launch-claude-mac (which owns the update step,
@@ -319,12 +321,25 @@ def launch_seat(name: str, seat_directory: Path, extra_supervisor_arguments: str
     directly in a per-seat tmux session, mirroring what launch-claude-ubuntu
     composes remotely; the update/prep steps are skipped, which recovery can
     afford (the seat ran this checkout minutes before the crash).
+
+    The supervisor is always told the handoff directory this recovery
+    assessed with (PR #131 review round 3, codex finding A: without it the
+    supervisor fell back to its own default, so under --handoff-dir the
+    boot-ignition watched an empty directory and supervisor state split
+    across two directories). The launcher branch likewise pins the agents
+    root the assessment used (codex finding B: the launcher's own
+    NEDSCHORUS_AGENTS_ROOT default made it create and attach a fresh seat
+    beside the assessed one — under --agents-root, and on the DEFAULT
+    no-flag path on any machine where that variable is set).
     """
     launcher = launcher_path()
     environment = dict(os.environ)
+    supervisor_arguments = f"--handoff-dir '{handoff_directory}'"
     if extra_supervisor_arguments:
-        environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_supervisor_arguments
+        supervisor_arguments += f" {extra_supervisor_arguments}"
     if launcher is not None:
+        environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = supervisor_arguments
+        environment["NEDSCHORUS_AGENTS_ROOT"] = str(seat_directory.parent)
         command = [str(launcher), name, "--no-attach"]
         if first_prompt_file is not None:
             command += ["--first-prompt-file", str(first_prompt_file)]
@@ -333,10 +348,8 @@ def launch_seat(name: str, seat_directory: Path, extra_supervisor_arguments: str
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
         f"python3 {Path(__file__).with_name('handoff-supervisor.py')} "
-        f"--agent '{name}' --cd '{seat_directory}'"
+        f"--agent '{name}' --cd '{seat_directory}' {supervisor_arguments}"
     )
-    if extra_supervisor_arguments:
-        supervisor_command += f" {extra_supervisor_arguments}"
     if first_prompt_file is not None:
         supervisor_command += f" --first-prompt-file '{first_prompt_file}'"
     completed = run_tmux(
@@ -430,7 +443,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "defer-to-boot-ignition":
         if dry_run:
             return f"{name}: would relaunch plain ({detail})"
-        exit_code = launch_seat(name, seat_directory, "")
+        exit_code = launch_seat(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return f"{name}: relaunched plain — {detail}"
@@ -441,7 +454,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         if dry_run:
             return (f"{name}: would resume session {session_id} "
                     f"({size_kb}KB transcript) under a supervisor")
-        exit_code = launch_seat(name, seat_directory,
+        exit_code = launch_seat(name, seat_directory, handoff_directory,
                                 f"--resume-session-id '{session_id}'",
                                 first_prompt_file=write_resume_prompt(
                                     handoff_directory, name))
@@ -457,7 +470,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if extract is None:
         if dry_run:
             return f"{name}: would launch fresh — nothing to resume, no extract to read"
-        exit_code = launch_seat(name, seat_directory, "")
+        exit_code = launch_seat(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return f"{name}: relaunched fresh (nothing to resume, no extract to read)"
@@ -472,7 +485,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         return f"{name}: would launch fresh igniting from {extract.name}"
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
-    exit_code = launch_seat(name, seat_directory, "", first_prompt_file=prompt_path)
+    exit_code = launch_seat(name, seat_directory, handoff_directory, "",
+                            first_prompt_file=prompt_path)
     if exit_code != 0:
         return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
     return f"{name}: relaunched fresh igniting from {extract.name}"

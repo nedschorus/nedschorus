@@ -42,8 +42,12 @@ def check(case_name, condition, detail=""):
 
 
 def write_transcript(directory: Path, session_id: str, first_user_text: str,
-                     age_seconds: float = 0.0, records: int = 3):
-    """One harness transcript whose first user turn says first_user_text."""
+                     age_seconds: float = 0.0, records: int = 3,
+                     tool_turns: int = 0):
+    """One harness transcript whose first user turn says first_user_text.
+    records-1 text-bearing assistant turns, then tool_turns assistant turns
+    carrying only tool_use blocks (the terse tool-heavy shape, round 3
+    finding 2)."""
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{session_id}.jsonl"
     lines = [json.dumps({"type": "user", "isMeta": False,
@@ -51,6 +55,10 @@ def write_transcript(directory: Path, session_id: str, first_user_text: str,
     for index in range(records - 1):
         lines.append(json.dumps({"type": "assistant",
                                  "message": {"content": f"turn {index}"}}))
+    for index in range(tool_turns):
+        lines.append(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"tool-{index}", "name": "Bash",
+             "input": {"command": "true"}}]}}))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if age_seconds:
         stamp = time.time() - age_seconds
@@ -103,8 +111,12 @@ def all_dead():
     patch("seat_directory_occupied", lambda directory: (False, ""))
 
 
+real_launch_seat = recovery.launch_seat  # for cases that probe the real one
+
+
 def capture_launches(workspace: Workspace):
-    def fake_launch(name, seat_directory, extra_arguments, first_prompt_file=None):
+    def fake_launch(name, seat_directory, handoff_directory, extra_arguments,
+                    first_prompt_file=None):
         workspace.launches.append((name, extra_arguments, first_prompt_file))
         return 0
     patch("launch_seat", fake_launch)
@@ -175,7 +187,8 @@ with tempfile.TemporaryDirectory() as temporary:
     write_transcript(workspace.project_directory(), "old-real",
                      "start the build", age_seconds=3600)
     write_transcript(workspace.project_directory(), "empty-successor",
-                     "You are seat-a. No handoff exists yet; ask what to work on.")
+                     "You are seat-a. No handoff exists yet; ask what to work on.",
+                     records=2)  # died at its first reply: under the turn minimum
     verdict, detail = workspace.assess()
     check("an empty-successor transcript never shadows the real one",
           verdict == "resume" and detail[0] == "old-real", (verdict, detail))
@@ -193,7 +206,8 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "w6")
     all_dead()
     write_transcript(workspace.project_directory(), "empty-only",
-                     "You are seat-a. No handoff exists yet; ask what to work on.")
+                     "You are seat-a. No handoff exists yet; ask what to work on.",
+                     records=1)  # never replied at all
     verdict, detail = workspace.assess()
     check("only empty successors on disk routes to ignite, not resume",
           verdict == "ignite" and "nothing worth resuming" in detail, (verdict, detail))
@@ -314,7 +328,8 @@ with tempfile.TemporaryDirectory() as temporary:
     workspace = Workspace(root / "r2")
     all_dead()
     write_transcript(workspace.project_directory(), "real-work", "do things", records=5)
-    def failing_launch(name, seat_directory, extra, first_prompt_file=None):
+    def failing_launch(name, seat_directory, handoff_directory, extra,
+                       first_prompt_file=None):
         workspace.launches.append((name, extra, first_prompt_file))
         return 2
     patch("launch_seat", failing_launch)
@@ -337,15 +352,16 @@ with tempfile.TemporaryDirectory() as temporary:
           and "Re-verify" in resume_prompt
           and "No handoff exists yet" not in resume_prompt, resume_prompt)
 
-    # F3: recovery's own fresh-session shapes are skipped when small...
+    # F3: recovery's own fresh-session shapes are skipped when small and workless...
     workspace = Workspace(root / "r4")
     all_dead()
     write_transcript(workspace.project_directory(), "pre-crash-real", "real work",
                      age_seconds=3600, records=6)
     write_transcript(workspace.project_directory(), "failed-ignition",
-                     "Read x-dialog-0004.md (crash recovery, nedschorus#120). Continue.")
+                     "Read x-dialog-0004.md (crash recovery, nedschorus#120). Continue.",
+                     records=1)  # died before working
     verdict, detail = workspace.assess()
-    check("F3: a small failed-ignition successor never shadows the pre-crash transcript",
+    check("F3/R4: a failed-ignition successor that died before working is skipped",
           verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
 
     workspace = Workspace(root / "r5")
@@ -379,8 +395,10 @@ with tempfile.TemporaryDirectory() as temporary:
           and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
           recovery.EMPTY_SUCCESSOR_MARKERS)
     check("F8: the ignition-opener literal is verbatim in handoff-supervisor.py",
-          "it is the dialog from the session you are continuing" in source,
-          "opener literal missing from supervisor source")
+          "it is the dialog from the session you are continuing" in source
+          and "it is the dialog from the session you are continuing"
+              in recovery.EMPTY_SUCCESSOR_MARKERS,
+          "opener literal missing from supervisor source or the marker set")
 
     # Q2: an unparseable handoff counter refuses with both paths named.
     workspace = Workspace(root / "r7")
@@ -526,6 +544,129 @@ with tempfile.TemporaryDirectory() as temporary:
           and "resumed by crash recovery" in launched_prompts[0][0]
           and "No handoff exists yet" not in launched_prompts[0][0],
           launched_prompts)
+
+    # --- PR #131 review round 4 --------------------------------------------
+
+    # Round 4 finding 1: the turn gate covers EVERY marker, not only the
+    # recycle opener — the reviewer measured markers 1 and 2 skipping real
+    # work on size alone. Same shape as the accepted round-3 P2 cases: small
+    # transcript, 8 text-bearing assistant turns, beside an older parent.
+    workspace = Workspace(root / "r14")
+    all_dead()
+    write_transcript(workspace.project_directory(), "handed-off-parent",
+                     "older real work", age_seconds=7200, records=8)
+    write_transcript(workspace.project_directory(), "first-ever-crashed",
+                     "You are seat-a. No handoff exists yet; ask what to work on.",
+                     records=9)  # 8 assistant turns: real work
+    verdict, detail = workspace.assess()
+    check("R4-1: a small first-ever session WITH real work is resumed, not its parent",
+          verdict == "resume" and detail[0] == "first-ever-crashed",
+          (verdict, detail))
+
+    workspace = Workspace(root / "r15")
+    all_dead()
+    write_transcript(workspace.project_directory(), "handed-off-parent",
+                     "older real work", age_seconds=7200, records=8)
+    write_transcript(workspace.project_directory(), "ignition-then-crashed",
+                     "Read x-dialog-0004.md (crash recovery, nedschorus#120). Continue.",
+                     records=9)  # the --ignite-fallback loop the reviewer named
+    verdict, detail = workspace.assess()
+    check("R4-1: an ignite-fallback successor WITH real work is resumed, not its parent",
+          verdict == "resume" and detail[0] == "ignition-then-crashed",
+          (verdict, detail))
+
+    # Round 4 finding 2: tool_use-only assistant turns are work. The
+    # reviewer's shapes: 12 tool-only turns and no text reply, and the same
+    # with one text reply — both were skipped for the parent before.
+    workspace = Workspace(root / "r16")
+    all_dead()
+    write_transcript(workspace.project_directory(), "handed-off-parent",
+                     "older real work", age_seconds=7200, records=8)
+    tool_heavy = write_transcript(
+        workspace.project_directory(), "tool-heavy-crashed", ignition_opener,
+        records=1, tool_turns=12)  # no text replies at all, 12 tool calls
+    check("R4-2: substantive_turn_count counts tool_use-only turns",
+          recovery.substantive_turn_count(tool_heavy) == 12,
+          recovery.substantive_turn_count(tool_heavy))
+    verdict, detail = workspace.assess()
+    check("R4-2: a terse tool-heavy successor is resumed, not its parent",
+          verdict == "resume" and detail[0] == "tool-heavy-crashed",
+          (verdict, detail))
+
+    # Round 4 codex finding A (handoff dir) and finding B (agents root):
+    # probed through the REAL launch_seat on the launcher branch, in codex's
+    # own scenario — the defer path with an override handoff directory.
+    workspace = Workspace(root / "r17")
+    all_dead()
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        "# Handoff\nrestart-counter: 3\nnext-step: go\n", encoding="utf-8")
+    captured_run = {}
+    def capture_subprocess_run(command, env=None, check=False):
+        captured_run["command"] = command
+        captured_run["env"] = env
+        class Done:
+            returncode = 0
+        return Done()
+    real_run = recovery.subprocess.run
+    real_launcher_path = recovery.launcher_path
+    try:
+        patch("launch_seat", real_launch_seat)
+        recovery.subprocess.run = capture_subprocess_run
+        recovery.launcher_path = lambda: Path("/fake/launch-claude-mac")
+        report = workspace.recover()
+    finally:
+        recovery.subprocess.run = real_run
+        recovery.launcher_path = real_launcher_path
+    supervisor_arguments = captured_run["env"].get(
+        "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "")
+    check("A: the defer launch hands the supervisor the assessed handoff directory",
+          f"--handoff-dir '{workspace.handoffs}'" in supervisor_arguments
+          and "relaunched plain" in report,
+          (supervisor_arguments, report))
+    check("B: the launcher branch pins NEDSCHORUS_AGENTS_ROOT to the assessed root",
+          captured_run["env"].get("NEDSCHORUS_AGENTS_ROOT")
+          == str(workspace.agents_root),
+          captured_run["env"].get("NEDSCHORUS_AGENTS_ROOT"))
+
+    # Finding A on the resume path: --handoff-dir and --resume-session-id
+    # travel together, and the box branch composes the same into its
+    # supervisor command.
+    workspace = Workspace(root / "r18")
+    tmux_commands = []
+    def capture_tmux(*arguments_after_tmux, socket_name=None):
+        tmux_commands.append((arguments_after_tmux, socket_name))
+        class Done:
+            returncode = 0
+        return Done()
+    try:
+        recovery.subprocess.run = capture_subprocess_run
+        recovery.launcher_path = lambda: Path("/fake/launch-claude-mac")
+        real_launch_seat(workspace.name, workspace.seat_directory,
+                         workspace.handoffs, "--resume-session-id 'abc-123'")
+    finally:
+        recovery.subprocess.run = real_run
+        recovery.launcher_path = real_launcher_path
+    resume_arguments = captured_run["env"].get(
+        "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "")
+    check("A: the resume launch carries --handoff-dir alongside --resume-session-id",
+          f"--handoff-dir '{workspace.handoffs}'" in resume_arguments
+          and "--resume-session-id 'abc-123'" in resume_arguments,
+          resume_arguments)
+    real_run_tmux = recovery.run_tmux
+    try:
+        recovery.launcher_path = lambda: None
+        recovery.run_tmux = capture_tmux
+        real_launch_seat(workspace.name, workspace.seat_directory,
+                         workspace.handoffs, "--resume-session-id 'abc-123'")
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+    box_command = tmux_commands[0][0][-1] if tmux_commands else ""
+    check("A: the box branch composes --handoff-dir into the supervisor command",
+          f"--handoff-dir '{workspace.handoffs}'" in box_command
+          and f"--cd '{workspace.seat_directory}'" in box_command
+          and "--resume-session-id 'abc-123'" in box_command,
+          box_command)
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(
