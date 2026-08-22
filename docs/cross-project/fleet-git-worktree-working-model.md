@@ -168,19 +168,26 @@ walk began.
 ### Q1 — Which directory am I in?
 
 **R1. Enforcement programs resolve their roots correctly — resolvers FIXED
-(PR #86, merged 2026-08-17); registration residue open.** Two questions
+(PR #86, merged 2026-08-17); registration residue closed won't-fix
+(user-ruled 2026-08-22).** Two questions
 hide under "the root": which repository owns the target file, and which
 checkout the session is in — the latter from the session's own working
 directory, never from `$CLAUDE_PROJECT_DIR`, which names the wrong
 checkout in forked sessions. User revision made at approval: override
 markers resolve from the *session's own* checkout, not the target's;
 target-derived resolution is only the fallback when the session sits in
-no checkout. Open residue: the hook and status-line *registration* lines
-in `.claude/settings.json` still resolve through `$CLAUDE_PROJECT_DIR` —
-benign while all checkouts carry identical copies. A re-registration was
-attempted and deliberately reverted (PR #103, 2026-08-19) after three
-shell forms in one day, two wrong; the PR records all three forms and
-their evidence for whoever settles it.
+no checkout. The residue, closed won't-fix: the hook and status-line *registration*
+lines in `.claude/settings.json` resolve through `$CLAUDE_PROJECT_DIR`
+and stay that way — benign while all checkouts carry identical copies.
+A re-registration was attempted and deliberately reverted (PR #103,
+2026-08-19) after three shell forms in one day, two wrong; the PR
+records all three forms and their evidence. The closing ruling: a
+registration line carries no more machinery, because the forked-session
+wrong-copy failure this would guard against has never been observed —
+per the defensive-tightening rule (CLAUDE.md, user-ruled 2026-08-20),
+hardening needs a named behavior. Reopen trigger: that failure actually
+observed — a guard demonstrably running as another checkout's copy,
+with effect.
 
 **R2. A session states and verifies its git context at start — satisfied
 by composition (ruled 2026-08-17), nothing built.** The four facts of
@@ -463,7 +470,7 @@ rulings; listed here to keep the numbering complete.
 
 | # | Rule | Rung | Status at close |
 |---|---|---|---|
-| R1 | Guards resolve roots correctly | — (foundation) | fixed, PR #86; registration residue open (reverted attempt recorded in PR #103) |
+| R1 | Guards resolve roots correctly | — (foundation) | fixed, PR #86; registration residue closed won't-fix 2026-08-22 (attempts recorded in PR #103) |
 | R2 | Session states its git context | — (composition of R3/R5/R6) | satisfied by composition |
 | R3 | Detached/reference seat refuses writes | block | built, PR #88 |
 | R4 | Stale base | — | absorbed by R15's catch-up |
@@ -505,8 +512,9 @@ pull request.
 1. **Guard and catch-up review fixes** — LANDED (PR #103, merged
    2026-08-19): fifteen of its sixteen entries, with the review
    discussions permanent on the pull request. The sixteenth — the hook
-   re-registration (R1's residue) — was deliberately dropped, and stays
-   open with all attempted forms recorded in that PR.
+   re-registration (R1's residue) — was deliberately dropped with all
+   attempted forms recorded in that PR, and closed won't-fix 2026-08-22
+   (ruling and reopen trigger at R1).
 2. **R20** — the handoff both-ends structure fix — LANDED (PR #108,
    merged 2026-08-20; design section md-reviewed in
    `fast-handoff-design.md` first, per design-first).
