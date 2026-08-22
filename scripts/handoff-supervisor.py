@@ -398,10 +398,20 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             f"ready (git merge origin/main){fetch_note}")
 
 
-def launch_agent_session(agent_command: str, session_id: str, working_directory: Path, prompt: str):
-    """Start one interactive session, inheriting this console's terminal."""
+def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
+                         prompt: str, resume: bool = False):
+    """Start one interactive session, inheriting this console's terminal.
+
+    resume=True launches `--resume <id>` instead of `--session-id <id>`: the
+    crash-recovery path (nedschorus#120), where the session to run already
+    has a transcript and must continue it. The CLI reuses the resumed id in
+    place (--fork-session is the opt-out), so the state file's session_id
+    stays correct for extraction at the next recycle — confirmed live
+    2026-08-21, when the crash-recovered seats' transcripts grew under
+    their original ids."""
+    flag = "--resume" if resume else "--session-id"
     return subprocess.Popen(
-        [agent_command, "--session-id", session_id, prompt],
+        [agent_command, flag, session_id, prompt],
         cwd=str(working_directory),
     )
 
@@ -536,6 +546,11 @@ class SupervisorSettings:
     handoff_directory: Path
     agent_command: str
     first_prompt: str
+    # Crash recovery (nedschorus#120): a session id whose transcript the FIRST
+    # launch resumes (`claude --resume`) instead of starting fresh. Later
+    # recycles mint fresh ids as always. The caller is responsible for having
+    # checked that no unconsumed handoff waits — boot-ignition is skipped.
+    resume_session_id: str = ""
     # A real annotation, not a string: this module is loaded by importlib in the
     # threshold hook and the tests, where a forward reference cannot resolve.
     adopted_session: Optional[AdoptedSession] = None
@@ -594,26 +609,62 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     """Launch, watch, and recycle sessions until one ends without a handoff."""
     state = read_supervisor_state(settings.state_path)
     generation = state.get("generation", 0)
-    prompt = settings.first_prompt or (
-        f"You are {settings.agent}. No handoff exists yet; ask what to work on."
-    )
+    if settings.first_prompt:
+        prompt = settings.first_prompt
+    elif settings.resume_session_id:
+        # A resumed session holds its full pre-crash context; the no-handoff
+        # default would tell it to ask for work it already has (PR #131
+        # review round 3, P3-4 — the recovery script writes a richer prompt
+        # file, and this default makes the by-hand flag equally truthful).
+        prompt = (
+            "This session was resumed by crash recovery (nedschorus#120): the "
+            "previous incarnation died without a handoff. Re-verify in-flight "
+            "state before trusting it, then continue the work underway."
+        )
+    else:
+        prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
 
     adopted = settings.adopted_session
     # A fresh start always mints a new session id. Reusing the one in the state
     # file would launch `claude --session-id` against a transcript that already
     # exists — and if the supervisor died while its agent kept running, would put
     # two processes on one session id. Adoption is how a running session is
-    # picked back up.
-    session_id = adopted.session_id if adopted else str(uuid.uuid4())
+    # picked back up; resume (nedschorus#120) is how a CRASHED session's
+    # transcript is continued, and applies to the first launch only.
+    resume_first_launch = bool(settings.resume_session_id) and adopted is None
+    if adopted:
+        session_id = adopted.session_id
+    elif resume_first_launch:
+        session_id = settings.resume_session_id
+    else:
+        session_id = str(uuid.uuid4())
 
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
+
+    # The resume path (crash recovery, nedschorus#120) must not meet a stale
+    # handoff either: the recovery script defers to boot-ignition when one
+    # waits, but this flag can be run by hand, and the wait loop would then
+    # kill the just-resumed session for a file predating it (PR #131 review,
+    # finding 4). Mark any waiting handoff consumed BEFORE the resume launch —
+    # the operator chose the transcript over the handoff by passing the flag.
+    if resume_first_launch and settings.handoff_path.is_file():
+        stale_fields = parse_handoff_file(settings.handoff_path)
+        stale_counter = counter_from(stale_fields)
+        if stale_counter is not None and stale_counter > (state.get("consumed_counter") or 0):
+            print(
+                f"handoff-supervisor: a handoff (counter {stale_counter}) predates this "
+                "resume; marking it consumed so it cannot kill the resumed session. "
+                "If that handoff was the fresher truth, stop and relaunch WITHOUT "
+                "--resume-session-id — boot-ignition will consume it."
+            )
+            state["consumed_counter"] = stale_counter
 
     # A fresh boot may find an unconsumed handoff — a crash or reboot ended the
     # previous cycle after the write but before a supervisor acted on it. Ignite
     # from it directly. Launching first and letting the wait loop find the file
     # would kill the just-born session for a handoff that predates it.
-    if adopted is None and settings.handoff_path.is_file():
+    if adopted is None and not resume_first_launch and settings.handoff_path.is_file():
         boot_fields = parse_handoff_file(settings.handoff_path)
         boot_counter = counter_from(boot_fields)
         consumed = state.get("consumed_counter")
@@ -669,10 +720,13 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             # directory, and changing files under a working agent is the one
             # thing this must never do.
             print(f"handoff-supervisor: {sync_working_branch_with_main(settings.working_directory)}")
-            print(f"handoff-supervisor: launching session {session_id} (generation {generation})")
+            verb = "resuming" if resume_first_launch else "launching"
+            print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
             process = launch_agent_session(
-                settings.agent_command, session_id, settings.working_directory, prompt
+                settings.agent_command, session_id, settings.working_directory, prompt,
+                resume=resume_first_launch,
             )
+            resume_first_launch = False  # recovery applies to the first launch only
 
         handoff_fields = wait_for_handoff(
             process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
@@ -750,6 +804,14 @@ def main(argv=None) -> int:
         help="report whether a supervisor is watching this agent, then exit (0 alive, 1 not)",
     )
     parser.add_argument(
+        "--resume-session-id", default="",
+        help="crash recovery (nedschorus#120): the first launch resumes this "
+             "session's transcript (claude --resume) instead of starting fresh; "
+             "later recycles mint fresh ids as always. A handoff already on disk "
+             "is marked consumed rather than igniting or recycling — passing this "
+             "flag chooses the transcript over any waiting handoff",
+    )
+    parser.add_argument(
         "--adopt-session-id", default="",
         help="watch an already-running session with this id instead of launching one",
     )
@@ -769,6 +831,9 @@ def main(argv=None) -> int:
 
     if bool(arguments.adopt_session_id) != bool(arguments.adopt_process_id):
         parser.error("--adopt-session-id and --adopt-process-id must be given together")
+    if arguments.resume_session_id and arguments.adopt_session_id:
+        parser.error("--resume-session-id and --adopt-session-id are different recoveries: "
+                     "resume continues a DEAD session's transcript, adopt watches a LIVE one")
 
     adopted = None
     if arguments.adopt_session_id:
@@ -803,6 +868,7 @@ def main(argv=None) -> int:
         handoff_directory=handoff_directory,
         agent_command=arguments.agent_command,
         first_prompt=arguments.first_prompt,
+        resume_session_id=arguments.resume_session_id,
         adopted_session=adopted,
     )
 
