@@ -45,7 +45,7 @@ Candidates become findings only here: the method above produces candidates, this
 ## Priority order when changes conflict
 
 1. **Simpler to operate** — more reliable, more autonomous, fewer or no user interventions; mechanical guarantees over trained agent habit; zero remembered human steps.
-2. **Simpler to understand** — the design easier to step through, with only necessary states.
+2. **Simpler to understand** — the document easier to follow; the design easier to step through, with only necessary states.
 3. **Simpler to build or maintain** — welcome, but never at the expense of reliability; and where the mechanism is code, never at the expense of its testability. AI steps with clear, direct prompts are legitimately hard to test but can solve complex or messy problems with a useful level of reliability.
 
 ## Report format
