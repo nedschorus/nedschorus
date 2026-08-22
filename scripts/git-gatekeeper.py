@@ -1383,15 +1383,31 @@ def cancel_request(arguments) -> int:
 # since 2026-07-21). The C3 amendment moves the pusher to the dedicated
 # account — update this set in the same commit that applies it.
 #
-# Spelled the human-readable way; GitHub stores the canonical login lowercase
+# The accounts main's push restriction may name, per the design's
+# § The credential and enforcement (amended 2026-08-19): the user's own account
+# and the merge-lane seat's, which was added so a merge is approved under an
+# identity other than the author's. Both must be listed — an allow-list naming
+# the user alone would close the merge seat's lane, and one naming the merge
+# seat alone would close the pull-request lane the gatekeeper's own source
+# depends on.
+#
+# Spelled the human-readable way; GitHub stores canonical logins lowercase
 # ("nedlern") and treats account names as case-insensitive for identity, so the
-# comparison below casefolds both sides rather than this constant being
+# comparison below casefolds both sides rather than these constants being
 # lowercased — a lowercase constant reads as a typo against the spelling the
 # design uses everywhere, and the next reader restores the case and the bug
-# with it. Case-insensitive, still whole-name: `NedLern` is a proper prefix of
-# `NedLerner` (the org's second owner), so the comparison stays set equality
-# over whole logins and never becomes a substring test.
-EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern"}
+# with it. Case-insensitive, still whole-name: the comparison is set equality
+# over whole logins and never becomes a substring test. (The older caution that
+# `NedLern` prefixes `NedLerner` is retired: that account was renamed to
+# `ned-review-merge` on 2026-08-19. The case-insensitivity caution stands.)
+#
+# KEEP THIS IN STEP WITH THE DESIGN. This audit is the sole detector of
+# protection drift, so a stale expectation here does not fail quietly — it
+# reports protection-wrong against correct settings and tells the user to
+# "restore" them, which is an instruction to undo a deliberate change. That is
+# what happened between 2026-08-19 and 2026-08-22, when the design gained the
+# second account and this constant did not.
+EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern", "ned-review-merge"}
 
 
 def derive_repo_slug(repository: Path) -> str:
