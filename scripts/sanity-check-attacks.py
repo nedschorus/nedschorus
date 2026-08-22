@@ -1,64 +1,116 @@
 #!/usr/bin/env python3
-"""Run a sanity-check: three stance attacks x two runtimes over one document.
+"""Run a sanity-check: independent audits, each on both runtimes, over one document.
 
 The sanity-check is this project's second review instrument, separate from
-md-review and never one of its grid cells (user-ruled 2026-08-17, on the
-attack-split validation experiment's scorecard; experiment records at
-`git show db917b5:md-review-records/2026-08-12-attack-split-experiment/`).
-Operating rules, all user-ruled:
+md-review (`scripts/md-review-grid.py`, the prose-and-clarity review) and
+never part of it. Three audits, each in its own
+fresh context:
 
-- Three attacks, each in its own fresh context: **cut** (what should be
-  deleted), **mechanization** (what English instruction should become code),
-  **fresh-eyes** (an independent design built from the problem statement —
-  the cell is instructed never to read the design, its implementation, or
-  its records, and may otherwise read the repository and the internet; the
-  leak scan below is the check; triage diffs its sketch against the real
-  one). Prompts: `docs/agents/sanity-checker-<attack>-attack-prompt.md`.
-- Both runtimes on every attack: claude-fable-5 and gpt-5.6-sol, at xhigh.
-  (Tier probe 2026-08-17: max found no missed ground-truth cut on either
-  runtime and covered less on codex — xhigh stands.)
-- Manual call, after md-review (the check reads the post-review text, so its
-  findings go to the design, not to prose md-review fixes more cheaply), on
-  actionable (work-directing) MDs only — designs, specs, skills, plans; never
-  on records. "md-review passed" is the natural moment to ask whether a
-  document deserves its check.
-- Never automatic, never repeated on revisions: a re-check is a deliberate
-  call. At most, a PR carrying an actionable MD that has never been
-  sanity-checked may have a check suggested — a note, never a gate; a
-  one-line walked edit to a never-checked file is not taxed with a full
-  review.
-- The requesting agent triages: verifies quotes, resolves code hedges by
-  targeted reads, merges the runtimes' reports, and walks the survivors with
-  the user (walk-me-through). Findings are design changes; none is applied
-  without his ruling.
+- **cut** — what here should be deleted.
+- **mechanization** — what English instruction here should become code.
+- **fresh-eyes** — an independent, competitive design built from the review
+  request alone — a problem statement plus reading lists — never from the
+  design. The agent is instructed not to read the existing design,
+  its implementation, or its records, but may research the best approach
+  independently — this repository, the internet, reputable repositories on
+  GitHub. Isolation is instructed, not enforced, and checked, best-effort, two ways:
+  the agent's report lists everything it consulted and discloses anything
+  off-limits it strayed into (self-reported), and the runner scans what the
+  requester sends — the problem statement, and the instruction files the
+  CLIs inject on their own (conventional paths, not a proven enumeration) —
+  for the design's coined names, printing a LEAK-WARNING per hit. The
+  agent returns a five-section report — sketch, hard parts, late
+  discoveries, assumptions, what it consulted — and triage compares the
+  original and the fresh design on their merits: a substantive difference
+  becomes a question, a worry, trap, or real failure mode the fresh design
+  raises that the original never addresses is a candidate finding, and the
+  stronger parts of either can feed a best-of-both proposal; every adoption
+  is reviewed and ruled on
+  by the user, one item at a time.
+
+Prompts: `docs/agents/sanity-checker-<audit>-attack-prompt.md`. Each file is
+split at its `<!-- SANITY-CHECK-PROMPT-BODY -->` line: above it a header for
+maintainers that the runner never sends to a review agent, below it the
+prompt itself. The
+runner refuses to start unless every prompt it will use carries exactly one
+such line with `## Your assignment` directly below it, so a broken boundary
+fails before any model cost is spent.
+
+Operating rules:
+
+- Both runtimes on every audit — claude-fable-5 (the claude CLI) and
+  gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each audit
+  therefore runs as two review agents, one per runtime, named
+  `<audit>-<runtime>` in this runner's output.
+- Run it only by deliberate decision — never wire it into automation. A
+  revision of an already-sanity-checked document earns no automatic rerun. Run it after md-review has passed, not before. It
+  applies only to actionable (work-directing) MDs — designs, specs, skills,
+  plans — never records (documents that only report what happened).
+  "md-review passed" is the natural moment to ask
+  whether a document deserves its sanity-check; a PR carrying an actionable MD with
+  no sign of a past sanity-check may have one suggested — a note, never a gate.
+- The requesting agent triages: follows up the warnings described below,
+  settles hedged claims about code by reading the code, merges the runtimes' reports, and
+  presents the surviving findings to the user one at a time for his ruling
+  (the walk-me-through skill). Findings are design changes; none is applied
+  without the user's ruling. Triage is complete when every warning and every
+  finding has either been brought to the user for a ruling or been set aside
+  with a stated reason.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
-  -3, ... when reports already sit there, so a same-day second pass or re-run
-  never overwrites earlier reports) — machine-local working material,
-  gitignored, deleted when the work it served lands; git history is the
-  archive.
+  -3, ... claimed by creation, so a same-day second pass never overwrites
+  earlier reports) — machine-local working material, gitignored; the
+  requesting agent deletes the directory when the work it served lands, or
+  when nothing further will use it. What survives is what landed — the
+  reports themselves are archived nowhere.
 
 Usage:
 
-  scripts/sanity-check-attacks.py --target <path> [--context <path> ...] \
-      [--problem-statement <path>] [--attack <name> ...]
+  scripts/sanity-check-attacks.py --target <path> [--context <path> ...]
+      [--problem-statement <path>] [--attack <name> ...] [--print <surface>]
 
-`--attack` (repeatable; default all three) runs a subset — the fresh-eyes
+`--context` names companion documents the reading audits receive alongside
+the target. `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
 second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
-failed cell pair reruns without repeating the others.
+failed audit reruns without repeating the others.
 
-Run it as a background task and arm a Monitor on its output: it prints one
-line per cell — `saved: <path>` or `FAILED: <cell> exit <code>` — as each
-finishes. Without `--problem-statement` the fresh-eyes cells print
-`SKIPPED: <cell> (no --problem-statement)` — loudly, never silently — since
-that attack works from the problem statement alone. A fresh-eyes run also
-prints `LEAK-WARNING: ...` lines — the design's coined names found in the
-problem statement, in instruction files the cell CLIs inject on their own,
-or in a fresh-eyes report. Information for triage, never a gate (user-ruled
-2026-08-17). Every cell may reach the internet to check facts (user-ruled
-2026-08-18): claude cells carry web tools and no write tools; codex cells run
-workspace-write with network on, writes forbidden by prompt — a codex cell
-that modifies the worktree is reported as `WARNING: <cell> modified the
-worktree: <paths>`. Exit 0 when every launched cell saved, 1 otherwise.
+`--print` writes a review surface to stdout instead of running: `cut`,
+`mechanization`, or `fresh-eyes` prints that audit's assembled prompt — body plus the review request: for
+the reading audits the request names the target and context paths, for
+fresh-eyes it is the problem-statement file; `requester` prints the requesting agent's manual —
+this docstring followed by the fresh-eyes requester section — and needs no
+other arguments.
+
+Running a sanity-check, and reading its output:
+
+- Run it as a background task and arm a Monitor (the harness's watch tool)
+  on its output; it prints a status line per review agent as each finishes —
+  `saved: <path>`, `FAILED: <audit>-<runtime> exit <code>`, or `SKIPPED:` —
+  plus the warning lines described below. Exit 0 when every launched agent saved; 1 when any launched agent
+  failed (a skipped agent is not launched); 2 when the invocation itself is
+  unusable — a missing file, a broken prompt boundary, a bad flag.
+- Without `--problem-statement` the fresh-eyes agents print `SKIPPED`, loudly,
+  never silently — that audit works from the problem statement alone.
+- Cut and mechanization reports get a quote scan: every quoted span of four
+  or more words is searched for across the tracked files, and a span found in
+  none prints `WARNING: <audit>-<runtime> quote found in no tracked file: ...` — triage
+  information, never a gate; a quote may legitimately come from git history
+  or the web.
+- Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
+  described above. Expect hits on every run: the off-limits list must name
+  the design's paths to forbid them, and those paths are coined names.
+- Every review agent may reach the internet to check facts: claude agents
+  carry web tools and no write tools; codex agents run workspace-write with
+  network on, writes forbidden by prompt — a codex agent that modifies the
+  worktree is reported as `WARNING: <audit>-<runtime> modified the worktree:
+  <paths>` — with two codex agents running, the writer may be either; the
+  warning names the agent whose audit saw it. While the agents run, make no changes in this worktree yourself —
+  the write detector cannot tell your edits from a review agent's; work
+  elsewhere until the run
+  completes.
+- Each saved report opens with a provenance line: runtime, model, effort,
+  audit, target, and the commit and worktree state at review time, so quotes
+  can be checked against the commit the agent read — exact when the worktree
+  was clean; `dirty(N)` warns that N files differed from it.
 """
 
 import argparse
@@ -79,6 +131,11 @@ CODEX_MODEL = "gpt-5.6-sol"
 # for both by the 2026-08-17 tier probe (max earned neither slot).
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
+
+# The prompt files' header/body boundary, and the heading the body must open
+# with — checked at startup, so a broken boundary fails before any model cost.
+PROMPT_BODY_MARKER = "<!-- SANITY-CHECK-PROMPT-BODY -->"
+PROMPT_BODY_FIRST_LINE = "## Your assignment"
 
 ATTACKS = ("cut", "mechanization", "fresh-eyes")
 RUNTIMES = ("claude", "codex")
@@ -105,19 +162,36 @@ GENERIC_HYPHENATED_WORDS = {
 
 
 def prompt_body(attack: str) -> str:
-    """The prompt below the file's status rule (skipping any YAML frontmatter,
-    whose own `---` pair would otherwise be mistaken for the rule)."""
+    """The prompt below the file's body marker.
+
+    The marker is a line no ordinary edit produces. The boundary was the first
+    `---` line until 2026-08-19, and `---` is ordinary markdown punctuation: a
+    horizontal rule added to the header, or one written inside a code fence,
+    silently moved the split and shipped header text to the cells in place of
+    their instructions. It also forced a YAML-frontmatter special case, since
+    frontmatter is delimited by `---` too. A marker that collides with nothing
+    needs neither the special case nor an editor's memory (user-ruled
+    2026-08-19, on the first live check of the cut prompt, where five of six
+    cells raised the old boundary independently).
+    """
     path = ATTACK_PROMPT_FILES[attack]
-    text = path.read_text(encoding="utf-8")
-    if text.startswith("---\n"):
-        close = text.find("\n---\n", 4)
-        if close == -1:
-            raise SystemExit(f"unterminated frontmatter: {path}")
-        text = text[close + len("\n---\n"):]
-    marker = "\n---\n"
-    if marker not in text:
-        raise SystemExit(f"attack prompt has no status rule: {path}")
-    return text.split(marker, 1)[1].strip()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    # A line that IS the marker, not a line mentioning it: the header names the
+    # marker when it explains the split, and that mention must not be mistaken
+    # for the boundary itself.
+    marker_lines = [i for i, line in enumerate(lines)
+                    if line.strip() == PROMPT_BODY_MARKER]
+    if len(marker_lines) != 1:
+        print(f"attack prompt needs exactly one {PROMPT_BODY_MARKER} line, "
+              f"found {len(marker_lines)}: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    body = "\n".join(lines[marker_lines[0] + 1:]).strip()
+    first_line = body.split("\n", 1)[0].strip()
+    if first_line != PROMPT_BODY_FIRST_LINE:
+        print(f"attack prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
+              f"found {first_line!r}: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    return body
 
 
 def coined_names(target_path: pathlib.Path) -> set:
@@ -130,7 +204,9 @@ def coined_names(target_path: pathlib.Path) -> set:
         # A plain lowercase word is vocabulary, not coinage: the project's
         # naming rule makes invented names multi-part, so single words
         # (`main`, `none`, `status`) only produce scan noise.
+        # Bare punctuation (`---`) is markdown, not a coinage.
         if (len(span) >= 3 and " " not in span and not span.isdigit()
+                and any(ch.isalnum() for ch in span)
                 and not (span.isalpha() and span.islower())):
             names.add(span)
     for token in re.findall(r"[A-Za-z]\w*(?:-\w+)+", text):
@@ -215,16 +291,17 @@ def run_codex(prompt: str) -> tuple:
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
         prompt,
     ]
-    completed = subprocess.run(
-        command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, text=True, check=False,
-        timeout=CELL_TIMEOUT_SECONDS,
-    )
-    if completed.returncode != 0:
-        return completed.returncode, ""
-    output = last_message_path.read_text(encoding="utf-8")
-    last_message_path.unlink(missing_ok=True)
-    return 0, output
+    try:
+        completed = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, text=True, check=False,
+            timeout=CELL_TIMEOUT_SECONDS,
+        )
+        if completed.returncode != 0:
+            return completed.returncode, ""
+        return 0, last_message_path.read_text(encoding="utf-8")
+    finally:
+        last_message_path.unlink(missing_ok=True)
 
 
 def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
@@ -275,6 +352,74 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     return snapshot
 
 
+QUOTE_MINIMUM_WORDS = 4
+
+
+def normalized_for_quote_match(text: str) -> str:
+    """Whitespace and markdown emphasis vary freely between a quote and its
+    source; both sides are compared with them normalized away (the same rule
+    as scripts/md-drift-lint.py)."""
+    return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text)).strip()
+
+
+def tracked_files_corpus() -> tuple:
+    """Every tracked text file's content, normalized, one entry per file.
+    Built once per run, before the cells launch."""
+    listed = subprocess.run(
+        ["git", "ls-files"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, text=True, check=False,
+    )
+    pieces = []
+    for name in listed.stdout.splitlines():
+        path = REPO_ROOT / name
+        try:
+            pieces.append(normalized_for_quote_match(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            continue
+    # One entry per file, never concatenated: a joined corpus would let a quote
+    # match across a file boundary (md-review finding, verified by construction).
+    return tuple(pieces)
+
+
+def quote_scan(corpus: tuple, report: str, cell: str) -> None:
+    """Print a WARNING per quoted span in a report that appears in no tracked
+    file. A quote is a search string: found anywhere, it is verbatim; found
+    nowhere, it is the one failure that matters — words that exist in no file.
+    No attribution convention is asked of the cells (user-ruled 2026-08-19).
+    Information for triage, never a gate: a quote may legitimately come from
+    git history or the web, and the warning says where it was not found."""
+    for match in re.finditer(r'"([^"\n]+)"|\u201c([^\u201d\n]+)\u201d', report):
+        quote = match.group(1) or match.group(2)
+        for fragment in re.split(r"\.\.\.|\u2026", quote):
+            fragment = fragment.strip().rstrip("?.!,;:")
+            if len(fragment.split()) < QUOTE_MINIMUM_WORDS:
+                continue
+            normalized = normalized_for_quote_match(fragment)
+            if not any(normalized in file_text for file_text in corpus):
+                print(f'WARNING: {cell} quote found in no tracked file: '
+                      f'"{fragment[:60]}"', flush=True)
+
+
+def reviewed_revision(baseline: dict) -> str:
+    """The revision each report describes, for its provenance line.
+
+    Cells read the working tree, not a commit, so the commit alone identifies
+    the text reviewed only when the tree is clean; `worktree=dirty(N)` says N
+    paths differed from it and the commit will not reproduce what the cell saw.
+    Recorded by the runner rather than asked of the reviewer: the machine holds
+    this fact exactly, and a document moves under a walk — every quote in the
+    first live check's reports pointed at a version that no longer existed
+    before the walk on them finished (user-ruled 2026-08-19).
+    """
+    completed = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
+    )
+    commit = completed.stdout.strip() or "unknown"
+    worktree = "clean" if not baseline else f"dirty({len(baseline)})"
+    return f"commit={commit} worktree={worktree}"
+
+
 def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a codex
     cell writing to the worktree, which its prompt forbids. Compared over the
@@ -306,7 +451,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
-             design_names: set, baseline_status: set) -> tuple:
+             baseline_status: dict, corpus: tuple) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
     prompt = assemble_prompt(attack, target, context, problem_statement)
@@ -324,18 +469,20 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     if code != 0:
         print(f"FAILED: {cell} exit {code}", flush=True)
         return cell, False
-    if fresh_eyes:
-        leak_scan(design_names, output, f"the {cell} report")
+    if not fresh_eyes:
+        quote_scan(corpus, output, cell)
     if runtime == "codex":
         stray = stray_paths(baseline_status, worktree_snapshot())
         if stray:
             print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
+    revision = reviewed_revision(baseline_status)
     out_path = out_dir / f"{cell}.md"
     out_path.write_text(
         f"<!-- provenance: runtime={runtime} model={model} effort={REASONING_EFFORT} "
         f"attack={attack} target={target} "
-        f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} -->\n\n"
+        f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
+        f"{revision} -->\n\n"
         + output,
         encoding="utf-8",
     )
@@ -347,39 +494,74 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--target", required=True,
-                        help="repo-relative path of the document under review")
+    parser.add_argument("--target", default=None,
+                        help="repo-relative path of the document under review "
+                             "(required except with --print requester or fresh-eyes)")
     parser.add_argument("--context", action="append", default=[],
                         help="repo-relative context document (repeatable)")
     parser.add_argument("--problem-statement", type=pathlib.Path, default=None,
-                        help="review-request file for the fresh-eyes attack; "
-                             "without it the fresh-eyes cells are SKIPPED, loudly")
+                        help="review-request file for the fresh-eyes audit; "
+                             "without it the fresh-eyes agents are SKIPPED, loudly")
     parser.add_argument("--attack", action="append", choices=list(ATTACKS), default=None,
-                        help="run only this attack (repeatable); default: all three")
+                        help="run only this audit (repeatable); default: all three")
+    parser.add_argument("--print", dest="print_surface",
+                        choices=list(ATTACKS) + ["requester"], default=None,
+                        help="print a review surface to stdout instead of running: "
+                             "an audit's assembled prompt, or the requester manual")
     args = parser.parse_args()
 
-    target_path = REPO_ROOT / args.target
-    if not target_path.is_file():
-        print(f"target not found: {args.target}", file=sys.stderr)
-        return 2
-    missing_context = [path for path in args.context if not (REPO_ROOT / path).is_file()]
-    if missing_context:
-        print(f"context not found: {', '.join(missing_context)}", file=sys.stderr)
-        return 2
+    if args.print_surface == "requester":
+        fresh_eyes_text = ATTACK_PROMPT_FILES["fresh-eyes"].read_text(encoding="utf-8")
+        heading = "## Writing the problem statement"
+        start = fresh_eyes_text.find(heading)
+        # The marker as its own line, not the header sentence that names it.
+        end = fresh_eyes_text.find("\n" + PROMPT_BODY_MARKER + "\n")
+        if start == -1 or end == -1 or start >= end:
+            print("requester section not found in the fresh-eyes prompt", file=sys.stderr)
+            return 2
+        section = fresh_eyes_text[start:end].strip()
+        # The section's closing sentence points at the marker and body below
+        # it, which this surface deliberately omits — printed here it would
+        # dangle (md-review finding).
+        tail_start = section.rfind("\n\nEverything below the marker")
+        if tail_start != -1:
+            section = section[:tail_start].rstrip()
+        print("# The requesting agent's manual\n")
+        print("## The runner's operating rules (its docstring)\n")
+        print(__doc__.strip())
+        print()
+        print(section)
+        return 0
+
+    if args.target is None and args.print_surface != "fresh-eyes":
+        parser.error("--target is required except with --print requester or fresh-eyes")
+
+    if args.target is not None:
+        target_path = REPO_ROOT / args.target
+        if not target_path.is_file():
+            print(f"target not found: {args.target}", file=sys.stderr)
+            return 2
+        missing_context = [path for path in args.context
+                           if not (REPO_ROOT / path).is_file()]
+        if missing_context:
+            print(f"context not found: {', '.join(missing_context)}", file=sys.stderr)
+            return 2
     if args.problem_statement and not args.problem_statement.is_file():
         print(f"problem statement not found: {args.problem_statement}", file=sys.stderr)
         return 2
 
-    design_names = coined_names(target_path)
-    if args.problem_statement:
-        leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
-                  f"the problem statement ({args.problem_statement})")
-        for path in injected_instruction_files():
-            leak_scan(design_names, path.read_text(encoding="utf-8"),
-                      f"an injected instruction file ({path})")
+    if args.print_surface:
+        if args.print_surface == "fresh-eyes" and args.problem_statement is None:
+            print("--print fresh-eyes needs --problem-statement", file=sys.stderr)
+            return 2
+        print(assemble_prompt(args.print_surface, args.target, args.context,
+                              args.problem_statement))
+        return 0
 
-    out_dir = fresh_record_dir(target_path.stem)
+    design_names = coined_names(target_path)
+
     baseline_status = worktree_snapshot()
+    corpus = tracked_files_corpus()
 
     attacks = tuple(dict.fromkeys(args.attack)) if args.attack else ATTACKS
     cells = []
@@ -391,24 +573,50 @@ def main() -> int:
         for runtime in RUNTIMES:
             cells.append((attack, runtime))
 
+    if args.problem_statement and any(a == "fresh-eyes" for a, _ in cells):
+        leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
+                  f"the problem statement ({args.problem_statement})")
+        for path in injected_instruction_files():
+            leak_scan(design_names, path.read_text(encoding="utf-8"),
+                      f"an injected instruction file ({path})")
+
+    # Validate every prompt this run will use before any cell launches, so a
+    # broken boundary fails before model cost — as documented; until 2026-08-21
+    # validation ran lazily inside each cell (md-review finding, verified).
+    for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
+        prompt_body(attack)
+
+    # Claimed only after validation and only when an agent will launch: a
+    # refused startup or an all-skipped run must not burn a -N suffix.
+    out_dir = fresh_record_dir(target_path.stem) if cells else None
+
     ok = True
+    saved_count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
         futures = [
             pool.submit(run_cell, attack, runtime, args.target, args.context,
-                        args.problem_statement, out_dir, design_names, baseline_status)
+                        args.problem_statement, out_dir, baseline_status, corpus)
             for attack, runtime in cells
         ]
         for future in concurrent.futures.as_completed(futures):
             _, cell_ok = future.result()
             ok = ok and cell_ok
+            saved_count += 1 if cell_ok else 0
 
-    print(
-        f"sanity-check complete: reports in {out_dir}. Triage each report "
-        "(verify quotes, resolve code hedges by targeted reads, merge the "
-        "runtimes), then walk the survivors with the user (walk-me-through). "
-        "Delete the record directory when the work it served lands.",
-        flush=True,
-    )
+    if saved_count:
+        print(
+            f"sanity-check complete: reports in {out_dir}. Triage each report "
+            "(follow up the warnings above, settle hedged claims about code by "
+            "reading the code, merge the "
+            "runtimes), then present the surviving findings to the user one at a "
+            "time for his ruling (the walk-me-through skill). "
+            "Delete the record directory when the work it served lands, "
+            "or when nothing further will use it.",
+            flush=True,
+        )
+    else:
+        print("sanity-check wrote no reports: every agent above failed or was "
+              "skipped; there is nothing to triage.", flush=True)
     return 0 if ok else 1
 
 

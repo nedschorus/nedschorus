@@ -222,6 +222,11 @@ def run_end_to_end_case(workspace: Path):
     line above the launch vanished whenever stdout was not a terminal --
     exactly the piped and logged runs where the record matters most
     (measured 2026-08-19).
+
+    The session is created on the DEFAULT tmux server, which since the
+    per-seat-server change (2026-08-21) doubles as the transition case: a
+    seat launched before that change lives there, and the kill must fall back
+    to the default socket to find it.
     """
     if shutil.which("tmux") is None:
         print("SKIP  end-to-end: tmux is not installed")
@@ -271,6 +276,63 @@ def run_end_to_end_case(workspace: Path):
               result.stdout)
     finally:
         subprocess.run(["tmux", "kill-session", "-t", f"={session}"],
+                       capture_output=True, check=False)
+
+
+def run_per_seat_server_end_to_end_case(workspace: Path):
+    """A seat living on its OWN tmux server is found and cleared there.
+
+    Per-seat tmux servers (2026-08-21): the launchers put each seat's session
+    on a server of its own, socket `tmux -L <name>`. The case above seats the
+    stale session on the default server (the transition shape); this one
+    seats it on the per-seat socket -- the steady-state shape -- and the kill
+    must name that socket in its record.
+    """
+    if shutil.which("tmux") is None:
+        print("SKIP  per-seat end-to-end: tmux is not installed")
+        return
+
+    isolated = workspace / "isolated"
+    copied = isolated / "resupervise-seat.py"
+    launcher_record = workspace / "launcher-ran-per-seat.txt"
+    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher.write_text(
+        f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n', encoding="utf-8"
+    )
+    stub_launcher.chmod(0o755)
+
+    session = "resupervise-seat-test-own-server"
+    write_handoff(workspace, session, counter=9)
+    write_state(workspace, session, {
+        "consumed_counter": 8, "session_id": "s",
+        "last_poll_at": "2026-08-18T00:00:00+00:00",
+    })
+    created = subprocess.run(
+        ["tmux", "-L", session, "new-session", "-d", "-s", session,
+         "-c", str(workspace), "sleep 120"],
+        capture_output=True, text=True, check=False,
+    )
+    if created.returncode != 0:
+        print(f"SKIP  per-seat end-to-end: could not create a per-seat tmux session "
+              f"({created.stderr.strip()})")
+        return
+
+    try:
+        result = subprocess.run(
+            [sys.executable, str(copied), session,
+             "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
+            capture_output=True, text=True, check=False,
+        )
+        still_there = subprocess.run(
+            ["tmux", "-L", session, "has-session", "-t", f"={session}"],
+            capture_output=True, text=True, check=False,
+        )
+        check("a seat on its own tmux server is cleared there",
+              still_there.returncode != 0, result.stdout + result.stderr)
+        check("the kill record names the per-seat server socket",
+              f"(server socket {session})" in result.stdout, result.stdout)
+    finally:
+        subprocess.run(["tmux", "-L", session, "kill-server"],
                        capture_output=True, check=False)
 
 
@@ -325,6 +387,7 @@ def main() -> int:
         run_missing_launcher_case(workspace)
         run_prepare_only_case(workspace)
         run_end_to_end_case(workspace)
+        run_per_seat_server_end_to_end_case(workspace)
         run_missing_tmux_case(workspace)
         run_agent_box_case(workspace)
 
