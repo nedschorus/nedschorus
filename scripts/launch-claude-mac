@@ -197,13 +197,27 @@ if ! tmux -L "$AGENT_NAME" has-session -t "=$AGENT_NAME" 2>/dev/null \
     SEAT_TMUX_SOCKET=default
 fi
 
+# Values spliced between single quotes in the shell-parsed commands below
+# must have their own single quotes escaped, or an apostrophe in the value
+# ends the quote early and the composed command fails to parse — after the
+# caller was already told the launch succeeded (PR #134 review round 2: an
+# apostrophe --handoff-dir lands in the recovery prompt-file path, and an
+# apostrophe agents root reaches AGENT_DIRECTORY through
+# NEDSCHORUS_AGENTS_ROOT). AGENT_NAME needs no escaping — validated above
+# to letters, digits, - and _ — and the supervisor path is the checkout's
+# own location, not reachable through any override.
+escape_single_quotes() {
+    printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
+QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
+
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 
 # A first-prompt file seeds only the FIRST session. The supervisor reads the
 # file itself, so its content never rides through shell quoting.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
-    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_single_quotes "$FIRST_PROMPT_FILE")'"
 fi
 
 # Extra supervisor arguments from the environment — the hook crash recovery
@@ -236,7 +250,7 @@ echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in th
 echo \"  fresh supervised seat:  exit, then launch-claude-mac $AGENT_NAME\"; \
 echo \"  resume this dialog:     claude --continue — starts NO supervisor, so that\"; \
 echo \"                          seat can never recycle until it is recovered\"; \
-cd '$AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
+cd '$QUOTED_AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
 # The chained set-option calls tell the terminal the session name, so the
 # tab reads the seat's name rather than the command that happened to start
