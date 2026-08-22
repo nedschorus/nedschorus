@@ -351,7 +351,8 @@ clutter. It now lives in the checked-in `.claude/settings.json` env
 block, reaching every seat's worktree on both machines; the docs state
 it stops only the background check, leaving the launchers' explicit
 `claude update` working. The launch-time version check that was queued
-here closed 2026-08-22 with no code — State at close, item 4.
+here closed 2026-08-22 without building a version check — State at
+close, item 4.
 
 **R17. Shared machinery lives in the repository, self-updating at safe
 points — principle; two open gaps (recorded 2026-08-19).** The principle:
@@ -476,7 +477,7 @@ rulings; listed here to keep the numbering complete.
 | R13 | Interim lane + deputization | text (process) | built-live; deputization in CLAUDE.md, PR #93 |
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
 | R15 | Landed changes reach running seats | default + block (attention) | built, PRs #87/#90 |
-| R16 | Binary updates at launch only | default | built-live; version check queued |
+| R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR #135 — banner off via settings env |
 | R17 | Machinery self-updates at safe points | text (principle) | two open: Mac launcher runs the invoking checkout's supervisor; freshening failures are silent |
 | R18 | Hosts survive disconnects | default | checklist ruled; box done |
 | R19 | Snapshot cadence | default | live: box 10-min, Mac hourly |
