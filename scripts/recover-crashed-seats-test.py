@@ -18,6 +18,7 @@ Run: python3 scripts/recover-crashed-seats-test.py
 import importlib.util
 import json
 import os
+import shlex
 import sys
 import tempfile
 import time
@@ -248,7 +249,8 @@ with tempfile.TemporaryDirectory() as temporary:
     report = workspace.recover()
     check("the resume launch rides --resume-session-id to the supervisor",
           workspace.launches
-          and workspace.launches[0][1] == "--resume-session-id 'crashed-session'",
+          and shlex.split(workspace.launches[0][1])
+              == ["--resume-session-id", "crashed-session"],
           workspace.launches)
     check("the resume report names the session and its size",
           "resuming crashed-session" in report and "KB transcript" in report, report)
@@ -619,8 +621,11 @@ with tempfile.TemporaryDirectory() as temporary:
         recovery.launcher_path = real_launcher_path
     supervisor_arguments = captured_run["env"].get(
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "")
+    # Assertions parse the composed string the way the launch shell will
+    # (shlex.split), instead of matching hand-written quotes — the quoting
+    # itself is under test since PR #134's review finding 1.
     check("A: the defer launch hands the supervisor the assessed handoff directory",
-          f"--handoff-dir '{workspace.handoffs}'" in supervisor_arguments
+          shlex.split(supervisor_arguments) == ["--handoff-dir", str(workspace.handoffs)]
           and "relaunched plain" in report,
           (supervisor_arguments, report))
     check("B: the launcher branch pins NEDSCHORUS_AGENTS_ROOT to the assessed root",
@@ -642,31 +647,84 @@ with tempfile.TemporaryDirectory() as temporary:
         recovery.subprocess.run = capture_subprocess_run
         recovery.launcher_path = lambda: Path("/fake/launch-claude-mac")
         real_launch_seat(workspace.name, workspace.seat_directory,
-                         workspace.handoffs, "--resume-session-id 'abc-123'")
+                         workspace.handoffs,
+                         f"--resume-session-id {shlex.quote('abc-123')}")
     finally:
         recovery.subprocess.run = real_run
         recovery.launcher_path = real_launcher_path
     resume_arguments = captured_run["env"].get(
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "")
     check("A: the resume launch carries --handoff-dir alongside --resume-session-id",
-          f"--handoff-dir '{workspace.handoffs}'" in resume_arguments
-          and "--resume-session-id 'abc-123'" in resume_arguments,
+          shlex.split(resume_arguments) == ["--handoff-dir", str(workspace.handoffs),
+                                            "--resume-session-id", "abc-123"],
           resume_arguments)
     real_run_tmux = recovery.run_tmux
     try:
         recovery.launcher_path = lambda: None
         recovery.run_tmux = capture_tmux
         real_launch_seat(workspace.name, workspace.seat_directory,
-                         workspace.handoffs, "--resume-session-id 'abc-123'")
+                         workspace.handoffs,
+                         f"--resume-session-id {shlex.quote('abc-123')}")
     finally:
         recovery.launcher_path = real_launcher_path
         recovery.run_tmux = real_run_tmux
     box_command = tmux_commands[0][0][-1] if tmux_commands else ""
+    box_tokens = shlex.split(box_command)
     check("A: the box branch composes --handoff-dir into the supervisor command",
-          f"--handoff-dir '{workspace.handoffs}'" in box_command
-          and f"--cd '{workspace.seat_directory}'" in box_command
-          and "--resume-session-id 'abc-123'" in box_command,
+          str(workspace.handoffs) in box_tokens
+          and str(workspace.seat_directory) in box_tokens
+          and "abc-123" in box_tokens
+          and "--handoff-dir" in box_tokens,
           box_command)
+
+    # PR #134 review finding 1: an apostrophe in an operator's directory path
+    # must survive the one shell parse each composed value gets — the
+    # reviewer measured the hand-quoted version killing the seat and then
+    # failing the launch. Both branches, parsed as the launch shell would.
+    apostrophe_handoffs = root / "r19" / "agent's handoffs"
+    apostrophe_handoffs.mkdir(parents=True)
+    try:
+        recovery.subprocess.run = capture_subprocess_run
+        recovery.launcher_path = lambda: Path("/fake/launch-claude-mac")
+        real_launch_seat(workspace.name, workspace.seat_directory,
+                         apostrophe_handoffs, "")
+    finally:
+        recovery.subprocess.run = real_run
+        recovery.launcher_path = real_launcher_path
+    check("F1: an apostrophe handoff dir survives the mac hook's shell parse",
+          shlex.split(captured_run["env"]["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"])
+          == ["--handoff-dir", str(apostrophe_handoffs)],
+          captured_run["env"]["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"])
+    tmux_commands.clear()
+    try:
+        recovery.launcher_path = lambda: None
+        recovery.run_tmux = capture_tmux
+        real_launch_seat(workspace.name, workspace.seat_directory,
+                         apostrophe_handoffs, "")
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+    check("F1: an apostrophe handoff dir survives the box command's shell parse",
+          str(apostrophe_handoffs) in shlex.split(tmux_commands[0][0][-1]),
+          tmux_commands[0][0][-1])
+
+    # PR #134 review finding 2: a --handoff-dir that does not exist yet must
+    # not traceback after assessment already chose to resume — the resume
+    # prompt's directory is created, as the supervisor creates its own.
+    workspace = Workspace(root / "r20")
+    all_dead()
+    write_transcript(workspace.project_directory(), "resume-me", "real work",
+                     records=5)
+    capture_launches(workspace)
+    missing_handoffs = workspace.handoffs / "not-created-yet"
+    report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                   missing_handoffs, workspace.projects,
+                                   False, False)
+    check("F2: a nonexistent --handoff-dir does not traceback; the resume proceeds",
+          "relaunched resuming resume-me" in report, report)
+    check("F2: the resume prompt lands in the created directory",
+          (missing_handoffs / f"{workspace.name}-resume-recovery-prompt.md").is_file(),
+          missing_handoffs)
 
     # Round-4 review note (user-ruled 2026-08-22: allowed overrides must
     # work): default_agents_root resolves the same way the launchers do —

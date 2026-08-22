@@ -17,6 +17,7 @@ Run: python3 scripts/resupervise-seat-test.py
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -403,11 +404,16 @@ def run_override_propagation_case(workspace: Path):
         capture_output=True, text=True, check=False,
     )
     recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
+    recorded_values = dict(line.split("=", 1)
+                           for line in recorded.splitlines() if "=" in line)
     check("the mac launch carries the assessed agents root through NEDSCHORUS_AGENTS_ROOT",
-          f"root={workspace / 'agents'}" in recorded,
+          recorded_values.get("root") == str(workspace / "agents"),
           (recorded, result.stdout, result.stderr))
+    # Parsed the way the launch shell will (shlex.split), not by matching
+    # hand-written quotes — the quoting is under test (PR #134 finding 1).
     check("the mac launch hands the supervisor the assessed handoff directory",
-          f"extra=--handoff-dir '{workspace}'" in recorded, recorded)
+          shlex.split(recorded_values.get("extra", ""))
+          == ["--handoff-dir", str(workspace)], recorded)
 
 
 def run_box_forwarding_case(workspace: Path):
@@ -459,18 +465,41 @@ def run_box_forwarding_case(workspace: Path):
         agent_box="testbox", handoff_dir="/box/handoffs", agents_root="/box/agents")
     module.resupervise_box_seat(arguments)
     remote_command = fake_subprocess.calls[0][-1]
+    remote_tokens = shlex.split(remote_command)  # parsed as the box shell will
     check("the box-side checks are given the overrides, verbatim",
-          "--handoff-dir '/box/handoffs'" in remote_command
-          and "--agents-root '/box/agents'" in remote_command, remote_command)
+          "/box/handoffs" in remote_tokens and "/box/agents" in remote_tokens
+          and "--handoff-dir" in remote_tokens and "--agents-root" in remote_tokens,
+          remote_command)
     _, _, environment = execve_calls[0]
     check("the ubuntu launch carries the overrides in its environment",
           environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agents"
-          and environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")
-              == "--handoff-dir '/box/handoffs'"
+          and shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
+              == ["--handoff-dir", "/box/handoffs"]
           and environment.get("NEDSCHORUS_AGENT_BOX") == "testbox",
           {key: environment.get(key) for key in
            ("NEDSCHORUS_AGENTS_ROOT", "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS",
             "NEDSCHORUS_AGENT_BOX")})
+
+    # PR #134 review finding 1, the box halves: an apostrophe path must
+    # survive the remote shell's parse and the launcher hook's parse.
+    fake_subprocess.calls.clear()
+    execve_calls.clear()
+    arguments = argparse.Namespace(
+        name="box-quote", machine="ubuntu", dry_run=False, prepare_only=False,
+        agent_box="testbox", handoff_dir="/box/agent's handoffs",
+        agents_root="/box/agent's root")
+    module.resupervise_box_seat(arguments)
+    remote_tokens = shlex.split(fake_subprocess.calls[0][-1])
+    _, _, environment = execve_calls[0]
+    check("apostrophe paths survive the box remote command's shell parse",
+          "/box/agent's handoffs" in remote_tokens
+          and "/box/agent's root" in remote_tokens,
+          fake_subprocess.calls[0][-1])
+    check("apostrophe paths survive the ubuntu launcher hook's shell parse",
+          shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
+          == ["--handoff-dir", "/box/agent's handoffs"]
+          and environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agent's root",
+          environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"))
 
     fake_subprocess.calls.clear()
     execve_calls.clear()
@@ -494,6 +523,39 @@ def run_box_forwarding_case(workspace: Path):
     check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
           module.default_agents_root() == Path("/elsewhere/agents"),
           module.default_agents_root())
+
+
+def run_apostrophe_propagation_case(workspace: Path):
+    """PR #134 review finding 1, end to end on the mac path: an operator's
+    --handoff-dir containing an apostrophe broke the hand-quoted hook value
+    at the launch shell — AFTER the stale session was killed, so the seat
+    stayed down while the record said the successor was starting. Through
+    the real script and a stub launcher: the propagated value must parse
+    back to the exact path."""
+    apostrophe_handoffs = workspace / "agent's handoffs"
+    apostrophe_handoffs.mkdir(exist_ok=True)
+    (apostrophe_handoffs / "quoted-seat-handoff.md").write_text(
+        "# handoff for quoted-seat\nrestart-counter: 2\nnext-step: go\n",
+        encoding="utf-8")
+    isolated = workspace / "isolated"
+    record = workspace / "launcher-environment-apostrophe.txt"
+    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher.write_text(
+        '#!/bin/sh\n'
+        f'echo "extra=$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" >> "{record}"\n',
+        encoding="utf-8")
+    stub_launcher.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(isolated / "resupervise-seat.py"), "quoted-seat",
+         "--handoff-dir", str(apostrophe_handoffs),
+         "--agents-root", str(workspace / "agents")],
+        capture_output=True, text=True, check=False,
+    )
+    recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
+    extra_value = recorded.partition("extra=")[2].strip()
+    check("an apostrophe --handoff-dir reaches the supervisor intact (mac, end to end)",
+          shlex.split(extra_value) == ["--handoff-dir", str(apostrophe_handoffs)],
+          (recorded, result.stdout, result.stderr))
 
 
 def run_ubuntu_launcher_hook_case():
@@ -522,6 +584,7 @@ def main() -> int:
         run_missing_tmux_case(workspace)
         run_agent_box_case(workspace)
         run_override_propagation_case(workspace)
+        run_apostrophe_propagation_case(workspace)
         run_box_forwarding_case(workspace)
         run_ubuntu_launcher_hook_case()
 

@@ -72,6 +72,7 @@ invocation.
 import argparse
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -248,10 +249,13 @@ def resupervise_box_seat(arguments) -> int:
     # The override flags are machine-local paths — for a box seat, box-local —
     # so they travel verbatim (unexpanded, box expands its own ~) and only
     # when the operator gave them; the defaults stay each machine's own.
+    # shlex.quote, because the joined string is parsed once by the box's
+    # shell, and a hand-quoted apostrophe path breaks there (PR #134 review,
+    # finding 1).
     if arguments.handoff_dir:
-        remote_arguments += ["--handoff-dir", f"'{arguments.handoff_dir}'"]
+        remote_arguments += ["--handoff-dir", shlex.quote(arguments.handoff_dir)]
     if arguments.agents_root:
-        remote_arguments += ["--agents-root", f"'{arguments.agents_root}'"]
+        remote_arguments += ["--agents-root", shlex.quote(arguments.agents_root)]
     if arguments.dry_run:
         remote_arguments.append("--dry-run")
     remote = subprocess.run(
@@ -303,7 +307,7 @@ def resupervise_box_seat(arguments) -> int:
         environment["NEDSCHORUS_AGENTS_ROOT"] = arguments.agents_root
     if arguments.handoff_dir:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
-            f"--handoff-dir '{arguments.handoff_dir}'")
+            f"--handoff-dir {shlex.quote(arguments.handoff_dir)}")
     os.execve(str(launcher), [str(launcher), arguments.name], environment)
 
 
@@ -474,10 +478,15 @@ def main(argv=None) -> int:
     # the pattern recover-crashed-seats.py's launch_seat closes the same way
     # (PR #131 round-3 codex findings A/B; user-ruled 2026-08-22: allowed
     # overrides must work).
+    # shlex.quote: the hook value is parsed by exactly one shell (the
+    # launcher appends it verbatim; tmux runs the composed command), and a
+    # hand-quoted apostrophe path fails that parse AFTER the stale session
+    # was killed — the seat stays down while the record says the successor
+    # is starting (PR #134 review, finding 1).
     environment = dict(os.environ)
     environment["NEDSCHORUS_AGENTS_ROOT"] = str(agents_root)
     environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
-        f"--handoff-dir '{handoff_directory}'")
+        f"--handoff-dir {shlex.quote(str(handoff_directory))}")
     os.execve(str(launcher), [str(launcher), arguments.name], environment)
 
 
