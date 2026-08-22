@@ -179,10 +179,14 @@ def main():
 
         def split_fails(name, text):
             prompt_file(name, text)
+            import contextlib
+            import io
             try:
-                runner.prompt_body("cut")
-            except SystemExit:
-                return True
+                with contextlib.redirect_stderr(io.StringIO()):
+                    runner.prompt_body("cut")
+            except SystemExit as exc:
+                # The documented contract: an unusable invocation exits 2.
+                return exc.code == 2
             return False
 
         good = f"# Header\n\nStatus: names the {marker} line inline.\n\n{marker}\n\n{heading}\n\nBody text.\n"
