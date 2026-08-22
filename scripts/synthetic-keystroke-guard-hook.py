@@ -47,11 +47,34 @@ remote command contains the tmux invocation attributes probes to that host
 (carrying -p/-i/-l); ssh found elsewhere in a command — e.g. inside a
 keystroke payload — attributes nothing.
 
+Which tmux SERVER the probe asks (per-seat servers, 2026-08-21): fleet seats
+run one tmux server per seat (`tmux -L <seat>`, the launchers' rule since
+the Mac's single default server died and took all three Mac seats down at
+once), so "no server running" on the default socket no longer means a
+session is down — it may be attached on its own socket, and a probe that
+stopped at the default socket would misjudge it as safe to type into. The
+probe therefore dials, in order:
+- the server the guarded command itself dials: its own -L/-S flag when it
+  carries one — probed EXCLUSIVELY, since keystrokes can only land on the
+  server the command addresses and other sockets are irrelevant — else the
+  same plain resolution the command will get ($TMUX's server when the
+  command runs inside tmux, the default socket otherwise). The plain probe
+  also covers the transition: seats launched before the per-seat change
+  still live on the default server.
+- only when that server does not know the session and the command carried
+  no socket flag: the seat's own per-seat server, `-L <session part of the
+  target>` (socket name == session name is the launchers' convention). A
+  hit there rules the decision.
+An unverifiable probe (timeout, unreachable host) denies immediately — fail
+closed, never shopping past an error to a later "unknown". A session that NO
+probed server knows stays allowed: keystrokes to a nonexistent session type
+nothing, and the command fails on its own.
+
 All probes share one wall-clock budget (PROBE_BUDGET_SECONDS) kept under the
 hook's own registered timeout, because a PreToolUse hook that times out
 FAILS OPEN in the harness: on overrun the guard denies as unverifiable
-instead of dying. Probe results are cached per (host, target) within one
-invocation.
+instead of dying. Probe results are cached per (host, server flags, target)
+within one invocation.
 
 Detection is literal, not adversarial: it corrects the habit of composing
 these commands directly, which is the only way the failures have happened.
@@ -388,6 +411,42 @@ def find_tmux_keystroke_verb(words):
     return None
 
 
+def extract_tmux_server_flags(words):
+    """The -L/-S socket flag pair the tmux invocation itself carries, from
+    the pre-verb global flags: ["-L", "name"], ["-S", "path"], or []. The
+    probe must dial the same server the command will — with per-seat servers
+    (one tmux server per seat, 2026-08-21), the default server knowing
+    nothing about a session says nothing about the server a socket-flagged
+    command actually addresses."""
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word in ("-L", "-S"):
+            if index + 1 < len(words):
+                return [word, words[index + 1]]
+            return []
+        if len(word) > 2 and not word.startswith("--") \
+                and word[:2] in ("-L", "-S"):
+            return [word[:2], word[2:]]
+        if word in TMUX_GLOBAL_VALUE_FLAGS:
+            index += 2
+            continue
+        if word.startswith("-"):
+            index += 1
+            continue
+        return []  # reached the command verb without a socket flag
+    return []
+
+
+def per_seat_server_flags_for_target(target):
+    """The -L flags of the per-seat server a target's session would live on:
+    socket name == session name, the launchers' rule since 2026-08-21. The
+    session name is the target up to any ':' window/pane qualifier, with
+    tmux's '=' exact-match prefix stripped."""
+    session_name = target.lstrip("=").split(":", 1)[0]
+    return ["-L", session_name] if session_name else []
+
+
 def extract_tmux_targets(words):
     """All -t values in the words after a keystroke verb: `-t name`,
     `-tname`, and (via the tokenizer) quoted names with spaces. Deduplicated,
@@ -409,8 +468,8 @@ def extract_tmux_targets(words):
     return list(dict.fromkeys(targets))
 
 
-def probe_argv(target, ssh_context):
-    tmux_argv = ["tmux", "display-message", "-p", "-t", target,
+def probe_argv(target, server_flags, ssh_context):
+    tmux_argv = ["tmux", *server_flags, "display-message", "-p", "-t", target,
                  "#{session_attached}"]
     if ssh_context is None:
         return tmux_argv
@@ -423,55 +482,115 @@ def probe_argv(target, ssh_context):
             + list(carried) + [host, remote])
 
 
-def probe_recipe(target, ssh_context):
-    local = 'tmux display-message -p -t "%s" \'#{session_attached}\'' % target
-    if ssh_context is None or ssh_context[0] == NESTED_SSH_HOST:
-        return local
-    host, carried = ssh_context
-    ssh_words = ["ssh"] + list(carried) + [host]
-    return ("%s 'tmux display-message -p -t \"%s\" \"#{session_attached}\"'"
-            % (" ".join(ssh_words), target))
+def probe_recipe(target, server_flags, ssh_context):
+    """The by-hand verification command a deny message teaches. Carries the
+    guarded command's own socket flags when it has them; otherwise appends
+    the per-seat-server probe, since a seat's session lives on its own
+    socket (2026-08-21) and the plain probe alone can answer 'no server
+    running' about a seat that is very much attached."""
+    def one_probe(flags):
+        flags_text = "".join(" %s" % part for part in flags)
+        if ssh_context is None or ssh_context[0] == NESTED_SSH_HOST:
+            return ('tmux%s display-message -p -t "%s" \'#{session_attached}\''
+                    % (flags_text, target))
+        host, carried = ssh_context
+        ssh_words = ["ssh"] + list(carried) + [host]
+        return ("%s 'tmux%s display-message -p -t \"%s\" \"#{session_attached}\"'"
+                % (" ".join(ssh_words), flags_text, target))
+
+    recipe = one_probe(server_flags)
+    if not server_flags:
+        per_seat_flags = per_seat_server_flags_for_target(target)
+        if per_seat_flags:
+            recipe += (" (finding no server? seats run per-seat tmux servers"
+                       " — probe the seat's own socket: %s)"
+                       % one_probe(per_seat_flags))
+    return recipe
 
 
-def query_session_attached(target, ssh_context, guard):
+def run_attachment_probe(target, server_flags, ssh_context, guard):
+    """One probe against one tmux server. Returns ("count", n) when that
+    server answered, ("unknown", error) when it does not know the session
+    (or is not running at all), ("unverifiable", error) otherwise. Probes
+    share the guard's global budget (a timed-out hook fails open, so
+    overruns must deny, not die)."""
+    remaining = guard.deadline - guard.clock()
+    if remaining <= 0:
+        return ("unverifiable",
+                "probe budget exhausted (%.0fs) — the hook must answer "
+                "before its own timeout, which would fail open"
+                % PROBE_BUDGET_SECONDS)
+    argv = probe_argv(target, server_flags, ssh_context)
+    try:
+        completed = guard.runner(argv, capture_output=True, text=True,
+                                 timeout=min(PER_PROBE_TIMEOUT_SECONDS, remaining))
+    except Exception as error:  # timeout, missing binary — cannot verify
+        return ("unverifiable", str(error))
+    if completed.returncode != 0:
+        error_text = (completed.stderr or "").strip()
+        # Three shapes mean "this server cannot answer for that session":
+        # "can't find" (server knows sessions, not this one), "no server
+        # running" (socket file exists, no server behind it), and "error
+        # connecting" (connect-stage failure: absent socket file — the
+        # steady state for a never-dialed socket path, PR #122 review P2-2 —
+        # or a refused connection on a dead server's leftover socket; matched
+        # broadly on purpose, since every connect-stage reason means exactly
+        # this). All three mean the NEXT candidate server may still know it.
+        if ("can't find" in error_text or "no server running" in error_text
+                or "error connecting" in error_text):
+            return ("unknown", error_text)
+        return ("unverifiable",
+                error_text or "probe exited %d" % completed.returncode)
+    stdout_text = (completed.stdout or "").strip()
+    if not stdout_text:
+        # rc 0 with empty stdout is tmux's CANFAIL shape for display-message
+        # against a session this (live) server does not know — NOT a count of
+        # 0 attached clients (PR #122 review P2-1). Treating it as a count
+        # ended the candidate loop and the per-seat -L probe never ran.
+        return ("unknown", "server answered but does not know the session")
+    try:
+        return ("count", int(stdout_text))
+    except ValueError:
+        return ("unverifiable", "unparseable probe output: %r" % completed.stdout)
+
+
+def query_session_attached(target, server_flags, ssh_context, guard):
     """Return (attached_count, error). attached_count is None when
-    unverifiable; a target tmux does not know counts as 0 — there is nothing
-    to type into. Probes share the guard's global budget (a timed-out hook
-    fails open, so overruns must deny, not die) and are cached per
-    (host, target)."""
-    key = (ssh_context, target)
+    unverifiable; a session NO probed server knows counts as 0 — there is
+    nothing to type into, and the command fails on its own.
+
+    Which servers are probed (per-seat tmux servers, 2026-08-21): when the
+    command carries its own -L/-S socket flag, exactly that server — the
+    only one its keystrokes can reach. Otherwise the plain resolution first
+    (the same $TMUX-or-default dial the unflagged command gets, which also
+    covers pre-change seats still on the default server), then the seat's
+    own server (-L <session part of the target>) — without that second
+    probe, an attached session on its own server reads as "no server
+    running" and would be misjudged as detached. An unverifiable probe
+    denies immediately rather than shopping on to a later "unknown".
+    Results are cached per (host, server flags, target)."""
+    key = (ssh_context, tuple(server_flags), target)
     if key in guard.probe_cache:
         return guard.probe_cache[key]
     if ssh_context is not None and ssh_context[0] == NESTED_SSH_HOST:
         result = (None, "nested ssh — this guard cannot probe through a jump chain")
         guard.probe_cache[key] = result
         return result
-    remaining = guard.deadline - guard.clock()
-    if remaining <= 0:
-        result = (None, "probe budget exhausted (%.0fs) — the hook must "
-                        "answer before its own timeout, which would fail open"
-                        % PROBE_BUDGET_SECONDS)
-        guard.probe_cache[key] = result
-        return result
-    argv = probe_argv(target, ssh_context)
-    try:
-        completed = guard.runner(argv, capture_output=True, text=True,
-                                 timeout=min(PER_PROBE_TIMEOUT_SECONDS, remaining))
-    except Exception as error:  # timeout, missing binary — cannot verify
-        result = (None, str(error))
-        guard.probe_cache[key] = result
-        return result
-    if completed.returncode != 0:
-        error_text = (completed.stderr or "").strip()
-        if "can't find" in error_text or "no server running" in error_text:
-            result = (0, error_text)
-        else:
-            result = (None, error_text or "probe exited %d" % completed.returncode)
-    else:
-        try:
-            result = (int((completed.stdout or "").strip() or "0"), "")
-        except ValueError:
-            result = (None, "unparseable probe output: %r" % completed.stdout)
+    candidate_flags = [list(server_flags)]
+    if not server_flags:
+        per_seat_flags = per_seat_server_flags_for_target(target)
+        if per_seat_flags:
+            candidate_flags.append(per_seat_flags)
+    result = (0, "")
+    for flags in candidate_flags:
+        kind, detail = run_attachment_probe(target, flags, ssh_context, guard)
+        if kind == "count":
+            result = (detail, "")
+            break
+        if kind == "unverifiable":
+            result = (None, detail)
+            break
+        result = (0, detail)  # unknown on this server — the next may know it
     guard.probe_cache[key] = result
     return result
 
@@ -542,6 +661,9 @@ def analyze_simple_command(words, ssh_context, verified, guard):
         return None
     if verified:
         return None
+    # The command's own -L/-S socket flag names the only server its
+    # keystrokes can reach, so the probes must dial that same server.
+    server_flags = extract_tmux_server_flags(after[:verb_index])
     targets = extract_tmux_targets(after[verb_index + 1:])
     if not targets:
         return NO_TARGET_REASON
@@ -551,12 +673,13 @@ def analyze_simple_command(words, ssh_context, verified, guard):
         # "can't find" and would allow while the real target may be attached.
         if "$" in target or "`" in target or "{}" in target:
             return UNRESOLVED_TARGET_REASON.format(
-                target=target, probe=probe_recipe(target, ssh_context))
-        attached, error = query_session_attached(target, ssh_context, guard)
+                target=target, probe=probe_recipe(target, server_flags, ssh_context))
+        attached, error = query_session_attached(target, server_flags,
+                                                 ssh_context, guard)
         if attached is None:
             return UNVERIFIED_REASON.format(
                 target=target, error=error,
-                probe=probe_recipe(target, ssh_context))
+                probe=probe_recipe(target, server_flags, ssh_context))
         if attached > 0:
             return ATTACHED_REASON.format(target=target)
     return None
