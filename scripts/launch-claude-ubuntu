@@ -129,12 +129,15 @@ if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
 fi
 
-# Update Claude Code on the box before starting the seat: background
-# auto-update is off on the fleet (nedschorus#62), and launch is the chosen
-# moment instead — every fresh agent starts current. Running sessions are
-# unaffected by an update (user-established across many updates: installed
-# versions are retained on disk). A failed or slow update warns and
-# proceeds, because an update problem must never block starting an agent.
+# Update Claude Code on the box before starting the seat: launch is the
+# fleet's one update moment — every fresh agent starts current. Background
+# auto-update is off via DISABLE_AUTOUPDATER in the checked-in
+# .claude/settings.json (user-ruled 2026-08-22: with launch-time updates,
+# the mid-session update banner is clutter); that switch leaves this
+# explicit `claude update` working. Running sessions are unaffected by an
+# update (user-established across many updates: installed versions are
+# retained on disk). A failed or slow update warns and proceeds, because
+# an update problem must never block starting an agent.
 # The twin does the same locally, at scripts/launch-claude-mac.
 UPDATE_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
