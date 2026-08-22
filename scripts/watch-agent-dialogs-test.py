@@ -152,6 +152,33 @@ def run_unit_cases():
           mangled_name("/mangle-probe-root/.claude/b"))
 
     # ------------------------------------------------------------------
+    # Agents-root default: ${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as the
+    # launchers resolve it. Resolving differently on a machine where the
+    # variable is set means iterating a root no seat lives in — the watcher
+    # then watches nothing, silently (user-ruled 2026-08-22: allowed
+    # overrides must work). Both the function and the parser wiring are
+    # pinned; the wiring case proves the env read happens per invocation.
+    # ------------------------------------------------------------------
+    saved_root = os.environ.get("NEDSCHORUS_AGENTS_ROOT")
+    try:
+        os.environ["NEDSCHORUS_AGENTS_ROOT"] = "/relocated/fleet-root"
+        check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
+              watcher_module.default_agents_root() == Path("/relocated/fleet-root"),
+              watcher_module.default_agents_root())
+        check("parse_arguments defaults --agents-root from the variable",
+              watcher_module.parse_arguments([]).agents_root == "/relocated/fleet-root",
+              watcher_module.parse_arguments([]).agents_root)
+        os.environ["NEDSCHORUS_AGENTS_ROOT"] = ""
+        check("an empty NEDSCHORUS_AGENTS_ROOT falls back to ~/agents (the :- rule)",
+              watcher_module.default_agents_root() == Path("~/agents").expanduser(),
+              watcher_module.default_agents_root())
+    finally:
+        if saved_root is None:
+            os.environ.pop("NEDSCHORUS_AGENTS_ROOT", None)
+        else:
+            os.environ["NEDSCHORUS_AGENTS_ROOT"] = saved_root
+
+    # ------------------------------------------------------------------
     # Risky-command pattern: every claimed class, both directions.
     # ------------------------------------------------------------------
     pattern = watcher_module.RISKY_COMMAND_PATTERN
