@@ -1015,7 +1015,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     # --- slice 5: the branch-protection audit (B3c's three outcomes) --------
     designed = {
-        "restrictions": {"users": [{"login": "NedLern"}], "teams": [], "apps": []},
+        "restrictions": {"users": [{"login": "NedLern"}, {"login": "ned-review-merge"}],
+                         "teams": [], "apps": []},
         "enforce_admins": {"enabled": True},
         "allow_force_pushes": {"enabled": False},
         "allow_deletions": {"enabled": False},
@@ -1032,7 +1033,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # drift. Pinned because the audit read it as drift until 2026-08-13 and
     # answered protection-wrong against correctly configured protection.
     cased = {**designed, "restrictions": {**designed["restrictions"],
-                                          "users": [{"login": "nedlern"}]}}
+                                          "users": [{"login": "nedlern"},
+                                                    {"login": "NED-REVIEW-MERGE"}]}}
     protection_file.write_text(json.dumps(cased), encoding="utf-8")
     code, payload = run_gatekeeper(
         ["audit", "--protection-file", str(protection_file)], state_home)
@@ -1040,7 +1042,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
           payload.get("outcome") == "protection-ok" and code == 0, payload)
 
     drifted = {
-        "restrictions": {"users": [{"login": "NedLern"}, {"login": "intruder"}],
+        "restrictions": {"users": [{"login": "NedLern"}, {"login": "ned-review-merge"},
+                                   {"login": "intruder"}],
                          "teams": [], "apps": []},
         "enforce_admins": {"enabled": False},
         "allow_force_pushes": {"enabled": True},
@@ -1055,6 +1058,26 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("B3c protection-wrong names every differing setting",
           "intruder" in audit_facts and "enforce-admins" in audit_facts
           and "force-push" in audit_facts, audit_facts)
+
+    # Dropping either allowed account is drift, and it is the drift this audit
+    # was blind to between 2026-08-19 and 2026-08-22: the design gained the
+    # merge seat's account, the expectation here did not, and the audit reported
+    # protection-wrong against correct settings while telling the user to
+    # "restore" them — an instruction to remove the account that had just been
+    # added deliberately. Both directions are pinned so a one-account
+    # expectation cannot come back unnoticed.
+    for dropped, remaining in (("ned-review-merge", "NedLern"),
+                               ("NedLern", "ned-review-merge")):
+        short = {**designed, "restrictions": {**designed["restrictions"],
+                                              "users": [{"login": remaining}]}}
+        protection_file.write_text(json.dumps(short), encoding="utf-8")
+        code, payload = run_gatekeeper(
+            ["audit", "--protection-file", str(protection_file)], state_home)
+        check(f"B3c audit calls it drift when {dropped} is missing from the allow-list",
+              payload.get("outcome") == "protection-wrong" and code == 1, payload)
+        check(f"the {dropped} drift names the account that should be there",
+              dropped.casefold() in payload.get("facts", "").casefold(),
+              payload.get("facts", ""))
 
     no_gh_environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
                          "PATH": str(workspace / "empty-path")}
