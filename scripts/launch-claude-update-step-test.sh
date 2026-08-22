@@ -34,6 +34,15 @@ EOF
 cat > "$STUBS/tmux" << 'EOF'
 #!/bin/sh
 echo "tmux $*" >> "${TMUX_CALL_LOG:?}"
+# The transition-fallback case makes the SEAT's own server look empty: a
+# has-session against the socket named by TMUX_STUB_SEATLESS_SOCKET fails,
+# while every other call (the default socket's has-session included)
+# succeeds.
+if [ -n "${TMUX_STUB_SEATLESS_SOCKET:-}" ] \
+        && [ "${1:-}" = "-L" ] && [ "${2:-}" = "$TMUX_STUB_SEATLESS_SOCKET" ] \
+        && [ "${3:-}" = "has-session" ]; then
+    exit 1
+fi
 exit 0
 EOF
 cat > "$STUBS/git" << 'EOF'
@@ -76,6 +85,35 @@ status=$(run_mac_launcher ok okcase)
 check "a working update still launches" "$([ "$status" -eq 0 ]; echo $?)"
 check "every launch invokes claude update" "$([ -f "$WORKSPACE/update-ran-okcase" ]; echo $?)"
 
+# Per-seat tmux servers (2026-08-21): the seat is created on its OWN server
+# (-L <name>) so one server crash cannot take the whole Mac fleet down, and
+# the set-titles options ride the same invocation (chained with \;) because
+# the seat's server does not exist before its first session does.
+grep -q -- "-L seat-okcase new-session" "$WORKSPACE/tmux-calls-okcase"
+check "the mac seat is created on its own tmux server (-L <name>)" $?
+grep -q -- "-L seat-okcase new-session .*; set-option -g set-titles on" "$WORKSPACE/tmux-calls-okcase"
+check "the mac launcher chains set-titles onto the seat's own server" $?
+
+# The rollout transition: a seat still running on the DEFAULT server
+# (launched before per-seat servers) must be reached there, not duplicated on
+# a fresh per-seat server. The stub makes the per-seat socket look seatless
+# while the default socket claims the session, and the launcher must then
+# seat on -L default. HOME is sandboxed like every invocation here (see the
+# PR #107 note below: an unsandboxed run edits the operator's real
+# ~/.claude.json).
+: > "$WORKSPACE/tmux-calls-transition"
+HOME="$WORKSPACE/home" NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
+    PATH="$STUBS:$PATH" \
+    CLAUDE_UPDATE_MARKER="$WORKSPACE/update-ran-transition" CLAUDE_UPDATE_MODE=ok \
+    TMUX_CALL_LOG="$WORKSPACE/tmux-calls-transition" LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS=2 \
+    TMUX_STUB_SEATLESS_SOCKET="seat-transition" \
+    sh "$SCRIPT_DIRECTORY/launch-claude-mac" seat-transition --no-attach \
+    > "$WORKSPACE/out-transition" 2>&1
+grep -q -- "-L default has-session" "$WORKSPACE/tmux-calls-transition"
+check "the launcher checks the default server for a pre-change seat" $?
+grep -q -- "-L default new-session" "$WORKSPACE/tmux-calls-transition"
+check "a seat live on the default server is reached there, not duplicated" $?
+
 # The ubuntu twin: its box-side command carries the same step, update before
 # seat creation. Asserted on the command string it hands ssh, with ssh
 # stubbed to print rather than connect.
@@ -94,6 +132,69 @@ esac
 case "$box_command" in
     (*"failed or timed out"*) check "ubuntu box command carries the warn-and-proceed branch" 0 ;;
     (*) check "ubuntu box command carries the warn-and-proceed branch" 1 ;;
+esac
+
+# Per-seat tmux servers on the box (2026-08-21): the remote command must probe
+# the seat's own socket, fall back to the default socket where a pre-change
+# seat still lives, and seat on whichever it selected.
+case "$box_command" in
+    (*"tmux -L 'seatub' has-session"*) check "ubuntu box command probes the seat's own tmux socket" 0 ;;
+    (*) check "ubuntu box command probes the seat's own tmux socket" 1 ;;
+esac
+case "$box_command" in
+    (*"tmux -L default has-session"*) check "ubuntu box command carries the default-socket transition fallback" 0 ;;
+    (*) check "ubuntu box command carries the default-socket transition fallback" 1 ;;
+esac
+case "$box_command" in
+    (*'-L "$SEAT_TMUX_SOCKET" new-session'*) check "ubuntu box command seats on the selected tmux socket" 0 ;;
+    (*) check "ubuntu box command seats on the selected tmux socket" 1 ;;
+esac
+# P2-3 (PR #122 review): the socket-selection string contains `;`, which
+# un-grouped would END the && list on the box — a failed prepare would no
+# longer abort, and tmux would launch with an empty -L socket name. The
+# brace group keeps it one && operand. Proven by EXECUTION, not sed surgery
+# (the first probe here was vacuous — a greedy sed left a dangling quote and
+# the dead probe passed on both trees, caught in re-review): the captured
+# box command runs with HOME sandboxed and python3 stubbed to fail, so the
+# pre-trust prepare step hard-fails; with correct grouping nothing after it
+# may run. A negative control un-braces the selection and asserts tmux IS
+# reached — the harness detects the defect shape it exists to catch.
+case "$box_command" in
+    (*'{ SEAT_TMUX_SOCKET='*'; }'*) check "ubuntu box socket selection is brace-grouped (one && operand)" 0 ;;
+    (*) check "ubuntu box socket selection is brace-grouped (one && operand)" 1 ;;
+esac
+P23_STUBS="$WORKSPACE/p23-stubs"; mkdir -p "$P23_STUBS"
+P23_HOME="$WORKSPACE/p23-home"; mkdir -p "$P23_HOME"
+cat > "$P23_STUBS/tmux" << 'EOF'
+#!/bin/sh
+echo "TMUX-RAN $*" >> "${TMUX_RAN_LOG:?}"
+exit 0
+EOF
+cat > "$P23_STUBS/python3" << 'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$P23_STUBS/tmux" "$P23_STUBS/python3"
+TMUX_RAN_LOG="$WORKSPACE/tmux-ran-log"; export TMUX_RAN_LOG
+: > "$TMUX_RAN_LOG"
+HOME="$P23_HOME" PATH="$P23_STUBS:$STUBS:$PATH" sh -c "$box_command" > /dev/null 2>&1 || true
+if [ -s "$TMUX_RAN_LOG" ]; then
+    check "ubuntu box command: a failed prepare reaches NO tmux invocation" 1
+else
+    check "ubuntu box command: a failed prepare reaches NO tmux invocation" 0
+fi
+unbraced_box_command=$(printf '%s\n' "$box_command" | sed 's/{ SEAT_TMUX_SOCKET/SEAT_TMUX_SOCKET/; s/fi; }/fi/')
+: > "$TMUX_RAN_LOG"
+HOME="$P23_HOME" PATH="$P23_STUBS:$STUBS:$PATH" sh -c "$unbraced_box_command" > /dev/null 2>&1 || true
+if [ -s "$TMUX_RAN_LOG" ]; then
+    check "ubuntu box command negative control: un-braced selection DOES reach tmux (harness has teeth)" 0
+else
+    check "ubuntu box command negative control: un-braced selection DOES reach tmux (harness has teeth)" 1
+fi
+
+case "$box_command" in
+    (*'\; set-option -g set-titles on'*) check "ubuntu box command chains set-titles onto the seat's server" 0 ;;
+    (*) check "ubuntu box command chains set-titles onto the seat's server" 1 ;;
 esac
 
 # The after-exit prompt, both twins. When a supervisor exits, its shell offers
