@@ -203,6 +203,15 @@ if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
 fi
 
+# Extra supervisor arguments from the environment — the hook crash recovery
+# rides (recover-crashed-seats.py sets --resume-session-id through it,
+# nedschorus#120). An environment variable rather than a flag because the
+# launcher's argument surface is operator-facing and stable, while this is
+# machinery-to-machinery; callers own the quoting of what they pass.
+if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
+fi
+
 # When the supervisor exits, the pane becomes an interactive shell in the
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
 # seat is relaunched in place, with no hunt for the right cd. The options are
