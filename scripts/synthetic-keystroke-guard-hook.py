@@ -531,9 +531,11 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
         # Three shapes mean "this server cannot answer for that session":
         # "can't find" (server knows sessions, not this one), "no server
         # running" (socket file exists, no server behind it), and "error
-        # connecting" (no socket file at all — the steady state for a socket
-        # path nothing has dialed since boot, PR #122 review P2-2). All
-        # three mean the NEXT candidate server may still know it.
+        # connecting" (connect-stage failure: absent socket file — the
+        # steady state for a never-dialed socket path, PR #122 review P2-2 —
+        # or a refused connection on a dead server's leftover socket; matched
+        # broadly on purpose, since every connect-stage reason means exactly
+        # this). All three mean the NEXT candidate server may still know it.
         if ("can't find" in error_text or "no server running" in error_text
                 or "error connecting" in error_text):
             return ("unknown", error_text)
