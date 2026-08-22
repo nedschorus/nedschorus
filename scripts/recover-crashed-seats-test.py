@@ -17,6 +17,7 @@ Run: python3 scripts/recover-crashed-seats-test.py
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import time
@@ -83,6 +84,14 @@ class Workspace:
         return recovery.recover_seat(self.name, self.agents_root, self.handoffs,
                                      self.projects, dry_run, ignite_fallback)
 
+
+
+
+def real_subprocess_run_help():
+    import subprocess
+    return subprocess.run(
+        [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")), "--help"],
+        capture_output=True, text=True).stdout
 
 def patch(monkey_target, value):
     setattr(recovery, monkey_target, value)
@@ -288,6 +297,162 @@ with tempfile.TemporaryDirectory() as temporary:
               launched)
     finally:
         supervisor_module.subprocess.Popen = real_popen
+
+    # --- PR #131 review round: the fix-round regressions --------------------
+
+    # F1: an unanswerable tmux axis refuses (fail closed, like lsof).
+    workspace = Workspace(root / "r1")
+    patch("tmux_session_alive_anywhere",
+          lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+                              "checked — refusing rather than guessing"))
+    patch("seat_directory_occupied", lambda directory: (False, ""))
+    verdict, detail = workspace.assess()
+    check("F1: tmux unanswerable refuses instead of reading as dead",
+          verdict == "refuse" and "cannot be checked" in detail, (verdict, detail))
+
+    # F1: a failing launch is reported and counted, not claimed as success.
+    workspace = Workspace(root / "r2")
+    all_dead()
+    write_transcript(workspace.project_directory(), "real-work", "do things", records=5)
+    def failing_launch(name, seat_directory, extra, first_prompt_file=None):
+        workspace.launches.append((name, extra, first_prompt_file))
+        return 2
+    patch("launch_seat", failing_launch)
+    report = workspace.recover()
+    check("F1: a failed launch reports LAUNCH FAILED, never 'relaunched'",
+          "LAUNCH FAILED (exit 2)" in report and "relaunched" not in report, report)
+
+    # F2: the resume launch carries the crash-recovery prompt file.
+    workspace = Workspace(root / "r3")
+    all_dead()
+    write_transcript(workspace.project_directory(), "real-work", "do things", records=5)
+    capture_launches(workspace)
+    workspace.recover()
+    check("F2: the resume launch passes a first-prompt file",
+          workspace.launches and workspace.launches[0][2] is not None,
+          workspace.launches)
+    resume_prompt = workspace.launches[0][2].read_text(encoding="utf-8")
+    check("F2: the resume prompt says crash-not-recycle and re-verify, not ask-for-work",
+          "died without writing a handoff" in resume_prompt
+          and "Re-verify" in resume_prompt
+          and "No handoff exists yet" not in resume_prompt, resume_prompt)
+
+    # F3: recovery's own fresh-session shapes are skipped when small...
+    workspace = Workspace(root / "r4")
+    all_dead()
+    write_transcript(workspace.project_directory(), "pre-crash-real", "real work",
+                     age_seconds=3600, records=6)
+    write_transcript(workspace.project_directory(), "failed-ignition",
+                     "Read x-dialog-0004.md (crash recovery, nedschorus#120). Continue.")
+    verdict, detail = workspace.assess()
+    check("F3: a small failed-ignition successor never shadows the pre-crash transcript",
+          verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
+
+    workspace = Workspace(root / "r5")
+    all_dead()
+    write_transcript(workspace.project_directory(), "pre-crash-real", "real work",
+                     age_seconds=3600, records=6)
+    empty = workspace.project_directory() / "zero-byte.jsonl"
+    empty.write_text("", encoding="utf-8")
+    verdict, detail = workspace.assess()
+    check("F3: a 0-byte transcript never shadows the pre-crash transcript",
+          verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
+
+    workspace = Workspace(root / "r6")
+    all_dead()
+    write_transcript(workspace.project_directory(), "pre-crash-real", "real work",
+                     age_seconds=3600, records=6)
+    ignition_shape = write_transcript(
+        workspace.project_directory(), "supervisor-ignition",
+        "Read /x/y-dialog-0002.md — it is the dialog from the session you are "
+        "continuing, written 0 minutes ago.")
+    verdict, detail = workspace.assess()
+    check("F3: a small supervisor-ignition successor is skipped too",
+          verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
+
+    # F8: the supervisor-marker literal is asserted against the supervisor's
+    # actual default prompt, so a wording change there fails HERE.
+    default_prompt = f"You are seat-a. No handoff exists yet; ask what to work on."
+    supervisor_default = None
+    import re as _re
+    source = SCRIPT_PATH.with_name("handoff-supervisor.py").read_text(encoding="utf-8")
+    match = _re.search(r'No handoff exists yet', source)
+    check("F8: the no-handoff marker is verbatim in handoff-supervisor.py",
+          match is not None and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
+          recovery.EMPTY_SUCCESSOR_MARKERS)
+
+    # Q2: an unparseable handoff counter refuses with both paths named.
+    workspace = Workspace(root / "r7")
+    all_dead()
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+    verdict, detail = workspace.assess()
+    check("Q2: an unreadable restart-counter refuses, naming fix and delete paths",
+          verdict == "refuse" and "restart-counter" in detail
+          and "delete it" in detail, (verdict, detail))
+
+    # Q3: a live-held supervisor lock refuses.
+    workspace = Workspace(root / "r8")
+    all_dead()
+    (workspace.handoffs / f"{workspace.name}-supervisor.lock").write_text(
+        f"{os.getpid()}\n", encoding="utf-8")
+    verdict, detail = workspace.assess()
+    check("Q3: a supervisor lock held by a live process refuses",
+          verdict == "refuse" and "supervisor lock" in detail, (verdict, detail))
+    (workspace.handoffs / f"{workspace.name}-supervisor.lock").write_text(
+        "999999999\n", encoding="utf-8")
+    write_transcript(workspace.project_directory(), "real", "work", records=4)
+    verdict, detail = workspace.assess()
+    check("Q3: a stale lock (dead pid) does not block recovery",
+          verdict == "resume", (verdict, detail))
+
+    # F4: the supervisor's resume path consumes a stale handoff instead of
+    # letting the wait loop kill the resumed session. Proven through the
+    # boot-sequence branch in supervise_sessions via source inspection plus
+    # the flag's help text; the live-loop probe belongs to the reviewer's
+    # harness and stays there.
+    help_text = " ".join(real_subprocess_run_help().split())
+    check("F4: --resume-session-id help states the handoff-consumption rule",
+          "marked consumed" in help_text
+          and "chooses the transcript over any waiting handoff" in help_text,
+          help_text[:300])
+
+    # F4 behavioral: drive supervise_sessions far enough to prove a stale
+    # handoff is consume-marked BEFORE the resume launch, so the wait loop
+    # cannot kill the resumed session for it. The fake launch records the
+    # state file's counter at launch time, then raises to stop the loop.
+    workspace = Workspace(root / "r9")
+    state_seen_at_launch = {}
+    class StopLoop(Exception):
+        pass
+    def probe_launch(agent_command, session_id, working_directory, prompt, resume=False):
+        state_seen_at_launch.update(json.loads(
+            (workspace.handoffs / "seat-a-supervisor-state.json").read_text()))
+        state_seen_at_launch["resume_flag"] = resume
+        raise StopLoop()
+    (workspace.handoffs / "seat-a-handoff.md").write_text(
+        "# Handoff\nrestart-counter: 7\nnext-step: stale\n", encoding="utf-8")
+    sup = supervisor_module
+    original_launch = sup.launch_agent_session
+    original_sync = sup.sync_working_branch_with_main
+    try:
+        sup.launch_agent_session = probe_launch
+        sup.sync_working_branch_with_main = lambda d: "sync skipped (probe)"
+        settings = sup.SupervisorSettings(
+            agent="seat-a", working_directory=workspace.seat_directory,
+            handoff_directory=workspace.handoffs, agent_command="claude",
+            first_prompt="", resume_session_id="resume-me")
+        try:
+            sup.supervise_sessions(settings)
+        except StopLoop:
+            pass
+    finally:
+        sup.launch_agent_session = original_launch
+        sup.sync_working_branch_with_main = original_sync
+    check("F4: a stale handoff is consume-marked before the resume launch",
+          state_seen_at_launch.get("consumed_counter") == 7
+          and state_seen_at_launch.get("resume_flag") is True,
+          state_seen_at_launch)
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(

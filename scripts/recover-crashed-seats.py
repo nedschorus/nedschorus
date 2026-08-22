@@ -68,12 +68,26 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
 
-EMPTY_SUCCESSOR_MARKER = "No handoff exists yet"
-# A transcript whose first user turn carries the marker is skipped only when
-# it is also SMALL: a seat's first-ever session legitimately starts with the
+# First-turn shapes of sessions this machinery itself starts fresh — any of
+# them, when SMALL, is a failed successor rather than the seat's real work
+# (PR #131 review, finding 3: the first build recognized only the supervisor's
+# no-handoff prompt, and recovery's own ignition sessions — marker-less —
+# shadowed the pre-crash transcript on a second run, the exact #120
+# regression). The supervisor marker is asserted against the supervisor's
+# actual default in the test suite, so a wording change there fails loudly.
+EMPTY_SUCCESSOR_MARKERS = (
+    "No handoff exists yet",            # handoff-supervisor's default first prompt
+    "crash recovery, nedschorus#120",   # this script's ignition prompt
+    "resumed by crash recovery",        # this script's resume prompt
+    "it is the dialog from the session you are continuing",  # build_ignition_prompt
+)
+# The size guard: a seat's first-ever session legitimately starts with the
 # no-handoff prompt and can then do real work (observed live 2026-08-22 —
-# fixer1's 1.8MB genuine session began exactly so, and a marker-only filter
-# wrongly wrote it off). The crash-day empty successors were a few KB.
+# fixer1's 1880KB genuine session began exactly so, and a marker-only filter
+# wrongly wrote it off). The crash-day empty successors were a few KB. A
+# transcript too small to hold real work is also skipped when its first
+# user turn is missing or unreadable — a 0-byte or no-user-turn file is
+# not the seat's real work either (finding 3's second shape).
 EMPTY_SUCCESSOR_MAX_BYTES = 100_000
 
 
@@ -117,6 +131,9 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
 
 def tmux_session_alive_anywhere(name: str):
     """(alive, detail): whether any tmux server still holds this seat's name.
+    alive is None when tmux cannot answer at all — the caller refuses, the
+    same fail-closed rule as the lsof check (PR #131 review, finding 1: an
+    unanswerable liveness axis must never read as "dead").
 
     Per-seat servers (2026-08-21) put a seat's session on socket -L <name>;
     seats launched before that change live on the default socket. Both are
@@ -124,7 +141,10 @@ def tmux_session_alive_anywhere(name: str):
     """
     for socket_name in dict.fromkeys((name, "default")):
         completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-        if completed is not None and completed.returncode == 0:
+        if completed is None:
+            return None, ("tmux cannot be run here, so seat liveness cannot be "
+                          "checked — refusing rather than guessing")
+        if completed.returncode == 0:
             return True, f"tmux session '{name}' is alive on socket '{socket_name}'"
     return False, ""
 
@@ -197,12 +217,34 @@ def newest_real_transcript(project_directory: Path):
     if not candidates:
         return None, f"no transcripts under {project_directory}"
     for transcript in candidates:
-        if (transcript.stat().st_size <= EMPTY_SUCCESSOR_MAX_BYTES
-                and EMPTY_SUCCESSOR_MARKER in first_user_turn_text(transcript)):
-            continue  # a crash-day empty successor, not the seat's real work
+        if transcript.stat().st_size <= EMPTY_SUCCESSOR_MAX_BYTES:
+            first_turn = first_user_turn_text(transcript)
+            if not first_turn.strip():
+                continue  # small with no readable user turn: not real work
+            if any(marker in first_turn for marker in EMPTY_SUCCESSOR_MARKERS):
+                continue  # a failed successor of this very machinery
         return transcript.stem, transcript
     return None, ("every transcript is an empty-successor session; nothing "
                   "worth resuming")
+
+
+def write_resume_prompt(handoff_directory: Path, name: str) -> Path:
+    """The resumed session's first turn (PR #131 review, finding 2): without
+    this, the supervisor's default first prompt tells a mid-task agent that
+    no handoff exists and to ask for work — pointing it away from the
+    context the resume just restored. The hand recovery sent no prompt; a
+    supervised launch must send one, so it says what actually happened."""
+    prompt_path = handoff_directory / f"{name}-resume-recovery-prompt.md"
+    prompt_path.write_text(
+        "This session was resumed by crash recovery (nedschorus#120): your "
+        "previous incarnation died without writing a handoff — a crash, not a "
+        "recycle — and your transcript was resumed under a fresh supervisor. "
+        "Re-verify any in-flight state before trusting it (files you were "
+        "mid-edit in, processes you were watching, messages you were owed), "
+        "then continue the work you were doing.",
+        encoding="utf-8",
+    )
+    return prompt_path
 
 
 def newest_dialog_extract(handoff_directory: Path, name: str):
@@ -271,8 +313,24 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
         return "refuse", f"no seat directory at {seat_directory}"
 
     alive, detail = tmux_session_alive_anywhere(name)
+    if alive is None:
+        return "refuse", detail
     if alive:
         return "refuse", f"{detail} — this tool recovers crashes, it never touches live seats"
+
+    # A supervisor lock held by a live process means a supervisor is starting
+    # or racing this assessment (PR #131 review, question 3): the launch this
+    # script would start exits at once against that lock, and finding-1's fix
+    # would then report a failure — refusing earlier is clearer.
+    lock_path = handoff_directory / f"{name}-supervisor.lock"
+    if lock_path.is_file():
+        try:
+            holder = int(lock_path.read_text(encoding="utf-8").strip())
+            os.kill(holder, 0)
+            return "refuse", (f"the supervisor lock at {lock_path} is held by live "
+                              f"process {holder} — a supervisor is starting or running")
+        except (ValueError, OSError):
+            pass  # stale or unreadable lock: the launcher's own reclaim handles it
 
     state_path = handoff_directory / f"{name}-supervisor-state.json"
     supervisor_alive, liveness_detail = supervisor.supervisor_liveness(state_path)
@@ -289,7 +347,18 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
         counter = supervisor.counter_from(fields)
         state = supervisor.read_supervisor_state(state_path)
         consumed = state.get("consumed_counter")
-        if counter is not None and (consumed is None or counter > consumed):
+        if counter is None:
+            # A handoff whose counter is missing or unparseable would be
+            # consumed by nobody — the supervisor's wait loop ignores it too.
+            # Resuming past it silently discards whatever it says (PR #131
+            # review, question 2); the operator decides, with both paths named.
+            return "refuse", (
+                f"a handoff exists at {handoff_path} but its restart-counter is "
+                "missing or unreadable, so no supervisor would ever consume it. "
+                "Read it: if it is real, fix its restart-counter and relaunch "
+                "plain; if it is scrap, delete it and rerun this recovery"
+            )
+        if consumed is None or counter > consumed:
             return "defer-to-boot-ignition", (
                 f"an unconsumed handoff waits (counter {counter}, consumed "
                 f"{consumed}) — plain relaunch is correct; the supervisor's "
@@ -315,7 +384,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "defer-to-boot-ignition":
         if dry_run:
             return f"{name}: would relaunch plain ({detail})"
-        launch_seat(name, seat_directory, "")
+        exit_code = launch_seat(name, seat_directory, "")
+        if exit_code != 0:
+            return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return f"{name}: relaunched plain — {detail}"
 
     if verdict == "resume" and not ignite_fallback:
@@ -324,8 +395,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         if dry_run:
             return (f"{name}: would resume session {session_id} "
                     f"({size_kb}KB transcript) under a supervisor")
-        launch_seat(name, seat_directory,
-                    f"--resume-session-id '{session_id}'")
+        exit_code = launch_seat(name, seat_directory,
+                                f"--resume-session-id '{session_id}'",
+                                first_prompt_file=write_resume_prompt(
+                                    handoff_directory, name))
+        if exit_code != 0:
+            return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return (f"{name}: relaunched resuming {session_id} "
                 f"({size_kb}KB transcript)")
 
@@ -336,7 +411,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if extract is None:
         if dry_run:
             return f"{name}: would launch fresh — nothing to resume, no extract to read"
-        launch_seat(name, seat_directory, "")
+        exit_code = launch_seat(name, seat_directory, "")
+        if exit_code != 0:
+            return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return f"{name}: relaunched fresh (nothing to resume, no extract to read)"
     prompt = (
         f"Read {extract} — it is the dialog from this seat's last recorded "
@@ -349,7 +426,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         return f"{name}: would launch fresh igniting from {extract.name}"
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
-    launch_seat(name, seat_directory, "", first_prompt_file=prompt_path)
+    exit_code = launch_seat(name, seat_directory, "", first_prompt_file=prompt_path)
+    if exit_code != 0:
+        return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
     return f"{name}: relaunched fresh igniting from {extract.name}"
 
 
@@ -383,8 +462,19 @@ def main(argv=None) -> int:
                      else Path("~/.claude/projects").expanduser())
 
     if arguments.all:
+        # A directory under the agents root is a SEAT only if something ever
+        # ran there: a supervisor state file, a handoff, or a transcript
+        # directory (PR #131 review, finding 6 — an empty leftover from a
+        # mistyped launch is not a seat, and "not running" is not "crashed").
+        # A never-run directory can still be recovered by NAME, deliberately.
+        def ever_ran(name: str) -> bool:
+            return ((handoff_directory / f"{name}-supervisor-state.json").is_file()
+                    or (handoff_directory / f"{name}-handoff.md").is_file()
+                    or harness_project_directory(agents_root / name,
+                                                 projects_root).is_dir())
         names = sorted(
-            entry.name for entry in agents_root.iterdir() if entry.is_dir()
+            entry.name for entry in agents_root.iterdir()
+            if entry.is_dir() and ever_ran(entry.name)
         ) if agents_root.is_dir() else []
         if not names:
             print(f"recover-crashed-seats: no seat directories under {agents_root}")
@@ -394,14 +484,14 @@ def main(argv=None) -> int:
     else:
         parser.error("name at least one seat, or pass --all")
 
-    refused = 0
+    not_recovered = 0
     for name in names:
         report = recover_seat(name, agents_root, handoff_directory, projects_root,
                               arguments.dry_run, arguments.ignite_fallback)
         print(f"recover-crashed-seats: {report}")
-        if "REFUSED" in report:
-            refused += 1
-    return 1 if refused == len(names) else 0
+        if "REFUSED" in report or "LAUNCH FAILED" in report:
+            not_recovered += 1
+    return 1 if not_recovered == len(names) else 0
 
 
 if __name__ == "__main__":

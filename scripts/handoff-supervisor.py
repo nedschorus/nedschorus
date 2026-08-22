@@ -631,6 +631,24 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     print(f"handoff-supervisor: {settings.agent} in {settings.working_directory}")
     print(f"handoff-supervisor: watching {settings.handoff_path}")
 
+    # The resume path (crash recovery, nedschorus#120) must not meet a stale
+    # handoff either: the recovery script defers to boot-ignition when one
+    # waits, but this flag can be run by hand, and the wait loop would then
+    # kill the just-resumed session for a file predating it (PR #131 review,
+    # finding 4). Mark any waiting handoff consumed BEFORE the resume launch —
+    # the operator chose the transcript over the handoff by passing the flag.
+    if resume_first_launch and settings.handoff_path.is_file():
+        stale_fields = parse_handoff_file(settings.handoff_path)
+        stale_counter = counter_from(stale_fields)
+        if stale_counter is not None and stale_counter > (state.get("consumed_counter") or 0):
+            print(
+                f"handoff-supervisor: a handoff (counter {stale_counter}) predates this "
+                "resume; marking it consumed so it cannot kill the resumed session. "
+                "If that handoff was the fresher truth, stop and relaunch WITHOUT "
+                "--resume-session-id — boot-ignition will consume it."
+            )
+            state["consumed_counter"] = stale_counter
+
     # A fresh boot may find an unconsumed handoff — a crash or reboot ended the
     # previous cycle after the write but before a supervisor acted on it. Ignite
     # from it directly. Launching first and letting the wait loop find the file
@@ -778,7 +796,9 @@ def main(argv=None) -> int:
         "--resume-session-id", default="",
         help="crash recovery (nedschorus#120): the first launch resumes this "
              "session's transcript (claude --resume) instead of starting fresh; "
-             "later recycles mint fresh ids as always",
+             "later recycles mint fresh ids as always. A handoff already on disk "
+             "is marked consumed rather than igniting or recycling — passing this "
+             "flag chooses the transcript over any waiting handoff",
     )
     parser.add_argument(
         "--adopt-session-id", default="",
