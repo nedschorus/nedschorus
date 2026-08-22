@@ -182,17 +182,15 @@ def prompt_body(attack: str) -> str:
     marker_lines = [i for i, line in enumerate(lines)
                     if line.strip() == PROMPT_BODY_MARKER]
     if len(marker_lines) != 1:
-        raise SystemExit(
-            f"attack prompt needs exactly one {PROMPT_BODY_MARKER} line, "
-            f"found {len(marker_lines)}: {path}"
-        )
+        print(f"attack prompt needs exactly one {PROMPT_BODY_MARKER} line, "
+              f"found {len(marker_lines)}: {path}", file=sys.stderr)
+        raise SystemExit(2)
     body = "\n".join(lines[marker_lines[0] + 1:]).strip()
     first_line = body.split("\n", 1)[0].strip()
     if first_line != PROMPT_BODY_FIRST_LINE:
-        raise SystemExit(
-            f"attack prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
-            f"found {first_line!r}: {path}"
-        )
+        print(f"attack prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
+              f"found {first_line!r}: {path}", file=sys.stderr)
+        raise SystemExit(2)
     return body
 
 
@@ -293,16 +291,17 @@ def run_codex(prompt: str) -> tuple:
         "-c", f"model_reasoning_effort={REASONING_EFFORT}",
         prompt,
     ]
-    completed = subprocess.run(
-        command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, text=True, check=False,
-        timeout=CELL_TIMEOUT_SECONDS,
-    )
-    if completed.returncode != 0:
-        return completed.returncode, ""
-    output = last_message_path.read_text(encoding="utf-8")
-    last_message_path.unlink(missing_ok=True)
-    return 0, output
+    try:
+        completed = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, text=True, check=False,
+            timeout=CELL_TIMEOUT_SECONDS,
+        )
+        if completed.returncode != 0:
+            return completed.returncode, ""
+        return 0, last_message_path.read_text(encoding="utf-8")
+    finally:
+        last_message_path.unlink(missing_ok=True)
 
 
 def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
@@ -452,7 +451,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
-             baseline_status: set, corpus: str) -> tuple:
+             baseline_status: dict, corpus: tuple) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
     prompt = assemble_prompt(attack, target, context, problem_statement)
@@ -497,7 +496,7 @@ def main() -> int:
     )
     parser.add_argument("--target", default=None,
                         help="repo-relative path of the document under review "
-                             "(required except with --print requester)")
+                             "(required except with --print requester or fresh-eyes)")
     parser.add_argument("--context", action="append", default=[],
                         help="repo-relative context document (repeatable)")
     parser.add_argument("--problem-statement", type=pathlib.Path, default=None,
@@ -534,17 +533,19 @@ def main() -> int:
         print(section)
         return 0
 
-    if args.target is None:
-        parser.error("--target is required except with --print requester")
+    if args.target is None and args.print_surface != "fresh-eyes":
+        parser.error("--target is required except with --print requester or fresh-eyes")
 
-    target_path = REPO_ROOT / args.target
-    if not target_path.is_file():
-        print(f"target not found: {args.target}", file=sys.stderr)
-        return 2
-    missing_context = [path for path in args.context if not (REPO_ROOT / path).is_file()]
-    if missing_context:
-        print(f"context not found: {', '.join(missing_context)}", file=sys.stderr)
-        return 2
+    if args.target is not None:
+        target_path = REPO_ROOT / args.target
+        if not target_path.is_file():
+            print(f"target not found: {args.target}", file=sys.stderr)
+            return 2
+        missing_context = [path for path in args.context
+                           if not (REPO_ROOT / path).is_file()]
+        if missing_context:
+            print(f"context not found: {', '.join(missing_context)}", file=sys.stderr)
+            return 2
     if args.problem_statement and not args.problem_statement.is_file():
         print(f"problem statement not found: {args.problem_statement}", file=sys.stderr)
         return 2
@@ -559,7 +560,6 @@ def main() -> int:
 
     design_names = coined_names(target_path)
 
-    out_dir = fresh_record_dir(target_path.stem)
     baseline_status = worktree_snapshot()
     corpus = tracked_files_corpus()
 
@@ -586,7 +586,12 @@ def main() -> int:
     for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
         prompt_body(attack)
 
+    # Claimed only after validation and only when an agent will launch: a
+    # refused startup or an all-skipped run must not burn a -N suffix.
+    out_dir = fresh_record_dir(target_path.stem) if cells else None
+
     ok = True
+    saved_count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
         futures = [
             pool.submit(run_cell, attack, runtime, args.target, args.context,
@@ -596,17 +601,22 @@ def main() -> int:
         for future in concurrent.futures.as_completed(futures):
             _, cell_ok = future.result()
             ok = ok and cell_ok
+            saved_count += 1 if cell_ok else 0
 
-    print(
-        f"sanity-check complete: reports in {out_dir}. Triage each report "
-        "(follow up the warnings above, settle hedged claims about code by "
-        "reading the code, merge the "
-        "runtimes), then present the surviving findings to the user one at a "
-        "time for his ruling (the walk-me-through skill). "
-        "Delete the record directory when the work it served lands, "
-        "or when nothing further will use it.",
-        flush=True,
-    )
+    if saved_count:
+        print(
+            f"sanity-check complete: reports in {out_dir}. Triage each report "
+            "(follow up the warnings above, settle hedged claims about code by "
+            "reading the code, merge the "
+            "runtimes), then present the surviving findings to the user one at a "
+            "time for his ruling (the walk-me-through skill). "
+            "Delete the record directory when the work it served lands, "
+            "or when nothing further will use it.",
+            flush=True,
+        )
+    else:
+        print("sanity-check wrote no reports: every agent above failed or was "
+              "skipped; there is nothing to triage.", flush=True)
     return 0 if ok else 1
 
 
