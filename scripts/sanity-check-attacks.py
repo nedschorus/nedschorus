@@ -22,9 +22,10 @@ fresh context:
   agent returns a five-section report — sketch, hard parts, late
   discoveries, assumptions, what it consulted — and triage compares the
   original and the fresh design on their merits: a substantive difference
-  becomes a question, a worry the fresh design raises that the original
-  never addresses is a candidate finding, and the stronger parts of either
-  can feed a best-of-both proposal; every adoption is reviewed and ruled on
+  becomes a question, a worry, trap, or real failure mode the fresh design
+  raises that the original never addresses is a candidate finding, and the
+  stronger parts of either can feed a best-of-both proposal; every adoption
+  is reviewed and ruled on
   by the user, one item at a time.
 
 Prompts: `docs/agents/sanity-checker-<audit>-attack-prompt.md`. Each file is
