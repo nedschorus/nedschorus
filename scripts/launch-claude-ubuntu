@@ -120,6 +120,15 @@ if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
 fi
 
+# Extra supervisor arguments from the environment — the same hook as the Mac
+# twin (launch-claude-mac), which resupervise-seat.py rides to hand a
+# box-local --handoff-dir to the box-side supervisor. Machinery-to-machinery:
+# callers own the quoting of what they pass, and the value rides the composed
+# ssh command exactly as given.
+if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
+fi
+
 # Update Claude Code on the box before starting the seat: launch is the
 # fleet's one update moment — every fresh agent starts current. Background
 # auto-update is off via DISABLE_AUTOUPDATER in the checked-in

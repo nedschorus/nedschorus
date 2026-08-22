@@ -17,6 +17,7 @@ Run: python3 scripts/resupervise-seat-test.py
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -376,6 +377,198 @@ def run_agent_box_case(workspace: Path):
           "the box launch does not carry --agent-box")
 
 
+def run_override_propagation_case(workspace: Path):
+    """--agents-root and --handoff-dir must reach the launch, not just the checks.
+
+    The pattern of recover-crashed-seats.py's codex findings A/B (PR #131
+    round 3), present here too: the flags steered steps 1-4 and were then
+    dropped at the exec, so the launcher re-resolved the agents root and the
+    supervisor re-resolved the handoff directory from their own defaults —
+    the checks cleared one seat and the launch watched another (user-ruled
+    2026-08-22: allowed overrides must work). The stub launcher records the
+    environment the exec actually carried.
+    """
+    isolated = workspace / "isolated"
+    record = workspace / "launcher-environment.txt"
+    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher.write_text(
+        '#!/bin/sh\n'
+        f'echo "root=$NEDSCHORUS_AGENTS_ROOT" >> {record}\n'
+        f'echo "extra=$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" >> {record}\n',
+        encoding="utf-8")
+    stub_launcher.chmod(0o755)
+    write_handoff(workspace, "override-carry", counter=3)
+    result = subprocess.run(
+        [sys.executable, str(isolated / "resupervise-seat.py"), "override-carry",
+         "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
+        capture_output=True, text=True, check=False,
+    )
+    recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
+    recorded_values = dict(line.split("=", 1)
+                           for line in recorded.splitlines() if "=" in line)
+    check("the mac launch carries the assessed agents root through NEDSCHORUS_AGENTS_ROOT",
+          recorded_values.get("root") == str(workspace / "agents"),
+          (recorded, result.stdout, result.stderr))
+    # Parsed the way the launch shell will (shlex.split), not by matching
+    # hand-written quotes — the quoting is under test (PR #134 finding 1).
+    check("the mac launch hands the supervisor the assessed handoff directory",
+          shlex.split(recorded_values.get("extra", ""))
+          == ["--handoff-dir", str(workspace)], recorded)
+
+
+def run_box_forwarding_case(workspace: Path):
+    """--machine ubuntu forwards the overrides to both of its halves.
+
+    The box-side --prepare-only checks and the Mac-side ubuntu launcher each
+    resolve the directories themselves, so a value given here and not
+    forwarded would steer nothing past the argument parser. Values travel
+    verbatim (they are box-local paths; the box expands its own ~) and only
+    when the operator gave them — the machine's own defaults must not be
+    replaced by a Mac-expanded path. Probed in-process with ssh and the exec
+    both captured.
+    """
+    import argparse
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("resupervise_under_test",
+                                                  RESUPERVISE_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class FakeCompleted:
+        returncode = 0
+
+    class FakeSubprocess:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, argv, **keywords):
+            self.calls.append(argv)
+            return FakeCompleted()
+
+    execve_calls = []
+
+    class FakeOs:
+        environ = {key: value for key, value in os.environ.items()
+                   if key not in ("NEDSCHORUS_AGENTS_ROOT",
+                                  "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")}
+
+        @staticmethod
+        def execve(path, argv, env):
+            execve_calls.append((path, argv, env))
+
+    fake_subprocess = FakeSubprocess()
+    module.subprocess = fake_subprocess  # rebinds the module-level name only
+    module.os = FakeOs
+
+    arguments = argparse.Namespace(
+        name="box-carry", machine="ubuntu", dry_run=False, prepare_only=False,
+        agent_box="testbox", handoff_dir="/box/handoffs", agents_root="/box/agents")
+    module.resupervise_box_seat(arguments)
+    remote_command = fake_subprocess.calls[0][-1]
+    remote_tokens = shlex.split(remote_command)  # parsed as the box shell will
+    check("the box-side checks are given the overrides, verbatim",
+          "/box/handoffs" in remote_tokens and "/box/agents" in remote_tokens
+          and "--handoff-dir" in remote_tokens and "--agents-root" in remote_tokens,
+          remote_command)
+    _, _, environment = execve_calls[0]
+    check("the ubuntu launch carries the overrides in its environment",
+          environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agents"
+          and shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
+              == ["--handoff-dir", "/box/handoffs"]
+          and environment.get("NEDSCHORUS_AGENT_BOX") == "testbox",
+          {key: environment.get(key) for key in
+           ("NEDSCHORUS_AGENTS_ROOT", "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS",
+            "NEDSCHORUS_AGENT_BOX")})
+
+    # PR #134 review finding 1, the box halves: an apostrophe path must
+    # survive the remote shell's parse and the launcher hook's parse.
+    fake_subprocess.calls.clear()
+    execve_calls.clear()
+    arguments = argparse.Namespace(
+        name="box-quote", machine="ubuntu", dry_run=False, prepare_only=False,
+        agent_box="testbox", handoff_dir="/box/agent's handoffs",
+        agents_root="/box/agent's root")
+    module.resupervise_box_seat(arguments)
+    remote_tokens = shlex.split(fake_subprocess.calls[0][-1])
+    _, _, environment = execve_calls[0]
+    check("apostrophe paths survive the box remote command's shell parse",
+          "/box/agent's handoffs" in remote_tokens
+          and "/box/agent's root" in remote_tokens,
+          fake_subprocess.calls[0][-1])
+    check("apostrophe paths survive the ubuntu launcher hook's shell parse",
+          shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
+          == ["--handoff-dir", "/box/agent's handoffs"]
+          and environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agent's root",
+          environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"))
+
+    fake_subprocess.calls.clear()
+    execve_calls.clear()
+    arguments = argparse.Namespace(
+        name="box-plain", machine="ubuntu", dry_run=False, prepare_only=False,
+        agent_box="testbox", handoff_dir="", agents_root="")
+    module.resupervise_box_seat(arguments)
+    remote_command = fake_subprocess.calls[0][-1]
+    _, _, environment = execve_calls[0]
+    check("with no overrides given, the box halves keep their own defaults",
+          "--handoff-dir" not in remote_command
+          and "--agents-root" not in remote_command
+          and "NEDSCHORUS_AGENTS_ROOT" not in environment
+          and "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" not in environment,
+          (remote_command, environment.get("NEDSCHORUS_AGENTS_ROOT")))
+
+    # default_agents_root reads the launchers' own variable (the same rule as
+    # recover-crashed-seats.py's twin), so the no-flag checks and the launch
+    # resolve one root.
+    FakeOs.environ["NEDSCHORUS_AGENTS_ROOT"] = "/elsewhere/agents"
+    check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
+          module.default_agents_root() == Path("/elsewhere/agents"),
+          module.default_agents_root())
+
+
+def run_apostrophe_propagation_case(workspace: Path):
+    """PR #134 review finding 1, end to end on the mac path: an operator's
+    --handoff-dir containing an apostrophe broke the hand-quoted hook value
+    at the launch shell — AFTER the stale session was killed, so the seat
+    stayed down while the record said the successor was starting. Through
+    the real script and a stub launcher: the propagated value must parse
+    back to the exact path."""
+    apostrophe_handoffs = workspace / "agent's handoffs"
+    apostrophe_handoffs.mkdir(exist_ok=True)
+    (apostrophe_handoffs / "quoted-seat-handoff.md").write_text(
+        "# handoff for quoted-seat\nrestart-counter: 2\nnext-step: go\n",
+        encoding="utf-8")
+    isolated = workspace / "isolated"
+    record = workspace / "launcher-environment-apostrophe.txt"
+    stub_launcher = isolated / "launch-claude-mac"
+    stub_launcher.write_text(
+        '#!/bin/sh\n'
+        f'echo "extra=$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" >> "{record}"\n',
+        encoding="utf-8")
+    stub_launcher.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(isolated / "resupervise-seat.py"), "quoted-seat",
+         "--handoff-dir", str(apostrophe_handoffs),
+         "--agents-root", str(workspace / "agents")],
+        capture_output=True, text=True, check=False,
+    )
+    recorded = record.read_text(encoding="utf-8") if record.is_file() else ""
+    extra_value = recorded.partition("extra=")[2].strip()
+    check("an apostrophe --handoff-dir reaches the supervisor intact (mac, end to end)",
+          shlex.split(extra_value) == ["--handoff-dir", str(apostrophe_handoffs)],
+          (recorded, result.stdout, result.stderr))
+
+
+def run_ubuntu_launcher_hook_case():
+    """The box path's --handoff-dir rides launch-claude-ubuntu's
+    extra-arguments hook; without the hook the value stops at the launcher.
+    Asserted at the source, like the agent-box case: the launcher's decisive
+    step is an ssh to the box, unobservable here."""
+    source = RESUPERVISE_SCRIPT.with_name("launch-claude-ubuntu").read_text(encoding="utf-8")
+    check("launch-claude-ubuntu appends the extra-arguments hook, like its Mac twin",
+          'SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"'
+          in source, "hook missing from launch-claude-ubuntu")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="resupervise-seat-test-") as scratch:
         workspace = Path(scratch)
@@ -390,6 +583,10 @@ def main() -> int:
         run_per_seat_server_end_to_end_case(workspace)
         run_missing_tmux_case(workspace)
         run_agent_box_case(workspace)
+        run_override_propagation_case(workspace)
+        run_apostrophe_propagation_case(workspace)
+        run_box_forwarding_case(workspace)
+        run_ubuntu_launcher_hook_case()
 
     print()
     if failures:

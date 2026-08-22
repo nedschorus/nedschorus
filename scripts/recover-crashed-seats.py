@@ -57,6 +57,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -105,7 +106,12 @@ EMPTY_SUCCESSOR_MAX_BYTES = 100_000
 
 
 def default_agents_root() -> Path:
-    return Path("~/agents").expanduser()
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as both launchers resolve it.
+    Resolving differently means, on a machine where that variable is set,
+    assessing ~/agents while every seat lives elsewhere — recovery then
+    refuses on "no seat directory" (PR #131 round-4 review note; user-ruled
+    2026-08-22: allowed overrides must work)."""
+    return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
 def default_handoff_directory() -> Path:
@@ -282,6 +288,10 @@ def write_resume_prompt(handoff_directory: Path, name: str) -> Path:
     no handoff exists and to ask for work — pointing it away from the
     context the resume just restored. The hand recovery sent no prompt; a
     supervised launch must send one, so it says what actually happened."""
+    # A --handoff-dir that does not exist yet must not crash the recovery
+    # after assessment already chose to resume (PR #134 review, finding 2);
+    # created the same way the supervisor creates its own on startup.
+    handoff_directory.mkdir(parents=True, exist_ok=True)
     prompt_path = handoff_directory / f"{name}-resume-recovery-prompt.md"
     prompt_path.write_text(
         "This session was resumed by crash recovery (nedschorus#120): your "
@@ -334,7 +344,13 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     """
     launcher = launcher_path()
     environment = dict(os.environ)
-    supervisor_arguments = f"--handoff-dir '{handoff_directory}'"
+    # shlex.quote, not hand-written single quotes: each value here is parsed
+    # by exactly one shell (the launcher appends it verbatim and tmux runs
+    # the composed command through sh), and an apostrophe in an operator's
+    # path breaks a hand-quoted string — the kill has already happened by
+    # then, so the seat stays down while the output says otherwise (PR #134
+    # review, finding 1).
+    supervisor_arguments = f"--handoff-dir {shlex.quote(str(handoff_directory))}"
     if extra_supervisor_arguments:
         supervisor_arguments += f" {extra_supervisor_arguments}"
     if launcher is not None:
@@ -348,10 +364,11 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
         f"python3 {Path(__file__).with_name('handoff-supervisor.py')} "
-        f"--agent '{name}' --cd '{seat_directory}' {supervisor_arguments}"
+        f"--agent {shlex.quote(name)} --cd {shlex.quote(str(seat_directory))} "
+        f"{supervisor_arguments}"
     )
     if first_prompt_file is not None:
-        supervisor_command += f" --first-prompt-file '{first_prompt_file}'"
+        supervisor_command += f" --first-prompt-file {shlex.quote(str(first_prompt_file))}"
     completed = run_tmux(
         "new-session", "-d", "-s", name, "-c", str(seat_directory),
         supervisor_command, socket_name=name,
@@ -455,7 +472,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             return (f"{name}: would resume session {session_id} "
                     f"({size_kb}KB transcript) under a supervisor")
         exit_code = launch_seat(name, seat_directory, handoff_directory,
-                                f"--resume-session-id '{session_id}'",
+                                f"--resume-session-id {shlex.quote(session_id)}",
                                 first_prompt_file=write_resume_prompt(
                                     handoff_directory, name))
         if exit_code != 0:
