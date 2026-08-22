@@ -528,12 +528,26 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
         return ("unverifiable", str(error))
     if completed.returncode != 0:
         error_text = (completed.stderr or "").strip()
-        if "can't find" in error_text or "no server running" in error_text:
+        # Three shapes mean "this server cannot answer for that session":
+        # "can't find" (server knows sessions, not this one), "no server
+        # running" (socket file exists, no server behind it), and "error
+        # connecting" (no socket file at all — the steady state for a socket
+        # path nothing has dialed since boot, PR #122 review P2-2). All
+        # three mean the NEXT candidate server may still know it.
+        if ("can't find" in error_text or "no server running" in error_text
+                or "error connecting" in error_text):
             return ("unknown", error_text)
         return ("unverifiable",
                 error_text or "probe exited %d" % completed.returncode)
+    stdout_text = (completed.stdout or "").strip()
+    if not stdout_text:
+        # rc 0 with empty stdout is tmux's CANFAIL shape for display-message
+        # against a session this (live) server does not know — NOT a count of
+        # 0 attached clients (PR #122 review P2-1). Treating it as a count
+        # ended the candidate loop and the per-seat -L probe never ran.
+        return ("unknown", "server answered but does not know the session")
     try:
-        return ("count", int((completed.stdout or "").strip() or "0"))
+        return ("count", int(stdout_text))
     except ValueError:
         return ("unverifiable", "unparseable probe output: %r" % completed.stdout)
 

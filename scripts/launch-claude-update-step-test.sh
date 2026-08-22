@@ -149,6 +149,34 @@ case "$box_command" in
     (*'-L "$SEAT_TMUX_SOCKET" new-session'*) check "ubuntu box command seats on the selected tmux socket" 0 ;;
     (*) check "ubuntu box command seats on the selected tmux socket" 1 ;;
 esac
+# P2-3 (PR #122 review): the socket-selection string contains `;`, which
+# un-grouped would END the && list on the box — a failed prepare would no
+# longer abort, and tmux would launch with an empty -L socket name. The
+# brace group keeps it one && operand; prove it by RUNNING the box command
+# with the prepare forced to fail: nothing after it may execute.
+case "$box_command" in
+    (*'{ SEAT_TMUX_SOCKET='*'; }'*) check "ubuntu box socket selection is brace-grouped (one && operand)" 0 ;;
+    (*) check "ubuntu box socket selection is brace-grouped (one && operand)" 1 ;;
+esac
+severed_probe=$(printf '%s\n' "$box_command" | sed 's/^.*claude update/false/; s/&& mkdir[^&]*//' )
+# A private stub directory, prepended: the shared $STUBS/tmux serves later
+# mac-side checks and must not be overwritten here.
+P23_STUBS="$WORKSPACE/p23-stubs"; mkdir -p "$P23_STUBS"
+cat > "$P23_STUBS/tmux" << 'EOF'
+#!/bin/sh
+echo "TMUX-RAN $*" >> "$TMUX_RAN_LOG"
+exit 0
+EOF
+chmod +x "$P23_STUBS/tmux"
+TMUX_RAN_LOG="$WORKSPACE/tmux-ran-log"; export TMUX_RAN_LOG
+: > "$TMUX_RAN_LOG"
+PATH="$P23_STUBS:$STUBS:$PATH" sh -c "$severed_probe" > /dev/null 2>&1 || true
+if [ -s "$TMUX_RAN_LOG" ]; then
+    check "ubuntu box command: a failed prepare reaches NO tmux invocation" 1
+else
+    check "ubuntu box command: a failed prepare reaches NO tmux invocation" 0
+fi
+
 case "$box_command" in
     (*'\; set-option -g set-titles on'*) check "ubuntu box command chains set-titles onto the seat's server" 0 ;;
     (*) check "ubuntu box command chains set-titles onto the seat's server" 1 ;;

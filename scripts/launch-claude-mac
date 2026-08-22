@@ -76,7 +76,10 @@ usage() {
     running=$(
         for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do
             [ -S "$seat_socket_path" ] || continue
-            tmux -S "$seat_socket_path" list-sessions -F '#{session_name}' 2>/dev/null || true
+            # name@socket, not the bare name: one name on TWO sockets is the
+            # decoy class resupervise-seat.py kills (PR #122 review P3-5),
+            # and a deduplicated listing would hide exactly that.
+            tmux -S "$seat_socket_path" list-sessions -F "#{session_name}@$(basename "$seat_socket_path")" 2>/dev/null || true
         done | sort -u | tr '\n' ' ')
     if [ -n "$running" ]; then
         echo "Agent tmux sessions on this Mac now (live seats or after-exit shells): $running" >&2

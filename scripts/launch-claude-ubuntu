@@ -75,7 +75,7 @@ usage() {
     running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
         'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do
              [ -S "$seat_socket_path" ] || continue
-             tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null || true
+             tmux -S "$seat_socket_path" list-sessions -F "#{session_name}@$(basename "$seat_socket_path")" 2>/dev/null || true
          done | sort -u' 2>/dev/null | tr '\n' ' ')
     if [ -n "$running" ]; then
         echo "Agent tmux sessions on the box now (live seats or after-exit shells): $running" >&2
@@ -182,9 +182,13 @@ PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/script
 # is escaped so the box expands it; `-L default` names the default socket,
 # so one variable serves both cases. The twin does the same locally, at
 # scripts/launch-claude-mac.
-SEAT_SOCKET_SELECTION_COMMAND="SEAT_TMUX_SOCKET='$AGENT_NAME'; \
+# Brace-grouped: the assignments and `if` end with `;`, and un-grouped those
+# semicolons END the && list on the box — a failed PREPARE_COMMAND no longer
+# aborted the launch, and tmux ran with an empty -L socket name (PR #122
+# review P2-3). The group keeps the whole selection one && operand.
+SEAT_SOCKET_SELECTION_COMMAND="{ SEAT_TMUX_SOCKET='$AGENT_NAME'; \
 if ! tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null \
-&& tmux -L default has-session -t '=$AGENT_NAME' 2>/dev/null; then SEAT_TMUX_SOCKET=default; fi"
+&& tmux -L default has-session -t '=$AGENT_NAME' 2>/dev/null; then SEAT_TMUX_SOCKET=default; fi; }"
 
 # When the supervisor exits, the pane becomes an interactive shell in the
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped

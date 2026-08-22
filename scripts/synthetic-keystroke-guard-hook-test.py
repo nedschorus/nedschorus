@@ -412,6 +412,43 @@ check("repeated targets are probed once (cached per host and target)",
 
 no_server_probe_answer = ("", "no server running on /private/tmp/tmux-501/default", 1)
 
+# The two probe answers the PR #122 review measured on real tmux 3.7b that the
+# first classifier misread (P2-1, P2-2): rc 0 with EMPTY stdout is tmux's
+# CANFAIL answer for a live server that does not know the session — not a
+# count of zero attached clients — and "error connecting" is the answer for
+# an absent socket file, the steady state for a never-dialed socket path.
+live_server_unknown_session_answer = ("", "", 0)
+absent_socket_file_answer = (
+    "", "error connecting to /private/tmp/tmux-501/default (No such file or directory)", 1)
+
+runner = ScriptedProbeRunner([live_server_unknown_session_answer, ("1\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("P2-1: rc0+empty-stdout is unknown, not count 0 — per-seat fallback runs and denies",
+      reason is not None and "attached client" in reason and len(runner.calls) == 2,
+      (reason, runner.calls))
+
+runner = ScriptedProbeRunner([live_server_unknown_session_answer, ("0\n", "", 0)])
+check("P2-1: rc0+empty-stdout then per-seat-detached allows after both probes",
+      decide("tmux send-keys -t seat-a x", runner) is None and len(runner.calls) == 2,
+      runner.calls)
+
+runner = ScriptedProbeRunner([absent_socket_file_answer, ("1\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("P2-2: absent socket file is unknown, not unverifiable — fallback runs and denies",
+      reason is not None and "attached client" in reason and len(runner.calls) == 2,
+      (reason, runner.calls))
+
+runner = ScriptedProbeRunner([absent_socket_file_answer, ("0\n", "", 0)])
+check("P2-2: absent socket file then per-seat-detached allows (no false deny)",
+      decide("tmux send-keys -t seat-a x", runner) is None and len(runner.calls) == 2,
+      runner.calls)
+
+runner = ScriptedProbeRunner([("", "", 0)])
+check("P2-1: with the command's own -L flag, rc0+empty-stdout stays a single-probe allow",
+      decide("tmux -L seat-b send-keys -t seat-b x", runner) is None
+      and len(runner.calls) == 1,
+      runner.calls)
+
 runner = ScriptedProbeRunner([no_server_probe_answer, ("1\n", "", 0)])
 reason = decide("tmux send-keys -t seat-a x", runner)
 check("per-seat: default-unknown then per-seat-attached denies",
