@@ -52,7 +52,7 @@ Candidates become findings only here: the method above produces candidates, this
 
 Open your report by listing the referenced documents you read and those you did not, so triage knows this review's reach before weighing its findings.
 
-Then comes the **prompts-to-code table**. It has one row per step you examined in the document under review — every place its text hands work to a model or a person, whether or not code already covers it, and one row per part when the parts of a step earn different outcomes. Each row gives: where (the quoted phrase), a label naming the work, one outcome from the list below, and the outcome's reason where the list asks for one. When two outcomes could fit, take the first that fits in this order:
+Then comes the **prompts-to-code table**. It has one row per step you examined in the document under review — every place its text hands work to a model or a person, whether or not code already covers it, and one row per part when the parts of a step earn different outcomes. Each row gives: a number, where (the quoted phrase), a label naming the work, one outcome from the list below, and the outcome's reason where the list asks for one. When two outcomes could fit, take the first that fits in this order:
 
 - **finding below** — you propose a mechanism that does, narrows, moves, or checks the work; details in your findings.
 - **not worth building** — a mechanism could do or check it, but the guard rejects the trade; name the mechanism and why it does not pay.
@@ -60,7 +60,7 @@ Then comes the **prompts-to-code table**. It has one row per step you examined i
 - **already mechanized** — code already does this and the document's text has not caught up; name the code, so triage can walk the text fix like a finding.
 - **could not evaluate** — name what you could not read.
 
-Exhaustiveness here is the audit's core duty; a row that ends in no finding is worth as much as one that does.
+Exhaustiveness here is the audit's core duty; a row that ends in no finding is worth as much as one that does. Close the table with a coverage list: every heading of the document under review at every level, and the text above the first heading, each with its row numbers or the word none — a skipped section then shows itself.
 
 Then findings, deepest first — whole-procedure encodings before single-fact lookups. For each:
 
