@@ -513,7 +513,7 @@ pull request.
    LANDED (PR #112, merged 2026-08-20), with the review discussion
    permanent on the pull request.
 4. **Launcher version check** (user-ruled 2026-08-17) — CLOSED
-   2026-08-22, no version check built. The queued question is answered
+   2026-08-22 (PR #135), no version check built. The queued question is answered
    (claude-code-guide agent, from the official setup and settings docs):
    `autoUpdatesChannel` exists — default `latest`, `stable` about a week
    behind — and both the background auto-updater and `claude update`
