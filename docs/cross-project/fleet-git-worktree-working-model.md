@@ -342,9 +342,16 @@ stays unruled (cherry-picks break ancestry, so the predicate needs care).
 (accreted, no single PR).** Both launchers update the binary at launch,
 warn-and-proceed on failure; their guarantee is that *they* never swap it
 under a live session. The box's `DISABLE_AUTOUPDATER=1` flag was
-removed 2026-08-17 (dated backup beside it); issue #62's auto-update
-theory was retracted. A launch-time version check is queued — State at
-close.
+removed 2026-08-17 (dated backup beside it) when issue #62's auto-update
+theory was retracted — which left background auto-update ON fleet-wide.
+The same flag returned 2026-08-22 for a different, still-valid reason:
+with launch as the update moment, the background updater adds nothing
+but its mid-session "update available" banner, which the user ruled
+clutter. It now lives in the checked-in `.claude/settings.json` env
+block, reaching every seat's worktree on both machines; the docs state
+it stops only the background check, leaving the launchers' explicit
+`claude update` working. The launch-time version check that was queued
+here closed 2026-08-22 with no code — State at close, item 4.
 
 **R17. Shared machinery lives in the repository, self-updating at safe
 points — principle; two open gaps (recorded 2026-08-19).** The principle:
@@ -505,10 +512,20 @@ pull request.
 3. **R25** — the dead-registration report line in `clean-worktrees.py` —
    LANDED (PR #112, merged 2026-08-20), with the review discussion
    permanent on the pull request.
-4. **Launcher version check** (user-ruled 2026-08-17) — queued; settle
-   first via the claude-code-guide agent whether the auto-updater and
-   `claude update` respect `autoUpdatesChannel`. That answer decides
-   build-or-close.
+4. **Launcher version check** (user-ruled 2026-08-17) — CLOSED
+   2026-08-22, no version check built. The queued question is answered
+   (claude-code-guide agent, from the official setup and settings docs):
+   `autoUpdatesChannel` exists — default `latest`, `stable` about a week
+   behind — and both the background auto-updater and `claude update`
+   honour it. A version check adds nothing: the launchers already run
+   `claude update` at launch. What the user actually wanted, ruled
+   2026-08-22: with launch-time updates, background auto-update is
+   unnecessary and its mid-session "update available" banner is clutter.
+   Built small instead: `DISABLE_AUTOUPDATER=1` in the checked-in
+   `.claude/settings.json` env block, which the docs state stops only
+   the background check while explicit `claude update` — the launchers'
+   path — keeps working. (`DISABLE_UPDATES` was rejected: it also blocks
+   `claude update`.) See R16 for the mechanism's history.
 
 Recorded candidates, unruled — an incident or a user pick is the trigger:
 the supervisor launch-reset of fully-merged seat branches (R15); R24's
