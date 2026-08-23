@@ -19,10 +19,13 @@ The cycle, per recycle:
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
-  written-at:      UTC timestamp, ISO 8601
-  next-step:       the first action the successor takes
-  restart-counter: predecessor's counter plus one
-  dont-restart:    optional; any value makes the supervisor ask before relaunching
+  written-at:          UTC timestamp, ISO 8601
+  next-step:           the first action the successor takes
+  restart-counter:     predecessor's counter plus one
+  dont-restart:        optional; any value makes the supervisor ask before relaunching
+  spawned-subagent-<n>: optional, one per subagent the retiring session
+                       spawned; they die with it, so the successor is told
+                       they existed and can restart the ones still owing work
 
 How much dialog to carry is not among them: the extractor takes the tail that
 clears its word floor, so the retiring agent exercises no judgment over what
@@ -67,6 +70,7 @@ NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
+SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 
 
 def parse_handoff_file(handoff_path: Path) -> dict:
@@ -304,6 +308,25 @@ def next_step_from(handoff_fields: dict) -> str:
     return handoff_fields.get("next-step", "").strip()
 
 
+def spawned_subagent_roster_from(handoff_fields: dict) -> list:
+    """The retiring session's subagent roster, in the order the writer wrote it.
+
+    One numbered field per subagent (`spawned-subagent-1`, `-2`, ...), because
+    a repeated key would lose every subagent but the first: the parser takes
+    the first occurrence of a key. Fields the writer never wrote simply are
+    not there — an older handoff yields an empty roster and the ignition
+    prompt says nothing about subagents.
+    """
+    numbered = []
+    for key, value in handoff_fields.items():
+        if not key.startswith(SPAWNED_SUBAGENT_FIELD_PREFIX):
+            continue
+        ordinal = key[len(SPAWNED_SUBAGENT_FIELD_PREFIX):]
+        if ordinal.isdigit() and value:
+            numbered.append((int(ordinal), value))
+    return [value for _, value in sorted(numbered)]
+
+
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
                           queue_status: str = "") -> str:
     next_step = next_step_from(handoff_fields)
@@ -316,6 +339,19 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: 
         # The rot-visibility duty (#32): the successor is the one reader every
         # supervisor mode has — a detached supervisor's console is a log file.
         lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
+    roster = spawned_subagent_roster_from(handoff_fields)
+    if roster:
+        # The orphaned-subagent duty (ruled 2026-08-23): subagents die with the
+        # session that spawned them, and the successor is the only reader who
+        # can restart them. Their last recorded event is stated, not
+        # interpreted — a subagent that stopped can still own unfinished work,
+        # which is exactly how pull request #150's fixer was nearly lost.
+        lines.append(
+            f"The session you are replacing spawned {len(roster)} subagent(s), which died with it: "
+            + "; ".join(roster)
+            + ". A last event of `completed` means that subagent stopped, not that its work is "
+            "finished — judge which of them still own unfinished work and restart those."
+        )
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
         preamble += (" NOTE: this handoff's verbatim next-step block was unterminated, so what "
