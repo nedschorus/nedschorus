@@ -15,7 +15,9 @@ must not drift are pinned:
     placement is the accepted form, verified on codex-cli 0.147.0);
   - the base, as a SHA the caller resolved -- `--base origin/main` drifts
     under a moving remote, so the review's subject is recorded exactly;
-  - the output, captured to a file the caller names.
+  - the output, captured to a file the caller names;
+  - Codex's own memory store, OFF for this process (`--disable memories`) --
+    see WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS below.
 
 What this deliberately does not do: accept custom review instructions.
 On codex-cli 0.147.0 a [PROMPT] is mutually exclusive with --base and
@@ -23,6 +25,38 @@ switches to custom-review mode, losing the built-in rubric (measured
 2026-08-19). Durable repository review rules belong in AGENTS.md per
 Codex's documented mechanism; merge-decision checks belong to the
 deferred pr-merge-decision component (nedschorus#105).
+
+WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
+for every `codex exec` this repository launches; the other two sites
+(scripts/md-review-codex-cell.py, scripts/sanity-check-attacks.py) pass the
+same flag and point here.
+
+Codex keeps a memory store under `~/.codex/` that every Codex process on the
+machine shares. It reads accumulated notes into a new session, and its memory
+pipeline writes fresh ones from saved sessions. Both directions are wrong for
+a review cell:
+
+  - READING. A cell is commissioned to be naive -- to judge the change in
+    front of it, not to carry forward what Codex concluded reviewing this
+    project before. On 2026-08-23 that store held a task group named
+    "NedsChorus NC toolchain / constrained adversarial review and Phase-1
+    phasing checks", with sections "Reusable knowledge" and "Failures and how
+    to do differently": Codex's own standing conclusions about this
+    repository's work, which a fresh cell would inherit.
+  - WRITING. These cells are automation; the store is the user's personal
+    one, kept for his interactive Codex. Automated review runs should not be
+    depositing findings in it.
+
+`--disable memories` is per-invocation. `codex exec --help` on codex-cli
+0.147.0 documents it as "Disable a feature (repeatable). Equivalent to `-c
+features.<name>=false`" -- a config override for this process only, writing
+nothing to disk and leaving the user's own interactive Codex untouched.
+Verified on codex-cli 0.147.0 (2026-08-23): `codex features list` reports
+`memories ... true`, `codex --disable memories features list` reports it
+`false`, and on the exec path an unknown name is refused ("Error: Unknown
+feature flag") while `memories` passes that check. Parent placement, beside
+--sandbox above; the nested `review` parser also accepts --disable, but one
+placement for both flags is easier to read.
 
 Exit codes: 0 the review ran and wrote the report -- WHICH SAYS NOTHING
 ABOUT THE VERDICT: codex exits 0 while reporting defects, so a gate must
@@ -99,6 +133,7 @@ def main(argv=None) -> int:
     command = [
         "codex", "exec",
         "--sandbox", "read-only",       # parent level; the nested parser rejects it
+        "--disable", "memories",        # naive cell, and no writes to the shared store
         "review",
         *scope_flag,
         "-m", arguments.model,

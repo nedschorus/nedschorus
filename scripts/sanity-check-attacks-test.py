@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for sanity-check-attacks.py — the worktree write detector, the record
-directory claim, and the prompt-body boundary.
+directory claim, the prompt-body boundary, and the codex cells' memory switch.
 
 The detector's only value is being trustworthy about whether a codex cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -595,6 +595,33 @@ def main():
         check(f"the standing {attack} prompt splits at its marker",
               body.startswith(runner_fresh.PROMPT_BODY_FIRST_LINE),
               f"body began {body[:60]!r}")
+
+    # The codex cells must launch with Codex's machine-wide memory store off,
+    # so the cell neither reads earlier reviews of this project nor feeds the
+    # store (why, in full: scripts/code-review-codex-cell.py's docstring). The
+    # composed command is inspected rather than run: launching a cell costs a
+    # model call, and the defect this guards against is a missing argument.
+    #
+    # subprocess.run is replaced for the length of one call only. The module
+    # object is shared with this file's own git() helper, so the real function
+    # goes back in a finally, never left swapped.
+    runner_memories = load_runner()
+    captured = {}
+    real_subprocess_run = runner_memories.subprocess.run
+
+    def capture_command(command, *arguments, **keywords):
+        captured["command"] = list(command)
+        return sp.CompletedProcess(list(command), 0, "", "")
+
+    try:
+        runner_memories.subprocess.run = capture_command
+        runner_memories.run_codex("a prompt no model ever sees")
+    finally:
+        runner_memories.subprocess.run = real_subprocess_run
+    codex_command = captured.get("command", [])
+    check("run_codex launches codex with memories disabled",
+          ("--disable", "memories") in list(zip(codex_command, codex_command[1:])),
+          f"composed command was {codex_command}")
 
     print()
     if failures:
