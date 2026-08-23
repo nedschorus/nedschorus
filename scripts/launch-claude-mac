@@ -51,6 +51,20 @@
 set -eu
 
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
+# A literal-tilde value (a quoted export sends one) is resolved or refused,
+# never half-worked (PR #137 review P3 on the twin, user-ruled 2026-08-22:
+# overrides either work or are blocked): ~/ becomes $HOME as the operator's
+# shell would have made it, and every fleet Python tool already
+# expanduser()s the same value; a ~user/ form is refused, because this
+# script would mkdir a literal ~user directory while those tools resolve
+# that user's real home — one seat, silently split across two directories.
+case "$AGENTS_ROOT" in
+    ("~"[!/]*)
+        echo "launch-claude-mac: ~user agents roots are not supported — the shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute path." >&2
+        exit 2 ;;
+    ("~") AGENTS_ROOT="$HOME" ;;
+    ("~/"*) AGENTS_ROOT="$HOME${AGENTS_ROOT#?}" ;;
+esac
 
 # The supervisor is this script's sibling, so the checkout location is never
 # configured and never wrong — wherever this script was run from IS the

@@ -20,6 +20,13 @@ supervisor's --cd arrives as the literal ~ path (handoff-supervisor.py
 expanduser()s it live, handoff-supervisor.py:855).
 
 Run: python3 scripts/launch-claude-ubuntu-test.py
+
+The suite is self-contained (this file plus launch-claude-ubuntu beside it;
+every other participant is stubbed) and runs unmodified ON THE BOX, where
+P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing in —
+the one caveat the PR #137/#139 reviews carried (user-directed 2026-08-22):
+  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py ned:/tmp/x/
+  ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
 """
 
 import os
@@ -56,6 +63,12 @@ class LaunchHarness:
         self.captures.mkdir(parents=True)
         self.home = root / "home"
         self.home.mkdir()
+        # Both the launcher and the P1 replay run from here, so any
+        # relative-path side effect lands in the sandbox — the #139 review
+        # measured the replay writing a literal ~alice directory into the
+        # suite-runner's own cwd against the pre-fix launcher.
+        self.workdir = root / "workdir"
+        self.workdir.mkdir()
         self.stubs = root / "stubs"
         self.stubs.mkdir()
         write_stub(self.stubs, "ssh",
@@ -117,13 +130,14 @@ class LaunchHarness:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         launched = subprocess.run(
             [str(LAUNCHER), *launcher_arguments],
-            capture_output=True, text=True, check=False, env=environment)
+            capture_output=True, text=True, check=False, env=environment,
+            cwd=str(self.workdir))
         ssh_capture = self.captures / "ssh-argv.txt"
         remote = (ssh_capture.read_text(encoding="utf-8").splitlines()[-1]
                   if ssh_capture.is_file() else "")
         replayed = subprocess.run(
             ["/bin/sh", "-c", remote], capture_output=True, text=True,
-            check=False, env=self.replay_environment())
+            check=False, env=self.replay_environment(), cwd=str(self.workdir))
         pane_directory_capture = self.captures / "tmux-pane-directory.txt"
         calls_capture = self.captures / "python3-calls.txt"
         supervisor_argv = []
@@ -175,6 +189,43 @@ def main() -> int:
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),
               str(harness.home / "agents"))
+
+        # --- 1b. the launcher itself must have reached ssh — without this,
+        # a launcher that exits before the transport leaves an empty remote
+        # string, and sh -c "" exits 0, passing the parse checks vacuously
+        # (PR #137 review P3).
+        check("default root: the launcher reached ssh and exited 0",
+              result["launched"].returncode == 0 and result["remote"],
+              (result["launched"].returncode, result["launched"].stderr[:200]))
+
+        # --- 1c. a ~user root is REFUSED before any transport (user-ruled
+        # 2026-08-22: overrides either work or are blocked) — the box shell
+        # and the fleet's Python tools would resolve it to different
+        # directories, silently splitting the seat.
+        harness = LaunchHarness(root / "tilde-user")
+        result = harness.run(["seat-u", "--no-attach"],
+                             agents_root="~alice/agents")
+        check("tilde-user root: refused with exit 2, naming the split",
+              result["launched"].returncode == 2
+              and "not supported" in result["launched"].stderr
+              and "splitting the seat" in result["launched"].stderr,
+              (result["launched"].returncode, result["launched"].stderr[:200]))
+        check("tilde-user root: nothing was sent to the box",
+              result["remote"] == "", result["remote"][:200])
+
+        # --- 1d. a ~/ root with a space rides the supported tilde carry ----
+        harness = LaunchHarness(root / "tilde-space")
+        result = harness.run(["seat-h", "--no-attach"],
+                             agents_root="~/custom agents")
+        check("~/ root with a space: tmux -c resolves under the box home",
+              result["replay"].returncode == 0
+              and result["pane_directory"]
+              == f"{harness.home}/custom agents/seat-h",
+              (result["replay"].returncode, result["pane_directory"]))
+        check("~/ root with a space: supervisor --cd stays the literal ~ path",
+              argv_value(result["supervisor_argv"], "--cd")
+              == "~/custom agents/seat-h",
+              result["supervisor_argv"])
 
         # --- 2. apostrophe + space in the agents root ----------------------
         harness = LaunchHarness(root / "apostrophe-root")
