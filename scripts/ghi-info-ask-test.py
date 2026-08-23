@@ -370,9 +370,15 @@ with tempfile.TemporaryDirectory() as temporary:
     ])
     ghi_ask.ask("q", False, seat_cs, "x/y")
     cold_prompt = cs_calls[0][0]
+    # Both clauses of the first version of this check passed whether the slot
+    # held the directory or the file, so it could not have caught the bug it
+    # was written for (PR #143 review, recorded for this suite's next touch).
+    # These two discriminate: the slot is followed immediately by the
+    # template's comma, and no mirror FILE path appears in the sentence.
+    mirror_directory = str(seat_cs / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR)
     check("the cold-start prompt names the mirror directory, not one of its files",
-          "issues-open.md:" not in cold_prompt
-          and str(seat_cs / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR) in cold_prompt,
+          f"at {mirror_directory}," in cold_prompt
+          and f"{mirror_directory}/issues-open.md" not in cold_prompt,
           cold_prompt[:400])
 
 

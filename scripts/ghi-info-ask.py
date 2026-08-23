@@ -192,6 +192,80 @@ def compose_drift_notice(unexpected_closed) -> str:
     return "\n".join(lines)
 
 
+def compose_adjudication_prompt(title: str, body: str, editing_issue_number,
+                                changed_numbers, is_resume: bool) -> str:
+    """§ Prompts: Adjudication request. Same changed-entries preamble as the
+    ask, dropped whole on cold start or an empty delta; the draft's title and
+    body pass through verbatim."""
+    parts = []
+    if is_resume and changed_numbers:
+        named = ", ".join(f"#{n}" for n in changed_numbers)
+        parts.append(
+            f"Since your last request, these mirror entries changed: {named}. "
+            "Re-read them in the mirror before answering."
+        )
+    parts.append("You are shown a draft issue — title and body — and asked "
+                 "whether the corpus already covers it.")
+    if editing_issue_number is not None:
+        parts.append(f"This draft edits issue #{editing_issue_number}: leave "
+                     f"#{editing_issue_number} out of the comparison.")
+    parts.append(f"Draft title: {title}")
+    parts.append("Draft body, verbatim:")
+    parts.append(body)
+    parts.append("Reply with exactly one line: `verdict: too-similar #n` or "
+                 "`verdict: related #n,#m` or `verdict: unrelated`.")
+    return "\n\n".join(parts)
+
+
+VERDICT_PATTERN = re.compile(
+    r"^verdict:\s*(too-similar|related|unrelated)\b\s*(.*)$", re.IGNORECASE)
+
+
+def parse_verdict(reply_text: str):
+    """The three verdict shapes, or None for anything else.
+
+    Strict on purpose (design: "A reply in any other shape is thrown away";
+    "A malformed reply is treated as unavailable (fail-open)"). None is what
+    an escalate:, an out-of-scope, or a paragraph of prose all become — the
+    caller then writes without adjudication rather than guessing at intent.
+    Only the FIRST line is considered, so a verdict with commentary bolted
+    after it still parses as the verdict it leads with.
+    """
+    first_line = (reply_text or "").strip().splitlines()
+    if not first_line:
+        return None
+    match = VERDICT_PATTERN.match(first_line[0].strip())
+    if match is None:
+        return None
+    kind = match.group(1).lower()
+    issues = [int(number) for number in POINTER_PATTERN.findall(match.group(2))]
+    if kind in ("too-similar", "related") and not issues:
+        # Both shapes name at least one issue by definition; without a number
+        # there is nothing for the caller to act on, so it is not a verdict.
+        return None
+    if kind == "unrelated":
+        issues = []
+    return {"kind": kind, "issues": issues}
+
+
+def _finish_reading_list(reply_text: str, cache: dict, include_closed: bool,
+                         turn, session_id):
+    """The ask path's step 4: post-check, and at most one drift recheck."""
+    stale = False
+    if not is_passthrough_reply(reply_text):
+        unexpected = find_unexpected_closed_pointers(reply_text, cache, include_closed)
+        if unexpected:
+            stale = True
+            drift_reply, _error = turn(compose_drift_notice(unexpected), session_id)
+            if drift_reply is not None:
+                session_id = drift_reply.get("session_id", session_id)
+                reply_text = (drift_reply.get("result") or "").strip()
+            # A failed recheck falls back to the original reply rather than
+            # failing the whole ask — the pointer may simply carry a
+            # now-stale tag, which is better than no answer at all.
+    return reply_text, stale, session_id
+
+
 def is_passthrough_reply(text: str) -> bool:
     """escalate:/out-of-scope replies are not reading lists (design step 4);
     the post-check does not apply to them, and neither does drift recheck."""
@@ -338,8 +412,60 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
 def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
        timeout_seconds: int = ASK_TIMEOUT_SECONDS,
        projects_root: Path = None):
-    """The whole ask path (design § The ask path, steps 1-5). Returns
-    (answer_text, error) — exactly one is not None."""
+    """A reading-list request: the ask path (design § The ask path, steps
+    1-5). Returns (answer_text, error) — exactly one is not None."""
+    return _perform_request(
+        seat_dir, repo, projects_root, timeout_seconds,
+        compose_prompt=lambda changed, is_resume: compose_resume_ask_prompt(
+            question, include_closed, changed, is_resume),
+        finish_reply=lambda reply_text, cache, turn, session_id: _finish_reading_list(
+            reply_text, cache, include_closed, turn, session_id),
+    )
+
+
+def adjudicate(title: str, body: str, editing_issue_number, seat_dir: Path,
+               repo: str, timeout_seconds: int = ASK_TIMEOUT_SECONDS,
+               projects_root: Path = None):
+    """A similarity-adjudication request: the write tool's step 2, riding
+    this same wrapper (user-ruled 2026-08-11 — "one stored session, one
+    refresh-and-resume machinery, every request form riding it").
+
+    Returns (verdict, error). The verdict is a dict:
+      {"kind": "too-similar", "issues": [13]}
+      {"kind": "related",     "issues": [13, 24]}
+      {"kind": "unrelated",   "issues": []}
+    Anything ghi-info replies that is not one of the three verdict shapes —
+    prose, an escalate:, an out-of-scope — is not a verdict, so it is
+    reported as an error and the caller FAILS OPEN (design: "A malformed
+    reply is treated as unavailable"). Accepted residual, stated in the
+    design: adjudication never escalates; ruling questions surface on the
+    ask path.
+
+    Deliberately unlike the reading-list form: no drift recheck and no
+    stale-match counting. Those exist to keep reading lists honest about
+    closed issues; a verdict names at most a couple of issues and is
+    consumed by a script, not a reader, and the design scopes step 4's
+    post-check to the ask path.
+    """
+    return _perform_request(
+        seat_dir, repo, projects_root, timeout_seconds,
+        compose_prompt=lambda changed, is_resume: compose_adjudication_prompt(
+            title, body, editing_issue_number, changed, is_resume),
+        finish_reply=lambda reply_text, cache, turn, session_id: (
+            parse_verdict(reply_text), False, session_id),
+    )
+
+
+def _perform_request(seat_dir: Path, repo: str, projects_root, timeout_seconds,
+                     compose_prompt, finish_reply):
+    """The machinery every request form rides: one stored session, one
+    refresh-and-resume, one deadline, one lock.
+
+    compose_prompt(changed, is_resume) -> the prompt for this form.
+    finish_reply(reply_text, cache, turn, session_id) -> (result, stale,
+    session_id); `turn` lets a form spend another turn (the reading list's
+    drift recheck does; adjudication does not).
+    """
     if projects_root is None:
         projects_root = Path.home() / ".claude" / "projects"
     state_path = seat_dir / STATE_FILE_NAME
@@ -357,14 +483,14 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
         return run_claude(prompt, resume_session_id, seat_dir, remaining)
 
     try:
-        return _locked_ask(question, include_closed, seat_dir, repo,
-                           projects_root, state_path, lock_path, turn)
+        return _locked_request(seat_dir, repo, projects_root, state_path,
+                               lock_path, turn, compose_prompt, finish_reply)
     except SeatDirectoryUnusable as error:
         return None, str(error)
 
 
-def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
-                state_path, lock_path, turn):
+def _locked_request(seat_dir, repo, projects_root, state_path, lock_path, turn,
+                    compose_prompt, finish_reply):
     """Holds the lock, settles which mirror this run publishes into, and
     cleans up a throwaway one on every exit path."""
     with state_lock(lock_path) as locked:
@@ -389,17 +515,18 @@ def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
             mirror_dir = throwaway_mirror
 
         try:
-            return _ask_within_lock(question, include_closed, seat_dir, repo,
-                                    projects_root, state, state_path, locked,
-                                    mirror_dir, turn)
+            return _request_within_lock(seat_dir, repo, projects_root, state,
+                                        state_path, locked, mirror_dir, turn,
+                                        compose_prompt, finish_reply)
         finally:
             if throwaway_mirror is not None:
                 shutil.rmtree(throwaway_mirror, ignore_errors=True)
 
 
-def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
-                     state, state_path, locked, mirror_dir, turn):
-    """The ask itself, with the lock decision and the mirror already settled.
+def _request_within_lock(seat_dir, repo, projects_root, state, state_path,
+                         locked, mirror_dir, turn, compose_prompt, finish_reply):
+    """The request itself, with the lock decision and the mirror already
+    settled.
 
     Split out so the throwaway mirror's cleanup is one `finally` around the
     whole body rather than a branch on every early return.
@@ -425,10 +552,14 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
             return None, f"mirror refresh failed: {error}"
         changed = delta_result["changed"]
         cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
-        # Counts a changed issue that is currently closed. An already-
-        # closed issue touched again (a late comment) counts once more,
-        # which only makes recycling more eager — the direction the
-        # design asks for ("Recycling errs eager").
+        # Counts a changed issue that is currently closed. Two shapes count
+        # the same issue more than once: an already-closed issue touched
+        # again (a late comment), and any closed issue re-reported because
+        # it sits inside ghi-mirror-refresh's delta-cutoff overlap window.
+        # Both inflate this counter, and both only make recycling more
+        # eager — the direction the design asks for ("Recycling errs
+        # eager"): an eager recycle costs one cheap reload, a lazy one
+        # costs silently wrong answers.
         new_closures = sum(
             1 for number in changed
             if cache.get("issues", {}).get(str(number), {}).get("state") == "CLOSED"
@@ -459,30 +590,23 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         if cold_reply is None:
             return None, f"ghi-info cold-start failed: {error}"
         session_id = cold_reply["session_id"]
-        resume_prompt = compose_resume_ask_prompt(question, include_closed, [], False)
+        request_prompt = compose_prompt([], False)
     else:
         session_id = state["session_id"]
-        resume_prompt = compose_resume_ask_prompt(question, include_closed, changed, True)
+        request_prompt = compose_prompt(changed, True)
 
-    answer_reply, error = turn(resume_prompt, session_id)
+    answer_reply, error = turn(request_prompt, session_id)
     if answer_reply is None:
-        return None, f"ghi-info ask failed: {error}"
+        return None, f"ghi-info request failed: {error}"
     session_id = answer_reply.get("session_id", session_id)
     reply_text = (answer_reply.get("result") or "").strip()
 
-    # Step 4: post-check.
-    stale = False
-    if not is_passthrough_reply(reply_text):
-        unexpected = find_unexpected_closed_pointers(reply_text, cache, include_closed)
-        if unexpected:
-            stale = True
-            drift_reply, error = turn(compose_drift_notice(unexpected), session_id)
-            if drift_reply is not None:
-                session_id = drift_reply.get("session_id", session_id)
-                reply_text = (drift_reply.get("result") or "").strip()
-            # A failed recheck falls back to the original reply rather
-            # than failing the whole ask — the pointer may simply carry
-            # a now-stale tag, which is better than no answer at all.
+    # Step 4: whatever this request form owes its reply — the reading list
+    # post-checks and may spend a drift-recheck turn; adjudication parses a
+    # verdict and spends nothing.
+    result, stale, session_id = finish_reply(reply_text, cache, turn, session_id)
+    if result is None:
+        return None, f"ghi-info returned no usable reply: {reply_text[:300]!r}"
 
     if locked:
         if cold_starting:
@@ -493,7 +617,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         state["recent_matches"] = recent[-STALE_MATCH_WINDOW:]
         save_state(state_path, state)
 
-    return reply_text, None
+    return result, None
 
 
 def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
