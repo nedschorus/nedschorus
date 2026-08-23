@@ -76,16 +76,36 @@ class LaunchHarness:
                    'exit 0\n')
         write_stub(self.stubs, "timeout", "exit 0\n")
         write_stub(self.stubs, "git", "exit 0\n")
+        # The supervisor call also records its ENVIRONMENT, not just its argv:
+        # the task-list binding is an exported variable, so the only place it
+        # can be measured is the environment of the process the pane command
+        # actually starts.
         write_stub(self.stubs, "python3",
                    '{ printf \'%s\\n\' "$@"; echo "=== call boundary ==="; } '
                    '>> "$LCU_TEST_DIR/python3-calls.txt"\n'
+                   'for argument in "$@"; do\n'
+                   '  case "$argument" in (*handoff-supervisor.py*)\n'
+                   '    { echo "CLAUDE_CODE_TASK_LIST_ID='
+                   '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
+                   '      echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
+                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}"; } '
+                   '> "$LCU_TEST_DIR/supervisor-environment.txt";;\n'
+                   '  esac\n'
+                   'done\n'
                    'exit 0\n')
         # The attached pane ends in `exec $SHELL`; this stand-in records the
         # directory that shell would start in — the after-exit cd's actual
         # landing point, which exit codes alone cannot pin (a failed cd is
-        # followed by an exec that succeeds anyway).
+        # followed by an exec that succeeds anyway) — and its environment,
+        # which is where the `claude --continue` that shell offers would read
+        # its task-list binding from.
         write_stub(self.stubs, "record-shell",
-                   'pwd > "$LCU_TEST_DIR/after-exit-cwd.txt"\n')
+                   'pwd > "$LCU_TEST_DIR/after-exit-cwd.txt"\n'
+                   '{ echo "CLAUDE_CODE_TASK_LIST_ID='
+                   '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
+                   '  echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
+                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}"; } '
+                   '> "$LCU_TEST_DIR/after-exit-environment.txt"\n')
         # has-session answers "no session" so socket selection stays on the
         # per-seat socket; a new-session call records its argv, then replays
         # its pane-command argument through a real sh — parse 2.
@@ -139,6 +159,10 @@ class LaunchHarness:
             ["/bin/sh", "-c", remote], capture_output=True, text=True,
             check=False, env=self.replay_environment(), cwd=str(self.workdir))
         pane_directory_capture = self.captures / "tmux-pane-directory.txt"
+        supervisor_environment_capture = (self.captures
+                                          / "supervisor-environment.txt")
+        after_exit_environment_capture = (self.captures
+                                          / "after-exit-environment.txt")
         calls_capture = self.captures / "python3-calls.txt"
         supervisor_argv = []
         if calls_capture.is_file():
@@ -154,7 +178,23 @@ class LaunchHarness:
             "pane_directory": (pane_directory_capture.read_text(encoding="utf-8")
                                if pane_directory_capture.is_file() else ""),
             "supervisor_argv": supervisor_argv,
+            "supervisor_environment": environment_lines(
+                supervisor_environment_capture),
+            "after_exit_environment": environment_lines(
+                after_exit_environment_capture),
         }
+
+
+def environment_lines(capture: Path) -> dict:
+    """A `NAME=value` capture file as a dict; {} when nothing was recorded."""
+    if not capture.is_file():
+        return {}
+    recorded = {}
+    for line in capture.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            name, _, value = line.partition("=")
+            recorded[name] = value
+    return recorded
 
 
 def argv_value(argv, flag):
@@ -322,6 +362,49 @@ def main() -> int:
               == Path(f"{apostrophe_root}/seat-g").resolve(),
               (after_exit_cwd.read_text(encoding="utf-8").strip()
                if after_exit_cwd.is_file() else "no shell recorded"))
+
+        # --- 8. task-list persistence: both variables reach the box-side
+        # supervisor's environment, and the list id is derived from the SEAT
+        # NAME. Two different seat names in one suite are the teeth here: an
+        # id leaking in from the ambient environment rather than being
+        # composed per seat would give both runs the same value. (The P1
+        # replay environment is a whitelist — PATH, HOME, SHELL, LCU_TEST_DIR
+        # — so a leak would have to come through the composed string itself.)
+        harness = LaunchHarness(root / "task-list-detached")
+        result = harness.run(["seat-h", "--no-attach"])
+        check("task list: the pin reaches the supervisor as <seat>-tasks",
+              result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
+              == "seat-h-tasks",
+              result["supervisor_environment"])
+        check("task list: the task tools are enabled for the supervisor",
+              result["supervisor_environment"].get(
+                  "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
+              result["supervisor_environment"])
+        harness = LaunchHarness(root / "task-list-second-seat")
+        result = harness.run(["seat-i", "--no-attach"])
+        check("task list: a second seat name yields a DIFFERENT list id",
+              result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
+              == "seat-i-tasks",
+              result["supervisor_environment"])
+
+        # --- 9. the same binding on the ATTACHED path, including the
+        # after-exit shell: that shell offers `claude --continue`, and a
+        # continue run without the pin binds to a session-keyed store whose
+        # TaskList returns empty with no error.
+        harness = LaunchHarness(root / "task-list-attached")
+        result = harness.run(["seat-j"])
+        check("task list (attached): the supervisor gets <seat>-tasks",
+              result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
+              == "seat-j-tasks"
+              and result["supervisor_environment"].get(
+                  "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
+              result["supervisor_environment"])
+        check("task list (attached): the after-exit shell keeps the binding",
+              result["after_exit_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
+              == "seat-j-tasks"
+              and result["after_exit_environment"].get(
+                  "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
+              result["after_exit_environment"])
 
     print()
     if failures:
