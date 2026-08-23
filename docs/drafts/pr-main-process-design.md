@@ -1116,6 +1116,65 @@ expected task ids, because a silently rebound store looks like success.
 User-blocking items surface ONE AT A TIME at natural pauses; `say` only for
 act-now items; no external channels.
 
+## 6.5 Session recycling, and the subagents it kills (user-ruled 2026-08-23)
+
+**How a recycle happens.** A seat's session recycles when its context runs
+low. `scripts/handoff-context-threshold-hook.py`, wired as a Stop hook, fires
+once at a turn boundary and tells the session to run its handoff skill; the
+session writes a handoff file; `scripts/handoff-supervisor.py` sees the file,
+kills the session, and launches a successor with an ignition prompt. Nothing
+kills the session until that file appears, so the moment of the recycle is
+the agent's own to choose, and deferring it is structurally possible.
+
+**Subagents spawned by that session die with it.** On 2026-08-23 this seat
+commissioned a subagent to fix the review findings on pull request #150. The
+session recycled and the subagent died. Its work was NOT lost — its git
+worktree and branch survived on disk at exactly the reviewed head — but its
+*ownership* was: nothing in the handoff said the pull request had a fixer.
+The successor found the orphan only because the retiring agent happened to
+mention it in a sentence of prose, which is the faculty most degraded at
+recycle time.
+
+**RULED: kill and restart uniformly; do not defer the recycle.** The
+alternative considered and rejected was a conditional rule — let a subagent
+that is mid-work finish, kill one whose only product is a report to a parent
+that no longer exists. It was rejected because it demands a classification at
+the exact moment the agent is least able to classify. A uniform rule executes
+reliably under those conditions; a conditional one fails precisely when it is
+needed, which is the same failure shape as the hand-written merge gates that
+regressed twice in August. A killed subagent's partial work is also legible
+rather than lost: its edits are individual file writes, so `git status` in its
+worktree shows exactly which landed.
+
+**RULED: the handoff records the roster, so the successor restarts them
+quickly.** The record is of every subagent the session SPAWNED — not only
+those still running. The motivating orphan was not running when its session
+died: it had finished its round and sat idle, resumable, owning unfinished
+work, so a roster filtered to "currently running" would exclude the exact
+case the feature exists for. Whether a subagent is worth restarting is a
+semantic judgement; the writer records what a machine can know and the
+successor judges. Being built on branch
+`handoff-records-spawned-subagent-roster`: the writer
+(`scripts/handoff-write-and-check-supervisor.py`) records the field, and
+`build_ignition_prompt()` in the supervisor surfaces it, following the
+`queue_status` line in that same function as its precedent.
+
+**Practice, this seat's refinement rather than a ruling:** commission prompts
+tell the subagent to commit each unit of work locally as it completes, and to
+push once at the end of the round. The two halves answer different threats.
+The commit is what survives a kill, because the worktree is on disk. The push
+is for the pull request's readers — and pushing per commit restarts the
+automated reviewer's latency clock, making it re-read a moving target several
+times for no gain.
+
+**RULED, on the pace of fixes (2026-08-23).** Asked whether to keep opening
+fix pull requests at the rate this walk was generating them, or to let the
+queue drain first, the user ruled fix-as-we-find: fix problems as they are
+found, so that neither he nor the seat has to re-derive a problem's context
+later.
+
+---
+
 ---
 
 # 7. Mechanisms to be built
@@ -1304,6 +1363,7 @@ Each is open in the sources; none is resolved here.
 | 15 | The escalation ladder's refinement — adopted "as designed, refining per natural specimen," with repetition owed (one and two specimens; the tournament's judge layer never ran). Next specimens planned: #110, then #101 | **The user**, on specimen results | `phase-5`; `phase-3` item 13 |
 | 16 | **The second pass over this whole cluster**, which the user expects; nothing in the cluster is final-final until it | **The user** | `phase-4`, Part-2 ruling |
 | 17 | The **namespace-prefix question** — LOCATED 2026-08-23, contrary to this row's original text. It is in the body of PR #141 under "Open questions for the reviewer", routed to the user by the merge seat as review finding F3: a seat's persistent task list is bound by composing `<seat>-tasks`, and the question is whether the composed id should carry a per-system prefix (`nedschorus-<name>-tasks`) to keep this project's stores apart from the legacy system's on this one Mac, or whether name discipline is enough. The earlier greps missed it because they covered `review-fix-cycle-analysis/`, `docs/`, `CLAUDE.md` and `CLAUDE.local.md` — not pull-request bodies | **The user** | PR #141 body, Open questions |
+| 18 | **Reachability of a durable record.** Three records on 2026-08-23 were stated as existing without stating who could read them: a ruling that survived only in a session transcript; the walk anchors in `review-fix-cycle-analysis/`, excluded from git and present on one Mac only; and a ruling committed at `148b6e2` on `origin/doctrine-queue-drain`, which a reader of `main` cannot reach. Three mechanisms, one shape. The proposed rule: a document that points at another record states not only where it is but who can reach it, and a pointer to something not on `main` says so | **The user** | this section; raised by the git-infra seat 2026-08-23 during PR #151 |
 
 ---
 
