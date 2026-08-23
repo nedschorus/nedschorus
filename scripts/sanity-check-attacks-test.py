@@ -5,8 +5,8 @@ directory claim, and the prompt-body boundary.
 The detector's only value is being trustworthy about whether a codex cell
 wrote to the worktree, and every hole in it is silent by construction. Each
 case below builds a scratch repository, snapshots it, simulates a cell write,
-and asserts the write is named. The three holes under test were found
-reviewing PRs #98 and #102:
+and asserts the write is named. The holes under test were found reviewing
+PRs #98 and #102:
 
   - a file already dirty before the run, rewritten by a cell (label
     comparison misses it; content hashes catch it)
@@ -14,6 +14,11 @@ reviewing PRs #98 and #102:
     anything a cell writes under it is invisible without -uall
   - a non-ASCII pathname, which git C-quotes without -z, producing a path
     that matches nothing on disk and fingerprints as "absent" on both sides
+  - a write to an ignored path, which `git status` never reports in any form:
+    the runner's own report directory is ignored, so a cell overwriting a
+    finished report was silent (PR #98, fixed 2026-08-23 by watching that
+    directory directly — see IGNORED_PATHS_WATCHED_FOR_WRITES, whose
+    deliberate limit case 11 records)
 
 Run: python3 scripts/sanity-check-attacks-test.py
 """
@@ -24,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 RUNNER_SCRIPT = pathlib.Path(__file__).with_name("sanity-check-attacks.py")
 
@@ -148,7 +154,147 @@ def main():
         check("a write after a staged rename is still detected",
               "zz-last.md" in found, f"stray list was {found}; baseline was {baseline}")
 
-    # Case 7: two runs starting together must not be handed the same record
+    # Case 7: a cell writing to an ignored path. `git status` never reports an
+    # ignored path in any form, so a write there was invisible to the detector
+    # no matter how the porcelain was parsed. The record directory is the
+    # ignored path that matters: it is where the runner puts every cell's
+    # report, the reports exist to be compared against each other, and a cell
+    # overwriting a finished one left the comparison running on corrupted
+    # input with the run still reported clean (raised as an inline P2 on PR
+    # #98, unfixed until 2026-08-23).
+    records_name = runner.RECORDS_ROOT.name
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore the record directory")
+        report = repo / records_name / "2026-08-23-design" / "cut-claude.md"
+        report.parent.mkdir(parents=True)
+        report.write_text("a finished report\n", encoding="utf-8")
+        # Precondition: git really is blind here. Without it the case below
+        # could pass for the wrong reason — an un-ignored directory is listed
+        # by -uall and detected with no ignored-path watch at all.
+        ignored = subprocess.run(
+            ["git", "-C", str(repo), "check-ignore", "-q", str(report)],
+            check=False).returncode == 0
+        check("precondition: git treats the record directory as ignored", ignored,
+              "git check-ignore did not match the report path")
+        baseline = snapshot(repo)
+        report.write_text("a cell wrote over this report\n", encoding="utf-8")
+        found = strays(baseline, snapshot(repo))
+        check("a cell overwriting a report in the ignored record directory is detected",
+              f"{records_name}/2026-08-23-design/cut-claude.md" in found,
+              f"stray list was {found}; baseline was {baseline}")
+
+    # Case 8: the runner writes every cell's report INTO the watched record
+    # directory, so its own writes have to be told apart from a cell's, or the
+    # first report written would be named as a stray by every cell that
+    # finished after it. The ledger records what the runner wrote and what it
+    # contained: a bare path exemption would excuse exactly the write case 7
+    # exists to catch.
+    ledger_class = getattr(runner, "RunnerReportWriteLedger", None)
+    missing_ledger = "RunnerReportWriteLedger is not present on the runner under test"
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore the record directory")
+        out_dir = repo / records_name / "2026-08-23-design"
+        out_dir.mkdir(parents=True)
+        baseline = snapshot(repo)
+        if ledger_class is None:
+            check("a report the runner wrote itself is not reported as a stray",
+                  False, missing_ledger)
+            check("a cell overwriting another cell's finished report is detected",
+                  False, missing_ledger)
+        else:
+            ledger = ledger_class()
+            report = out_dir / "cut-claude.md"
+            ledger.write_report(report, "the report this cell produced\n", repo)
+            found = ledger.stray_paths_since(baseline, repo)
+            check("a report the runner wrote itself is not reported as a stray",
+                  found == [], f"stray list was {found}")
+            report.write_text("a cell wrote over this finished report\n", encoding="utf-8")
+            found = ledger.stray_paths_since(baseline, repo)
+            check("a cell overwriting another cell's finished report is detected",
+                  f"{records_name}/2026-08-23-design/cut-claude.md" in found,
+                  f"stray list was {found}")
+
+    # Case 9: the ledger under the concurrency main() actually creates. The
+    # cells run in a ThreadPoolExecutor, so one cell's report write and
+    # another cell's stray snapshot interleave, and a snapshot that catches a
+    # report mid-write — or before its fingerprint is recorded — names a stray
+    # where nothing strayed. A warning on an ordinary run is worse than no
+    # warning: it teaches its reader to skip the one that means something.
+    # Measured 2026-08-23 with the ledger's lock replaced by a no-op: 45 of 60
+    # rounds reported a spurious stray; with the lock, none of 60.
+    if ledger_class is None:
+        check("concurrent report writes produce no spurious stray", False, missing_ledger)
+    else:
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = new_repo(pathlib.Path(scratch))
+            (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-qm", "ignore the record directory")
+            out_dir = repo / records_name / "2026-08-23-design"
+            out_dir.mkdir(parents=True)
+            ledger = ledger_class()
+            baseline = snapshot(repo)
+            spurious = []
+
+            def write_reports_and_check(cell_name):
+                for round_number in range(15):
+                    ledger.write_report(
+                        out_dir / f"{cell_name}.md",
+                        f"{cell_name} report body, round {round_number}\n" * 50, repo)
+                    found = ledger.stray_paths_since(baseline, repo)
+                    if found:
+                        spurious.append((cell_name, round_number, found))
+
+            workers = [threading.Thread(target=write_reports_and_check,
+                                        args=(f"cell-{index}",)) for index in range(4)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+            check("concurrent report writes produce no spurious stray", spurious == [],
+                  f"{len(spurious)} spurious report(s); first was {spurious[:1]}")
+
+    # Case 10: the watched ignored paths belong to the write detector, not to
+    # the provenance line. They are not part of any commit, so a record
+    # directory left over from an earlier run must not turn `worktree=clean`
+    # into `dirty(N)` in every report's provenance header — which is what a
+    # snapshot entry counted naively would do.
+    ignored_status = getattr(runner, "IGNORED_PATH_STATUS_CODE", "!!")
+    revision = runner.reviewed_revision(
+        {f"{records_name}/2026-08-01-earlier-run/cut-codex.md": (ignored_status, "0" * 40)})
+    check("a leftover record file does not make the reviewed revision dirty",
+          "worktree=clean" in revision, f"provenance line said {revision!r}")
+
+    # Case 11: the boundary of case 7, asserted rather than assumed. The
+    # detector watches the paths named in IGNORED_PATHS_WATCHED_FOR_WRITES,
+    # not every ignored path — enumerating and fingerprinting every ignored
+    # file in the repository to catch a rare write was ruled out (user,
+    # 2026-08-23). A write to any other ignored path (ghi-mirror/,
+    # md-review-records/, __pycache__/) is still invisible, and this case
+    # states that limit in code. It passes both before and after case 7's
+    # fix: it is documentation of the carve-out, never evidence for the fix,
+    # and it fails if the watch ever silently becomes repository-wide.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / ".gitignore").write_text("unwatched-ignored-dir/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore an unwatched directory")
+        unwatched = repo / "unwatched-ignored-dir" / "notes.md"
+        unwatched.parent.mkdir(parents=True)
+        unwatched.write_text("original\n", encoding="utf-8")
+        baseline = snapshot(repo)
+        unwatched.write_text("a cell wrote over this\n", encoding="utf-8")
+        found = strays(baseline, snapshot(repo))
+        check("a write to an ignored path outside the watch list is NOT detected "
+              "(the declared limit)", found == [], f"stray list was {found}")
+
+    # Case 12: two runs starting together must not be handed the same record
     # directory. A look-then-create claim passes both when neither has written
     # its first report yet, and the second run overwrites the first.
     records_root = getattr(runner, "RECORDS_ROOT", None)
