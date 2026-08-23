@@ -115,12 +115,14 @@ requests — 85× more, for two fields per pull request. That is why the
 query is GraphQL, following scripts/ghi-mirror-refresh.py's practice of
 raw `gh api graphql` rather than `gh`'s own --json field allowlist, which
 differs between the gh versions the fleet runs.) Provenance worth stating:
-that measurement used this Mac's default `gh` login, not the
-`ned-review-merge` fine-grained token this program is meant to run with,
-which by seat rule is not exported for ad-hoc commands; both are rated at
-5,000/hour and neither is anywhere near it. If the merge token turned out
-unable to run this query, the first poll would fail loudly rather than
-quietly — see "Announcing blindness".
+those byte and point figures were measured with this Mac's default `gh`
+login, while the credential this program is meant to run with is the
+`ned-review-merge` fine-grained token — which was proven separately, by
+running this program against this repository once with that token: it
+answered, and reported the four pull requests then open. Both credentials
+are rated at 5,000 requests an hour and neither is near it. Were a
+credential unable to run this query, the first poll would fail loudly
+rather than quietly — see "Announcing blindness".
 
 Why faster detection would not help. The merge seat holds every pull
 request about three minutes from its most recent push, so an automated
