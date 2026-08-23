@@ -204,10 +204,11 @@ def timestamp_to_whole_seconds(stamp: str) -> str:
 def task_notification_text(record: dict):
     """The `<task-notification>` body a transcript record carries, or None.
 
-    One notification reaches the transcript up to three times in three record
+    One notification reaches the transcript up to four times in three record
     shapes — enqueued (`queue-operation`), delivered as a user turn (`user`),
-    and removed from the queue (`queue-operation`), with an `attachment` copy
-    beside them. All the shapes are read rather than only the delivered one,
+    copied as an `attachment`, then removed from the queue
+    (`queue-operation`). All the shapes are read rather than only the
+    delivered one,
     because a subagent that finishes as its session is dying has its
     notification enqueued and never delivered, and that is the moment this
     roster exists for.
@@ -305,7 +306,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             if entry is None or status is None:
                 continue
             # Only a CHANGE of status is a new event. The same completion is
-            # announced up to three times, so taking every announcement would
+            # announced up to four times, so taking every announcement would
             # date the event at its last echo rather than at its arrival.
             if status.group(1) != entry["last_event"]:
                 entry["last_event"] = status.group(1)

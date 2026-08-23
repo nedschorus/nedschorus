@@ -19,13 +19,13 @@ The cycle, per recycle:
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
-  written-at:          UTC timestamp, ISO 8601
-  next-step:           the first action the successor takes
-  restart-counter:     predecessor's counter plus one
-  dont-restart:        optional; any value makes the supervisor ask before relaunching
+  written-at:           UTC timestamp, ISO 8601
+  next-step:            the first action the successor takes
+  restart-counter:      predecessor's counter plus one
+  dont-restart:         optional; any value makes the supervisor ask before relaunching
   spawned-subagent-<n>: optional, one per subagent the retiring session
-                       spawned; they die with it, so the successor is told
-                       they existed and can restart the ones still owing work
+                        spawned; they die with it, so the successor is told
+                        they existed and can restart the ones still owing work
 
 How much dialog to carry is not among them: the extractor takes the tail that
 clears its word floor, so the retiring agent exercises no judgment over what
