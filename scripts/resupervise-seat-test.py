@@ -565,8 +565,10 @@ def run_ubuntu_launcher_hook_case():
     step is an ssh to the box, unobservable here."""
     source = RESUPERVISE_SCRIPT.with_name("launch-claude-ubuntu").read_text(encoding="utf-8")
     check("launch-claude-ubuntu appends the extra-arguments hook, like its Mac twin",
-          'SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"'
-          in source, "hook missing from launch-claude-ubuntu")
+          'SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $(escape_remote_double_quote_context '
+          '"$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")"' in source,
+          "hook missing from launch-claude-ubuntu — its behavior is proven in "
+          "launch-claude-ubuntu-test.py; this pins only that the hook exists")
 
 
 def main() -> int:
