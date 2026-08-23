@@ -1077,6 +1077,30 @@ gated the head SHA but only printed the comment count. The recorded
 conclusion: improvised per-merge gates regress; the committed gate is the
 fix.
 
+**A third specimen, and it widens the class beyond the merge gate**
+(git-infra seat, 2026-08-23, self-reported to the merge seat). Correcting
+#149, that seat cherry-picked `HEAD@{0}`, which resolved inside a fresh
+worktree rather than the seat branch it meant. The cherry-pick no-opped; the
+push answered `Everything up-to-date`; both outputs had been truncated with
+`tail`. Every visible sign said success and nothing had happened. It was
+caught only because the seat then read the file back **from `origin/`**
+rather than trusting the push output, and it redid the work with an explicit
+SHA.
+
+Nothing shipped wrong, but the shape is the same as #125 and #141 and the
+operation is different — a push, not a merge — so the rule generalizes past
+the merge door: **a check whose output cannot distinguish "it worked" from
+"I looked at nothing" is not a check.** `Everything up-to-date` is that
+sentence exactly; so is an inline-comment count printed beside a merge. The
+countermeasure the seat used is the one to standardize: verify an operation
+by reading back the state it was supposed to produce, from the authority
+(here `origin/`), not by reading the tool's report of its own success.
+
+Also worth carrying from this specimen: `tail` on a command's output is not
+neutral. It discarded the lines that would have shown the no-op, and it did
+so in the same breath as the check. Truncating the output of a verification
+step is itself a way to blind it.
+
 **What it must gate on:** the channel **digest** (`id`+`updated_at` across
 all three channels) — never counts, never `commit_id`. #141 demonstrated
 that GitHub remaps an old comment's `commit_id` to a new head, so
