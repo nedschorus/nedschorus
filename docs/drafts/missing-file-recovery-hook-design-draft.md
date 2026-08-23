@@ -163,7 +163,12 @@ Two different things are tested, with separate corpora and separate verdicts. Co
 Corpus: the 66 real missing-file error lines already extracted from 486 transcripts. Small enough to hand-label honestly, and it is real traffic rather than invented cases. **Measures false positives.**
 
 **2. The search — given a path, is the content found?**
-Corpus: the **294 distinct paths git has ever deleted** in this repository. Every one is a known real loss whose content git demonstrably still holds, so any `NOT FOUND` is a definite false negative **with no labelling required**. Ground truth is built in; this is the strongest test available.
+Corpus: the **294 distinct paths git has ever deleted** in this repository, filtered. Unfiltered, it is not a set of losses: it contains renames (the content moved and nothing was lost), paths deleted and later re-added, and deliberate removals — a `NOT FOUND` on any of those is correct, not a false negative. Filtering out paths whose content survives under another name and paths later re-added leaves a set where git genuinely should find the content, and a `NOT FOUND` on *that* set is a real false negative with no labelling required.
+
+Two limits, stated because the corpus is easy to overclaim:
+
+- **It establishes the git surface only.** Finding content in git's history says nothing about whether Timeshift, local snapshots, Time Machine or transcripts would have found it. The other surfaces get their coverage from the Timeshift differential and the per-surface synthetic tests below.
+- **It shares provenance with what it tests.** The corpus is produced by the same history queries the search uses, so a mistake in how history is queried could yield a corpus that agrees with itself. That is the reason the other corpora must not also be git-derived.
 
 Two further corpora:
 
