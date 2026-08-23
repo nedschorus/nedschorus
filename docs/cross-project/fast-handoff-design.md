@@ -1,6 +1,6 @@
 ---
 status: built
-rulings-as-of: 2026-08-12
+rulings-as-of: 2026-08-23
 ---
 
 # Session recycling — the handoff system
@@ -131,6 +131,33 @@ that job here and is not weakened: `next-step` is still collapsed, which is
 exactly what makes it safe for every reader. What changes is that the collapsed
 line is no longer the only copy — the verbatim text travels beside it.
 
+### The spawned-subagent roster — BUILT 2026-08-23
+
+Unlike the block form above, this field is built and in use. A retiring
+session records every subagent it spawned as one numbered field each:
+
+    spawned-subagent-1: a309071aa3681d280 "Fix ignored-path write blind spot" spawned 2026-08-23T19:55:24Z, last event completed 2026-08-23T20:52:59Z
+    spawned-subagent-2: a022a89c0b2ceeb88 "Review PR 150 independently" spawned 2026-08-23T21:32:36Z, last event spawned 2026-08-23T21:32:36Z
+
+One field per subagent, numbered from 1 in spawn order, carrying the agent
+id, the task description, the spawn time and the last event recorded for that
+subagent. Numbered rather than repeated, because the reader takes the first
+occurrence of a key and a repeated `spawned-subagent:` would lose every
+subagent but the first. Written with the computed fields, before any verbatim
+block. A session that spawned nothing writes no field at all, so its handoff
+is byte-identical to what it would have been.
+
+Compatibility runs the same way as the block form's. A reader that predates
+the field sees unknown keys and ignores them; a reader that has the field
+meets a handoff without it, derives an empty roster, and says nothing about
+subagents. Nothing migrates.
+
+**`last event` is stated, never interpreted.** It is whatever the transcript
+last recorded — `spawned`, `resumed`, `completed`, `killed` — and the ignition
+prompt tells the successor plainly that `completed` means the subagent
+stopped, not that its work is finished. Deciding which entries still own work
+is the successor's judgement, and the writer does not pretend to compute it.
+
 ## Rulings
 
 Dated decisions and their reasons — the part of the design a reader cannot recover from code.
@@ -148,9 +175,10 @@ Dated decisions and their reasons — the part of the design a reader cannot rec
 - **The auto-trigger reads the transcript, and only the transcript (user-ruled 2026-08-12).** The statusline relay — a second data source riding the interactive-only statusline — was cut: its sole remaining trigger was a session whose first turn had not completed, a moment the threshold cannot be crossed. The statusline renderer survives as `scripts/session-statusline-command.py`, outside this system.
 - **The hook fires at the threshold unconditionally (user-ruled 2026-08-12).** Its supervisor-liveness gate was cut: self-registration made an unwatched firing self-healing (the writer starts an adopting supervisor), so silence could only turn a dead supervisor into a permanently un-recycled session. Per-agent wiring of the hook, if ever wanted, waits on an agent-naming convention and gates on being a named agent, not on liveness.
 - **The queue-status line rides the ignition prompt (user-ruled 2026-08-12).** The #32 rot-visibility duty (queue depth and oldest item, visible to the boss) discharged into a log file under detached and headless supervisors; every successor now receives the line with the instruction to surface anything rotting. The console print stays for a watched pane.
+- **Record the subagents, do not wait for them (user-ruled 2026-08-23).** Subagents die with the session that spawned them, and that stays the policy: killing and restarting them is cheaper than draining them before a recycle. What was missing is that nothing told the successor they had existed. On 2026-08-23 the merge-lane seat commissioned a subagent to fix the review findings on pull request #150 and then recycled. The subagent died. Its work survived — worktree and branch on disk at exactly the reviewed head — but its ownership did not: nothing in the handoff said #150 had a fixer. The successor found the orphan only because the retiring agent happened to write a sentence of prose about it, which is the faculty least to be relied on at recycle time. Hence the roster field above, and a supervisor that names it in the ignition prompt. Two shapes the field deliberately does NOT take, each of which loses the case it exists for: a roster of *running* subagents (the #150 fixer had stopped and was sitting idle, still owning the fix), and liveness inferred from unmatched tool_use/tool_result pairs (see the harness facts below — the spawn's result arrives at spawn time, so every spawn is a matched pair whatever becomes of the subagent).
 - **No scheduled canary re-runs (user-ruled 2026-08-12).** Task pre-seed rides undocumented harness state, and the user does not care about the risk of a Claude Code upgrade breaking it. Detection is the successor's ignition count-check (trial-proven to fire unprompted) with the queues as backstop; the `--canary` cases in the supervisor suite are the diagnosis when it fires.
 
-## Verified facts (2026-07-21 – 2026-08-06, Claude Code v2.1.220)
+## Verified facts (2026-07-21 – 2026-08-23, Claude Code v2.1.220, and v2.1.238 for the 2026-08-23 rows)
 
 | Fact | Source |
 |------|--------|
@@ -164,6 +192,9 @@ Dated decisions and their reasons — the part of the design a reader cannot rec
 | A task record's `id` is a STRING, and `blocks`/`blockedBy` arrays are present; a record with an integer id is dropped by TaskList while still counting toward the next allocated id — so a schema-wrong pre-seed looks half-successful | canary 2026-08-06 |
 | `--continue` keeps the prior session id; a context clear mints a new id; the session id is in the environment | measured |
 | A fresh subagent's context floor is CLAUDE.md + prompt | measured |
+| A subagent spawn writes a transcript record whose `toolUseResult` carries `status: async_launched` with an `agentId`, the task `description` and the commissioning prompt — and that result arrives at SPAWN time, so a matched tool_use/tool_result pair says nothing about whether the subagent is still running | 2026-08-23 transcripts |
+| A subagent's completion arrives later and separately, as a `<task-notification>` record naming its task-id and a `<status>`; one notification reaches the transcript up to four times (queue enqueue, delivered user turn, attachment copy, queue remove), and a subagent finishing as its session dies gets only the enqueue | 2026-08-23 transcripts |
+| Background monitors notify through that same channel but launch differently: a monitor's `toolUseResult` carries `taskId`/`persistent` and never an `agentId`, which is how the two are told apart — not by the shape of their ids | 2026-08-23 transcripts (9 subagents, 7 monitors in one session) |
 
 ## The live recycle trial — PASSED 2026-08-06
 
