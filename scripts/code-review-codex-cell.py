@@ -36,21 +36,46 @@ machine shares. It reads accumulated notes into a new session, and its memory
 pipeline writes fresh ones from saved sessions. Both directions are wrong for
 a review cell:
 
-  - READING. A cell is commissioned to be naive -- to judge the change in
-    front of it, not to carry forward what Codex concluded reviewing this
-    project before. On 2026-08-23 that store held a task group named
-    "NedsChorus NC toolchain / constrained adversarial review and Phase-1
-    phasing checks", with sections "Reusable knowledge" and "Failures and how
-    to do differently": Codex's own standing conclusions about this
-    repository's work, which a fresh cell would inherit.
-  - WRITING. These cells are automation; the store is the user's personal
-    one, kept for his interactive Codex. Automated review runs should not be
-    depositing findings in it.
+  - READING, which is the measured half. A cell is commissioned to be naive
+    -- to judge the change in front of it, not to carry forward what Codex
+    concluded reviewing this project before. On 2026-08-23 that store held a
+    task group named "NedsChorus NC toolchain / constrained adversarial
+    review and Phase-1 phasing checks", with sections "Reusable knowledge"
+    and "Failures and how to do differently": Codex's own standing
+    conclusions about this repository's work. Those notes were not merely
+    sitting in the store, they were reaching the cells -- pull request #150's
+    reviewer recovered the injected `role: developer` message headed
+    `## Memory`, 37,535 characters, from THIS script's own review run on
+    pull request #102, and found the block in 73 of 98 `codex exec` sessions
+    across 2026-08-17 to 08-23, 61 of them under `--sandbox read-only`.
+    (Repeating that measurement: `codex exec review` writes TWO session
+    files, a parent wrapper without the block and a child reviewer thread
+    with it, so a naive per-file scan undercounts.)
+  - WRITING, which is a hazard to close rather than one observed happening,
+    and this flag is not proven to close it. These cells are automation and
+    the store is the user's personal one, kept for his interactive Codex;
+    automated review runs should not be depositing findings in it. What the
+    flag does about that is unestablished: it turns the feature off inside
+    the cell process, but the cell still writes a session rollout file under
+    `~/.codex/sessions/`, that persisted file is what the memory pipeline
+    ingests later, and no per-session record of the flag was found in the
+    sampled `session_meta` records. Whether the pipeline ingests a
+    memories-disabled session anyway is unmeasured. `--ephemeral` -- "Run
+    without persisting session files to disk" -- is the flag that removes
+    the pipeline's input, and it is deliberately NOT used here: this
+    script's transcript is the forensic record behind a merge decision, and
+    the pull request #102 reproduction above was read out of one.
+    (Measured on the store 2026-08-23, which is why the writing half claims
+    no more than this: of the 129 sessions the pipeline has ever ingested,
+    none has originator `codex_exec` -- the mode this script uses -- none
+    comes from `~/agents/`, and ingestion had been idle since 2026-08-15.)
 
 `--disable memories` is per-invocation. `codex exec --help` on codex-cli
 0.147.0 documents it as "Disable a feature (repeatable). Equivalent to `-c
-features.<name>=false`" -- a config override for this process only, writing
-nothing to disk and leaving the user's own interactive Codex untouched.
+features.<name>=false`" -- a config override that applies to this
+process only; it edits no config file and leaves the user's own interactive
+Codex untouched. It does not stop the session itself being persisted: see
+the WRITING bullet above for what that leaves open.
 Verified on codex-cli 0.147.0 (2026-08-23): `codex features list` reports
 `memories ... true`, `codex --disable memories features list` reports it
 `false`, and on the exec path an unknown name is refused ("Error: Unknown
@@ -133,7 +158,7 @@ def main(argv=None) -> int:
     command = [
         "codex", "exec",
         "--sandbox", "read-only",       # parent level; the nested parser rejects it
-        "--disable", "memories",        # naive cell, and no writes to the shared store
+        "--disable", "memories",        # a naive cell, not one carrying earlier reviews
         "review",
         *scope_flag,
         "-m", arguments.model,
