@@ -103,9 +103,25 @@ Running a sanity-check, and reading its output:
   network on, writes forbidden by prompt — a codex agent that modifies the
   worktree is reported as `WARNING: <audit>-<runtime> modified the worktree:
   <paths>` — with two codex agents running, the writer may be either; the
-  warning names the agent whose audit saw it. While the agents run, make no changes in this worktree yourself —
-  the write detector cannot tell your edits from a review agent's; work
-  elsewhere until the run
+  warning names the agent whose audit saw it.
+- What the write detector sees, and what it does not. It compares the worktree
+  against a baseline taken before the agents launched: everything git reports
+  as dirty or untracked, plus this runner's own record directory
+  (`sanity-check-records/`) — gitignored, so git reports it in no form, and
+  the place a stray write does the most damage, since the reports it holds are
+  what triage reads against each other afterwards. Because it compares rather
+  than watches, a write made and undone before the comparison runs leaves
+  nothing to find. The one undoing that used to happen routinely is closed: a
+  write to a report path that this runner's own report then erases is reported
+  as `WARNING: <audit>-<runtime> found a stray write at its own report path and
+  overwrote it: <path>`. Writes to other ignored paths are not detected —
+  enumerating every ignored file in the repository to catch a rare write was
+  ruled out (user, 2026-08-23) — and neither is a file that another overlapping
+  run of this script creates elsewhere under `sanity-check-records/`, because
+  each run reports only what it can account for: its own record directory, and
+  what was on disk when it started. While the agents run, make no changes in
+  this worktree yourself, the record directory included — the detector cannot
+  tell your edits from a review agent's; work elsewhere until the run
   completes.
 - Each saved report opens with a provenance line: runtime, model, effort,
   audit, target, and the commit and worktree state at review time, so quotes
@@ -116,14 +132,38 @@ Running a sanity-check, and reading its output:
 import argparse
 import concurrent.futures
 import datetime
+import hashlib
 import pathlib
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-RECORDS_ROOT = REPO_ROOT / "sanity-check-records"
+RECORDS_DIRECTORY_NAME = "sanity-check-records"
+RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
+
+# Ignored paths the write detector watches, repo-relative. `git status` reports
+# no ignored path in any form, so a cell writing to one was invisible however
+# the porcelain was parsed; the record directory is the ignored path that
+# matters, because the runner writes every cell's report there and triage then
+# reads those reports against each other — a cell overwriting a finished report
+# corrupts the comparison and the run still looked clean (raised as an inline
+# P2 on PR #98, fixed 2026-08-23). Watching the whole ignore list instead —
+# `git status --ignored` — was ruled out (user, 2026-08-23): it enumerates and
+# fingerprints every ignored file in the repository, one subprocess each, to
+# catch a rare write. Writes to other ignored paths (ghi-mirror/,
+# md-review-records/, __pycache__/) are therefore still undetected; the test
+# file asserts that limit rather than leaving it to be discovered. Each entry
+# is a literal path — a directory, walked, or a single file — never a glob
+# pattern: git's ignore syntax is not interpreted here.
+IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
+
+# git's own porcelain code for an ignored entry, carried as the status half of
+# a watched ignored path's snapshot entry. It marks the entries that exist for
+# write detection alone and belong to no commit — see reviewed_revision.
+IGNORED_PATH_STATUS_CODE = "!!"
 
 CLAUDE_MODEL = "claude-fable-5"
 CODEX_MODEL = "gpt-5.6-sol"
@@ -304,10 +344,70 @@ def run_codex(prompt: str) -> tuple:
         last_message_path.unlink(missing_ok=True)
 
 
+def blob_fingerprint(data: bytes) -> str:
+    """git's blob hash for a byte string: sha1 over git's header for a blob of
+    that size, its NUL terminator, and the bytes.
+
+    The same value `git hash-object` prints for a file holding those bytes,
+    which is how the ledger's record of what it wrote stays comparable with a
+    snapshot's record of what is on disk (verified 2026-08-23; the repository
+    sets no .gitattributes and no core.autocrlf, so no clean filter stands
+    between the two). Raw bytes are also the right input for a write detector:
+    a rewrite that a filter would normalize away is still a write.
+    """
+    digest = hashlib.sha1()
+    digest.update(b"blob %d\0" % len(data))
+    digest.update(data)
+    return digest.hexdigest()
+
+
+def file_fingerprint(file_path: pathlib.Path) -> str:
+    """git's blob hash of a file's current contents, or "absent".
+
+    Read in chunks rather than whole: this runs once per dirty or watched path
+    on every snapshot, and a file a cell wrote can be any size.
+    """
+    if not file_path.is_file():
+        return "absent"
+    digest = hashlib.sha1()
+    digest.update(b"blob %d\0" % file_path.stat().st_size)
+    with open(file_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_status_code_for_path(file_path: pathlib.Path,
+                             repo_root: pathlib.Path) -> str:
+    """The two-character status git gives one path, or the ignored code when
+    git says nothing about it — the entry worktree_snapshot would record.
+
+    Asked once per report the runner writes, so the ledger records what git
+    actually says rather than assuming the record directory is still ignored.
+    Where that ignore rule is absent — an older revision, or a worktree whose
+    .gitignore has been edited — git calls each report `??`, and a ledger
+    entry claiming `!!` made every later cell's check name the runner's own
+    report as a worktree modification (chatgpt-codex-connector, P2 on PR #147).
+    """
+    completed = subprocess.run(
+        ["git", "status", "--porcelain", "-z", "-uall", "--", str(file_path)],
+        cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False,
+    )
+    entry = completed.stdout.split("\0")[0]
+    return entry[:2] if entry else IGNORED_PATH_STATUS_CODE
+
+
+def path_watched_as_ignored(path: str) -> bool:
+    """Whether a repo-relative path lies under a watched ignored path."""
+    return any(path == watched or path.startswith(watched + "/")
+               for watched in IGNORED_PATHS_WATCHED_FOR_WRITES)
+
+
 def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     """Path -> (index/worktree status, content fingerprint) for every file git
-    sees as dirty or untracked. Both halves are needed, because each catches
-    what the other misses. A file already modified before the run keeps its
+    sees as dirty or untracked, plus every file under
+    IGNORED_PATHS_WATCHED_FOR_WRITES. Both halves are needed, because each
+    catches what the other misses. A file already modified before the run keeps its
     ` M` line when a cell rewrites it, so a label alone misses that write
     (Codex finding on PR #98); staging a file changes its status without
     changing its bytes, so a fingerprint alone misses `git add` (found by
@@ -321,6 +421,13 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     before and after a cell rewrites it. Without `-uall`, git collapses a
     wholly-untracked directory into one `dir/` entry, so every file a cell
     writes underneath it is invisible.
+
+    None of that reaches an ignored path, which git reports in no form at all,
+    and the runner's own record directory is ignored — so the watched ignored
+    paths are walked separately and added on top. Their entries carry git's
+    ignored status code in place of a porcelain label, and a path git already
+    reported keeps the entry git gave it, so a file force-added under a watched
+    path still shows its real status and a `git add` there is still visible.
     """
     completed = subprocess.run(
         ["git", "status", "--porcelain", "-z", "-uall"], cwd=repo_root,
@@ -340,15 +447,18 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
         # the walk aligned with the entries that follow.
         if status[0] in ("R", "C"):
             index += 1
-        file_path = repo_root / path
-        if file_path.is_file():
-            hashed = subprocess.run(
-                ["git", "hash-object", str(file_path)], cwd=repo_root,
-                stdout=subprocess.PIPE, text=True, check=False,
-            ).stdout.strip()
-        else:
-            hashed = "absent"
-        snapshot[path] = (status, hashed)
+        snapshot[path] = (status, file_fingerprint(repo_root / path))
+    for watched in IGNORED_PATHS_WATCHED_FOR_WRITES:
+        watched_root = repo_root / watched
+        candidates = (sorted(watched_root.rglob("*")) if watched_root.is_dir()
+                      else [watched_root])
+        for file_path in candidates:
+            if not file_path.is_file():
+                continue
+            path = file_path.relative_to(repo_root).as_posix()
+            if path not in snapshot:
+                snapshot[path] = (IGNORED_PATH_STATUS_CODE,
+                                  file_fingerprint(file_path))
     return snapshot
 
 
@@ -416,7 +526,12 @@ def reviewed_revision(baseline: dict) -> str:
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
     )
     commit = completed.stdout.strip() or "unknown"
-    worktree = "clean" if not baseline else f"dirty({len(baseline)})"
+    # Watched ignored paths sit in the snapshot for write detection alone. They
+    # belong to no commit, so a record directory left over from an earlier run
+    # must not report the text the cell read as dirty.
+    differing = [path for path, (status, _) in baseline.items()
+                 if status != IGNORED_PATH_STATUS_CODE]
+    worktree = "clean" if not differing else f"dirty({len(differing)})"
     return f"commit={commit} worktree={worktree}"
 
 
@@ -427,6 +542,117 @@ def stray_paths(baseline: dict, now: dict) -> list:
     all count (Codex finding on PR #98)."""
     return sorted(path for path in set(now) | set(baseline)
                   if now.get(path) != baseline.get(path))
+
+
+class RunnerReportWriteLedger:
+    """The reports this run wrote itself: path -> snapshot entry, in the shape
+    worktree_snapshot records.
+
+    The runner writes every cell's report into RECORDS_ROOT, which the write
+    detector watches, so without this the first report written would be named
+    as a stray by every cell that finished after it — a warning on every
+    ordinary run, which teaches its readers to ignore the warning that matters.
+    The ledger holds each report's fingerprint rather than exempting its path:
+    a cell overwriting a finished report is precisely the write the watch
+    exists to catch, and a path exemption would excuse it.
+
+    main() runs the cells concurrently, so one cell's report write and another
+    cell's stray snapshot can interleave. The lock keeps a snapshot from
+    reading a report mid-write, and makes each report's fingerprint recorded
+    before any snapshot that could see the file.
+
+    The ledger also holds the record directory this run owns, because two runs
+    can overlap in one worktree — a case fresh_record_dir is built for — and
+    the watch is repo-wide while a ledger is per-invocation. Without that,
+    each run named the other run's reports as its own cells' stray writes
+    (PR #147 finding 1).
+    """
+
+    # git's shapes for a path it has never had in the index. Another live run
+    # only ever creates files under the record root; it never modifies or
+    # stages an existing one. So these are the statuses an entry may carry and
+    # still be excused as somebody else's legitimate work — a ` M` or `A `
+    # there is nobody's routine business and stays reported.
+    NEW_TO_GIT_STATUS_CODES = (IGNORED_PATH_STATUS_CODE, "??")
+
+    def __init__(self, own_record_dir: pathlib.Path = None) -> None:
+        self._own_record_dir = own_record_dir
+        self._writes = {}
+        self._lock = threading.Lock()
+
+    def write_report(self, out_path: pathlib.Path, text: str,
+                     repo_root: pathlib.Path = REPO_ROOT) -> bool:
+        """Write one cell's report, record it as this runner's own work, and
+        answer whether the path was already occupied.
+
+        Occupied means a stray write that this report has just erased: the
+        record directory is claimed by mkdir when the run starts and only this
+        ledger writes reports into it, so anything already at the path arrived
+        during this run from somewhere else. Until PR #147 the runner's write
+        simply repaired such a file and recorded the repair as its own work,
+        and the cell's write was reported nowhere.
+
+        The bytes are written, not the string, so the fingerprint recorded is
+        of exactly what landed on disk on any platform.
+        """
+        data = text.encode("utf-8")
+        with self._lock:
+            occupied = out_path.exists()
+            out_path.write_bytes(data)
+            try:
+                path = out_path.relative_to(repo_root).as_posix()
+            except ValueError:
+                # A record root outside the repository is a path the detector
+                # never looks at, so there is nothing to account for.
+                return occupied
+            # git's own word on the path, and the fingerprint of the text
+            # handed in rather than of the file just written: a cell writing
+            # between the write and the hash would otherwise have its content
+            # recorded as the runner's own (PR #147 finding 3).
+            self._writes[path] = (git_status_code_for_path(out_path, repo_root),
+                                  blob_fingerprint(data))
+            return occupied
+
+    def stray_paths_since(self, baseline: dict,
+                          repo_root: pathlib.Path = REPO_ROOT) -> list:
+        """Paths changed since baseline that this run can account for — its own
+        reports excepted, another live run's reports left out of it.
+
+        Under a watched ignored path this run accounts for what was on disk
+        when it started, what its own ledger wrote, and everything inside the
+        record directory it owns. A file that merely appears elsewhere under
+        the record root is what a second invocation of this runner
+        legitimately creates, and from here the two are indistinguishable.
+        Everything git reports outside those paths is compared in full, as
+        before.
+        """
+        with self._lock:
+            expected = {**baseline, **self._writes}
+            own_dir = self._own_record_directory(repo_root)
+            now = {path: entry
+                   for path, entry in worktree_snapshot(repo_root).items()
+                   if self._reportable_by_this_run(path, entry, expected, own_dir)}
+            return stray_paths(expected, now)
+
+    def _own_record_directory(self, repo_root: pathlib.Path):
+        """This run's record directory, repo-relative, or None when it has
+        none or it lies outside the repository."""
+        if self._own_record_dir is None:
+            return None
+        try:
+            return self._own_record_dir.relative_to(repo_root).as_posix()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _reportable_by_this_run(path: str, entry: tuple, expected: dict,
+                                own_dir: str) -> bool:
+        if path in expected or not path_watched_as_ignored(path):
+            return True
+        if own_dir is not None and (path == own_dir
+                                    or path.startswith(own_dir + "/")):
+            return True
+        return entry[0] not in RunnerReportWriteLedger.NEW_TO_GIT_STATUS_CODES
 
 
 def fresh_record_dir(target_stem: str) -> pathlib.Path:
@@ -451,7 +677,8 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
 
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
-             baseline_status: dict, corpus: tuple) -> tuple:
+             baseline_status: dict, corpus: tuple,
+             report_ledger: RunnerReportWriteLedger) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
     prompt = assemble_prompt(attack, target, context, problem_statement)
@@ -472,20 +699,26 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     if not fresh_eyes:
         quote_scan(corpus, output, cell)
     if runtime == "codex":
-        stray = stray_paths(baseline_status, worktree_snapshot())
+        stray = report_ledger.stray_paths_since(baseline_status)
         if stray:
             print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
     revision = reviewed_revision(baseline_status)
     out_path = out_dir / f"{cell}.md"
-    out_path.write_text(
+    # Through the ledger, not straight to disk: the report lands in a directory
+    # the write detector watches, and the ledger is what tells this write from
+    # a cell's.
+    overwrote_stray_write = report_ledger.write_report(
+        out_path,
         f"<!-- provenance: runtime={runtime} model={model} effort={REASONING_EFFORT} "
         f"attack={attack} target={target} "
         f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
         f"{revision} -->\n\n"
         + output,
-        encoding="utf-8",
     )
+    if overwrote_stray_write:
+        print(f"WARNING: {cell} found a stray write at its own report path and "
+              f"overwrote it: {out_path}", flush=True)
     print(f"saved: {out_path}", flush=True)
     return cell, True
 
@@ -590,12 +823,14 @@ def main() -> int:
     # refused startup or an all-skipped run must not burn a -N suffix.
     out_dir = fresh_record_dir(target_path.stem) if cells else None
 
+    report_ledger = RunnerReportWriteLedger(out_dir)
     ok = True
     saved_count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells) or 1) as pool:
         futures = [
             pool.submit(run_cell, attack, runtime, args.target, args.context,
-                        args.problem_statement, out_dir, baseline_status, corpus)
+                        args.problem_statement, out_dir, baseline_status, corpus,
+                        report_ledger)
             for attack, runtime in cells
         ]
         for future in concurrent.futures.as_completed(futures):
