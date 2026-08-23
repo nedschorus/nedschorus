@@ -50,9 +50,10 @@
 
 set -eu
 
-# AGENTS_ROOT is a BOX-side path. The default's ~ is expanded by the box's
-# shell (it rides unquoted in the remote command), so keep the root free of
-# spaces; agent names are charset-checked below for the same reason.
+# AGENTS_ROOT is a BOX-side path. A leading ~ is carried to the box as its
+# $HOME (~user/ forms are not supported); any other character — spaces and
+# apostrophes included — travels literally, escaped per parse layer below.
+# Agent names stay charset-checked: they ride in more places than paths do.
 AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
 
@@ -107,26 +108,61 @@ case "$AGENT_NAME" in
     (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
+# Every operator value spliced into the remote command is escaped for the
+# parses it actually crosses (PR #134's review arc: hand-written quotes here
+# broke on an apostrophe, and the ssh command's double-quote wrapper expanded
+# $ inside values box-side). The layers: the box's login shell parses the
+# whole ssh command once (P1), and tmux's shell parses the pane command
+# again (P2). escape_single_quotes prepares a value for one single-quoted
+# parse; escape_remote_double_quote_context makes it inert through one
+# double-quote-context parse; sites compose the two by depth. AGENT_NAME
+# needs neither (charset-checked above). The launch-claude-ubuntu-test.py
+# harness replays all layers with a real sh — trust it over derivation.
+escape_single_quotes() {
+    printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
+escape_remote_double_quote_context() {
+    printf "%s" "$1" | sed 's/[$`"\\]/\\&/g'
+}
+
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
+# The P1 form, spliced as \"$AGENT_DIRECTORY_REMOTE\": a leading ~ becomes
+# $HOME so the box still resolves its own home inside the quotes (bare ~
+# would stay literal there); ~user/ forms are not supported. Everything
+# else is escaped so P1 neither expands nor splits it.
+case "$AGENTS_ROOT" in
+    ("~") AGENTS_ROOT_REMOTE="\$HOME" ;;
+    ("~/"*) AGENTS_ROOT_REMOTE="\$HOME$(escape_remote_double_quote_context "${AGENTS_ROOT#?}")" ;;
+    (*) AGENTS_ROOT_REMOTE=$(escape_remote_double_quote_context "$AGENTS_ROOT") ;;
+esac
+AGENT_DIRECTORY_REMOTE="$AGENTS_ROOT_REMOTE/$AGENT_NAME"
+# The P2 form, spliced between single quotes inside the pane command: quoted
+# for P2, then made inert through P1's double-quote context. A literal ~
+# reaching the supervisor is fine — it expanduser()s its --cd itself.
+AGENT_DIRECTORY_SUPERVISOR=$(escape_remote_double_quote_context "$(escape_single_quotes "$AGENT_DIRECTORY")")
+
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
---agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY'"
+--agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY_SUPERVISOR'"
 
 # A first-prompt file (box-side path) seeds only the FIRST session — used for
 # the founding boot, where the committed handoff is the prompt. The supervisor
 # reads the file itself, so its content never rides through shell quoting.
 # After the first recycle the ordinary ignition prompt takes over.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
-    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$FIRST_PROMPT_FILE'"
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_remote_double_quote_context "$(escape_single_quotes "$FIRST_PROMPT_FILE")")'"
 fi
 
 # Extra supervisor arguments from the environment — the same hook as the Mac
 # twin (launch-claude-mac), which resupervise-seat.py rides to hand a
 # box-local --handoff-dir to the box-side supervisor. Machinery-to-machinery:
-# callers own the quoting of what they pass, and the value rides the composed
-# ssh command exactly as given.
+# the caller quotes the value for the supervisor's own shell parse (one
+# parse, same contract as the Mac twin), and each launcher owns its
+# transport's transparency — here that means making the value inert through
+# the ssh command's double-quote context, so both twins read a caller's
+# quoting identically.
 if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
-    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
+    SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $(escape_remote_double_quote_context "$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")"
 fi
 
 # Update Claude Code on the box before starting the seat: launch is the
@@ -147,12 +183,12 @@ timeout \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45} claude update \
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never
 # answer and an attached one should not have to.
-PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p $AGENT_DIRECTORY && python3 -c 'import json,os,sys; \
+PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\" && python3 -c 'import json,os,sys; \
 p=os.path.expanduser(\"~/.claude.json\"); \
 d=json.load(open(p)) if os.path.exists(p) else {}; \
 t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
 d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
-json.dump(d,open(p,\"w\"),indent=2)' $AGENT_DIRECTORY"
+json.dump(d,open(p,\"w\"),indent=2)' \"$AGENT_DIRECTORY_REMOTE\""
 
 # The agent's home must be a CHECKOUT before the session starts, not after.
 # Project settings — the status line, the recycle Stop hook, the
@@ -165,11 +201,11 @@ json.dump(d,open(p,\"w\"),indent=2)' $AGENT_DIRECTORY"
 # already exists is reused rather than recreated, since git allows a branch
 # in only one worktree at a time.
 PREPARE_COMMAND="$PREPARE_COMMAND && \
-if ! git -C $AGENT_DIRECTORY rev-parse --show-toplevel >/dev/null 2>&1; then \
+if ! git -C \"$AGENT_DIRECTORY_REMOTE\" rev-parse --show-toplevel >/dev/null 2>&1; then \
   git -C \$HOME/Projects/nedschorus fetch --quiet origin || true; \
-  git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY -b '$AGENT_NAME' origin/main 2>/dev/null \
-  || git -C \$HOME/Projects/nedschorus worktree add $AGENT_DIRECTORY '$AGENT_NAME' \
-  || echo 'launch-claude-ubuntu: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings' >&2; \
+  git -C \$HOME/Projects/nedschorus worktree add \"$AGENT_DIRECTORY_REMOTE\" -b '$AGENT_NAME' origin/main 2>/dev/null \
+  || git -C \$HOME/Projects/nedschorus worktree add \"$AGENT_DIRECTORY_REMOTE\" '$AGENT_NAME' \
+  || echo \"launch-claude-ubuntu: could not make $AGENT_DIRECTORY_REMOTE a checkout; the agent will start without project settings\" >&2; \
 fi"
 
 # Boot-time worktree report on the box — the twin of the same step in
@@ -217,16 +253,22 @@ if ! tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null \
 # only: a --no-attach seat keeps the old close-on-exit behavior, because a
 # shell nobody is watching in a detached session would leak, and would turn
 # the "already running" refusal below into a lie automation acts on (review
-# finding, 2026-08-17). $AGENT_DIRECTORY rides unquoted so the box expands
-# its ~; \${SHELL} is escaped so the box (at remote-command parse), not this
-# Mac, names the shell. The twin does the same locally, at
-# scripts/launch-claude-mac.
+# finding, 2026-08-17). The cd target is double-quoted at the PANE shell's
+# parse (P2), one layer deeper than the P1 form: escaped once more so P1
+# passes it through, with a leading ~ carried as a $HOME the pane shell
+# expands. \${SHELL} is escaped so the box, not this Mac, names the shell.
+# The twin does the same locally, at scripts/launch-claude-mac.
+case "$AGENTS_ROOT" in
+    ("~") AFTER_EXIT_ROOT="\\\$HOME" ;;
+    ("~/"*) AFTER_EXIT_ROOT="\\\$HOME$(escape_remote_double_quote_context "$(escape_remote_double_quote_context "${AGENTS_ROOT#?}")")" ;;
+    (*) AFTER_EXIT_ROOT=$(escape_remote_double_quote_context "$(escape_remote_double_quote_context "$AGENTS_ROOT")") ;;
+esac
 AFTER_EXIT_COMMAND="echo; \
 echo 'launch-claude-ubuntu: the $AGENT_NAME supervisor exited; this shell is in the seat directory'; \
 echo '  fresh supervised seat:  exit, then (from the Mac) launch-claude-ubuntu $AGENT_NAME'; \
 echo '  resume this dialog:     claude --continue — starts NO supervisor, so that'; \
 echo '                          seat can never recycle until it is recovered'; \
-cd $AGENT_DIRECTORY; exec \${SHELL:-sh}"
+cd \\\"$AFTER_EXIT_ROOT/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
 
 # The chained set-option calls tell an iTerm2 tab the session name
 # ("gatekeeper" rather than "ssh"). They ride the same tmux invocation
@@ -236,7 +278,7 @@ cd $AGENT_DIRECTORY; exec \${SHELL:-sh}"
 # separator rather than a shell one.
 if [ "$ATTACH" = yes ]; then
     exec ssh -t "$AGENT_BOX" \
-        "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -A -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S'"
+        "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -A -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S'"
 fi
 exec ssh "$AGENT_BOX" \
-    "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c $AGENT_DIRECTORY \"$SUPERVISOR_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S' 2>/dev/null || echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'"
+    "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S' 2>/dev/null || echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'"
