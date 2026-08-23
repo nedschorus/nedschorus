@@ -81,6 +81,8 @@ An earlier proposal added a third filter reading the *command's intent* — skip
 
 Parallelism beyond this is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree, not a search. It would matter for a bare filename with unknown location, where each tree needs a `find` — measured at about 11 s limited to four directory levels. **Version 1 does not run that fan-out**; a fragment search is answered from git, Timeshift and transcripts, and the Time Machine branch reports UNAVAILABLE with the reason.
 
+**The hook never blocks.** It fires inside a failed tool call with an agent stopped behind it, and the operator is usually working in another window. So when Time Machine would need a snapshot mounted, the hook reports what the cheap surfaces found and prints the mount command rather than waiting. The willingness to wait — up to 100 seconds — belongs in the **script**, when a person runs it deliberately. Summoning the operator with a password window is an explicit flag, never the default: a password prompt appearing unbidden during someone else's work is charming once and infuriating by Thursday.
+
 ## What it hands back
 
 **One copy, plus an agreement line.** Every copy found is checksummed with SHA-256 — the full digest is compared, an abbreviation is displayed — and the surfaces are compared:
@@ -106,6 +108,14 @@ Every surface reports one of three outcomes, and the last two are never conflate
 
 An agent told "not found" stops looking; an agent told "Time Machine needs a snapshot mounted, here is the command" asks for it. A surface that cannot be read must never render as empty.
 
+### Transcripts report three states, not one
+
+Transcripts match on the path *string*, and an agent searching for a file has usually just typed that path — so its own session always matches. Observed in testing: a lone hit that was the searching session quoting the filename. Reporting that as "found in 1 transcript" reads as recovery and is not. So:
+
+- **content likely present** — the path appears alongside a large body of text, the shape of a tool result that read the file;
+- **mentioned only** — the name appears, with no content near it;
+- **the searcher's own session** — excluded entirely, by session id.
+
 ## Path resolution
 
 The same file has several names, and getting this wrong is already a live defect: two findings on PR #146 are exactly this — the documented absolute-path form makes git report NOT FOUND with a confidently false message, and a dotfile fragment can return a FOUND pointing at an unrelated file.
@@ -122,6 +132,21 @@ The rules, made possible by the payload carrying `cwd`:
 The transcript triage described above — is there a large block of text beside this match, is this our own session id — is arithmetic, so it is plain Python. A model would add latency, cost and nondeterminism to questions arithmetic answers, in a tool whose contract is an honest, reproducible report.
 
 One case is genuine judgment and is deferred: a **fragment search returning several differently-named candidate paths**, where something must decide which was meant. Version 1's answer is to report them all rather than choose. A small fast model is appropriate there and is built only if real use shows the ambiguity is common enough to be worth it.
+
+## Test plan
+
+Two different things are tested, with separate corpora and separate verdicts. Conflating them yields a green suite that proves nothing: a perfect searcher behind a trigger that never fires is useless, and the reverse is noise.
+
+**1. The trigger — does the hook fire on the right failures?**
+Corpus: the 66 real missing-file error lines already extracted from 486 transcripts. Small enough to hand-label honestly, and it is real traffic rather than invented cases. **Measures false positives.**
+
+**2. The search — given a path, is the content found?**
+Corpus: the **294 distinct paths git has ever deleted** in this repository. Every one is a known real loss whose content git demonstrably still holds, so any `NOT FOUND` is a definite false negative **with no labelling required**. Ground truth is built in; this is the strongest test available.
+
+Two further corpora:
+
+- **Synthetic injection** — copy a file, hash it, delete the copy, run the finder, assert byte-identical recovery. Exercises the whole chain including the backup surfaces, and is repeatable rather than history-dependent.
+- **Timeshift differential** — files present in an old box snapshot and absent now: real losses with known recoverability, exercising the box surface instead of using git as both question and answer.
 
 ## Deliberately not in version 1
 
