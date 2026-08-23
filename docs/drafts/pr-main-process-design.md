@@ -313,8 +313,82 @@ names bolded, values in code style) is this document's:
 - **consequence if it fires:** `loses-work-or-data` | `wrong-behavior-in-operation`
   | `misleads-readers` (false prose/docs) | `polish`
 - **introduced-by:** `this-change` | `this-fix-round` | `pre-existing` | `external`
-- **basis:** `reproduced` | `judged`
-- **scope:** `isolated` | `pattern` (same shape at several sites)
+- **evidence:** `reproduced` | `reasoned`
+- **how-to-find:** the search that finds every instance
+
+### `evidence` and `how-to-find` — renamed and re-shaped (user-ruled 2026-08-23)
+
+The two tags above were `basis: reproduced | judged` and `scope: isolated |
+pattern` until the user walked them. Both names were abstract nouns that did
+not say what they held, and one of them held the wrong thing.
+
+**`evidence: reproduced | reasoned`.** The vaguer half was the value, not the
+name. `reproduced` says what the reviewer did; `judged` named a verdict rather
+than a method, which is why the scheme needed a standing note explaining that
+judged is not weak. `reasoned` is symmetric with `reproduced` — both say what
+the reviewer did — and the note largely stops being necessary. Candidates
+considered and set aside: `Verification-Method`, which promises to name *which*
+method when the tag is binary, and `Evaluation-Basis`, which stacks two
+abstract nouns and still does not say what is evaluated.
+
+**`how-to-find`, replacing `scope`.** `pattern` told the fixer that other
+sites existed without saying where, so the fixer re-ran the search the reviewer
+had already run. The field now carries the search itself, which makes
+`isolated | pattern` derivable and removes a vocabulary item rather than adding
+one. `location` and `sites` were both considered and rejected for the same
+reason: every finding already cites its own `path:line`, so a field named for
+locations promises locations and delivers a method.
+
+What it holds, in four shapes and one rule:
+
+- one command → the command
+- several commands → all of them
+- a command plus a judgement → the command **and** what was discarded, so the
+  fixer applies the same filter instead of trusting a list
+- no command possible → a **prompt**, which in this fleet is as runnable as a
+  shell command, and which survives rewording where a grep does not: the
+  five-tool defect of 2026-08-23 shared no string at all, so no grep would ever
+  have found it
+
+**One invariant across every shape: it is the search the reviewer actually
+ran**, not one composed for someone else. Without that the field acquires the
+defect it exists to prevent, in a new costume — a plausible-looking grep or
+prompt that was never executed reads exactly like a real one.
+
+**The field is mandatory, including for a single-instance finding.** That case
+is what justifies it: `how-to-find: grep -rn "X" scripts/ — returns only this
+site` records that the reviewer looked and found one. A missing field records
+that nobody searched. Today those two are indistinguishable, which is why
+`isolated` was never trustworthy — it could mean "one place" or "I did not
+check."
+
+### Counts in durable text — two kinds, opposite treatment (user-ruled 2026-08-23)
+
+The user observed that reviews kept being stopped by bad counts and that most
+of the counts looked meaningless. Four separate counts in this project's
+durable text went stale or proved wrong within hours on 2026-08-23: a
+32-of-32 that now reads 35; a 73-of-98 that measures 77-of-102; a commit
+message claiming "21/21, 20/20 before" that measures 37/37 after its own
+rebase; and a "3,712 characters to 1,029" that became 1,173 when a fix round
+added 144 characters back — its pull request body edited nineteen seconds
+after the push that invalidated it.
+
+**Bookkeeping counts** — test-case totals, commit counts, character counts.
+Nobody decides anything from them. They are a proxy for *work happened*, the
+cheapest thing that resembles evidence, and they rot on contact. Cut them and
+name what was added instead.
+
+**Measurement counts** — "73 of 98 sessions carry the memory block", "32 of 32
+merges carry an approving review". Here the number *is* the finding. These
+stay, but pinned: the command that produced it and the moment it was taken.
+That stamp is what kept the 32-of-32 claim honest when it became 35.
+
+**The test that separates them:** would anyone decide differently if the number
+were different? If no, it is bookkeeping — cut it.
+
+Commissioning texts are implicated in producing these, since they ask for
+evidence and a count is the easiest thing that resembles evidence. That belongs
+to walk item 15's pass over the commission templates.
 
 **Why four and not more:** each is answerable in seconds by a reviewer who
 just proved the finding; none requires estimating someone else's work.
