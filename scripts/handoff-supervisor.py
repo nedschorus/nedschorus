@@ -11,7 +11,9 @@ The cycle, per recycle:
   1. Watch the handoff file for a restart-counter above the last consumed.
   2. Kill the running session.
   3. Extract its dialog to disk before anything else proceeds.
-  4. Copy the retiring session's tasks into the successor's task directory.
+  4. Carry the tasks forward: nothing to do under a seat-pinned task list,
+     where every generation shares one store; otherwise copy the retiring
+     session's records into the successor's task directory.
   5. Print one queue-status line.
   6. Launch the successor with the ignition prompt.
   7. Keep the current and previous handoff and extract; delete older ones.

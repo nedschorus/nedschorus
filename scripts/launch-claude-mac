@@ -268,9 +268,11 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # is ever created. The two are not symmetric, and it is worth being exact,
 # because reading them as interchangeable is what hid the supervisor's stale
 # accounting for a review round: the PIN alone does nothing, while ENABLE
-# alone gives a seat working task tools on a session-keyed store — a real
-# list, just one that starts empty at every recycle. Both are needed for a
-# list that is the SEAT's.
+# alone gives a seat working task tools on a session-keyed store, whose
+# records the supervisor's pre-seed then carries across recycles
+# (handoff-supervisor.py, preseed_tasks). The pin is what makes the list the
+# SEAT's — one store every generation opens, rather than a fresh directory
+# each recycle has to copy into.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 export CLAUDE_CODE_TASK_LIST_ID='$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
