@@ -3,7 +3,7 @@ status: draft design, in md-review; the search script is built and under review 
 design-as-of: 2026-08-23
 ---
 
-# Missing-file recovery — the failure hook and the four-surface search (design)
+# Missing-file recovery — the failure hook and the five-surface search (design)
 
 When an agent in this fleet tries to open a file that is not there, nothing today tells it where the file went. This design makes the harness answer that question automatically: a hook fires on the failed call, a script searches the histories this fleet keeps, and what it finds arrives beside the error while the agent is still looking at it.
 
@@ -25,16 +25,30 @@ A written convention was considered and rejected as the *primary* fix. This proj
 
 **A gap this design must close, raised by PR #146's review:** the script is currently referenced nowhere outside its own two files, so the argument "a script does not have to be remembered" is not yet true of it. The hook is what makes it true. Until the hook exists, the script needs a reference in `docs/agents/fleet-instructions.md`, where fleet tooling is named.
 
-## The four surfaces
+## The five surfaces
 
 | surface | what it is | how it is searched | cost | privilege |
 |---|---|---|---|---|
+| **local snapshots** | hourly Time Machine snapshots on the Mac's **internal** disk, present whether or not the backup disk is attached | mount one read-only and test the path inside | one mount, **no privilege** | none |
 | **git** | this repository's history | one query, then a walk back to a commit whose tree holds the blob | **95 ms** to ask, **70 ms** to recover | none |
 | **Timeshift** | snapshots on ned-box under `/mnt/backup/timeshift/snapshots`, reached over ssh as `nedlern@ned-box` | snapshots are ordinary directories — test the path inside each of 133 | **1.3 s** | none |
 | **transcripts** | agent session JSONL under `~/.claude/projects` on the Mac **and** on ned-box | grep 530 files | **4.2 s** | none |
 | **Time Machine** | APFS snapshots on the Mac's external backup disk | see below — not like the others | **160 ms** to enumerate; **8.4 s** to mount; ordinary filesystem cost to read once mounted | root to mount only |
 
 Transcripts earn their place for a reason the other three cannot cover: a transcript holds what a tool call *returned*, so it can hold the content of a file that was never committed and never survived to a snapshot. It is not immune to loss — output can be truncated, and transcripts are themselves deletable — but it is the only surface fed by reading rather than by storing.
+
+## Local snapshots — the cheapest surface, and the shortest memory
+
+macOS keeps Time Machine snapshots on the Mac's own internal disk, hourly (`AutoBackupInterval = 3600`), independent of whether the external backup disk is attached. They are the only Mac-side surface that needs **no privilege and no external disk**: `mount_apfs -o ro` against the Data volume, reading inside, and `diskutil unmount` all succeed as an ordinary user.
+
+Two mechanics a builder will otherwise get wrong:
+
+- The **Data** volume carries them. `diskutil apfs listSnapshots /` lists only `com.apple.os.update-*` snapshots for the root volume; the user-file snapshots are on `/System/Volumes/Data`, whose device must be resolved at runtime. `tmutil listlocalsnapshotdates /` lists the dates.
+- Their names end `.local`, distinguishing them from the `.backup` snapshots on the external destination.
+
+**Its memory is short, and that bounds what it can be trusted for.** Retention measured 2026-08-23: 24 snapshots — 15 from that day, 5 from the day before, and two each from 27 and 28 July, with nothing at all in between. So it covers roughly the last day and a half densely and keeps a few older survivors by luck. **It would not have recovered the 2026-08-14 file this design exists for.** It is the right first place to look for something lost minutes or hours ago, and no substitute for the archive surfaces.
+
+Nothing this fleet cares about is excluded from it: `tmutil isexcluded` reports `~/Projects`, `~/agents`, `~/.claude` and `~/Documents` all `[Included]`.
 
 ## Time Machine, specifically
 
@@ -71,14 +85,15 @@ Two filters, in order, both free:
 
 A missing **program** (`env: python3`) passes the signature test and is an accepted residual: the search will simply find nothing, at the cost of one git query.
 
-An earlier proposal added a third filter reading the *command's intent* — skip `ls`, `test`, `cd`. It was measured and **rejected**: of the 8 failures that filter would have passed through to a search, roughly 3 were real losses, and it missed shapes whose wording did not match its patterns (`bash: line 1: cd:`, `python3: can't open file`). A proposal to gate on "has git ever tracked this path" was also **rejected**, for a better reason: three of the four surfaces are cheap and unprivileged, so gating them saves little.
+An earlier proposal added a third filter reading the *command's intent* — skip `ls`, `test`, `cd`. It was measured and **rejected**: of the 8 failures that filter would have passed through to a search, roughly 3 were real losses, and it missed shapes whose wording did not match its patterns (`bash: line 1: cd:`, `python3: can't open file`). A proposal to gate on "has git ever tracked this path" was also **rejected**, for a better reason: four of the five surfaces are cheap and unprivileged, so gating them saves little.
 
 ## What the hook does when it fires
 
 When both filters pass, the search runs in this order:
 
-1. **git, alone.** Its answer bounds which Time Machine snapshot is worth mounting. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
-2. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
+1. **Local snapshots, then git** — the two that need no network and no privilege. Local snapshots answer the "deleted it minutes ago" case outright.
+2. **git.** Its answer bounds which Time Machine snapshot is worth mounting. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
+3. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
 
 The failed tool call stays open while this runs. A surface that does not answer within its command timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open.
 
@@ -152,7 +167,11 @@ Corpus: the **294 distinct paths git has ever deleted** in this repository. Ever
 
 Two further corpora:
 
-- **Synthetic injection** — copy a file, hash it, delete the copy, run the finder, assert byte-identical recovery. Exercises the whole chain including the backup surfaces, and is repeatable rather than history-dependent.
+- **Synthetic injection**, scoped per surface by how fast that surface ingests. The naive form — copy a file, delete it, expect recovery — cannot work: a file created and deleted minutes later is in no history at all, so the finder correctly reports nothing and the test proves nothing. The file must enter a history first, and how long that takes differs:
+  - **git** — commit it, delete it, assert byte-identical recovery. Seconds; belongs in the ordinary suite.
+  - **local snapshots** — the same cycle after one hourly snapshot. A slow test, not a CI test.
+  - **Timeshift** — the same, after one 10-minute box snapshot. Slow test.
+  - **Time Machine** — needs a backup run to complete, which is hours. A manual test, run occasionally, never automated.
 - **Timeshift differential** — files present in an old box snapshot and absent now: real losses with known recoverability, exercising the box surface instead of using git as both question and answer.
 
 ## Deliberately not in version 1
@@ -192,4 +211,9 @@ All measured 2026-08-23 on this Mac and ned-box; re-measure after a macOS or Cla
 | dated trees exposed by one mount | 91 | live test |
 | observed failed-mount signature | exit 66, `volume could not be mounted` | live test |
 | Full Disk Access required | **no** — sparse `.previous` trees explain the apparent block | `ls -la` on the tree, plus the same read under `sudo` |
+| local snapshots mount, read and unmount | all three unprivileged | `mount_apfs -o ro` against the Data volume as the ordinary user, read `CLAUDE.md`, `diskutil unmount` |
+| local snapshot retention | 24 kept: 15 same-day, 5 previous day, 2 each on 2026-07-27 and 07-28, nothing between | `tmutil listlocalsnapshotdates /` |
+| Time Machine backup interval | hourly (`AutoBackupInterval = 3600`), `AutoBackup = 1` | `defaults read /Library/Preferences/com.apple.TimeMachine.plist`, readable unprivileged |
+| fleet paths excluded from backup | none — `~/Projects`, `~/agents`, `~/.claude`, `~/Documents` all `[Included]` | `tmutil isexcluded` |
+| macOS version these hold for | 26.5 | `sw_vers` |
 | paths git has ever deleted | 294 distinct | `git log --all --full-history --diff-filter=D --name-only --format=` piped through `sort -u` |
