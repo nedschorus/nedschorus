@@ -31,10 +31,12 @@ for every `codex exec` this repository launches; the other two sites
 (scripts/md-review-codex-cell.py, scripts/sanity-check-attacks.py) pass the
 same flag and point here.
 
-Codex keeps a memory store under `~/.codex/` that every Codex process on the
-machine shares. It reads accumulated notes into a new session, and its memory
-pipeline writes fresh ones from saved sessions. Both directions are wrong for
-a review cell:
+Codex keeps a memory store under `~/.codex/` that Codex processes on this
+machine share. When the feature is on, a session reads accumulated notes in,
+and the memory pipeline writes fresh ones out of saved sessions. Whether it
+is on by default is machine state that MOVES -- see the drift note below --
+which is the whole reason this is pinned per invocation. Both directions are
+unwanted for a review cell:
 
   - READING, which is the measured half. A cell is commissioned to be naive
     -- to judge the change in front of it, not to carry forward what Codex
@@ -76,19 +78,35 @@ features.<name>=false`" -- a config override that applies to this
 process only; it edits no config file and leaves the user's own interactive
 Codex untouched. It does not stop the session itself being persisted: see
 the WRITING bullet above for what that leaves open.
-Verified on codex-cli 0.147.0 (2026-08-23): `codex features list` reports
-`memories ... true`, `codex --disable memories features list` reports it
-`false`, and on the exec path an unknown name is refused ("Error: Unknown
-feature flag") while `memories` passes that check. Parent placement, beside
---sandbox above; the nested `review` parser also accepts --disable, but one
-placement for both flags is easier to read.
+What is verified on codex-cli 0.147.0, and still reproduces: the feature name
+is validated, so acceptance means something -- `--disable bogus-not-a-feature`
+is refused with "Error: Unknown feature flag" both at the top level and on the
+`codex exec review` path, while `memories` passes that check. Under the flag,
+`codex --disable memories features list` reports `memories ... false`.
+
+THE MACHINE DEFAULT DRIFTS, which is why the flag is on the command line
+rather than left to machine state. Earlier on 2026-08-23 a bare
+`codex features list` on this Mac reported `memories ... true`, so the flag
+produced a visible true-to-false flip; by that evening the bare command
+reported `false` on the same codex-cli 0.147.0, with no local override in
+play (`~/.codex/config.toml`'s `[features]` holds only `js_repl = false`).
+Pull request #150's round-2 reviewer bracketed the move to that afternoon:
+a 14:14 session carries the memory block, four sessions between 15:46 and
+15:51 do not. The cause was not established -- a config key, a CLI override
+and persistence of `--disable` were each eliminated, and no explanation is
+asserted here. So the flag today pins a state the machine may already be in;
+what it guarantees is that the cell does not depend on which way the default
+happens to be pointing.
+
+Parent placement, beside --sandbox above; the nested `review` parser also
+accepts --disable, but one placement for both flags is easier to read.
 
 The scope of that guarantee is these three committed launchers, not the
-machine. A seat that types `codex exec` by hand gets the machine default and
-the memory block with it -- two such sessions on 2026-08-20, with
-cwd=/Users/el/agents/merge-lane, were found carrying it. So a review is
-memory-free because it went through one of these scripts, not because it ran
-on this Mac.
+machine. A seat that types `codex exec` by hand gets whatever the machine
+default is at that moment: on 2026-08-20 that meant the memory block, and two
+such sessions with cwd=/Users/el/agents/merge-lane were found carrying it. So
+a review is memory-free because it went through one of these scripts, not
+because it ran on this Mac.
 
 Exit codes: 0 the review ran and wrote the report -- WHICH SAYS NOTHING
 ABOUT THE VERDICT: codex exits 0 while reporting defects, so a gate must
