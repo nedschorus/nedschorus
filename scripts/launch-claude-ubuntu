@@ -51,11 +51,21 @@
 set -eu
 
 # AGENTS_ROOT is a BOX-side path. A leading ~ is carried to the box as its
-# $HOME (~user/ forms are not supported); any other character — spaces and
-# apostrophes included — travels literally, escaped per parse layer below.
-# Agent names stay charset-checked: they ride in more places than paths do.
+# $HOME; any other character — spaces and apostrophes included — travels
+# literally, escaped per parse layer below. A ~user/ form is REFUSED rather
+# than half-working: the box shell would treat the quoted value as a literal
+# directory named ~user while the fleet's Python tools expanduser() it to
+# that user's real home — one seat, silently split across two directories
+# (PR #137 review P3, user-ruled 2026-08-22: overrides either work or are
+# blocked). Agent names stay charset-checked: they ride in more places than
+# paths do.
 AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
+case "$AGENTS_ROOT" in
+    ("~"[!/]*)
+        echo "launch-claude-ubuntu: ~user agents roots are not supported — the box shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute box-side path." >&2
+        exit 2 ;;
+esac
 
 # The no-name case is the common mistake, so it teaches rather than scolds:
 # what a name is for, and which agents are up on the box right now to pick from

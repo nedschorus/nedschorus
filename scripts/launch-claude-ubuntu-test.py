@@ -176,6 +176,43 @@ def main() -> int:
               (harness.home / "agents" / "seat-a").is_dir(),
               str(harness.home / "agents"))
 
+        # --- 1b. the launcher itself must have reached ssh — without this,
+        # a launcher that exits before the transport leaves an empty remote
+        # string, and sh -c "" exits 0, passing the parse checks vacuously
+        # (PR #137 review P3).
+        check("default root: the launcher reached ssh and exited 0",
+              result["launched"].returncode == 0 and result["remote"],
+              (result["launched"].returncode, result["launched"].stderr[:200]))
+
+        # --- 1c. a ~user root is REFUSED before any transport (user-ruled
+        # 2026-08-22: overrides either work or are blocked) — the box shell
+        # and the fleet's Python tools would resolve it to different
+        # directories, silently splitting the seat.
+        harness = LaunchHarness(root / "tilde-user")
+        result = harness.run(["seat-u", "--no-attach"],
+                             agents_root="~alice/agents")
+        check("tilde-user root: refused with exit 2, naming the split",
+              result["launched"].returncode == 2
+              and "not supported" in result["launched"].stderr
+              and "splitting the seat" in result["launched"].stderr,
+              (result["launched"].returncode, result["launched"].stderr[:200]))
+        check("tilde-user root: nothing was sent to the box",
+              result["remote"] == "", result["remote"][:200])
+
+        # --- 1d. a ~/ root with a space rides the supported tilde carry ----
+        harness = LaunchHarness(root / "tilde-space")
+        result = harness.run(["seat-h", "--no-attach"],
+                             agents_root="~/custom agents")
+        check("~/ root with a space: tmux -c resolves under the box home",
+              result["replay"].returncode == 0
+              and result["pane_directory"]
+              == f"{harness.home}/custom agents/seat-h",
+              (result["replay"].returncode, result["pane_directory"]))
+        check("~/ root with a space: supervisor --cd stays the literal ~ path",
+              argv_value(result["supervisor_argv"], "--cd")
+              == "~/custom agents/seat-h",
+              result["supervisor_argv"])
+
         # --- 2. apostrophe + space in the agents root ----------------------
         harness = LaunchHarness(root / "apostrophe-root")
         apostrophe_root = f"{harness.home}/agent's fleet"
