@@ -1227,6 +1227,41 @@ expected task ids, because a silently rebound store looks like success.
 User-blocking items surface ONE AT A TIME at natural pauses; `say` only for
 act-now items; no external channels.
 
+## 6.4a Fix rounds land on GitHub too, and declines especially (R8, user-ruled 2026-08-23)
+
+Walk item 14. The source recommendation is R8, "reviews and fix rounds land
+on GitHub channels", raised because #118's two rounds and both of its Codex
+reviews were invisible to GitHub entirely, and #117's off-channel round could
+only be detected through the timeline API.
+
+**The review half is already enacted and enforced.** This seat has posted every
+review to its pull request since 2026-08-18, and since 2026-08-20 GitHub itself
+refuses a merge without an approving review.
+
+**The fix-round half was not, and the gap has a precise shape.** A fixer's
+report — what it changed per finding, what it declined, and why — lands
+nowhere on GitHub; it lives in a subagent transcript that dies with the
+session that commissioned it. The asymmetry is what makes this worth a rule:
+**a finding that was fixed leaves a commit; a finding that was declined leaves
+nothing at all.**
+
+The specimen is #150 on 2026-08-23. The fixer declined one item and gave three
+reasons — the reviewer had requested no change, this project's
+defensive-tightening rule requires a named behaviour before adding a guard,
+and the failure mode is loud rather than silent. All three were sound. None of
+it would have existed on GitHub except that the merge seat chose to restate it
+in its own review, which is the merge seat speaking for the fixer.
+
+RULED: **when a fix round is pushed, its author posts one comment saying what
+was fixed and, load-bearingly, what was declined and why.** Not a full report —
+the commits carry what changed. The declines are the part with no other home.
+
+**One cost, named rather than hidden:** it is another artifact that can go
+stale. A decline, however, is a decision rather than a measurement, so it does
+not decay the way the counts recorded above do.
+
+---
+
 ## 6.5 Session recycling, and the subagents it kills (user-ruled 2026-08-23)
 
 **How a recycle happens.** A seat's session recycles when its context runs
