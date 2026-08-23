@@ -93,6 +93,37 @@ Meanwhile (user-ruled 2026-08-18, explicit stopgap): the merge-lane seat posts i
 
 This measurement is the kind of evidence a revisit of the declined slice 6 would weigh; whether it returns is the user's ruling, and nothing here presumes it.
 
+## The requirement enabled (2026-08-20, merge-lane seat; recovered 2026-08-23 from that seat's session transcript)
+
+The lever described in the section above was pulled the day after it was described. Recovered by reading the merge-lane seat's session transcript directly rather than on report; that transcript is machine-local and will not survive this Mac, which is why this section exists.
+
+**The sequence, all 2026-08-20 UTC:**
+
+| time | event |
+|---|---|
+| 00:52:34Z | the user types "approved" — item 5 of a walk at the merge-lane seat |
+| 00:54:09Z | PR #104 approved by `ned-review-merge`, requirement still off |
+| 00:54:38Z | the enabling call runs |
+| 00:54:55Z | #104 merges, under the live requirement |
+
+**The call**, verbatim from the transcript:
+
+```
+unset GH_TOKEN
+gh api -X PATCH repos/nedschorus/nedschorus/branches/main/protection/required_pull_request_reviews \
+  -F required_approving_review_count=1 \
+  -F dismiss_stale_reviews=false \
+  -F require_code_owner_reviews=false
+```
+
+**Who ran it, in two halves that come apart.** The *credential* was the user's own default `gh` login; the *executor* was the merge-lane seat, as a Bash tool call in its own session — `unset GH_TOKEN` only parses as that seat dropping its `ned-review-merge` token, which cannot write protection. He was present and had approved 124 seconds earlier; he did not type the command. **The precedent that sets, and the queued `dismiss_stale_reviews` ask inherits it:** a seat runs the protection change on his credential with his approval in the moment.
+
+**The drill was deliberately ordered** — approve, enable, merge — so the first merge exercised the new rule rather than merely following it. A revert script and a saved `protection-pre-state.json` were written in the same tool call, before the change.
+
+**What is publicly checkable, and what rests on the transcript.** Public: PR #104's approving review body (`gh api repos/nedschorus/nedschorus/pulls/104/reviews`), a contemporaneous witness in its own words — "the rule is enabled between this approval and the merge, so this PR tests that `ned-review-merge`'s approval satisfies it" — both timestamps, and the exercise record, which is that all 32 pull requests merged since carry an approving review and none lack one (measured 2026-08-23). Transcript-only: the 00:52:34Z approval and its walk item, the command text, the 00:54:38Z execution time, and the revert-script and pre-state claims.
+
+**`dismiss_stale_reviews` is false, and unruled.** An approval therefore survives later pushes to the same branch. Turning it on is recorded as recommended in the merge-lane seat's in-progress `docs/drafts/pr-main-process-design.md` (§ 8 Open questions, row 13), queued as a one-flag ask needing the user's own credential — but that draft sits on the unmerged `merge-lane` branch, and the analysis behind it is machine-local and git-excluded, so neither is reachable from main. A search of the issue mirror and of main on 2026-08-23 found nothing, which is how it was nearly recorded as unrecorded.
+
 ## The guardian direction (user-set 2026-08-18; direction, not yet specification)
 
 Where review-at-the-gate is heading, recorded so the reasoning survives:
