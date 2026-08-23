@@ -792,11 +792,11 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
         "written-at": recent,
         "next-step": "merge the queue",
         "spawned-subagent-1": ('a309071aa3681d280 "Fix ignored-path write blind spot" '
-                               'spawned 2026-08-23T19:55:24Z, '
-                               'last event completed 2026-08-23T20:52:59Z'),
+                               'spawned at 2026-08-23T19:55:24Z, '
+                               'last event completed at 2026-08-23T20:52:59Z'),
         "spawned-subagent-2": ('a022a89c0b2ceeb88 "Review PR 150 independently" '
-                               'spawned 2026-08-23T21:32:36Z, '
-                               'last event spawned 2026-08-23T21:32:36Z'),
+                               'spawned at 2026-08-23T21:32:36Z, '
+                               'last event spawned at 2026-08-23T21:32:36Z'),
     }
     prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), roster_fields, 0)
     check("ignition states how many subagents died with the session",
@@ -805,8 +805,8 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
           "a309071aa3681d280" in prompt and "Fix ignored-path write blind spot" in prompt
           and "a022a89c0b2ceeb88" in prompt and "Review PR 150 independently" in prompt, prompt)
     check("ignition carries each subagent's last recorded event",
-          "last event completed 2026-08-23T20:52:59Z" in prompt
-          and "last event spawned 2026-08-23T21:32:36Z" in prompt, prompt)
+          "last event completed at 2026-08-23T20:52:59Z" in prompt
+          and "last event spawned at 2026-08-23T21:32:36Z" in prompt, prompt)
     # The whole point of Constraint A: a stopped subagent can still own work.
     check("ignition warns that a completed subagent may still own work",
           "does not mean its work is finished" in prompt
@@ -823,7 +823,9 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     # after field 9, and the successor reads them in the order they were spawned.
     many = {"written-at": recent, "next-step": "carry on"}
     for ordinal in range(1, 12):
-        many[f"spawned-subagent-{ordinal}"] = f"agent-{ordinal:02d} spawned, last event spawned"
+        many[f"spawned-subagent-{ordinal}"] = (
+            f"agent-{ordinal:02d} spawned at 2026-08-23T20:00:00Z, "
+            "last event spawned at 2026-08-23T20:00:00Z")
     ordered_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), many, 0)
     check("the roster keeps the writer's order past nine subagents",
           ordered_prompt.index("agent-09") < ordered_prompt.index("agent-10")
@@ -836,8 +838,8 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
         "written-at: 2026-08-23T22:00:00Z\n"
         "next-step: merge the queue\n"
         "restart-counter: 3\n"
-        "spawned-subagent-1: a309071aa3681d280 \"Fix ignored-path\" spawned "
-        "2026-08-23T19:55:24Z, last event completed 2026-08-23T20:52:59Z\n"
+        "spawned-subagent-1: a309071aa3681d280 \"Fix ignored-path\" spawned at "
+        "2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z\n"
         "next-step-verbatim: <<END-OF-NEXT-STEP\n"
         "merge the queue\n"
         "and then rest\n"

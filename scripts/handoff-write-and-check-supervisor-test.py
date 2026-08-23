@@ -562,8 +562,8 @@ def run_spawned_subagent_roster_cases(workspace: Path):
     check("a field line names the agent, its task, its spawn and its last event",
           field_lines[0] == (f'spawned-subagent-1: {FIXTURE_IDLE_AGENT} '
                              '"Fix ignored-path write blind spot" '
-                             'spawned 2026-08-23T19:55:24Z, '
-                             'last event completed 2026-08-23T20:52:59Z'),
+                             'spawned at 2026-08-23T19:55:24Z, '
+                             'last event completed at 2026-08-23T20:52:59Z'),
           field_lines[0])
 
     # An empty transcript is not an error: a session may spawn nothing.

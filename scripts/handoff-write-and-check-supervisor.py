@@ -321,8 +321,8 @@ def spawned_subagent_field_lines(roster) -> list:
         described = f' "{entry["description"]}"' if entry["description"] else ""
         lines.append(
             f"{SPAWNED_SUBAGENT_FIELD_PREFIX}{ordinal}: {entry['agent_id']}{described}"
-            f" spawned {entry['spawned_at']},"
-            f" last event {entry['last_event']} {entry['last_event_at']}"
+            f" spawned at {entry['spawned_at']},"
+            f" last event {entry['last_event']} at {entry['last_event_at']}"
         )
     return lines
 

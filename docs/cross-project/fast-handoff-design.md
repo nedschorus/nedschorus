@@ -136,8 +136,8 @@ line is no longer the only copy — the verbatim text travels beside it.
 Unlike the block form above, this field is built and in use. A retiring
 session records every subagent it spawned as one numbered field each:
 
-    spawned-subagent-1: a309071aa3681d280 "Fix ignored-path write blind spot" spawned 2026-08-23T19:55:24Z, last event completed 2026-08-23T20:52:59Z
-    spawned-subagent-2: a022a89c0b2ceeb88 "Review PR 150 independently" spawned 2026-08-23T21:32:36Z, last event spawned 2026-08-23T21:32:36Z
+    spawned-subagent-1: a309071aa3681d280 "Fix ignored-path write blind spot" spawned at 2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z
+    spawned-subagent-2: a022a89c0b2ceeb88 "Review PR 150 independently" spawned at 2026-08-23T21:32:36Z, last event spawned at 2026-08-23T21:32:36Z
 
 One field per subagent, numbered from 1 in spawn order, carrying the agent
 id, the task description, the spawn time and the last event recorded for that
