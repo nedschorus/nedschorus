@@ -225,7 +225,44 @@ escape_single_quotes() {
 }
 QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 
+# Task-list persistence across seat generations. The harness keys its native
+# task store by CLAUDE_CODE_TASK_LIST_ID when that is set, and by the session
+# id otherwise, so a seat left to the default gets a NEW empty list every
+# time the supervisor recycles it. Binding the id to the seat's NAME makes
+# every generation of that seat open the same list — the same store, not a
+# copy of it, so nothing has to be migrated at a handoff. Ported from the
+# legacy system, which has run it since nedlern#1257
+# (~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341); the two warnings
+# below are what that system learned from running it.
+#
+# Warning 1 — the store is ONE copy on ONE disk, outside the repository:
+# $HOME/.claude/tasks/<name>-tasks/ on this Mac. It is not committed, not
+# backed up with the repository, and not shared with the box, so the same
+# seat name on both machines keeps two unrelated lists.
+#
+# Warning 2 — a session started OUTSIDE this launcher binds ELSEWHERE, and
+# the failure is silent. Without this export, `claude` falls back to the
+# session-keyed store, which is a directory that has never existed: TaskList
+# returns an empty list and TaskUpdate answers "Task not found", both with no
+# error and both looking exactly like a seat that simply has no tasks. The
+# after-exit shell below inherits this export precisely so the
+# `claude --continue` it offers keeps the binding; a `claude` typed in any
+# other terminal does not.
+#
+# AGENT_NAME needs no escaping here — validated above to letters, digits, -
+# and _ — so the composed id is always a plain directory name.
+#
+# The task tools themselves are opt-in on current models: Claude Code 2.1.233
+# withdrew TaskCreate/Get/Update/List and TodoWrite from Opus 4.8, Sonnet 5,
+# Fable 5, Mythos 5 and newer, and CLAUDE_CODE_ENABLE_TODO_TOOLS=1 restores
+# them. Measured on this Mac 2026-08-22 (Claude Code 2.1.238, model
+# claude-sonnet-5): with the enable variable unset, the pin alone does
+# nothing — TaskCreate is not among the visible tools and no store directory
+# is ever created. Both variables are therefore required, and neither is
+# useful alone.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+export CLAUDE_CODE_TASK_LIST_ID='$AGENT_NAME-tasks'; \
+export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 
 # A first-prompt file seeds only the FIRST session. The supervisor reads the
