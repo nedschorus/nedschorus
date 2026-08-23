@@ -187,6 +187,20 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a contended lock never writes the state file",
           (seat4 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8") == before_state_text,
           "state file changed under contention")
+    # PR #143 review, Codex P2: the shared mirror is three files renamed
+    # independently, so a contended ask publishing into it alongside the lock
+    # holder could leave a reader with a new open file beside an old closed
+    # one, or roll the cache cutoff backward. A contended ask therefore gets
+    # a private mirror and never touches the shared one.
+    check("a contended ask never publishes into the shared mirror",
+          not (seat4 / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR).exists(),
+          list(seat4.iterdir()))
+    check("a contended ask leaves no throwaway mirror behind",
+          not list(seat4.glob(".ghi-mirror-throwaway-*")),
+          list(seat4.glob(".ghi-mirror-throwaway-*")))
+    check("the lock HOLDER does publish into the shared mirror",
+          (seat2 / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR).exists(),
+          list(seat2.iterdir()))
 
     # --- post-check: unexpected closed pointer triggers one drift recheck --
     seat5 = root / "seat5"
@@ -281,6 +295,46 @@ with tempfile.TemporaryDirectory() as temporary:
     answer, error = ghi_ask.ask("q", False, seat10, "x/y", projects_root=projects_root)
     check("an oversized transcript forces a cold start",
           claude_calls[0][1] is None and answer == "read #1", (claude_calls, answer))
+
+
+    # --- one deadline for the whole ask, not one per turn ------------------
+    # PR #143 review, Codex P2: an ask can spend three turns (a cold start's
+    # two, plus a drift recheck). Giving each the full allowance made a
+    # nominal five-minute ask a possible fifteen-minute one, against the
+    # design's "one overall timeout (inside the hook budget)".
+    seat11 = root / "seat11"
+    seat11.mkdir()
+    fake_refresh_queue([([13], {"13": issue(13, state="CLOSED",
+                                            closed_at="2026-08-08T00:00:00Z")}, None)])
+    budgets = []
+
+    def recording_run_claude(prompt, resume_session_id, seat_dir, timeout_seconds):
+        budgets.append(timeout_seconds)
+        replies = [
+            {"session_id": "sess-T", "result": "(ack)"},
+            {"session_id": "sess-T", "result": "read #13"},   # cites a closed issue
+            {"session_id": "sess-T", "result": "read #24"},   # the drift recheck
+        ]
+        return replies[len(budgets) - 1], None
+    patch("run_claude", recording_run_claude)
+    answer, error = ghi_ask.ask("q", False, seat11, "x/y", timeout_seconds=300)
+    check("all three turns of one ask draw on a single budget",
+          len(budgets) == 3, budgets)
+    check("each turn is handed only what the ask has left, never the full budget again",
+          budgets == sorted(budgets, reverse=True) and budgets[0] <= 300
+          and budgets[-1] < budgets[0],
+          budgets)
+
+    # An ask whose budget is already gone fails saying so, rather than
+    # starting a turn it cannot afford.
+    seat12 = root / "seat12"
+    seat12.mkdir()
+    fake_refresh_queue([([1], {"1": issue(1)}, None)])
+    spent_calls = fake_claude_queue([])
+    answer, error = ghi_ask.ask("q", False, seat12, "x/y", timeout_seconds=0)
+    check("an ask with no budget left fails cleanly and starts no turn",
+          answer is None and "budget was already spent" in error and not spent_calls,
+          (answer, error, spent_calls))
 
 
 # --- build_remote_command --------------------------------------------------

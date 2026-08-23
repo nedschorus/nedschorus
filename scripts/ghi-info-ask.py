@@ -72,8 +72,11 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
@@ -100,13 +103,18 @@ LOCK_FILE_NAME = ".ghi-info-state.lock"
 # choice among fable/opus/sonnet.
 GHI_INFO_MODEL = os.environ.get("GHI_INFO_MODEL", "claude-sonnet-5")
 # "One overall timeout (inside the hook budget)" (design § The ask path) —
-# applied per claude call, not once across a cold-start's two turns plus a
-# possible drift recheck; NM's three-watchdog machinery is deliberately not
-# carried over (design: "version 1 here starts with one timeout").
+# ONE deadline for the whole ask, not one per claude call. An ask can spend
+# up to three turns (a cold start's two, plus a drift recheck), and giving
+# each the full allowance made a nominal five-minute ask a possible
+# fifteen-minute one — the opposite of what "inside the hook budget" is for
+# (PR #143 review, Codex P2). Each turn is handed only what is left.
+# NM's three-watchdog machinery is deliberately not carried over (design:
+# "version 1 here starts with one timeout").
 ASK_TIMEOUT_SECONDS = int(os.environ.get("GHI_INFO_ASK_TIMEOUT_SECONDS", "300"))
-# SSH delegation's own timeout must cover the worst case run box-side: a
-# cold start (two claude calls) plus one drift recheck (a third).
-SSH_TIMEOUT_SECONDS = ASK_TIMEOUT_SECONDS * 3 + 30
+# The box gets the ask's own budget plus room for its refresh and the ssh
+# round trip, so this side never gives up on a run that is still inside its
+# deadline box-side.
+SSH_TIMEOUT_SECONDS = ASK_TIMEOUT_SECONDS + 120
 
 # Recycle-trigger constants (design § Verify at build's Constants list).
 CLOSES_SINCE_BIRTH_THRESHOLD = 20
@@ -315,99 +323,143 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
     (answer_text, error) — exactly one is not None."""
     if projects_root is None:
         projects_root = Path.home() / ".claude" / "projects"
-    mirror_dir = seat_dir / mirror_refresh.DEFAULT_MIRROR_DIR
     state_path = seat_dir / STATE_FILE_NAME
     lock_path = seat_dir / LOCK_FILE_NAME
+
+    # One deadline for the whole ask, however many turns it takes.
+    deadline = time.monotonic() + timeout_seconds
+
+    def turn(prompt, resume_session_id):
+        """A claude turn that can only spend what the ask has left."""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None, (f"the ask's {timeout_seconds}s budget was already spent "
+                          "before this turn could start")
+        return run_claude(prompt, resume_session_id, seat_dir, remaining)
 
     with state_lock(lock_path) as locked:
         state = load_state(state_path) if locked else default_state()
 
-        # Steps 1-2 interleave, because which refresh is owed depends on
-        # whether this ask resumes or cold-starts, and the recycle decision
-        # in turn depends on what the delta saw close.
-        #
-        # With no session to resume (first ever ask, or a contended lock),
-        # the answer is known before any fetch: a cold start needs the whole
-        # corpus rebuilt anyway, so go straight to the full refresh. Running
-        # the routine delta first would fetch the entire corpus TWICE on
-        # every first run — the delta has no cutoff to search from without a
-        # cache, so it is itself a full fetch.
-        has_session = locked and state.get("session_id")
-        changed = []
-        recycle, recycle_reason = False, None
-
-        if has_session:
-            delta_result, error = mirror_refresh.refresh(mirror_dir, repo, full=False)
-            if delta_result is None:
-                return None, f"mirror refresh failed: {error}"
-            changed = delta_result["changed"]
-            cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
-            # Counts a changed issue that is currently closed. An already-
-            # closed issue touched again (a late comment) counts once more,
-            # which only makes recycling more eager — the direction the
-            # design asks for ("Recycling errs eager").
-            new_closures = sum(
-                1 for number in changed
-                if cache.get("issues", {}).get(str(number), {}).get("state") == "CLOSED"
-            )
-            state["closes_since_birth"] = state.get("closes_since_birth", 0) + new_closures
-            recycle, recycle_reason = should_recycle(state, seat_dir, projects_root)
-
-        cold_starting = not has_session or recycle
-
-        if cold_starting:
-            if recycle_reason:
-                # A recycle silently replacing the session would leave the
-                # next investigator no way to tell a fresh answer from a
-                # resumed one; the trigger that fired is the useful part.
-                print(f"ghi-info-ask: recycling the session — {recycle_reason}",
-                      file=sys.stderr)
-            full_result, error = mirror_refresh.refresh(mirror_dir, repo, full=True)
-            if full_result is None:
-                return None, f"mirror refresh (full, for cold-start) failed: {error}"
-            cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
-            cold_start_text = COLD_START_PROMPT_TEMPLATE.format(
-                mirror_path=full_result["open_path"])
-            cold_reply, error = run_claude(cold_start_text, None, seat_dir, timeout_seconds)
-            if cold_reply is None:
-                return None, f"ghi-info cold-start failed: {error}"
-            session_id = cold_reply["session_id"]
-            resume_prompt = compose_resume_ask_prompt(question, include_closed, [], False)
-        else:
-            session_id = state["session_id"]
-            resume_prompt = compose_resume_ask_prompt(question, include_closed, changed, True)
-
-        answer_reply, error = run_claude(resume_prompt, session_id, seat_dir, timeout_seconds)
-        if answer_reply is None:
-            return None, f"ghi-info ask failed: {error}"
-        session_id = answer_reply.get("session_id", session_id)
-        reply_text = (answer_reply.get("result") or "").strip()
-
-        # Step 4: post-check.
-        stale = False
-        if not is_passthrough_reply(reply_text):
-            unexpected = find_unexpected_closed_pointers(reply_text, cache, include_closed)
-            if unexpected:
-                stale = True
-                drift_reply, error = run_claude(compose_drift_notice(unexpected),
-                                                session_id, seat_dir, timeout_seconds)
-                if drift_reply is not None:
-                    session_id = drift_reply.get("session_id", session_id)
-                    reply_text = (drift_reply.get("result") or "").strip()
-                # A failed recheck falls back to the original reply rather
-                # than failing the whole ask — the pointer may simply carry
-                # a now-stale tag, which is better than no answer at all.
-
+        # The shared mirror has exactly one writer: the lock holder. A
+        # contended ask publishes into a private directory it deletes on the
+        # way out, so the two runs' renames can never interleave and leave a
+        # reader looking at a new open file beside an old closed one, or roll
+        # the cache cutoff backward (PR #143 review, Codex P2). This costs
+        # nothing extra: a contended ask cold-starts, so it was fetching the
+        # whole corpus either way. It is also what the design already asks
+        # for in spirit — "nothing waits, nothing shares a transcript" — with
+        # the mirror counted among the things not shared.
+        throwaway_mirror = None
         if locked:
-            if cold_starting:
-                state = default_state()
-            state["session_id"] = session_id
-            recent = state.get("recent_matches", [])
-            recent.append(stale)
-            state["recent_matches"] = recent[-STALE_MATCH_WINDOW:]
-            save_state(state_path, state)
+            mirror_dir = seat_dir / mirror_refresh.DEFAULT_MIRROR_DIR
+        else:
+            seat_dir.mkdir(parents=True, exist_ok=True)
+            throwaway_mirror = Path(tempfile.mkdtemp(
+                prefix=".ghi-mirror-throwaway-", dir=seat_dir))
+            mirror_dir = throwaway_mirror
 
-        return reply_text, None
+        try:
+            return _ask_within_lock(question, include_closed, seat_dir, repo,
+                                    projects_root, state, state_path, locked,
+                                    mirror_dir, turn)
+        finally:
+            if throwaway_mirror is not None:
+                shutil.rmtree(throwaway_mirror, ignore_errors=True)
+
+
+def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
+                     state, state_path, locked, mirror_dir, turn):
+    """The ask itself, with the lock decision and the mirror already settled.
+
+    Split out so the throwaway mirror's cleanup is one `finally` around the
+    whole body rather than a branch on every early return.
+    """
+
+    # Steps 1-2 interleave, because which refresh is owed depends on
+    # whether this ask resumes or cold-starts, and the recycle decision
+    # in turn depends on what the delta saw close.
+    #
+    # With no session to resume (first ever ask, or a contended lock),
+    # the answer is known before any fetch: a cold start needs the whole
+    # corpus rebuilt anyway, so go straight to the full refresh. Running
+    # the routine delta first would fetch the entire corpus TWICE on
+    # every first run — the delta has no cutoff to search from without a
+    # cache, so it is itself a full fetch.
+    has_session = locked and state.get("session_id")
+    changed = []
+    recycle, recycle_reason = False, None
+
+    if has_session:
+        delta_result, error = mirror_refresh.refresh(mirror_dir, repo, full=False)
+        if delta_result is None:
+            return None, f"mirror refresh failed: {error}"
+        changed = delta_result["changed"]
+        cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
+        # Counts a changed issue that is currently closed. An already-
+        # closed issue touched again (a late comment) counts once more,
+        # which only makes recycling more eager — the direction the
+        # design asks for ("Recycling errs eager").
+        new_closures = sum(
+            1 for number in changed
+            if cache.get("issues", {}).get(str(number), {}).get("state") == "CLOSED"
+        )
+        state["closes_since_birth"] = state.get("closes_since_birth", 0) + new_closures
+        recycle, recycle_reason = should_recycle(state, seat_dir, projects_root)
+
+    cold_starting = not has_session or recycle
+
+    if cold_starting:
+        if recycle_reason:
+            # A recycle silently replacing the session would leave the
+            # next investigator no way to tell a fresh answer from a
+            # resumed one; the trigger that fired is the useful part.
+            print(f"ghi-info-ask: recycling the session — {recycle_reason}",
+                  file=sys.stderr)
+        full_result, error = mirror_refresh.refresh(mirror_dir, repo, full=True)
+        if full_result is None:
+            return None, f"mirror refresh (full, for cold-start) failed: {error}"
+        cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
+        cold_start_text = COLD_START_PROMPT_TEMPLATE.format(
+            mirror_path=full_result["open_path"])
+        cold_reply, error = turn(cold_start_text, None)
+        if cold_reply is None:
+            return None, f"ghi-info cold-start failed: {error}"
+        session_id = cold_reply["session_id"]
+        resume_prompt = compose_resume_ask_prompt(question, include_closed, [], False)
+    else:
+        session_id = state["session_id"]
+        resume_prompt = compose_resume_ask_prompt(question, include_closed, changed, True)
+
+    answer_reply, error = turn(resume_prompt, session_id)
+    if answer_reply is None:
+        return None, f"ghi-info ask failed: {error}"
+    session_id = answer_reply.get("session_id", session_id)
+    reply_text = (answer_reply.get("result") or "").strip()
+
+    # Step 4: post-check.
+    stale = False
+    if not is_passthrough_reply(reply_text):
+        unexpected = find_unexpected_closed_pointers(reply_text, cache, include_closed)
+        if unexpected:
+            stale = True
+            drift_reply, error = turn(compose_drift_notice(unexpected), session_id)
+            if drift_reply is not None:
+                session_id = drift_reply.get("session_id", session_id)
+                reply_text = (drift_reply.get("result") or "").strip()
+            # A failed recheck falls back to the original reply rather
+            # than failing the whole ask — the pointer may simply carry
+            # a now-stale tag, which is better than no answer at all.
+
+    if locked:
+        if cold_starting:
+            state = default_state()
+        state["session_id"] = session_id
+        recent = state.get("recent_matches", [])
+        recent.append(stale)
+        state["recent_matches"] = recent[-STALE_MATCH_WINDOW:]
+        save_state(state_path, state)
+
+    return reply_text, None
 
 
 def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
