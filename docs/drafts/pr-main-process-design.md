@@ -921,14 +921,42 @@ owed):
   `false`. For a run that should also leave no saved session to be mined
   later, `--ephemeral` is the documented addition.
 
-  **The contamination is bidirectional**, which the old bullet missed. The
-  shared store holds a task group named "NedsChorus NC toolchain /
-  constrained adversarial review", with "Reusable knowledge" and "Failures
-  and how to do differently" sections — Codex's own conclusions from
-  previously reviewing this project. And 31 session files landed in
-  `~/.codex/` in the three days to 2026-08-23 with the memory database
-  updated the next day, so this project's automated cells have been feeding
-  the user's personal memory as well as reading it.
+  **The reading contamination is real and worse than first described**;
+  **the writing contamination is NOT established and this document said it
+  was.** Corrected 2026-08-23 by the independent reviewer of the pull
+  request that carries the fix.
+
+  Reading, measured: the shared store holds a task group named "NedsChorus
+  NC toolchain / constrained adversarial review", with "Reusable knowledge"
+  and "Failures and how to do differently" sections — Codex's own
+  conclusions from previously reviewing this project. That is not merely
+  present but demonstrably injected: the reviewer recovered the actual
+  `role: developer` message headed `## Memory`, 37,535 characters, from
+  `code-review-codex-cell.py`'s own review run on pull request #102, and
+  found the block in **73 of 98** `codex exec` sessions across 2026-08-17
+  to 08-23 — 61 of them under `--sandbox read-only`. Structural note for
+  anyone repeating the measurement: `codex exec review` writes TWO session
+  files, a parent wrapper without the block and a child reviewer thread
+  with it, so a naive per-file scan undercounts.
+
+  Writing, retracted: this document previously said "31 session files
+  landed in `~/.codex/` … with the memory database updated the next day, so
+  this project's automated cells have been feeding the user's personal
+  memory." The 31 files are real and all 31 are nedschorus-seat sessions.
+  The inference is not supported. Of the **129 sessions the memory pipeline
+  has ever ingested**, not one has `originator: codex_exec` — the mode all
+  three launchers use — and all 129 come from `~/Projects/nedlern-sonnet/*`
+  or temp directories, **zero from `~/agents/*`**. Ingestion has been idle
+  since 2026-08-15; the job that ran on 08-23 was
+  `memory_consolidate_global`, re-processing existing material rather than
+  taking in a cell session. Whether the flag prevents LATER ingestion of an
+  already-persisted cell session is unmeasured: the persisted file is the
+  pipeline's input, and no per-session feature-flag record appears in
+  sampled `session_meta`. `--ephemeral` is the flag that removes the input.
+
+  The case for the change rests on the reading half, which is measured. The
+  writing half is a possibility, not an observation, and saying otherwise
+  was this seat's error.
 
   **Scope:** this applies to every review cell, not only to replays. The
   flag is being added at all three call sites
