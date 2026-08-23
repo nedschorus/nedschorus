@@ -20,6 +20,13 @@ supervisor's --cd arrives as the literal ~ path (handoff-supervisor.py
 expanduser()s it live, handoff-supervisor.py:855).
 
 Run: python3 scripts/launch-claude-ubuntu-test.py
+
+The suite is self-contained (this file plus launch-claude-ubuntu beside it;
+every other participant is stubbed) and runs unmodified ON THE BOX, where
+P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing in —
+the one caveat the PR #137/#139 reviews carried (user-directed 2026-08-22):
+  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py ned:/tmp/x/
+  ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
 """
 
 import os
@@ -56,6 +63,12 @@ class LaunchHarness:
         self.captures.mkdir(parents=True)
         self.home = root / "home"
         self.home.mkdir()
+        # Both the launcher and the P1 replay run from here, so any
+        # relative-path side effect lands in the sandbox — the #139 review
+        # measured the replay writing a literal ~alice directory into the
+        # suite-runner's own cwd against the pre-fix launcher.
+        self.workdir = root / "workdir"
+        self.workdir.mkdir()
         self.stubs = root / "stubs"
         self.stubs.mkdir()
         write_stub(self.stubs, "ssh",
@@ -117,13 +130,14 @@ class LaunchHarness:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         launched = subprocess.run(
             [str(LAUNCHER), *launcher_arguments],
-            capture_output=True, text=True, check=False, env=environment)
+            capture_output=True, text=True, check=False, env=environment,
+            cwd=str(self.workdir))
         ssh_capture = self.captures / "ssh-argv.txt"
         remote = (ssh_capture.read_text(encoding="utf-8").splitlines()[-1]
                   if ssh_capture.is_file() else "")
         replayed = subprocess.run(
             ["/bin/sh", "-c", remote], capture_output=True, text=True,
-            check=False, env=self.replay_environment())
+            check=False, env=self.replay_environment(), cwd=str(self.workdir))
         pane_directory_capture = self.captures / "tmux-pane-directory.txt"
         calls_capture = self.captures / "python3-calls.txt"
         supervisor_argv = []

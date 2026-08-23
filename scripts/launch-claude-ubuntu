@@ -138,7 +138,7 @@ escape_remote_double_quote_context() {
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
 # The P1 form, spliced as \"$AGENT_DIRECTORY_REMOTE\": a leading ~ becomes
 # $HOME so the box still resolves its own home inside the quotes (bare ~
-# would stay literal there); ~user/ forms are not supported. Everything
+# would stay literal there); ~user/ forms are refused above. Everything
 # else is escaped so P1 neither expands nor splits it.
 case "$AGENTS_ROOT" in
     ("~") AGENTS_ROOT_REMOTE="\$HOME" ;;
