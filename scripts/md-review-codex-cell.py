@@ -11,7 +11,19 @@ Usage:
   scripts/md-review-codex-cell.py --cell defect-hunt --tier good --target .claude/skills/x/SKILL.md
 
 The cell's final message prints to stdout; codex progress output stays on
-stderr. Exit codes: 0 cell ran, 2 bad invocation, else codex exec's code.
+stderr.
+
+Exit codes: 0 the cell ran and its report printed; 64 this script refused
+the invocation and never launched codex (a target that is not a file, a
+missing prompt template, or a command-line error argparse caught); any other
+value is `codex exec`'s own, passed through unchanged. 64 rather than the
+conventional 2 because `codex exec` ITSELF exits 2 when it rejects a command
+line, so a 2 out of this script has to stay readable as what it is -- codex
+refusing the command this script composed, a defect here rather than a
+caller's typo. The measurements behind that, and what exit 0 does and does
+not promise, are written once in scripts/code-review-codex-cell.py's
+docstring under the heading
+EXIT CODES
 """
 
 import argparse
@@ -41,9 +53,29 @@ TIER_TO_REASONING_EFFORT = {
     "floor": "xhigh",
 }
 
+# This script's own refusals, kept off every code `codex exec` produces so a
+# passed-through code stays readable as codex's. sysexits.h's EX_USAGE; the
+# reasoning is under Exit codes above.
+EXIT_BAD_INVOCATION = 64
+
+
+class BadInvocationArgumentParser(argparse.ArgumentParser):
+    """argparse's own command-line errors join EXIT_BAD_INVOCATION.
+
+    argparse exits 2 on a missing or unknown option, and 2 is also what
+    `codex exec` returns when IT rejects a command line -- so leaving the
+    default in place would keep the two layers indistinguishable for the
+    commonest bad invocation there is, a mistyped flag. Usage text and
+    message are argparse's, unchanged; only the exit code moves.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_BAD_INVOCATION, f"{self.prog}: error: {message}\n")
+
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
+    parser = BadInvocationArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--cell", required=True, choices=["restate", "defect-hunt"])
@@ -59,12 +91,12 @@ def main() -> int:
         target = REPO_ROOT / target
     if not target.is_file():
         print(f"md-review-codex-cell: target not found: {target}", file=sys.stderr)
-        return 2
+        return EXIT_BAD_INVOCATION
 
     template_path = PROMPTS_DIR / f"{args.cell}.md"
     if not template_path.is_file():
         print(f"md-review-codex-cell: prompt template missing: {template_path}", file=sys.stderr)
-        return 2
+        return EXIT_BAD_INVOCATION
     prompt = template_path.read_text(encoding="utf-8").replace("{TARGET_PATH}", str(target))
 
     model = args.model or TIER_TO_CODEX_MODEL[args.tier]
