@@ -10,7 +10,11 @@ retyped at the start of every session from the previous session's
 transcript. That loop was never reviewed, never tested, and died with the
 session that typed it; each retyping was a fresh chance to get it wrong,
 and the commonest way to get it wrong is silent (see "Announcing
-blindness"). This is the same move as scripts/watch-agent-dialogs.py made
+blindness"). Where that account comes from, since it matters for judging
+it: the merge seat's own record of its practice, which lives in
+machine-local session transcripts a reader of main cannot open — this
+paragraph is the durable statement of it, not a summary of one.
+This is the same move as scripts/watch-agent-dialogs.py made
 for seat transcripts — one durable watcher replacing per-session
 improvisation — for a different channel.
 
@@ -127,9 +131,11 @@ rather than quietly — see "Announcing blindness".
 Why faster detection would not help. The merge seat holds every pull
 request about three minutes from its most recent push, so an automated
 reviewer that publishes no status check has time to post its findings
-(CLAUDE.local.md, "Do not merge a pull request less than about three
-minutes old", written after two merges that beat the reviewer by 62 and
-240 seconds). A 60-second poll therefore detects a pull request well
+(the merge seat's CLAUDE.local.md, "Do not merge a pull request less than
+about three minutes old", written after two merges that beat the reviewer
+by 62 and 240 seconds — that file is machine-local to one seat and is not
+in this repository, so the rule is restated here rather than only cited).
+A 60-second poll therefore detects a pull request well
 inside a window that is already being waited out on purpose; spending
 requests to detect it in 5 seconds would move nothing that happens
 afterward. The interval is an option for the cases the default is wrong
