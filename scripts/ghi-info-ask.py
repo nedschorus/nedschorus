@@ -111,9 +111,15 @@ GHI_INFO_MODEL = os.environ.get("GHI_INFO_MODEL", "claude-sonnet-5")
 # NM's three-watchdog machinery is deliberately not carried over (design:
 # "version 1 here starts with one timeout").
 ASK_TIMEOUT_SECONDS = int(os.environ.get("GHI_INFO_ASK_TIMEOUT_SECONDS", "300"))
-# The box gets the ask's own budget plus room for its refresh and the ssh
-# round trip, so this side never gives up on a run that is still inside its
-# deadline box-side.
+# The box gets the ask's own budget plus room for the ssh round trip and a
+# routine refresh. This does NOT guarantee the Mac outlasts every box-side
+# run: the ask's deadline bounds only the claude turns, while the mirror
+# refresh is bounded separately by ghi-mirror-refresh's own constants
+# (MAX_PAGES x the per-call gh timeout), which can exceed this slack when
+# GitHub stalls (PR #143 review, P3). The cost of that case is
+# misattribution, not a wrong answer: the Mac reports "the box was silent"
+# instead of the box's real refresh error, and both land the caller on the
+# ghi-write skill's fallback ladder.
 SSH_TIMEOUT_SECONDS = ASK_TIMEOUT_SECONDS + 120
 
 # Recycle-trigger constants (design § Verify at build's Constants list).
@@ -240,6 +246,11 @@ def save_state(state_path: Path, state: dict) -> None:
     temp_path.replace(state_path)
 
 
+class SeatDirectoryUnusable(Exception):
+    """The seat directory cannot be locked or written — raised so the ask
+    path reports it as one line rather than a traceback."""
+
+
 @contextlib.contextmanager
 def state_lock(lock_path: Path):
     """Yields True if the exclusive lock was acquired, False if contended.
@@ -248,8 +259,16 @@ def state_lock(lock_path: Path):
     path, step 2): this ask must not wait and must not touch the shared
     session or state file — it proceeds read-only against a throwaway.
     """
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(lock_path, "a+")
+    # An unusable seat directory must reach the caller as this module's
+    # documented one-line failure, not a traceback (PR #143 review question).
+    # The open and the mkdir are the two calls that touch the filesystem
+    # before any work starts, so they are where that promise is kept.
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path, "a+")
+    except OSError as error:
+        raise SeatDirectoryUnusable(
+            f"the seat directory at {lock_path.parent} is not usable: {error}") from error
     try:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -337,6 +356,17 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
                           "before this turn could start")
         return run_claude(prompt, resume_session_id, seat_dir, remaining)
 
+    try:
+        return _locked_ask(question, include_closed, seat_dir, repo,
+                           projects_root, state_path, lock_path, turn)
+    except SeatDirectoryUnusable as error:
+        return None, str(error)
+
+
+def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
+                state_path, lock_path, turn):
+    """Holds the lock, settles which mirror this run publishes into, and
+    cleans up a throwaway one on every exit path."""
     with state_lock(lock_path) as locked:
         state = load_state(state_path) if locked else default_state()
 
@@ -419,8 +449,12 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         if full_result is None:
             return None, f"mirror refresh (full, for cold-start) failed: {error}"
         cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
+        # The slot names the mirror DIRECTORY, not one of its files: the
+        # design's sentence is followed by a bullet list of BOTH files, so
+        # filling it with issues-open.md left issues-closed.md with no
+        # stated location (PR #143 review, P3).
         cold_start_text = COLD_START_PROMPT_TEMPLATE.format(
-            mirror_path=full_result["open_path"])
+            mirror_path=full_result["mirror_dir"])
         cold_reply, error = turn(cold_start_text, None)
         if cold_reply is None:
             return None, f"ghi-info cold-start failed: {error}"

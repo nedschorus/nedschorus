@@ -137,9 +137,19 @@ with tempfile.TemporaryDirectory() as temporary:
     fake_gh(calls, [([issue_node(1, "First, edited", labels=["draft"],
                             updated_at="2026-08-15T00:00:00Z")], None)])
     exit_code = mirror.main(["--mirror-dir", str(mirror_dir), "--repo", "x/y"])
+    # PR #143 review, P3: GitHub's search index is eventually consistent, so
+    # the cutoff is rewound a little before searching — otherwise an issue
+    # stamped BEFORE the newest returned one, but indexed after it, is
+    # stepped over and never re-fetched until a recycle.
+    check("the delta cutoff is rewound by the overlap window, not used raw",
+          mirror.overlapped_cutoff("2026-08-23T02:43:21Z") == "2026-08-23T02:41:21Z",
+          mirror.overlapped_cutoff("2026-08-23T02:43:21Z"))
+    check("an unparseable stored cutoff is used as-is rather than failing",
+          mirror.overlapped_cutoff("not-a-date") == "not-a-date",
+          mirror.overlapped_cutoff("not-a-date"))
     check("second run is a delta: searchQuery carries updated:> the prior cutoff",
           exit_code == 0
-          and any("updated:>2026-08-10T00:00:00Z" in a for a in calls[0]),
+          and any("updated:>2026-08-09T23:58:00Z" in a for a in calls[0]),
           calls)
 
     open_text = (mirror_dir / mirror.OPEN_FILE_NAME).read_text(encoding="utf-8")

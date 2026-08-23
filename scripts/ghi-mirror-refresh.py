@@ -69,7 +69,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_REPO = "nedschorus/nedschorus"
@@ -121,6 +121,16 @@ query($searchQuery: String!, $cursor: String) {
   }
 }
 """ % PAGE_SIZE
+
+# GitHub's search index is eventually consistent, so a delta can return a
+# later-stamped issue while an earlier-stamped one is still unindexed. The
+# cutoff then advances past the issue that was never returned, and a strict
+# `>` never asks for it again (PR #143 review, P3 — concrete on this corpus:
+# #142 and #138 landed 23 seconds apart). Re-asking for a small window
+# already covered costs a few redundant issues per delta and merges
+# idempotently; it does not close the hole for lag longer than the window,
+# which stays bounded by the recycle-time full rewrite, as designed.
+DELTA_CUTOFF_OVERLAP_SECONDS = 120
 
 # A gh that never ran (missing binary, timeout) reports a code gh itself
 # cannot return, so "no answer" is never read as "ran and failed with 0
@@ -202,6 +212,21 @@ def fetch_issues(repo: str, search: str = None):
                   "did not end within the reachable result ceiling")
 
 
+def overlapped_cutoff(last_refresh_at: str) -> str:
+    """The stored cutoff, rewound by DELTA_CUTOFF_OVERLAP_SECONDS.
+
+    Returned unchanged when it cannot be parsed: a delta from the recorded
+    cutoff still sees everything stamped after it, so an unreadable stamp
+    costs the overlap, not the refresh.
+    """
+    try:
+        parsed = datetime.fromisoformat(last_refresh_at.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return last_refresh_at
+    rewound = parsed - timedelta(seconds=DELTA_CUTOFF_OVERLAP_SECONDS)
+    return rewound.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def read_cache(cache_path: Path) -> dict:
     try:
         return json.loads(cache_path.read_text(encoding="utf-8"))
@@ -278,7 +303,7 @@ def refresh(mirror_dir: Path, repo: str, full: bool):
 
     search = None
     if not full and cache.get("last_refresh_at"):
-        search = f"updated:>{cache['last_refresh_at']}"
+        search = f"updated:>{overlapped_cutoff(cache['last_refresh_at'])}"
     fetched, error = fetch_issues(repo, search=search)
     if fetched is None:
         return None, error

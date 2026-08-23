@@ -16,6 +16,7 @@ import fcntl
 import importlib.util
 import io
 import json
+import os
 import shlex
 import sys
 import tempfile
@@ -335,6 +336,44 @@ with tempfile.TemporaryDirectory() as temporary:
     check("an ask with no budget left fails cleanly and starts no turn",
           answer is None and "budget was already spent" in error and not spent_calls,
           (answer, error, spent_calls))
+
+
+# --- an unusable seat directory is one line, not a traceback ---------------
+# PR #143 review question: the module docstring promises "one line to stderr
+# and exits 1" on any failure, and an unwritable seat raised a traceback.
+with tempfile.TemporaryDirectory() as temporary:
+    readonly_seat = Path(temporary) / "readonly-seat"
+    readonly_seat.mkdir()
+    os.chmod(readonly_seat, 0o500)
+    try:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            exit_code = ghi_ask.main(["q", "--seat-dir", str(readonly_seat)])
+        check("an unwritable seat directory exits 1 with one line, no traceback",
+              exit_code == 1 and "Traceback" not in err.getvalue()
+              and "not usable" in err.getvalue(),
+              err.getvalue())
+    finally:
+        os.chmod(readonly_seat, 0o700)
+
+
+# --- the cold-start prompt names the mirror DIRECTORY ----------------------
+# PR #143 review, P3: the slot was filled with issues-open.md, which left
+# issues-closed.md — named in the very next bullet — with no stated location.
+with tempfile.TemporaryDirectory() as temporary:
+    seat_cs = Path(temporary) / "seat-coldstart"
+    seat_cs.mkdir()
+    fake_refresh_queue([([1], {"1": issue(1)}, None)])
+    cs_calls = fake_claude_queue([
+        ({"session_id": "sess-CS", "result": "(ack)"}, None),
+        ({"session_id": "sess-CS", "result": "read #1"}, None),
+    ])
+    ghi_ask.ask("q", False, seat_cs, "x/y")
+    cold_prompt = cs_calls[0][0]
+    check("the cold-start prompt names the mirror directory, not one of its files",
+          "issues-open.md:" not in cold_prompt
+          and str(seat_cs / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR) in cold_prompt,
+          cold_prompt[:400])
 
 
 # --- build_remote_command --------------------------------------------------
