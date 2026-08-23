@@ -101,9 +101,93 @@ No step waits on a person. If Time Machine needs a snapshot mounted, the report 
 
 Finer-grained parallelism is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree rather than a search. It would matter for a bare filename with no known directory, where every tree needs a `find`. **Version 1 does not run that fan-out**; a fragment search is answered from git, Timeshift and transcripts, and the Time Machine branch reports UNAVAILABLE with the reason.
 
+## The hook, specified
+
+Settled here so the build has no interface left to invent. The one thing deliberately left open is named at the end.
+
+### Where it lives and how it is wired
+
+`.claude/hooks/missing-file-recovery-injector.py`, registered in `.claude/settings.json` beside the existing guards — which makes adding it a guarded change needing the user's walked approval, like every other `.claude/` edit:
+
+```json
+"PostToolUseFailure": [
+  {
+    "matcher": "Read|Edit|Bash",
+    "hooks": [
+      { "type": "command",
+        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/missing-file-recovery-injector.py" }
+    ]
+  }
+]
+```
+
+`Edit` is included because an edit against a deleted path fails the same way and is the same loss. Other tools are excluded: their failures are not missing files.
+
+### What it reads
+
+From the payload, measured 2026-08-23: `tool_name`, `error`, `cwd`, `session_id`, and `tool_input` — `file_path` for `Read` and `Edit`, `command` for `Bash`. `session_id` is what excludes the running session's own transcript from the transcript surface.
+
+### What it returns
+
+One JSON object on stdout, exit 0:
+
+```json
+{"hookSpecificOutput": {"hookEventName": "PostToolUseFailure",
+                        "additionalContext": "<the note>"}}
+```
+
+**Silence is the default.** When no surface has the file, the hook prints nothing and exits 0. A hook that speaks on every failure becomes noise, and noise is what agents learn to skip.
+
+**The note carries provenance, never content.** Measured 2026-08-23: a note saying *"deleted in `ab541cc`, recover with `git show 65b382a01:<path>`"* was acted on — the agent ran the command itself and recovered the file. A note pointing at a copy the hook had already placed in a scratch directory was refused as a prompt injection, correctly, because an unexplained file appearing on disk is indistinguishable from an attack. So the note names a source the agent can verify and the command that reads it. **The hook never copies a file anywhere.**
+
+Its shape, one line per surface that found it:
+
+```
+missing-file recovery: <path> was deleted <date> in <commit>.
+  git        git show <sha>:<path>
+  timeshift  scp nedlern@ned-box:<snapshot path> .
+  local      <path inside a mounted local snapshot>
+  sha256: git, timeshift and local agree
+```
+
+### Fail-open, structurally
+
+Any error inside the hook — an unparseable payload, a crashed subprocess, a missing script — exits 0 with no stdout and one line in its own log. **A hook that can block a tool call is a hook that can wedge the fleet**, and this one has no reason to block anything. A deliberately-crashing build of it must demonstrably let the tool call through; that is a test, not an aspiration.
+
+### How it calls the search
+
+`scripts/find-deleted-path-across-backups.py` prints prose for a human. The hook needs machine-readable results, so the script gains a **`--json` mode** emitting one object per surface with its outcome, path, timestamp, sha256 and recovery command. The prose renderer becomes a formatter over that same structure, so the two cannot drift apart.
+
+### Extracting the path from a Bash failure
+
+`Read` and `Edit` hand the path over directly. `Bash` does not: it sits inside the error text, positioned differently by each program. These patterns, applied in order to each line of `error`, cover every shape the 486-transcript census produced:
+
+| pattern | the shape it catches |
+|---|---|
+| `cannot access '(.+?)'` | `ls: cannot access '/x/y': No such file or directory` |
+| `can't open file '(.+?)'` | `python3: can't open file '/x/y': [Errno 2] ...` |
+| `No such file or directory: '(.+?)'` | `FileNotFoundError: [Errno 2] No such file or directory: '/x/y'` |
+| `pathspec '(.+?)' did not match` | `fatal: pathspec 'docs/x' did not match any files` |
+| `^\S+: (.+?): open: No such file` | `wc: /x/y: open: No such file or directory` |
+| `cd: ?(.+?): No such file or directory` | `bash: line 1: cd: /x/y: ...` and `(eval):cd:1: no such file or directory: /x/y` |
+| `^\S+: (.+?): No such file or directory` | `cat: /x/y: No such file or directory` — the general last resort |
+
+The rules around them:
+
+- **First match wins**, in the order above, so the specific patterns run before the general one and `ls: cannot access '/x'` is not mis-read by the last row.
+- **No match means silence.** The hook exits 0 without searching rather than guessing.
+- **A missing program is not a missing file.** `env: python3: No such file or directory` matches the last row and yields `python3`; a candidate containing no `/` that names no existing directory entry is discarded.
+- **Only the first candidate is searched**, and the note names which path it searched, so a reader can see what was and was not looked for.
+
+These patterns are a build artifact with a test rather than prose to be re-derived: the 66 census lines are the corpus, and the test asserts the extracted path for each.
+
+### Deliberately left to the build
+
+The **thresholds inside the transcript classifier** — how large a neighbouring block of text must be to count as "content likely present". No measurement exists to set them, they are cheap to tune against the corpus once the classifier runs, and a number invented here would be an unmeasured claim of exactly the kind this document has already had to remove.
+
 ## What it hands back
 
-**One copy, plus an agreement line.** Every copy found is checksummed with SHA-256 — the full digest is compared, an abbreviation is displayed — and the surfaces are compared:
+**Locations and an agreement line — not a copy.** Every copy found is checksummed with SHA-256 where it lies — the full digest is compared, an abbreviation is displayed — and the surfaces are compared:
 
 ```
 git          2026-08-12  109 lines  sha256 3f2a91…
@@ -191,7 +275,8 @@ Two further corpora:
 
 These are **not** established by the measurements below; they are what the build must show.
 
-- `PostToolUseFailure` fires and injects its text **in a real session**, not only in the probe harness.
+- The Bash path-extraction patterns extract the right path for all 66 census lines.
+- A deliberately-crashing build of the hook lets the failed tool call through unchanged.
 - The signature test exits before any git or ssh call on a non-matching failure — checkable directly, without a latency threshold to argue about.
 - The trigger and search corpora run as one suite that reports false positives and false negatives **separately**.
 - A surface that cannot be searched renders as UNAVAILABLE, never NOT FOUND, for every input form the tool accepts: repository-relative, absolute, and fragment.
@@ -221,4 +306,7 @@ All measured 2026-08-23 on this Mac and ned-box; re-measure after a macOS or Cla
 | Time Machine backup interval | hourly (`AutoBackupInterval = 3600`), `AutoBackup = 1` | `defaults read /Library/Preferences/com.apple.TimeMachine.plist`, readable unprivileged |
 | fleet paths excluded from backup | none — `~/Projects`, `~/agents`, `~/.claude`, `~/Documents` all `[Included]` | `tmutil isexcluded` |
 | macOS version these hold for | 26.5 | `sw_vers` |
+| a hook's `additionalContext` reaches the model on `PostToolUseFailure` | yes — quoted back verbatim, delivered next to the tool result | probe hook returning `hookSpecificOutput.additionalContext`, `claude -p` asked to quote what it saw |
+| a provenance-shaped note is acted on | yes — the agent ran `git show <sha>:<path>` itself and recovered the file | same probe, real repository |
+| a note pointing at a pre-fetched copy is refused | yes — the agent called it a prompt injection | same probe, scratch-directory copy |
 | paths git has ever deleted | 294 distinct | `git log --all --full-history --diff-filter=D --name-only --format=` piped through `sort -u` |
