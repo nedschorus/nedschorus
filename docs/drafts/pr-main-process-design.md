@@ -944,6 +944,30 @@ agent issues; a reproduced finding is categorically different.
   Commissioned to the mac-ubuntu-bridge seat, which owns the GHI tooling
   (issue #46).
 
+### Fix-now takes precedence over filing, when the fix is small (user-ruled 2026-08-23, later the same day)
+
+Ruled while walking the parked cleanup queue, on a finding that met the
+agent-filing gate exactly (reproduced, wrong-behavior-in-operation). The
+user declined the issue and commissioned the fix instead, in his words:
+
+> "I prefer making small fixes now instead of creating ghis, remembering to
+> look at the ghis, hoping the context wasn't lost, ..."
+
+The reason is a read-path failure, not a dislike of issues: an issue defers
+the work to a moment when someone must remember to look, and by then the
+context that made the finding actionable may be gone. A small fix made now
+carries its own context and needs no retrieval.
+
+So the order of preference for a reproduced finding that reaches
+wrong-behavior-in-operation is: **fix it now** if the fix is small; file the
+agent-filed issue when it is not. Filing remains right for work too large to
+do on the spot, and the eligibility gate above still governs what may be
+filed WITHOUT sign-off when filing is the answer.
+
+OPEN, and the user's to settle: where "small" ends. No boundary was stated,
+and the two routes are not equivalent in cost — a fix consumes a review
+cycle and a merge, an issue consumes a queue slot and a future reader.
+
 ## 6.2 Queue notes
 
 `docs/issues/queue/` is the ask-the-user path. It takes unrelated accidental
