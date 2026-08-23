@@ -325,10 +325,12 @@ def run_codex(prompt: str) -> tuple:
         "codex", "exec",
         "--sandbox", "workspace-write",
         # Codex's machine-wide memory store off for this cell: an audit cell
-        # must be naive, and automated cells must not deposit findings in the
-        # user's personal store. Full reasoning and the verification, once,
-        # in scripts/code-review-codex-cell.py's docstring under WHY THE
-        # CODEX MEMORY STORE IS OFF FOR REVIEW CELLS.
+        # must be naive, not carrying forward what Codex concluded reviewing
+        # this project before, and these automated runs should not deposit
+        # findings in the user's personal store. The full reasoning, the
+        # verification, and what the flag leaves open are written once in
+        # scripts/code-review-codex-cell.py's docstring, under the heading
+        # WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS
         "--disable", "memories",
         "-c", "sandbox_workspace_write.network_access=true",
         "-C", str(REPO_ROOT),

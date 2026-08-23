@@ -73,10 +73,12 @@ def main() -> int:
         "codex", "exec",
         "--sandbox", "read-only",
         # Codex's machine-wide memory store off for this cell: a review cell
-        # must be naive, and automated cells must not deposit findings in the
-        # user's personal store. Full reasoning and the verification, once,
-        # in scripts/code-review-codex-cell.py's docstring under WHY THE
-        # CODEX MEMORY STORE IS OFF FOR REVIEW CELLS.
+        # must be naive, not carrying forward what Codex concluded reviewing
+        # this project before, and these automated runs should not deposit
+        # findings in the user's personal store. The full reasoning, the
+        # verification, and what the flag leaves open are written once in
+        # scripts/code-review-codex-cell.py's docstring, under the heading
+        # WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS
         "--disable", "memories",
         "-C", str(REPO_ROOT),
         "--output-last-message", str(last_message_path),

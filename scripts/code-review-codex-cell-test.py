@@ -32,10 +32,11 @@ Three things are pinned here.
     reviewing this project before, and on 2026-08-23 it demonstrably was
     carrying it: the `## Memory` developer message was recovered from this
     cell's own review run on pull request #102. The full account is in the
-    cell's docstring under WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW
-    CELLS. Drop `--disable memories` from the command list and nothing else
-    in this file notices, while every review from then on runs contaminated
-    -- which is why the flag is pinned here and not left to the docstring.
+    cell's docstring, under the heading
+    WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS
+    Drop `--disable memories` from the command list and nothing else in this
+    file notices, while every review from then on runs contaminated -- which
+    is why the flag is pinned here and not left to the docstring.
 
 Run: python3 scripts/code-review-codex-cell-test.py
 """
