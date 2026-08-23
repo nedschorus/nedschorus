@@ -155,6 +155,53 @@ with tempfile.TemporaryDirectory() as workspace:
     kept = [turn["text"] for turn in turns]
     check("keeps both voices, drops all noise", kept == ["kept prompt", "kept answer"], str(kept))
 
+    # --- Messages typed while the agent was mid-turn -----------------------
+    # These are NOT user records. The harness queues them and persists an
+    # attachment of type queued_command, which the type filter dropped — so
+    # every message the user typed during a running turn was invisible to the
+    # handoff. Shapes below are copied from the field (2026-08-23 census of 530
+    # transcripts: 294 human-origin records, 283 appearing nowhere else in
+    # their own transcript), not from the design.
+    def queued(prompt, kind="human"):
+        origin = {"kind": kind} if kind is not None else None
+        return {"type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": prompt, "origin": origin}}
+
+    mid_turn = [
+        user_record("first prompt"),
+        assistant_record("working on it"),
+        queued("the post tool hook is the magic"),
+        assistant_record("answer after the interruption"),
+    ]
+    path = write_transcript(workspace, "mid-turn.jsonl", mid_turn)
+    turns, _ = extractor.read_dialog_turns(path)
+    kept = [(turn["voice"], turn["text"]) for turn in turns]
+    check(
+        "a message typed mid-turn is carried, in the position it was delivered",
+        kept == [("user", "first prompt"), ("assistant", "working on it"),
+                 ("user", "the post tool hook is the magic"),
+                 ("assistant", "answer after the interruption")],
+        str(kept),
+    )
+
+    other_origins = [
+        user_record("real prompt"),
+        queued("<cross-session-message from-name=\"merge-lane\">merge #143</cross-session-message>", kind="peer"),
+        queued("<task-notification><task-id>b1</task-id></task-notification>", kind=None),
+        queued("", kind="human"),
+        {"type": "attachment", "attachment": {"type": "total_tokens_reminder", "text": "<total_tokens>1</total_tokens>"}},
+        assistant_record("real answer"),
+    ]
+    path = write_transcript(workspace, "other-origins.jsonl", other_origins)
+    turns, _ = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    check(
+        "another agent's message, a task notification, an empty one and a "
+        "non-command attachment all stay out",
+        kept == ["real prompt", "real answer"],
+        str(kept),
+    )
+
     # --- Harness-injected pseudo-prompts and their acknowledgements --------
     # Fixture shapes are copied from the field, not the design: a delivered
     # monitor notification persists as a PLAIN user record — no isMeta, string

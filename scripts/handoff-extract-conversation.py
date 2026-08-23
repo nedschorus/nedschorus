@@ -240,8 +240,42 @@ def dialog_turn_from_record(record):
         return None  # harness-injected, not typed by the user
 
     record_type = record.get("type")
+
+    # A message the user types WHILE the agent is mid-turn is not stored as a
+    # user record at all. The harness queues it and persists an `attachment`
+    # record of type queued_command, so the type check below dropped it and
+    # every such message was invisible to the handoff — the successor read a
+    # dialog its predecessor's own transcript said nothing about.
+    #
+    # Observed 2026-08-23: a ruling the user typed at 19:37:20, one second
+    # before his session was recycled, reached neither the retiring agent nor
+    # its successor and had to be dug out of the JSONL by hand. A census of 530
+    # transcripts found 294 human-origin records of this shape, 283 of which
+    # appear nowhere else in their transcript.
+    #
+    # Only human origin is carried. The same shape also holds cross-session
+    # messages from other agents (origin.kind "peer") and task-notifications
+    # (no origin) — the injected traffic INJECTED_TEXT_PREFIXES already keeps
+    # out of the dialog.
+    #
+    # NOT de-duplicated against later user records. In the 7 transcripts where
+    # an identical plain user record follows one of these, the two are minutes
+    # and hundreds of records apart (checked: a "yes" at 00:46 and another at
+    # 01:05, 243 records later) — two separate short answers, not one message
+    # written twice. Dropping the second would lose a real reply.
+    if record_type == "attachment":
+        attachment = record.get("attachment")
+        if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+            return None
+        origin = attachment.get("origin")
+        if not isinstance(origin, dict) or origin.get("kind") != "human":
+            return None
+        prompt = attachment.get("prompt")
+        text = prompt.strip() if isinstance(prompt, str) else ""
+        return {"voice": "user", "text": text} if text else None
+
     if record_type not in ("user", "assistant"):
-        return None  # system, attachment, queue-operation, harness state
+        return None  # system, queue-operation, other harness state
 
     content = (record.get("message") or {}).get("content")
     if record_type == "user" and isinstance(content, str):
