@@ -75,13 +75,16 @@ An earlier proposal added a third filter reading the *command's intent* — skip
 
 ## What the hook does when it fires
 
-**git first, alone.** It costs 95 ms, and its answer bounds which Time Machine snapshot is worth mounting. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
+When both filters pass, the search runs in this order:
 
-**Then Timeshift, transcripts and Time Machine in parallel.** They are independent, so they overlap rather than sum.
+1. **git, alone.** Its answer bounds which Time Machine snapshot is worth mounting. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
+2. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
 
-Parallelism beyond this is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree, not a search. It would matter for a bare filename with unknown location, where each tree needs a `find` — measured at about 11 s limited to four directory levels. **Version 1 does not run that fan-out**; a fragment search is answered from git, Timeshift and transcripts, and the Time Machine branch reports UNAVAILABLE with the reason.
+The failed tool call stays open while this runs. A surface that does not answer within its command timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open.
 
-**The hook never blocks.** It fires inside a failed tool call with an agent stopped behind it, and the operator is usually working in another window. So when Time Machine would need a snapshot mounted, the hook reports what the cheap surfaces found and prints the mount command rather than waiting. The willingness to wait — up to 100 seconds — belongs in the **script**, when a person runs it deliberately. Summoning the operator with a password window is an explicit flag, never the default: a password prompt appearing unbidden during someone else's work is charming once and infuriating by Thursday.
+No step waits on a person. If Time Machine needs a snapshot mounted, the report says so and gives the command rather than prompting. The willingness to wait belongs to the script, when someone runs it deliberately, and summoning the operator with a password window is an explicit flag rather than the default.
+
+Finer-grained parallelism is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree rather than a search. It would matter for a bare filename with no known directory, where every tree needs a `find`. **Version 1 does not run that fan-out**; a fragment search is answered from git, Timeshift and transcripts, and the Time Machine branch reports UNAVAILABLE with the reason.
 
 ## What it hands back
 
@@ -161,7 +164,7 @@ Two further corpora:
 These are **not** established by the measurements below; they are what the build must show.
 
 - `PostToolUseFailure` fires and injects its text **in a real session**, not only in the probe harness.
-- The signature test exits before any git or ssh call on a non-matching failure, and the hook's added wall-clock on such a failure stays **under 50 ms**.
+- The signature test exits before any git or ssh call on a non-matching failure — checkable directly, without a latency threshold to argue about.
 - The trigger and search corpora run as one suite that reports false positives and false negatives **separately**.
 - A surface that cannot be searched renders as UNAVAILABLE, never NOT FOUND, for every input form the tool accepts: repository-relative, absolute, and fragment.
 - Nothing writes to backup state. The state changes are: `diskutil mount` of the backup volume (an ordinary mount of a disk the user attached), a read-only snapshot mount, and its unmount.
