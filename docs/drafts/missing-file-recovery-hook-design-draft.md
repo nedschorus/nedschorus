@@ -91,7 +91,7 @@ An earlier proposal added a third filter reading the *command's intent* — skip
 
 When both filters pass, the search runs in this order:
 
-1. **Local snapshots, then git** — the two that need no network and no privilege. Local snapshots answer the "deleted it minutes ago" case outright.
+1. **Local snapshots.** No network, no privilege, and they answer the "deleted it minutes ago" case outright.
 2. **git.** Its answer bounds which Time Machine snapshot is worth mounting. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
 3. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
 
