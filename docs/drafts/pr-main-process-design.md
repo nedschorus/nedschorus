@@ -889,9 +889,62 @@ owed):
 - `codex exec` workspace-write on macOS does **not** block child outbound
   network — a replay can read answers straight past a scrubbed clone; the
   working mitigation is the dead-proxy `shell_environment_policy`.
-- Codex's first act is grepping its own `~/.codex/memories/MEMORY.md`,
-  outside any clone scrub — point it at an empty `CODEX_HOME` or equivalent
-  for experiment runs.
+  **Scope, ruled by the user 2026-08-23:** this is a REPLAY-ONLY concern and
+  must not be generalized into ordinary review cells. A replay re-runs a task
+  whose solution and review findings are published on the pull request, so an
+  unblocked network lets the agent fetch the answer and the experiment
+  measures nothing. An ordinary review cell is reading new code, has no
+  answer to fetch, and was ruled able to check facts online (2026-08-18) —
+  blocking its network would remove a capability the user granted, to defend
+  against nothing. So the dead proxy becomes a documented, version-pinned
+  recipe inside this experiment procedure rather than a launcher every cell
+  runs through. **Version pins at ruling time:** codex-cli 0.147.0, macOS
+  26.5 build 25F71, gh 2.97.0.
+- **Codex memory contamination — RULED 2026-08-23, and the remedy is not
+  what this bullet used to say.** Codex reads its own store under
+  `~/.codex/` before doing anything else, and every Codex process on a
+  machine shares it. This bullet previously said to point it at an empty
+  `CODEX_HOME`. That is heavier than needed and rests on two claims that are
+  wrong: a different `CODEX_HOME` loses far more than memories and the
+  global `AGENTS.md` (sessions, history, logs, skills, plugins, hooks,
+  rules, trust state), and `auth.json` is NOT universally required, because
+  keychain and API-key paths exist and may not be namespaced by
+  `CODEX_HOME` at all. Both corrections came from asking Codex directly, at
+  the user's instruction.
+
+  **The supported remedy is a per-invocation flag:** `--disable memories`
+  (equivalently `-c features.memories=false`). It suppresses reading
+  existing memories AND the generation pipeline for that process, changes
+  nothing on disk, and leaves the user's own interactive Codex untouched.
+  Verified on this Mac before commissioning: `codex features list` reports
+  `memories … true`; `codex --disable memories features list` reports
+  `false`. For a run that should also leave no saved session to be mined
+  later, `--ephemeral` is the documented addition.
+
+  **The contamination is bidirectional**, which the old bullet missed. The
+  shared store holds a task group named "NedsChorus NC toolchain /
+  constrained adversarial review", with "Reusable knowledge" and "Failures
+  and how to do differently" sections — Codex's own conclusions from
+  previously reviewing this project. And 31 session files landed in
+  `~/.codex/` in the three days to 2026-08-23 with the memory database
+  updated the next day, so this project's automated cells have been feeding
+  the user's personal memory as well as reading it.
+
+  **Scope:** this applies to every review cell, not only to replays. The
+  flag is being added at all three call sites
+  (`sanity-check-attacks.py`, `code-review-codex-cell.py`,
+  `md-review-codex-cell.py`) on branch `codex-cells-disable-memories`.
+
+  **Purging the existing store is separate and is the user's**, deliberately
+  not done by any seat. Codex's own guidance, worth keeping because it
+  contradicts the obvious approach: the supported purge is the interactive
+  `/memories → Reset all memories`; `codex debug clear-memories` exists but
+  its own help labels it *Internal*; the SQLite database is the
+  authoritative layer and repopulates from saved sessions, so deleting
+  either side alone is not a reliable purge; and `~/.codex/memories/`
+  contains much more than its markdown files — a `.git`, scripts, temporary
+  artifacts, rollout summaries — with the reset's deletion whitelist
+  undocumented. Back it up first.
 - **Dead-proxy scope caveat** (user-raised 2026-08-23): the codex arms were
   instructed never to touch GitHub and obeyed — post-run command audits
   clean, all runs. The dead proxy guards **validity, not obedience**: a
