@@ -51,3 +51,13 @@ md-review-records/
 # md-review-records: machine-local working material, deleted when the work it
 # served lands; git history is the archive
 sanity-check-records/
+
+# ghi-info's local GHI mirror (nedschorus#46, docs/issues/46-ghi-info-agent-design.md
+# § The GHI mirror): derived from GitHub by scripts/ghi-mirror-refresh.py,
+# regenerable on any machine — a committed mirror would pollute the history the
+# user reads with pure derived churn (the design's own "Deliberately not in
+# version 1" table). Includes the ask wrapper's session state
+# (.ghi-info-state.json) alongside it.
+ghi-mirror/
+.ghi-info-state.json
+.ghi-info-state.lock
