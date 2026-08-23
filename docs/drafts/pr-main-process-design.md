@@ -390,6 +390,43 @@ Commissioning texts are implicated in producing these, since they ask for
 evidence and a count is the easiest thing that resembles evidence. That belongs
 to walk item 15's pass over the commission templates.
 
+### When a tag is wrong, and when readers disagree (user-ruled 2026-08-23)
+
+Four failure modes were walked. Two already have a mechanical answer and are
+recorded in §7.2 and §7.3: a **malformed** tag line is refused by the
+write-time hook, and a **missing** one is caught by the pre-merge gate, which
+the hook cannot do because a comment with no tag line is indistinguishable
+from an ordinary comment. The other two need judgement and are ruled here.
+
+**A tag that is well-formed and wrong.** No validator can catch this by
+construction — `consequence: polish` on a finding that actually loses data
+parses perfectly. What makes it worse than an ordinary mis-set field is that
+**tags are routing decisions, so a wrong tag has already misrouted by the time
+anyone notices**. A finding tagged `polish` is merged over; correcting the tag
+afterwards does not unmerge it.
+
+RULED: **the merge seat checks the tags rather than accepting them.** It is
+the last reader before the routing takes effect, so it is the only point at
+which a wrong tag is still recoverable, and it is the same posture the seat
+already takes toward every other claim in a pull request.
+
+**Disagreement between readers.** One case was already ruled and stands: a
+finding the fixer cannot reproduce goes back to the reviewer as a question,
+not a fix. RULED for the unresolved case — reviewer versus merge seat: **the
+merge seat decides, because it owns the merge, and the disagreement is
+recorded on the pull request rather than silently overridden.** Both shapes
+occurred on 2026-08-23 and are on the record: a fixer declining to fix and
+giving three reasons the merge seat agreed with, and a finding raised against
+text the merge seat itself had written and committed, which it accepted and
+recorded.
+
+**Provenance worth keeping for the second pass:** the user approved both of
+these while saying plainly that he had no strong view of them — "nasty
+problems, I have no great insight so approved." They are therefore the two
+rulings in this cluster most worth re-examining when better specimens exist,
+and they should not be cited as settled doctrine with the same weight as
+rulings he argued for.
+
 **Why four and not more:** each is answerable in seconds by a reviewer who
 just proved the finding; none requires estimating someone else's work.
 Remedy size sits with the fixer — effort estimation by reviewers appears in
