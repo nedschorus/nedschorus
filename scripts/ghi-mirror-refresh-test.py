@@ -2,11 +2,12 @@
 """Tests for ghi-mirror-refresh.py (nedschorus#46).
 
 `gh` is never invoked for real: every case monkeypatches run_gh with a fake
-that returns canned CompletedProcess objects and records the arguments it
-was called with, so delta mode's --search cutoff is checked directly rather
-than inferred from behavior. Every case runs against a throwaway mirror
-directory under a TemporaryDirectory, so nothing here touches a real
-checkout or a real GHI corpus.
+that returns canned CompletedProcess objects (GraphQL-search-shaped, one
+page per canned response unless a case builds a multi-page one on purpose)
+and records the arguments it was called with, so delta mode's searchQuery
+cutoff is checked directly rather than inferred from behavior. Every case
+runs against a throwaway mirror directory under a TemporaryDirectory, so
+nothing here touches a real checkout or a real GHI corpus.
 
 Run: python3 scripts/ghi-mirror-refresh-test.py
 """
@@ -39,28 +40,48 @@ def patch(monkey_target, value):
     setattr(mirror, monkey_target, value)
 
 
-def issue(number, title="Untitled", state="OPEN", updated_at="2026-08-01T00:00:00Z",
-          labels=None, body="body text", comments=None, state_reason=None,
-          closed_at=None):
+def issue_node(number, title="Untitled", state="OPEN", updated_at="2026-08-01T00:00:00Z",
+               labels=None, body="body text", comments=None, state_reason=None,
+               closed_at=None):
+    """A GraphQL search-result node, the shape _issue_from_node consumes.
+    `comments`, when given, is a list of already-node-shaped comment dicts
+    — {"author": {"login": ...}, "createdAt": ..., "body": ...} — matching
+    a real GraphQL response, not a flattened convenience shape."""
     return {
         "number": number, "title": title, "state": state,
         "updatedAt": updated_at, "createdAt": updated_at,
-        "labels": [{"name": name} for name in (labels or [])],
-        "body": body, "comments": comments or [],
+        "labels": {"nodes": [{"name": name} for name in (labels or [])]},
+        "body": body,
+        "comments": {"nodes": comments or []},
         "stateReason": state_reason, "closedAt": closed_at,
         "author": {"login": "someone"},
     }
 
 
+def graphql_page(nodes, has_next_page=False, end_cursor=None):
+    return json.dumps({"data": {"search": {
+        "nodes": nodes,
+        "pageInfo": {"hasNextPage": has_next_page, "endCursor": end_cursor},
+    }}})
+
+
 def fake_gh(calls_log, responses):
-    """responses: list of (issues_or_None, error_or_None) popped in call order."""
+    """responses: list of (nodes_or_None, error_or_None) popped in call
+    order — one gh api graphql page per response, each with hasNextPage
+    false (single-page cases; see the dedicated pagination case for a
+    multi-page fetch)."""
     def fake_run_gh(arguments, timeout=120):
         calls_log.append(arguments)
-        issues, error = responses.pop(0)
-        if issues is None:
+        nodes, error = responses.pop(0)
+        if nodes is None:
             return subprocess.CompletedProcess(arguments, 1, "", error or "gh failed")
-        return subprocess.CompletedProcess(arguments, 0, json.dumps(issues), "")
+        return subprocess.CompletedProcess(arguments, 0, graphql_page(nodes), "")
     patch("run_gh", fake_run_gh)
+
+
+def issue(*args, **kwargs):
+    """Back-compat alias used by the rest of this file's call sites."""
+    return issue_node(*args, **kwargs)
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -74,8 +95,8 @@ with tempfile.TemporaryDirectory() as temporary:
                             closed_at="2026-08-10T00:00:00Z", updated_at="2026-08-10T00:00:00Z")],
                     None)])
     exit_code = mirror.main(["--mirror-dir", str(mirror_dir), "--repo", "x/y"])
-    check("first run (no cache) forces a full fetch with no --search",
-          exit_code == 0 and "--search" not in calls[0], calls)
+    check("first run (no cache) forces a full fetch: no updated:> clause",
+          exit_code == 0 and not any("updated:>" in a for a in calls[0]), calls)
 
     open_text = (mirror_dir / mirror.OPEN_FILE_NAME).read_text(encoding="utf-8")
     closed_text = (mirror_dir / mirror.CLOSED_FILE_NAME).read_text(encoding="utf-8")
@@ -99,10 +120,9 @@ with tempfile.TemporaryDirectory() as temporary:
     fake_gh(calls, [([issue(1, "First, edited", labels=["draft"],
                             updated_at="2026-08-15T00:00:00Z")], None)])
     exit_code = mirror.main(["--mirror-dir", str(mirror_dir), "--repo", "x/y"])
-    check("second run is a delta: --search updated:> the prior cutoff",
+    check("second run is a delta: searchQuery carries updated:> the prior cutoff",
           exit_code == 0
-          and any(a == "--search" for a in calls[0])
-          and "updated:>2026-08-10T00:00:00Z" in calls[0],
+          and any("updated:>2026-08-10T00:00:00Z" in a for a in calls[0]),
           calls)
 
     open_text = (mirror_dir / mirror.OPEN_FILE_NAME).read_text(encoding="utf-8")
@@ -135,8 +155,8 @@ with tempfile.TemporaryDirectory() as temporary:
                             closed_at="2026-08-20T00:00:00Z",
                             updated_at="2026-08-20T00:00:00Z")], None)])
     mirror.main(["--mirror-dir", str(mirror_dir2), "--repo", "x/y", "--full"])
-    check("--full omits --search even when a cache exists",
-          "--search" not in calls[0], calls)
+    check("--full omits the updated:> clause even when a cache exists",
+          not any("updated:>" in a for a in calls[0]), calls)
 
     # --- full mode purges issues the fetch no longer returns ---------------
     mirror_dir3 = root / "m3"
@@ -180,6 +200,46 @@ with tempfile.TemporaryDirectory() as temporary:
     check("unparseable gh output exits 1 and writes nothing",
           exit_code == 1 and not (mirror_dir6 / mirror.OPEN_FILE_NAME).exists(),
           exit_code)
+
+    # --- a GraphQL "errors" payload (200 OK, but no data) is a clean failure
+    mirror_dir6b = root / "m6b"
+    def fake_run_gh_graphql_error(arguments, timeout=120):
+        return subprocess.CompletedProcess(
+            arguments, 0, json.dumps({"errors": [{"message": "rate limited"}]}), "")
+    patch("run_gh", fake_run_gh_graphql_error)
+    exit_code = mirror.main(["--mirror-dir", str(mirror_dir6b), "--repo", "x/y"])
+    check("a GraphQL errors payload exits 1 and writes nothing",
+          exit_code == 1 and not (mirror_dir6b / mirror.OPEN_FILE_NAME).exists(),
+          exit_code)
+
+    # --- pagination: hasNextPage true is followed, results merged ----------
+    mirror_dir6c = root / "m6c"
+    page_calls = []
+    pages = [
+        graphql_page([issue_node(1, "One")], has_next_page=True, end_cursor="cursor-1"),
+        graphql_page([issue_node(2, "Two")], has_next_page=False),
+    ]
+    def fake_run_gh_paginated(arguments, timeout=120):
+        page_calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, pages.pop(0), "")
+    patch("run_gh", fake_run_gh_paginated)
+    exit_code = mirror.main(["--mirror-dir", str(mirror_dir6c), "--repo", "x/y"])
+    open_text6c = (mirror_dir6c / mirror.OPEN_FILE_NAME).read_text(encoding="utf-8")
+    check("pagination follows hasNextPage and merges both pages",
+          exit_code == 0 and "#1 — One" in open_text6c and "#2 — Two" in open_text6c,
+          open_text6c)
+    check("the second page's request carries the first page's cursor",
+          any("cursor=cursor-1" in a for a in page_calls[1]), page_calls)
+
+    # --- a pagination loop that never ends is a clean failure, not a hang --
+    mirror_dir6d = root / "m6d"
+    def fake_run_gh_never_ends(arguments, timeout=120):
+        return subprocess.CompletedProcess(
+            arguments, 0, graphql_page([], has_next_page=True, end_cursor="x"), "")
+    patch("run_gh", fake_run_gh_never_ends)
+    exit_code = mirror.main(["--mirror-dir", str(mirror_dir6d), "--repo", "x/y"])
+    check("a pagination loop that never ends gives up rather than hanging",
+          exit_code == 1, exit_code)
 
     # --- stdout carries exactly one JSON line on success -------------------
     mirror_dir7 = root / "m7"

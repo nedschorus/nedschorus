@@ -12,10 +12,10 @@ cache (`.mirror-cache.json`) that makes delta refreshes possible without
 re-parsing the rendered Markdown back into data.
 
 Two modes:
-  --full   Rebuild the cache from a full `--state all` fetch, discarding
-           anything not returned (a GitHub-side deletion or state gh no
-           longer reports is purged here — the mirror should never claim an
-           issue GitHub itself has stopped returning).
+  --full   Rebuild the cache from a fetch of every issue, open or closed,
+           discarding anything not returned (a GitHub-side deletion is
+           purged here — the mirror should never claim an issue GitHub
+           itself has stopped returning).
   (delta)  The default. One `updated:>` search against the cache's newest
            seen timestamp re-fetches only changed issues, open or closed,
            and merges them in. Cheap and the routine path — run before
@@ -24,20 +24,28 @@ Two modes:
            full fetch" rule; deciding WHEN to recycle is ghi-info-ask.py's
            job, not this script's.
 
-Verified 2026-08-23 against the live repo and a throwaway probe repo
-(nedschorus/ghi-api-probes, made for exactly this): `gh issue list --json`
-already returns full comment bodies inline for every matched issue in one
-call — the design's "comments fetched only for changed issues (one call per
-issue)" predates this discovery; delta mode still fetches comments only for
-changed issues, just riding the same list call as everything else, not a
-second one. Also verified: close, reopen, and a label added or removed by a
-standalone `gh issue edit` all move `updated_at`; only a label bundled into
-the SAME `gh issue create --label` call does not move it past the creation
-timestamp — harmless, since creation itself always moves `updated_at`, so
-the issue is still caught by the next delta query regardless. The design's
-own named residual — "a same-second boundary clip" two mutations landing in
-the same second can still slip past a delta query using strict `>` — is
-real and accepted; it is what the recycle-time full rewrite bounds.
+Fetches ride `gh api graphql` against GitHub's search connection, not
+`gh issue list --json`: measured 2026-08-23 that the box's gh (2.46.0,
+Ubuntu's apt package, well behind the Mac's 2.97.0) rejects `--json
+stateReason` outright — that field isn't in its allowlist at all, so the
+CLI-side flag would silently drop close reasons on the one machine that
+actually runs this script. GraphQL's `stateReason` is a server-side schema
+field, unaffected by the CLI's own version. The same query returns full
+comment bodies inline for every matched issue, paginated — the design's
+"comments fetched only for changed issues (one call per issue)" predates
+this discovery; delta mode still fetches comments only for changed issues,
+just riding the same paginated query as everything else, not a second call.
+
+Also verified, against the live repo and a throwaway probe repo made for
+exactly this (nedschorus/ghi-api-probes, private): close, reopen, and a
+label added or removed by a standalone `gh issue edit` all move
+`updated_at`; only a label bundled into the SAME `gh issue create --label`
+call does not move it past the creation timestamp — harmless, since
+creation itself always moves `updated_at`, so the issue is still caught by
+the next delta query regardless. The design's own named residual — a
+same-second boundary clip between two mutations can still slip past a delta
+query using strict `>` — is real and accepted; it is what the recycle-time
+full rewrite bounds.
 
 Mirror writes go temp-then-rename throughout, so a refresh racing another
 process reading the files never exposes a half-written one.
@@ -68,11 +76,45 @@ DEFAULT_MIRROR_DIR = "ghi-mirror"
 CACHE_FILE_NAME = ".mirror-cache.json"
 OPEN_FILE_NAME = "issues-open.md"
 CLOSED_FILE_NAME = "issues-closed.md"
-# Comfortably above the corpus size measured 2026-08-07 (45 issues) and the
-# ~140 seen live at this build — gh paginates internally under one --limit.
-FETCH_LIMIT = 2000
-FETCH_FIELDS = ("number,title,labels,updatedAt,createdAt,body,comments,"
-                "state,stateReason,closedAt,author")
+# Issues per page; GitHub's search connection caps at 100.
+PAGE_SIZE = 100
+# A generous ceiling against a runaway pagination loop (a server that never
+# reports hasNextPage: false) — comfortably above the corpus size measured
+# 2026-08-07 (45 issues) and the ~140 seen live at this build.
+MAX_PAGES = 50
+
+# Raw GraphQL, not `gh issue list --json ...`: measured 2026-08-23 against
+# the box's gh 2.46.0 (Ubuntu's apt package, well behind the Mac's 2.97.0) —
+# `--json stateReason` is not in that version's field allowlist at all, so
+# the CLI-side flag would silently strip close reasons from the one machine
+# that actually runs this script. GraphQL's `stateReason` is a server-side
+# schema field, unaffected by the CLI's own version; querying it directly
+# with `gh api graphql` works identically on both machines. Comments ride
+# the same query (confirmed 2026-08-23: no separate per-issue call needed,
+# on either gh version) — the design's "comments fetched only for changed
+# issues (one call per issue)" predates this discovery either way.
+SEARCH_QUERY = """
+query($searchQuery: String!, $cursor: String) {
+  search(query: $searchQuery, type: ISSUE, first: %d, after: $cursor) {
+    nodes {
+      ... on Issue {
+        number
+        title
+        state
+        stateReason
+        updatedAt
+        createdAt
+        closedAt
+        body
+        labels(first: 50) { nodes { name } }
+        author { login }
+        comments(first: 100) { nodes { author { login } createdAt body } }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+""" % PAGE_SIZE
 
 # A gh that never ran (missing binary, timeout) reports a code gh itself
 # cannot return, so "no answer" is never read as "ran and failed with 0
@@ -90,20 +132,56 @@ def run_gh(arguments, timeout=120):
                                            f"{type(error).__name__}: {error}")
 
 
+def _issue_from_node(node: dict) -> dict:
+    return {
+        "number": node["number"],
+        "title": node["title"],
+        "state": node["state"],
+        "stateReason": node.get("stateReason"),
+        "updatedAt": node["updatedAt"],
+        "createdAt": node.get("createdAt"),
+        "closedAt": node.get("closedAt"),
+        "body": node.get("body"),
+        "labels": (node.get("labels") or {}).get("nodes") or [],
+        "comments": [
+            {"author": comment.get("author"), "createdAt": comment.get("createdAt"),
+             "body": comment.get("body")}
+            for comment in (node.get("comments") or {}).get("nodes") or []
+        ],
+        "author": node.get("author"),
+    }
+
+
 def fetch_issues(repo: str, search: str = None):
-    """One gh issue list call, --state all so a state change (open<->closed)
-    rides the same query as any other edit. Returns (issues, error)."""
-    arguments = ["issue", "list", "--repo", repo, "--state", "all",
-                "--json", FETCH_FIELDS, "--limit", str(FETCH_LIMIT)]
+    """Every issue (not PR) matching search, paginated. `is:issue` scopes the
+    search connection to issues since the same number sequence carries PRs
+    too. Returns (issues, error)."""
+    search_query = f"repo:{repo} is:issue"
     if search:
-        arguments += ["--search", search]
-    result = run_gh(arguments)
-    if result.returncode != 0:
-        return None, (result.stderr or "gh issue list failed with no stderr").strip()
-    try:
-        return json.loads(result.stdout), None
-    except json.JSONDecodeError as error:
-        return None, f"gh returned unparseable JSON: {error}"
+        search_query += f" {search}"
+    issues = []
+    cursor = None
+    for _ in range(MAX_PAGES):
+        arguments = ["api", "graphql", "-f", f"query={SEARCH_QUERY}",
+                    "-f", f"searchQuery={search_query}"]
+        if cursor:
+            arguments += ["-f", f"cursor={cursor}"]
+        result = run_gh(arguments)
+        if result.returncode != 0:
+            return None, (result.stderr or "gh api graphql failed with no stderr").strip()
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            return None, f"gh returned unparseable JSON: {error}"
+        if payload.get("errors"):
+            return None, f"GraphQL error: {payload['errors']}"
+        search_result = payload["data"]["search"]
+        issues.extend(_issue_from_node(node) for node in search_result["nodes"])
+        page_info = search_result["pageInfo"]
+        if not page_info.get("hasNextPage"):
+            return issues, None
+        cursor = page_info.get("endCursor")
+    return None, f"gave up after {MAX_PAGES} pages ({len(issues)} issues) — pagination did not end"
 
 
 def read_cache(cache_path: Path) -> dict:
