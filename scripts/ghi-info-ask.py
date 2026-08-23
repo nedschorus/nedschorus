@@ -19,14 +19,23 @@ $NEDSCHORUS_AGENTS_ROOT/ghi-info (default ~/agents/ghi-info) — its mirror,
 session id, and recycle counters all live in that one checkout, per the
 design's "wrapper state ... lives there." This script is the SAME file on
 both machines (it is checked into the repo, so every checkout — Mac or box
-— carries an identical copy): on the Mac it notices the seat directory does
-not exist locally and re-execs itself over `ssh ned` inside that directory
-on the box, one hop, so every step below (refresh, session state, the
-claude call, the post-check) runs box-side where the mirror and state
-actually live. On the box itself, inside a bootstrapped seat, it just runs.
-There is no wrapper-side auto-bootstrap: if the seat directory does not
-exist yet on the box, this script says so and names the setup command
-rather than trying to create a knowledge agent's home out of thin air.
+— carries an identical copy): on the Mac it notices no seat directory
+locally and re-execs itself over `ssh ned`, one hop, so every step below
+(refresh, session state, the claude call, the post-check) runs box-side
+where the mirror and state actually live. On the box, inside a bootstrapped
+seat, it just runs.
+
+Where the box's seat is, is resolved BY THE BOX — its own shell applies the
+same ${NEDSCHORUS_AGENTS_ROOT:-~/agents} rule launch-claude-ubuntu
+documents. This script never sends a path of its own: the first live run
+failed exactly there, having spliced in the Mac's expanded
+/Users/el/agents/ghi-info, which of course does not exist on the box.
+
+There is no wrapper-side auto-bootstrap: if the seat does not exist on the
+box, the run says so and names the path it looked in, rather than trying to
+create a knowledge agent's home out of thin air. A caller that gets that
+error is not stuck — the ghi-write skill's fallback ladder covers a failed
+ask by design.
 
 Session lifecycle (design § The ghi-info session): no process outlives one
 ask. Every call is a fresh `claude -p`, resumed by session id read from
@@ -65,7 +74,6 @@ import re
 import shlex
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
@@ -314,27 +322,46 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
     with state_lock(lock_path) as locked:
         state = load_state(state_path) if locked else default_state()
 
-        # Step 1: the routine delta refresh, always.
-        delta_result, error = mirror_refresh.refresh(mirror_dir, repo, full=False)
-        if delta_result is None:
-            return None, f"mirror refresh failed: {error}"
-        changed = delta_result["changed"]
-        cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
-        if locked:
+        # Steps 1-2 interleave, because which refresh is owed depends on
+        # whether this ask resumes or cold-starts, and the recycle decision
+        # in turn depends on what the delta saw close.
+        #
+        # With no session to resume (first ever ask, or a contended lock),
+        # the answer is known before any fetch: a cold start needs the whole
+        # corpus rebuilt anyway, so go straight to the full refresh. Running
+        # the routine delta first would fetch the entire corpus TWICE on
+        # every first run — the delta has no cutoff to search from without a
+        # cache, so it is itself a full fetch.
+        has_session = locked and state.get("session_id")
+        changed = []
+        recycle, recycle_reason = False, None
+
+        if has_session:
+            delta_result, error = mirror_refresh.refresh(mirror_dir, repo, full=False)
+            if delta_result is None:
+                return None, f"mirror refresh failed: {error}"
+            changed = delta_result["changed"]
+            cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
+            # Counts a changed issue that is currently closed. An already-
+            # closed issue touched again (a late comment) counts once more,
+            # which only makes recycling more eager — the direction the
+            # design asks for ("Recycling errs eager").
             new_closures = sum(
                 1 for number in changed
                 if cache.get("issues", {}).get(str(number), {}).get("state") == "CLOSED"
             )
             state["closes_since_birth"] = state.get("closes_since_birth", 0) + new_closures
+            recycle, recycle_reason = should_recycle(state, seat_dir, projects_root)
 
-        # Step 2: resume, or cold-start.
-        has_session = locked and state.get("session_id")
-        recycle, recycle_reason = (
-            should_recycle(state, seat_dir, projects_root) if has_session else (False, None)
-        )
         cold_starting = not has_session or recycle
 
         if cold_starting:
+            if recycle_reason:
+                # A recycle silently replacing the session would leave the
+                # next investigator no way to tell a fresh answer from a
+                # resumed one; the trigger that fired is the useful part.
+                print(f"ghi-info-ask: recycling the session — {recycle_reason}",
+                      file=sys.stderr)
             full_result, error = mirror_refresh.refresh(mirror_dir, repo, full=True)
             if full_result is None:
                 return None, f"mirror refresh (full, for cold-start) failed: {error}"
@@ -383,14 +410,42 @@ def ask(question: str, include_closed: bool, seat_dir: Path, repo: str,
         return reply_text, None
 
 
-def build_remote_command(seat_dir_remote: str, question: str, include_closed: bool) -> str:
-    """One string, sent as ssh's single trailing argument so the box's login
-    shell parses it exactly once — no second parse layer here (unlike the
-    launchers, which also cross tmux's pane-command parse)."""
-    ask_invocation = "python3 scripts/ghi-info-ask.py " + shlex.quote(question)
+def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
+    """The command the box runs, as one string: ssh hands it to the box's
+    login shell, which parses it exactly once — no second parse layer here
+    (unlike the launchers, which also cross tmux's pane-command parse), so
+    shlex.quote is the whole escaping story for operator values.
+
+    The seat path is resolved BOX-side, by the box's own shell, using the
+    same ${NEDSCHORUS_AGENTS_ROOT:-~/agents} rule launch-claude-ubuntu
+    documents. Splicing this machine's expanded path in instead was the
+    first live run's failure: the Mac sent `cd /Users/el/agents/ghi-info`,
+    which of course does not exist on the box.
+
+    Two further properties this shape buys:
+      - `--seat-dir "$PWD"` after a successful cd means the box-side run
+        takes the local branch unconditionally. Without it, a box whose
+        seat directory is missing would ssh to itself — an infinite
+        delegation loop rather than an error.
+      - a failed cd keeps the shell's OWN diagnostic (which names the real
+        cause — missing, not a directory, unreadable) and adds the remedy
+        beside it. Suppressing the shell's line would make a permissions
+        failure read as "no seat", pointing the operator at the wrong fix.
+    """
+    invocation = "python3 scripts/ghi-info-ask.py " + shlex.quote(question)
     if include_closed:
-        ask_invocation += " --include-closed"
-    return f"cd {shlex.quote(seat_dir_remote)} && {ask_invocation}"
+        invocation += " --include-closed"
+    invocation += " --repo " + shlex.quote(repo)
+    invocation += ' --seat-dir "$PWD"'
+    return "\n".join([
+        'seat="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/ghi-info"',
+        'cd "$seat" || {',
+        '  echo "ghi-info-ask: could not enter the ghi-info seat at $seat on this box'
+        ' — bootstrap it (a checkout of this repository at that path), then retry" >&2',
+        '  exit 1',
+        '}',
+        invocation,
+    ])
 
 
 def main(argv=None) -> int:
@@ -413,8 +468,9 @@ def main(argv=None) -> int:
     else:
         seat_dir = DEFAULT_SEAT_DIR
         if not seat_dir.is_dir():
-            remote_command = build_remote_command(str(seat_dir), arguments.question,
-                                                  arguments.include_closed)
+            remote_command = build_remote_command(arguments.question,
+                                                  arguments.include_closed,
+                                                  arguments.repo)
             try:
                 completed = subprocess.run(
                     ["ssh", AGENT_BOX, remote_command], capture_output=True, text=True,

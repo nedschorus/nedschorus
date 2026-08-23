@@ -14,6 +14,7 @@ Run: python3 scripts/ghi-mirror-refresh-test.py
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -58,8 +59,12 @@ def issue_node(number, title="Untitled", state="OPEN", updated_at="2026-08-01T00
     }
 
 
-def graphql_page(nodes, has_next_page=False, end_cursor=None):
+def graphql_page(nodes, has_next_page=False, end_cursor=None, issue_count=None):
+    """issue_count defaults to "exactly what this page carries", the honest
+    single-page case; a case proving truncation detection passes a larger
+    one on purpose."""
     return json.dumps({"data": {"search": {
+        "issueCount": len(nodes) if issue_count is None else issue_count,
         "nodes": nodes,
         "pageInfo": {"hasNextPage": has_next_page, "endCursor": end_cursor},
     }}})
@@ -79,19 +84,14 @@ def fake_gh(calls_log, responses):
     patch("run_gh", fake_run_gh)
 
 
-def issue(*args, **kwargs):
-    """Back-compat alias used by the rest of this file's call sites."""
-    return issue_node(*args, **kwargs)
-
-
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
 
     # --- first run: no cache means forced full even without --full --------
     mirror_dir = root / "m1"
     calls = []
-    fake_gh(calls, [([issue(1, "First", labels=["draft"]),
-                      issue(2, "Second", state="CLOSED", state_reason="COMPLETED",
+    fake_gh(calls, [([issue_node(1, "First", labels=["draft"]),
+                      issue_node(2, "Second", state="CLOSED", state_reason="COMPLETED",
                             closed_at="2026-08-10T00:00:00Z", updated_at="2026-08-10T00:00:00Z")],
                     None)])
     exit_code = mirror.main(["--mirror-dir", str(mirror_dir), "--repo", "x/y"])
@@ -108,8 +108,25 @@ with tempfile.TemporaryDirectory() as temporary:
           "#2 — Second — closed 2026-08-10 (completed)" in closed_text, closed_text)
     check("closed file excludes the open issue",
           "#1" not in closed_text, closed_text)
-    check("no .tmp files left behind after a clean write",
-          not list(mirror_dir.glob("*.tmp")), list(mirror_dir.glob("*.tmp")))
+    check("no temp files left behind after a clean write",
+          not list(mirror_dir.glob("*.tmp*")), list(mirror_dir.glob("*.tmp*")))
+
+    # The temp name must be per-process, or two concurrent refreshes share
+    # one temp path and can rename each other's half-written file into
+    # place — the exact guarantee the design claims for this step. Observed
+    # by suppressing the rename so the temp file survives to be looked at.
+    staging = root / "staging"
+    staging.mkdir()
+    target = staging / "issues-open.md"
+    real_replace = Path.replace
+    try:
+        Path.replace = lambda self, other: None      # keep the temp in place
+        mirror.write_temp_then_rename(target, "content")
+        leftovers = [p.name for p in staging.iterdir()]
+    finally:
+        Path.replace = real_replace
+    check("the temp file name carries this process's pid",
+          leftovers == [f"issues-open.md.tmp.{os.getpid()}"], leftovers)
 
     cache = json.loads((mirror_dir / mirror.CACHE_FILE_NAME).read_text(encoding="utf-8"))
     check("cache records the newest updatedAt seen as last_refresh_at",
@@ -117,7 +134,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- second run: delta mode searches from the cached cutoff ------------
     calls = []
-    fake_gh(calls, [([issue(1, "First, edited", labels=["draft"],
+    fake_gh(calls, [([issue_node(1, "First, edited", labels=["draft"],
                             updated_at="2026-08-15T00:00:00Z")], None)])
     exit_code = mirror.main(["--mirror-dir", str(mirror_dir), "--repo", "x/y"])
     check("second run is a delta: searchQuery carries updated:> the prior cutoff",
@@ -135,10 +152,10 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- state transition: open -> closed disappears from the open file ----
     mirror_dir2 = root / "m2"
     calls = []
-    fake_gh(calls, [([issue(9, "Ninth")], None)])
+    fake_gh(calls, [([issue_node(9, "Ninth")], None)])
     mirror.main(["--mirror-dir", str(mirror_dir2), "--repo", "x/y"])
     calls = []
-    fake_gh(calls, [([issue(9, "Ninth", state="CLOSED", state_reason="NOT_PLANNED",
+    fake_gh(calls, [([issue_node(9, "Ninth", state="CLOSED", state_reason="NOT_PLANNED",
                             closed_at="2026-08-20T00:00:00Z",
                             updated_at="2026-08-20T00:00:00Z")], None)])
     mirror.main(["--mirror-dir", str(mirror_dir2), "--repo", "x/y"])
@@ -151,7 +168,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- --full forces a full fetch even with a cache present --------------
     calls = []
-    fake_gh(calls, [([issue(9, "Ninth", state="CLOSED", state_reason="NOT_PLANNED",
+    fake_gh(calls, [([issue_node(9, "Ninth", state="CLOSED", state_reason="NOT_PLANNED",
                             closed_at="2026-08-20T00:00:00Z",
                             updated_at="2026-08-20T00:00:00Z")], None)])
     mirror.main(["--mirror-dir", str(mirror_dir2), "--repo", "x/y", "--full"])
@@ -161,10 +178,10 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- full mode purges issues the fetch no longer returns ---------------
     mirror_dir3 = root / "m3"
     calls = []
-    fake_gh(calls, [([issue(1, "One"), issue(2, "Two")], None)])
+    fake_gh(calls, [([issue_node(1, "One"), issue_node(2, "Two")], None)])
     mirror.main(["--mirror-dir", str(mirror_dir3), "--repo", "x/y"])
     calls = []
-    fake_gh(calls, [([issue(1, "One")], None)])  # #2 no longer returned
+    fake_gh(calls, [([issue_node(1, "One")], None)])  # #2 no longer returned
     mirror.main(["--mirror-dir", str(mirror_dir3), "--repo", "x/y", "--full"])
     open_text3 = (mirror_dir3 / mirror.OPEN_FILE_NAME).read_text(encoding="utf-8")
     check("--full drops an issue the fetch no longer returns",
@@ -173,7 +190,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- comments render, with author and body -----------------------------
     mirror_dir4 = root / "m4"
     calls = []
-    fake_gh(calls, [([issue(1, "Commented", comments=[
+    fake_gh(calls, [([issue_node(1, "Commented", comments=[
         {"author": {"login": "nedlern"}, "createdAt": "2026-08-05T00:00:00Z",
          "body": "an instance outcome"},
     ])], None)])
@@ -216,8 +233,9 @@ with tempfile.TemporaryDirectory() as temporary:
     mirror_dir6c = root / "m6c"
     page_calls = []
     pages = [
-        graphql_page([issue_node(1, "One")], has_next_page=True, end_cursor="cursor-1"),
-        graphql_page([issue_node(2, "Two")], has_next_page=False),
+        graphql_page([issue_node(1, "One")], has_next_page=True, end_cursor="cursor-1",
+                     issue_count=2),
+        graphql_page([issue_node(2, "Two")], has_next_page=False, issue_count=2),
     ]
     def fake_run_gh_paginated(arguments, timeout=120):
         page_calls.append(arguments)
@@ -241,10 +259,28 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a pagination loop that never ends gives up rather than hanging",
           exit_code == 1, exit_code)
 
+    # --- a truncated fetch is REFUSED, not written -------------------------
+    # GitHub's search API stops at 1000 results however you paginate. A
+    # mirror short of the corpus answers "no issue covers X" wrongly, and
+    # that absence claim is what the ghi-write skill's search receipt rests
+    # on — so a short fetch must fail loudly rather than write a plausible
+    # but incomplete mirror.
+    mirror_dir6e = root / "m6e"
+    def fake_run_gh_truncated(arguments, timeout=120):
+        return subprocess.CompletedProcess(
+            arguments, 0,
+            graphql_page([issue_node(1, "One")], has_next_page=False, issue_count=900),
+            "")
+    patch("run_gh", fake_run_gh_truncated)
+    exit_code = mirror.main(["--mirror-dir", str(mirror_dir6e), "--repo", "x/y"])
+    check("a fetch short of the reported issueCount writes nothing and exits 1",
+          exit_code == 1 and not (mirror_dir6e / mirror.OPEN_FILE_NAME).exists(),
+          exit_code)
+
     # --- stdout carries exactly one JSON line on success -------------------
     mirror_dir7 = root / "m7"
     calls = []
-    fake_gh(calls, [([issue(3, "Three")], None)])
+    fake_gh(calls, [([issue_node(3, "Three")], None)])
     import io
     import contextlib
     captured = io.StringIO()

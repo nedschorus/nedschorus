@@ -11,9 +11,12 @@ against a throwaway seat directory under a TemporaryDirectory.
 Run: python3 scripts/ghi-info-ask-test.py
 """
 
+import contextlib
+import fcntl
 import importlib.util
+import io
 import json
-import subprocess
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -43,10 +46,12 @@ def issue(number, state="OPEN", closed_at=None):
     return {"number": number, "state": state, "closedAt": closed_at}
 
 
-def fake_refresh_queue(mirror_dir_holder, responses):
+def fake_refresh_queue(responses):
     """responses: list of (changed_numbers, cache_issues_dict, error) popped
-    in call order. Writes a real cache file each time, like the genuine
-    refresh does, so read_cache sees it."""
+    in call order, one per refresh call — an extra call empties the queue
+    and fails loudly rather than passing quietly. Writes a real cache file
+    each time, like the genuine refresh does, so read_cache — used
+    un-mocked by the post-check — is genuinely exercised."""
     calls = []
 
     def fake_refresh(mirror_dir, repo, full):
@@ -90,9 +95,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- cold start: no state file -> two claude calls, session persisted --
     seat = root / "seat1"
     seat.mkdir()
-    refresh_calls = fake_refresh_queue(seat, [
-        ([1], {"1": issue(1)}, None),           # step-1 delta
-        ([1], {"1": issue(1)}, None),           # cold-start full refresh
+    refresh_calls = fake_refresh_queue([
+        ([1], {"1": issue(1)}, None),           # the single full refresh
     ])
     claude_calls = fake_claude_queue([
         ({"session_id": "sess-A", "result": "(ack)"}, None),   # cold-start turn
@@ -105,8 +109,11 @@ with tempfile.TemporaryDirectory() as temporary:
           len(claude_calls) == 2, claude_calls)
     check("cold-start's second call resumes the session the first call opened",
           claude_calls[1][1] == "sess-A", claude_calls)
-    check("cold-start does a full refresh as its second refresh call",
-          refresh_calls[1]["full"] is True, refresh_calls)
+    # With no session to resume there is nothing a delta could inform: the
+    # delta would itself be a full fetch (no cache, so no cutoff to search
+    # from), so running one first fetched the whole corpus TWICE per first ask.
+    check("a cold start fetches the corpus ONCE — one refresh call, full",
+          len(refresh_calls) == 1 and refresh_calls[0]["full"] is True, refresh_calls)
     state = json.loads((seat / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
     check("state persists the new session id after a cold start",
           state["session_id"] == "sess-A", state)
@@ -118,7 +125,7 @@ with tempfile.TemporaryDirectory() as temporary:
     seat2.mkdir()
     ghi_ask.save_state(seat2 / ghi_ask.STATE_FILE_NAME,
                        {"session_id": "sess-B", "closes_since_birth": 0, "recent_matches": []})
-    refresh_calls = fake_refresh_queue(seat2, [([7], {"7": issue(7)}, None)])
+    refresh_calls = fake_refresh_queue([([7], {"7": issue(7)}, None)])
     claude_calls = fake_claude_queue([({"session_id": "sess-B", "result": "read #7"}, None)])
     answer, error = ghi_ask.ask("about #7?", False, seat2, "x/y")
     check("a resumed ask makes exactly one claude call",
@@ -138,7 +145,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "closes_since_birth": ghi_ask.CLOSES_SINCE_BIRTH_THRESHOLD,
         "recent_matches": [],
     })
-    refresh_calls = fake_refresh_queue(seat3, [
+    refresh_calls = fake_refresh_queue([
         ([], {}, None),
         ([], {}, None),
     ])
@@ -159,10 +166,7 @@ with tempfile.TemporaryDirectory() as temporary:
     ghi_ask.save_state(seat4 / ghi_ask.STATE_FILE_NAME,
                        {"session_id": "sess-HELD", "closes_since_birth": 0, "recent_matches": []})
     before_state_text = (seat4 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8")
-    refresh_calls = fake_refresh_queue(seat4, [
-        ([], {}, None),
-        ([], {}, None),
-    ])
+    refresh_calls = fake_refresh_queue([([], {}, None)])
     claude_calls = fake_claude_queue([
         ({"session_id": "sess-THROWAWAY", "result": "(ack)"}, None),
         ({"session_id": "sess-THROWAWAY", "result": "read #9"}, None),
@@ -170,7 +174,6 @@ with tempfile.TemporaryDirectory() as temporary:
     lock_path = seat4 / ghi_ask.LOCK_FILE_NAME
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     held_handle = open(lock_path, "a+")
-    import fcntl
     fcntl.flock(held_handle.fileno(), fcntl.LOCK_EX)
     try:
         answer, error = ghi_ask.ask("q", False, seat4, "x/y")
@@ -188,8 +191,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- post-check: unexpected closed pointer triggers one drift recheck --
     seat5 = root / "seat5"
     seat5.mkdir()
-    refresh_calls = fake_refresh_queue(seat5, [
-        ([13], {"13": issue(13, state="CLOSED", closed_at="2026-08-08T00:00:00Z")}, None),
+    refresh_calls = fake_refresh_queue([
         ([13], {"13": issue(13, state="CLOSED", closed_at="2026-08-08T00:00:00Z")}, None),
     ])
     claude_calls = fake_claude_queue([
@@ -211,8 +213,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- --include-closed: closed pointers are expected, no recheck --------
     seat6 = root / "seat6"
     seat6.mkdir()
-    refresh_calls = fake_refresh_queue(seat6, [
-        ([13], {"13": issue(13, state="CLOSED", closed_at="2026-08-08T00:00:00Z")}, None),
+    refresh_calls = fake_refresh_queue([
         ([13], {"13": issue(13, state="CLOSED", closed_at="2026-08-08T00:00:00Z")}, None),
     ])
     claude_calls = fake_claude_queue([
@@ -229,8 +230,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- escalate:/out-of-scope pass through, no post-check -----------------
     seat7 = root / "seat7"
     seat7.mkdir()
-    refresh_calls = fake_refresh_queue(seat7, [
-        ([13], {"13": issue(13, state="CLOSED", closed_at="2026-08-08T00:00:00Z")}, None),
+    refresh_calls = fake_refresh_queue([
         ([13], {"13": issue(13, state="CLOSED", closed_at="2026-08-08T00:00:00Z")}, None),
     ])
     claude_calls = fake_claude_queue([
@@ -246,7 +246,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- mirror refresh failure surfaces as an ask failure ------------------
     seat8 = root / "seat8"
     seat8.mkdir()
-    fake_refresh_queue(seat8, [(None, None, "gh rate limited")])
+    fake_refresh_queue([(None, None, "gh rate limited")])
     answer, error = ghi_ask.ask("q", False, seat8, "x/y")
     check("a mirror refresh failure fails the ask cleanly",
           answer is None and "gh rate limited" in error, (answer, error))
@@ -254,7 +254,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- claude failure on the ask turn surfaces as an ask failure ---------
     seat9 = root / "seat9"
     seat9.mkdir()
-    fake_refresh_queue(seat9, [([1], {"1": issue(1)}, None), ([1], {"1": issue(1)}, None)])
+    fake_refresh_queue([([1], {"1": issue(1)}, None)])
     fake_claude_queue([
         ({"session_id": "sess-F", "result": "(ack)"}, None),
         (None, "claude exited 1: boom"),
@@ -273,7 +273,7 @@ with tempfile.TemporaryDirectory() as temporary:
     project_directory.mkdir(parents=True)
     (project_directory / "sess-BIG.jsonl").write_bytes(
         b"x" * (ghi_ask.TRANSCRIPT_SIZE_THRESHOLD_BYTES + 1))
-    refresh_calls = fake_refresh_queue(seat10, [([], {}, None), ([], {}, None)])
+    refresh_calls = fake_refresh_queue([([], {}, None), ([], {}, None)])
     claude_calls = fake_claude_queue([
         ({"session_id": "sess-BIGGER", "result": "(ack)"}, None),
         ({"session_id": "sess-BIGGER", "result": "read #1"}, None),
@@ -283,18 +283,71 @@ with tempfile.TemporaryDirectory() as temporary:
           claude_calls[0][1] is None and answer == "read #1", (claude_calls, answer))
 
 
-# --- build_remote_command: quoting, not composition by hand -----------------
-command = ghi_ask.build_remote_command("/home/nedlern/agents/ghi-info",
-                                       "what about $(rm -rf /) and \"quotes\"?", False)
-check("build_remote_command produces one shell-safe string (round-trips via shlex)",
-      __import__("shlex").split(command)[:2] == ["cd", "/home/nedlern/agents/ghi-info"],
+# --- build_remote_command --------------------------------------------------
+# The first live Mac->box run failed here: the command spliced in THIS
+# machine's expanded seat path (/Users/el/agents/ghi-info), which does not
+# exist on the box. The seat must be resolved by the box's own shell.
+DANGEROUS = 'what about $(rm -rf /) and "quotes" and \'apostrophes\'?'
+command = ghi_ask.build_remote_command(DANGEROUS, False, "x/y")
+
+check("the remote command carries NO path from this machine",
+      str(ghi_ask.DEFAULT_SEAT_DIR) not in command
+      and str(Path.home()) not in command,
       command)
-check("a dangerous question round-trips as ONE inert argument, not shell syntax",
-      __import__("shlex").split(command)[-1] == 'what about $(rm -rf /) and "quotes"?',
-      command)
-command_closed = ghi_ask.build_remote_command("/x", "q", True)
+check("the seat is resolved box-side by the launcher's own agents-root rule",
+      '"${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/ghi-info"' in command, command)
+check("the box-side run is pinned to --seat-dir \"$PWD\", so it can never "
+      "re-delegate to itself (an infinite ssh loop)",
+      '--seat-dir "$PWD"' in command, command)
+check("--repo rides the remote command (it was silently dropped before)",
+      "--repo x/y" in command, command)
+
+command_closed = ghi_ask.build_remote_command("q", True, "x/y")
 check("--include-closed rides the remote command when requested",
-      command_closed.endswith("--include-closed"), command_closed)
+      "--include-closed" in command_closed, command_closed)
+check("--include-closed is absent when not requested",
+      "--include-closed" not in command, command)
+
+# Quoting is measured by a real POSIX shell, not derived: the question is an
+# operator value crossing one shell parse, and this project has been bitten
+# by hand-derived quoting before (PR #134's review arc). The launcher's
+# suite replays its layers the same way.
+with tempfile.TemporaryDirectory() as temporary:
+    probe_root = Path(temporary)
+    recorder = probe_root / "record-argv"
+    recorder.write_text(
+        '#!/bin/sh\nfor a in "$@"; do printf "ARG:[%s]\\n" "$a"; done\n',
+        encoding="utf-8")
+    recorder.chmod(0o755)
+    seat_home = probe_root / "agents" / "ghi-info"
+    seat_home.mkdir(parents=True)
+    replayed = ghi_ask.build_remote_command(DANGEROUS, True, "o/n").replace(
+        "python3 scripts/ghi-info-ask.py", str(recorder))
+    import subprocess as real_subprocess
+    result = real_subprocess.run(
+        ["/bin/sh", "-c", replayed], capture_output=True, text=True,
+        env={"HOME": str(probe_root), "PATH": "/usr/bin:/bin"})
+    recorded = result.stdout.splitlines()
+    check("a real /bin/sh cds into the box-side seat and runs the ask there",
+          result.returncode == 0, (result.returncode, result.stderr))
+    check("the question survives one shell parse as ONE inert argument",
+          f"ARG:[{DANGEROUS}]" in recorded, recorded)
+    check("the shell resolved --seat-dir to the seat it actually cd'd into",
+          f"ARG:[{seat_home}]" in recorded, recorded)
+
+    # A box with no seat must say where it looked, not emit the shell's bare
+    # "No such file or directory" — and must not run the ask anyway.
+    empty_home = probe_root / "empty"
+    empty_home.mkdir()
+    missing_result = real_subprocess.run(
+        ["/bin/sh", "-c", replayed], capture_output=True, text=True,
+        env={"HOME": str(empty_home), "PATH": "/usr/bin:/bin"})
+    check("a box with no seat exits 1, names the path, and runs no ask",
+          missing_result.returncode == 1
+          and "could not enter the ghi-info seat at" in missing_result.stderr
+          and str(empty_home / "agents" / "ghi-info") in missing_result.stderr
+          and "ARG:[" not in missing_result.stdout,
+          (missing_result.returncode, missing_result.stderr, missing_result.stdout))
 
 
 # --- main(): explicit --seat-dir skips SSH, missing seat-dir errors clean --
@@ -305,22 +358,20 @@ try:
         root = Path(temporary)
         seat = root / "explicit-seat"
         seat.mkdir()
-        fake_refresh_queue(seat, [([1], {"1": issue(1)}, None), ([1], {"1": issue(1)}, None)])
+        fake_refresh_queue([([1], {"1": issue(1)}, None)])
         fake_claude_queue([
             ({"session_id": "sess-M", "result": "(ack)"}, None),
             ({"session_id": "sess-M", "result": "read #1"}, None),
         ])
-        import io
-        import contextlib as ctxlib
         out = io.StringIO()
-        with ctxlib.redirect_stdout(out):
+        with contextlib.redirect_stdout(out):
             exit_code = ghi_ask.main(["q", "--seat-dir", str(seat), "--repo", "x/y"])
         check("main() with an explicit --seat-dir runs locally and exits 0",
               exit_code == 0 and out.getvalue().strip() == "read #1", out.getvalue())
 
         missing = root / "no-such-seat"
         err = io.StringIO()
-        with ctxlib.redirect_stdout(io.StringIO()), ctxlib.redirect_stderr(err):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             exit_code = ghi_ask.main(["q", "--seat-dir", str(missing)])
         check("main() with a missing explicit --seat-dir errors cleanly, no traceback",
               exit_code == 1 and "bootstrap" in err.getvalue()

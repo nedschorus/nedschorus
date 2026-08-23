@@ -66,6 +66,7 @@ not a partial mirror.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -78,10 +79,14 @@ OPEN_FILE_NAME = "issues-open.md"
 CLOSED_FILE_NAME = "issues-closed.md"
 # Issues per page; GitHub's search connection caps at 100.
 PAGE_SIZE = 100
-# A generous ceiling against a runaway pagination loop (a server that never
-# reports hasNextPage: false) — comfortably above the corpus size measured
-# 2026-08-07 (45 issues) and the ~140 seen live at this build.
-MAX_PAGES = 50
+# GitHub's search API returns at most 1000 results per query however you
+# paginate it, so 10 full pages is the real ceiling, not an arbitrary one.
+# A fetch that comes back short of the reported issueCount has hit that wall
+# (or some other truncation) and is REFUSED rather than written: a mirror
+# missing issues answers "no issue covers X" wrongly, and an absence claim
+# is exactly what the ghi-write skill's search receipt rests on. Corpus size
+# for scale: 45 issues measured 2026-08-07, 57 at this build.
+MAX_PAGES = 10
 
 # Raw GraphQL, not `gh issue list --json ...`: measured 2026-08-23 against
 # the box's gh 2.46.0 (Ubuntu's apt package, well behind the Mac's 2.97.0) —
@@ -96,6 +101,7 @@ MAX_PAGES = 50
 SEARCH_QUERY = """
 query($searchQuery: String!, $cursor: String) {
   search(query: $searchQuery, type: ISSUE, first: %d, after: $cursor) {
+    issueCount
     nodes {
       ... on Issue {
         number
@@ -161,6 +167,7 @@ def fetch_issues(repo: str, search: str = None):
         search_query += f" {search}"
     issues = []
     cursor = None
+    issue_count = None
     for _ in range(MAX_PAGES):
         arguments = ["api", "graphql", "-f", f"query={SEARCH_QUERY}",
                     "-f", f"searchQuery={search_query}"]
@@ -176,12 +183,23 @@ def fetch_issues(repo: str, search: str = None):
         if payload.get("errors"):
             return None, f"GraphQL error: {payload['errors']}"
         search_result = payload["data"]["search"]
+        if issue_count is None:
+            issue_count = search_result.get("issueCount")
         issues.extend(_issue_from_node(node) for node in search_result["nodes"])
         page_info = search_result["pageInfo"]
         if not page_info.get("hasNextPage"):
+            # The completeness check: GitHub told us how many issues match,
+            # so a short collection means the fetch was truncated and the
+            # mirror would silently under-report. Refuse rather than write it.
+            if issue_count is not None and len(issues) < issue_count:
+                return None, (
+                    f"fetch returned {len(issues)} of {issue_count} matching issues — "
+                    "the mirror would be incomplete, so nothing was written "
+                    "(GitHub's search API caps a single query at 1000 results)")
             return issues, None
         cursor = page_info.get("endCursor")
-    return None, f"gave up after {MAX_PAGES} pages ({len(issues)} issues) — pagination did not end"
+    return None, (f"gave up after {MAX_PAGES} pages ({len(issues)} issues) — pagination "
+                  "did not end within the reachable result ceiling")
 
 
 def read_cache(cache_path: Path) -> dict:
@@ -192,7 +210,17 @@ def read_cache(cache_path: Path) -> dict:
 
 
 def write_temp_then_rename(path: Path, content: str) -> None:
-    temp_path = path.with_name(path.name + ".tmp")
+    """Publish a mirror file atomically.
+
+    The temp name carries this process's pid. A fixed temp name would break
+    exactly the guarantee the design claims for this step ("Mirror writes go
+    temp-then-rename, so concurrent refreshes are safe"): two refreshes
+    running at once would share one temp path, and each could rename the
+    other's half-written file into place. Concurrency here is not
+    hypothetical — the ask path's contended-lock case (ghi-info-ask.py) runs
+    a full refresh while another ask already holds the session.
+    """
+    temp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     temp_path.write_text(content, encoding="utf-8")
     temp_path.replace(path)
 
