@@ -6,7 +6,7 @@ it with a stub `codex` first on PATH, so no real review is ever launched:
 the stub is the seam that lets the cell's own logic be tested without the
 model, the money, or the half hour.
 
-Two things are pinned here.
+Three things are pinned here.
 
   - Bad invocations are reported, not thrown -- asserted on the exit code AND
     on the absence of a traceback, because an unhandled exception exits 1 just
@@ -27,9 +27,20 @@ Two things are pinned here.
     without writing reproduces exactly that setup, so the case fails loudly
     if anyone ever "simplifies" the delete away.
 
+  - Codex's machine-wide memory store is off for the launch. A cell asked
+    for a fresh judgement must not carry forward what Codex concluded
+    reviewing this project before, and on 2026-08-23 it demonstrably was
+    carrying it: the `## Memory` developer message was recovered from this
+    cell's own review run on pull request #102. The full account is in the
+    cell's docstring under WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW
+    CELLS. Drop `--disable memories` from the command list and nothing else
+    in this file notices, while every review from then on runs contaminated
+    -- which is why the flag is pinned here and not left to the docstring.
+
 Run: python3 scripts/code-review-codex-cell-test.py
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -52,6 +63,21 @@ sys.exit(0)
 # the cell must treat as a failure rather than as a clean review.
 STUB_CODEX_WRITES_NOTHING = """#!/usr/bin/env python3
 import sys
+sys.exit(0)
+"""
+
+# A stub codex that records the argv it was launched with, beside the report
+# it writes, so a case can assert on the composed command without a model
+# call. It dumps to <output>.argv.json rather than to a fixed path so the
+# recording belongs to the run that made it.
+STUB_CODEX_RECORDS_ARGV = """#!/usr/bin/env python3
+import json, sys
+argv = sys.argv
+target = argv[argv.index("--output-last-message") + 1]
+with open(target + ".argv.json", "w", encoding="utf-8") as handle:
+    json.dump(argv, handle)
+with open(target, "w", encoding="utf-8") as handle:
+    handle.write("STUB CODEX REPORT: argv recorded\\n")
 sys.exit(0)
 """
 
@@ -211,6 +237,31 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a stale report does not survive a run that wrote nothing",
           not stale_report.exists(),
           "the pre-run delete is gone; a stale report can be stamped as fresh")
+
+    # --- The memory store is off for the launch ----------------------------
+    # Why this matters and what it does not cover: the cell's own docstring,
+    # under WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS. What is
+    # pinned here is only that the argument reaches codex, which is the part
+    # that can be lost by an edit to the command list. Whether codex then
+    # honours it is not measured by anyone, here or in the cell.
+    #
+    # The flag and its value are checked as an ADJACENT pair: `--disable`
+    # takes a value, so finding both words somewhere in argv would also pass
+    # for a command that disabled something else entirely.
+    argv_report = scratch / "argv-report.md"
+    result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(argv_report))
+    check("the argv-recording run succeeded",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    argv_recording = Path(f"{argv_report}.argv.json")
+    launched_command = (
+        json.loads(argv_recording.read_text(encoding="utf-8"))
+        if argv_recording.is_file() else []
+    )
+    check("codex is launched with the memory store disabled",
+          ("--disable", "memories") in list(zip(launched_command, launched_command[1:])),
+          f"composed command was {launched_command}")
 
 print()
 if failures:
