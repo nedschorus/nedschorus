@@ -138,9 +138,13 @@ a defect in this repository's code.
          a git repository, an unusable model id, a rejected config
          override -- exits 1).
 
-Every failure path deletes any report codex may have left behind, so a
-report file exists if and only if the run succeeded: its absence is
-detectable, and must never be read as a clean review.
+Once codex has been launched, every failure path deletes any report it may
+have left behind, so from there a report file exists if and only if the run
+succeeded: its absence is detectable, and must never be read as a clean
+review. A 64 refusal is the one gap in that, and by construction: it happens
+before the pre-run delete, so a stale report from an EARLIER run survives it
+untouched. A caller reusing one --output path across runs therefore has to
+read the exit code, not merely look for the file.
 
 WHAT EXIT 0 DOES NOT PROMISE -- why a gate must read the report and never
 this exit code. Two things, both measured rather than assumed:
