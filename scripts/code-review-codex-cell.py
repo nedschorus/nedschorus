@@ -83,6 +83,13 @@ feature flag") while `memories` passes that check. Parent placement, beside
 --sandbox above; the nested `review` parser also accepts --disable, but one
 placement for both flags is easier to read.
 
+The scope of that guarantee is these three committed launchers, not the
+machine. A seat that types `codex exec` by hand gets the machine default and
+the memory block with it -- two such sessions on 2026-08-20, with
+cwd=/Users/el/agents/merge-lane, were found carrying it. So a review is
+memory-free because it went through one of these scripts, not because it ran
+on this Mac.
+
 Exit codes: 0 the review ran and wrote the report -- WHICH SAYS NOTHING
 ABOUT THE VERDICT: codex exits 0 while reporting defects, so a gate must
 read the report, never this exit code (measured 2026-08-19, PR #102's
