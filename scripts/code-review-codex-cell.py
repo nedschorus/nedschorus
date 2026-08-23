@@ -83,6 +83,15 @@ def main(argv=None) -> int:
     # one file on the caller's side and a different one on codex's side, and
     # a stale caller-side file would then be stamped as this run's review.
     output_path = pathlib.Path(arguments.output).resolve()
+    # --output names a file, and the delete below removes whatever already
+    # sits there. os.unlink cannot remove a directory (IsADirectoryError on
+    # Linux, PermissionError on macOS), so an --output that is a directory --
+    # or any other non-regular file -- is a bad invocation, reported like the
+    # --repo and --base/--commit ones above rather than thrown as a traceback.
+    if output_path.exists() and not output_path.is_file():
+        print(f"code-review-codex-cell: {output_path} exists and is not a regular file; "
+              "--output names the file the report is written to", file=sys.stderr)
+        return 2
     # A pre-existing file at the output path must not survive into the
     # post-run checks: after this, a file that exists is provably this run's.
     output_path.unlink(missing_ok=True)
