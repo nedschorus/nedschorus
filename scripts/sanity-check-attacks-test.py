@@ -597,10 +597,14 @@ def main():
               f"body began {body[:60]!r}")
 
     # The codex cells must launch with Codex's machine-wide memory store off,
-    # so the cell neither reads earlier reviews of this project nor feeds the
-    # store (why, in full: scripts/code-review-codex-cell.py's docstring). The
-    # composed command is inspected rather than run: launching a cell costs a
-    # model call, and the defect this guards against is a missing argument.
+    # so a cell does not carry forward what Codex concluded reviewing this
+    # project before -- the measured half. Why, in full, and what the flag
+    # does NOT settle about the writing half, in
+    # scripts/code-review-codex-cell.py's docstring under the heading
+    # WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS
+    # The composed command is inspected rather than run: launching a cell
+    # costs a model call, and the defect this guards against is a missing
+    # argument.
     #
     # subprocess.run is replaced for the length of one call only. The module
     # object is shared with this file's own git() helper, so the real function
