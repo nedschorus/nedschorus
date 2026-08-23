@@ -521,14 +521,15 @@ def append_to_recovery_log(handoff_directory: Path, report: str):
     nothing, and it is itself the investigator's probe. A log failure never
     blocks a recovery — the seat matters more than the record.
     """
+    log_path = handoff_directory / "recover-crashed-seats-log.txt"
     try:
         handoff_directory.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with (handoff_directory / "recover-crashed-seats-log.txt").open(
-                "a", encoding="utf-8") as stream:
+        with log_path.open("a", encoding="utf-8") as stream:
             stream.write(f"{stamp} {report}\n")
-    except OSError:
-        pass
+    except OSError as error:
+        print(f"recover-crashed-seats: could not append to {log_path}: {error}",
+              file=sys.stderr)
 
 
 def main(argv=None) -> int:

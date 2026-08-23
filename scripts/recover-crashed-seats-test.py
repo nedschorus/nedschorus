@@ -863,19 +863,20 @@ with tempfile.TemporaryDirectory() as temporary:
                                "--agents-root", str(workspace.agents_root),
                                "--handoff-dir", str(workspace.handoffs),
                                "--projects-root", str(workspace.projects)])
+    after_dry_run = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
     check("LOG: --dry-run logs nothing — it changes nothing, and it is the probe",
-          exit_code == 0
-          and log_path.read_text(encoding="utf-8") == log_text,
-          log_path.read_text(encoding="utf-8"))
+          exit_code == 0 and after_dry_run == log_text,
+          after_dry_run)
     patch("tmux_session_alive_anywhere",
           lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
     exit_code = recovery.main(["seat-a",
                                "--agents-root", str(workspace.agents_root),
                                "--handoff-dir", str(workspace.handoffs),
                                "--projects-root", str(workspace.projects)])
+    after_refusal = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
     check("LOG: a refusal is a decision too — logged, run exits 1",
-          exit_code == 1 and "REFUSED" in log_path.read_text(encoding="utf-8"),
-          log_path.read_text(encoding="utf-8"))
+          exit_code == 1 and "REFUSED" in after_refusal,
+          after_refusal)
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(
