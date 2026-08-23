@@ -362,8 +362,19 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
             command += ["--first-prompt-file", str(first_prompt_file)]
         return subprocess.run(command, env=environment, check=False).returncode
 
+    # This branch hand-composes what the launcher would have composed, so it
+    # must carry the launcher's seat environment too — the task-list binding
+    # included (nedschorus#141, scripts/launch-claude-mac, where the
+    # mechanism is written out). Without it, the recovered generation runs
+    # with no task tools and no pin: its list is invisible, TaskList returns
+    # empty and TaskUpdate answers "Task not found", both with no error —
+    # the launcher comment's Warning 2, arriving at the one moment
+    # continuity is being promised. The launcher branch above needs nothing
+    # here; it runs the launcher, which does this itself.
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
+        f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'{name}-tasks')}; "
+        "export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; "
         f"python3 {Path(__file__).with_name('handoff-supervisor.py')} "
         f"--agent {shlex.quote(name)} --cd {shlex.quote(str(seat_directory))} "
         f"{supervisor_arguments}"

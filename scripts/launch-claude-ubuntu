@@ -151,7 +151,35 @@ AGENT_DIRECTORY_REMOTE="$AGENTS_ROOT_REMOTE/$AGENT_NAME"
 # reaching the supervisor is fine — it expanduser()s its --cd itself.
 AGENT_DIRECTORY_SUPERVISOR=$(escape_remote_double_quote_context "$(escape_single_quotes "$AGENT_DIRECTORY")")
 
+# Task-list persistence across seat generations — the twin of the same block
+# in scripts/launch-claude-mac, where the mechanism and its two warnings are
+# written out in full. In short: the harness keys its native task store by
+# CLAUDE_CODE_TASK_LIST_ID when set and by the session id otherwise, so
+# binding the id to the seat's NAME gives every generation of that seat the
+# same list rather than a fresh empty one, and CLAUDE_CODE_ENABLE_TODO_TOOLS=1
+# is what makes the task tools exist at all on current models (Claude Code
+# 2.1.233 withdrew them from Opus 4.8, Sonnet 5, Fable 5, Mythos 5 and newer).
+# Ported from the legacy system's
+# ~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341.
+#
+# Warning 1 — the store is ONE copy on ONE disk outside the repository, here
+# $HOME/.claude/tasks/<name>-tasks/ ON THE BOX. It is not committed and not
+# shared with the Mac, so the same seat name on both machines keeps two
+# unrelated lists.
+#
+# Warning 2 — a session started OUTSIDE this launcher binds elsewhere, and
+# the failure is silent: TaskList returns empty and TaskUpdate answers "Task
+# not found", both looking exactly like a seat with no tasks. The after-exit
+# shell inherits this export so the `claude --continue` it offers keeps the
+# binding; a `claude` typed in any other shell on the box does not.
+#
+# No escaping is needed on the composed id at either parse layer: AGENT_NAME
+# is charset-checked above to letters, digits, - and _, and the single quotes
+# ride through P1's double-quote context to be parsed by the pane shell at
+# P2, exactly as --agent does on the next line.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+export CLAUDE_CODE_TASK_LIST_ID='$AGENT_NAME-tasks'; \
+export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
 --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY_SUPERVISOR'"
 

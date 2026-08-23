@@ -14,6 +14,7 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -468,8 +469,14 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("queue status reports an empty queue", "docs/wiki/queue: empty" in line, line)
 
     # --- Task pre-seed (file mechanics, no session) -----------------------
+    # CLAUDE_CODE_TASK_LIST_ID is removed for the un-pinned cases and set
+    # explicitly for the pinned ones, never inherited: after nedschorus#141
+    # every wrapper-launched seat has it set, so a suite that read the
+    # ambient value would take a different path depending on who ran it.
     original_tasks_root = supervisor.TASKS_ROOT
+    original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
     try:
+        os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         supervisor.TASKS_ROOT = workspace / "tasks"
         retiring, successor = "old-session", "new-session"
         (supervisor.TASKS_ROOT / retiring).mkdir(parents=True)
@@ -477,25 +484,89 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
             (supervisor.TASKS_ROOT / retiring / f"{task_id}.json").write_text(
                 json.dumps({"id": task_id, "status": "pending"}), encoding="utf-8"
             )
+        check("unpinned: no pinned list id is reported",
+              supervisor.pinned_task_list_id() == "",
+              supervisor.pinned_task_list_id())
         copied = supervisor.preseed_tasks(retiring, successor)
         check("pre-seed copies every task record", copied == 2, f"copied {copied}")
         check("pre-seed counts what the successor will see", supervisor.task_count_for(successor) == 2)
         check("pre-seed leaves the source intact", supervisor.task_count_for(retiring) == 2)
         check("pre-seed of a taskless session copies nothing", supervisor.preseed_tasks("never-existed", "x") == 0)
+
+        # --- Recycle under a PINNED list (nedschorus#141) -----------------
+        # The failure this replaces: claude wrote the seat-keyed store while
+        # the supervisor counted the successor's session-UUID directory, so
+        # every recycle after a seat created a task told the successor
+        # "Confirm 0 task(s) are visible to you" over a list holding N —
+        # a false mismatch warning, deterministically, before work began.
+        # Shaped like a real recycle: tasks already in the seat's store, a
+        # fresh successor id, nothing copied, and the ignition line the
+        # successor is actually handed.
+        pinned_id = "handoff-supervisor-test-pin-tasks"
+        os.environ["CLAUDE_CODE_TASK_LIST_ID"] = pinned_id
+        pinned_store = supervisor.TASKS_ROOT / pinned_id
+        pinned_store.mkdir(parents=True)
+        for task_id in (1, 2, 3):
+            (pinned_store / f"{task_id}.json").write_text(
+                json.dumps({"id": str(task_id), "subject": f"pinned task {task_id}",
+                            "status": "pending", "blocks": [], "blockedBy": []}),
+                encoding="utf-8")
+        pinned_successor = "successor-session-that-names-no-store"
+        check("pinned: the list id is read from the environment",
+              supervisor.pinned_task_list_id() == pinned_id,
+              supervisor.pinned_task_list_id())
+        check("pinned: the successor's count comes from the SEAT's store, not its id",
+              supervisor.task_count_for(pinned_successor) == 3,
+              supervisor.task_count_for(pinned_successor))
+        check("pinned: nothing is pre-seeded — one store, both generations",
+              supervisor.preseed_tasks(retiring, pinned_successor) == 0)
+        check("pinned: no directory is created for the successor's session id",
+              not (supervisor.TASKS_ROOT / pinned_successor).exists(),
+              str(supervisor.TASKS_ROOT / pinned_successor))
+        check("pinned: the seat's own records are left untouched",
+              sorted(p.name for p in pinned_store.glob("*.json"))
+              == ["1.json", "2.json", "3.json"],
+              sorted(p.name for p in pinned_store.glob("*.json")))
+        pinned_prompt = supervisor.build_ignition_prompt(
+            Path("/tmp/extract.md"), {"written-at": "2026-08-22T00:00:00Z"},
+            supervisor.task_count_for(pinned_successor))
+        check("pinned: the successor is told to confirm 3 tasks, not 0",
+              "Confirm 3 task(s)" in pinned_prompt, pinned_prompt[:200])
+        # The un-pinned store this block started with must not have been
+        # disturbed by any of the above.
+        os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+        check("pinned cases left the un-pinned fixture alone",
+              supervisor.task_count_for(retiring) == 2,
+              supervisor.task_count_for(retiring))
     finally:
         supervisor.TASKS_ROOT = original_tasks_root
+        if original_pin is None:
+            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
 
 
 def run_preseed_canaries() -> None:
-    """Live canaries: does a fresh session read pre-seeded task files?
+    """Live canaries: does a fresh session read the seat's pinned task list?
 
-    Canary 1: a session started with an explicit id reads task records that
-    were on disk before it booted.
-    Canary 2: a task the successor creates allocates above the seeded ids,
-    leaving the migrated records untouched.
+    Canary 1: a fresh session launched with the seat's pinned list id reads
+    task records that were on disk before it booted — the successor half of
+    a recycle, which is how the fleet carries tasks since nedschorus#141.
+    Canary 2: a task that session creates allocates above the existing ids,
+    leaving the earlier records untouched.
+
+    Two variables, because either alone proves nothing here.
+    CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is what makes the task tools exist at
+    all from Claude Code 2.1.233 onward; without it the canary would report
+    a failure that is only the tools being absent.
+    CLAUDE_CODE_TASK_LIST_ID is the binding under test.
+
+    The store is a throwaway id, created and removed by this function. No
+    seat's real list is read or written.
     """
     session_id = str(uuid.uuid4())
-    task_directory = supervisor.TASKS_ROOT / session_id
+    pinned_list_id = f"handoff-supervisor-canary-{uuid.uuid4().hex[:8]}-tasks"
+    task_directory = supervisor.TASKS_ROOT / pinned_list_id
     task_directory.mkdir(parents=True, exist_ok=True)
     # The record shape is the harness's own, read from live task stores: the
     # id is a STRING, and blocks/blockedBy are present. A record with an
@@ -517,22 +588,33 @@ def run_preseed_canaries() -> None:
             encoding="utf-8",
         )
 
-    result = subprocess.run(
-        [
-            "claude", "-p", "--session-id", session_id,
-            "List your current tasks with the TaskList tool, then create one new task "
-            "titled 'canary successor task'. Report the subjects you saw and the new task's id.",
-        ],
-        capture_output=True, text=True, timeout=300, check=False,
-    )
-    transcript = result.stdout
+    try:
+        result = subprocess.run(
+            [
+                "claude", "-p", "--session-id", session_id,
+                "List your current tasks with the TaskList tool, then create one new task "
+                "titled 'canary successor task'. Report the subjects you saw and the new task's id.",
+            ],
+            capture_output=True, text=True, timeout=300, check=False,
+            env={**os.environ,
+                 "CLAUDE_CODE_TASK_LIST_ID": pinned_list_id,
+                 "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"},
+        )
+        transcript = result.stdout
 
-    check("canary 1: successor reads seeded tasks", "alpha" in transcript and "beta" in transcript, transcript[:400])
+        check("canary 1: successor reads the seat's pinned tasks",
+              "alpha" in transcript and "beta" in transcript, transcript[:400])
 
-    seeded_intact = all((task_directory / f"{n}.json").is_file() for n in (1, 2))
-    new_files = sorted(int(p.stem) for p in task_directory.glob("*.json") if p.stem.isdigit())
-    check("canary 2: seeded records are untouched", seeded_intact, str(new_files))
-    check("canary 2: new task ids allocate above the seeded maximum", max(new_files) >= 3, str(new_files))
+        seeded_intact = all((task_directory / f"{n}.json").is_file() for n in (1, 2))
+        new_files = sorted(int(p.stem) for p in task_directory.glob("*.json") if p.stem.isdigit())
+        check("canary 2: seeded records are untouched", seeded_intact, str(new_files))
+        check("canary 2: new task ids allocate above the seeded maximum", max(new_files) >= 3, str(new_files))
+    finally:
+        # The throwaway store goes even when a check above failed, so a red
+        # run does not strand a directory beside the fleet's real lists.
+        shutil.rmtree(task_directory, ignore_errors=True)
+        print(f"(canary store {task_directory} removed: "
+              f"{'gone' if not task_directory.exists() else 'STILL PRESENT'})")
 
 
 def git_in(arguments, cwd):
