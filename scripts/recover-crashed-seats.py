@@ -61,6 +61,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _supervisor_spec = importlib.util.spec_from_file_location(
@@ -509,6 +510,28 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     return f"{name}: relaunched fresh igniting from {extract.name}"
 
 
+def append_to_recovery_log(handoff_directory: Path, report: str):
+    """One timestamped line per seat verdict, appended durably.
+
+    The printed reports otherwise live only in the operator's scrollback,
+    and a post-crash investigator needs the decision AS MADE AT THE TIME —
+    state moves after a recovery (handoffs consumed, seats relaunched), so
+    the verdict may not be re-derivable later (user-ruled 2026-08-22: a
+    simple durable log). Dry runs do not log: --dry-run promises to change
+    nothing, and it is itself the investigator's probe. A log failure never
+    blocks a recovery — the seat matters more than the record.
+    """
+    log_path = handoff_directory / "recover-crashed-seats-log.txt"
+    try:
+        handoff_directory.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{stamp} {report}\n")
+    except OSError as error:
+        print(f"recover-crashed-seats: could not append to {log_path}: {error}",
+              file=sys.stderr)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Recover seats whose sessions died without writing a handoff.",
@@ -566,6 +589,8 @@ def main(argv=None) -> int:
         report = recover_seat(name, agents_root, handoff_directory, projects_root,
                               arguments.dry_run, arguments.ignite_fallback)
         print(f"recover-crashed-seats: {report}")
+        if not arguments.dry_run:
+            append_to_recovery_log(handoff_directory, report)
         if "REFUSED" in report or "LAUNCH FAILED" in report:
             not_recovered += 1
     return 1 if not_recovered == len(names) else 0
