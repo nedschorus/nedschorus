@@ -111,13 +111,17 @@ Every surface reports one of three outcomes, and the last two are never conflate
 
 An agent told "not found" stops looking; an agent told "Time Machine needs a snapshot mounted, here is the command" asks for it. A surface that cannot be read must never render as empty.
 
+**A surface with more than one location reports the honest combination.** Transcripts live on this Mac *and* on ned-box; Timeshift is reached over ssh. The rule: FOUND if any location found it; otherwise UNAVAILABLE if any location could not be searched, naming which one and stating what the searched locations returned; otherwise NOT FOUND. Without this, a run that searched the Mac and could not reach the box reports NOT FOUND — the exact dishonesty this contract exists to prevent. (This is also finding F6 on PR #146, where the built script has the defect.)
+
 ### Transcripts report three states, not one
 
 Transcripts match on the path *string*, and an agent searching for a file has usually just typed that path — so its own session always matches. Observed in testing: a lone hit that was the searching session quoting the filename. Reporting that as "found in 1 transcript" reads as recovery and is not. So:
 
-- **content likely present** — the path appears alongside a large body of text, the shape of a tool result that read the file;
-- **mentioned only** — the name appears, with no content near it;
-- **the searcher's own session** — excluded entirely, by session id.
+- **content likely present** — the path appears alongside a large body of text, the shape of a tool result that read the file. Reported as **FOUND**.
+- **mentioned only** — the name appears, with no content near it. Reported as **NOT FOUND**, with the mentions listed underneath as leads: the surface was searched and does not hold the content, and a name turning up is worth seeing without being recovery.
+- **the searcher's own session** — excluded by session id *before* classification, so it never reaches the vocabulary at all.
+
+These are a refinement of what "has the content" means for a surface that can hold a filename without holding the file. They do not replace the three outcomes above; every transcript result still resolves to exactly one of them.
 
 ## Path resolution
 
