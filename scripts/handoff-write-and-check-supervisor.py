@@ -5,8 +5,9 @@ The handoff system's writer (specification:
 docs/cross-project/fast-handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
-restart counter, formats and writes the file, then checks whether a
-supervisor is actually watching and tells the agent what that means for it.
+restart counter, derives the roster of subagents this session spawned,
+formats and writes the file, then checks whether a supervisor is actually
+watching and tells the agent what that means for it.
 
 Usage:
   handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
@@ -72,6 +73,19 @@ _supervisor_spec.loader.exec_module(supervisor)
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
+
+PROJECTS_ROOT = Path.home() / ".claude" / "projects"
+
+# One numbered field per subagent: `spawned-subagent-1`, `spawned-subagent-2`.
+# A repeated key would not work — the reader takes the first occurrence of a
+# key, so every subagent but the first would be dropped.
+SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+
+# No transcript record can describe a subagent event without carrying one of
+# these strings, so a line carrying none of them is never parsed. A session
+# transcript runs to megabytes of tool output; this substring pre-filter is
+# what keeps deriving the roster from parsing all of it.
+SUBAGENT_EVENT_RECORD_MARKERS = ("async_launched", "resumedAgentId", "<task-notification>")
 
 
 def collapse_to_one_line(text: str) -> str:
@@ -152,8 +166,197 @@ def claiming_directory(handoff_path: Path) -> str:
     return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
 
 
+def project_directory_for_working_directory(working_directory: Path) -> Path:
+    """Return the ~/.claude/projects directory holding a worktree's sessions.
+
+    The harness mangles the absolute path by replacing every character that is
+    not alphanumeric, a dash, or an underscore with a dash.
+    """
+    mangled = "".join(
+        character if (character.isalnum() or character in "-_") else "-"
+        for character in str(working_directory)
+    )
+    return PROJECTS_ROOT / mangled
+
+
+def find_session_transcript(session_id: str, working_directory: Path):
+    """Locate a session's JSONL by id: keyed lookup first, then a search.
+
+    Returns None rather than raising. The roster is one extra field on a
+    handoff; a handoff must still be written when the transcript cannot be
+    found, and an ambiguous search hit is no better than none.
+    """
+    if not session_id or session_id == "unknown":
+        return None
+    keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
+    if keyed_path.is_file():
+        return keyed_path
+    matches = sorted(PROJECTS_ROOT.glob(f"*/{session_id}.jsonl"))
+    return matches[0] if len(matches) == 1 else None
+
+
+def timestamp_to_whole_seconds(stamp: str) -> str:
+    """`2026-08-23T19:55:24.756Z` -> `2026-08-23T19:55:24Z`, as `written-at` reads."""
+    match = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", stamp or "")
+    return f"{match.group(1)}Z" if match else "an unrecorded time"
+
+
+def task_notification_text(record: dict):
+    """The `<task-notification>` body a transcript record carries, or None.
+
+    One notification reaches the transcript up to three times in three record
+    shapes — enqueued (`queue-operation`), delivered as a user turn (`user`),
+    and removed from the queue (`queue-operation`), with an `attachment` copy
+    beside them. All the shapes are read rather than only the delivered one,
+    because a subagent that finishes as its session is dying has its
+    notification enqueued and never delivered, and that is the moment this
+    roster exists for.
+    """
+    if record.get("type") == "user":
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+    elif record.get("type") == "queue-operation":
+        content = record.get("content")
+    elif record.get("type") == "attachment":
+        attachment = record.get("attachment")
+        content = attachment.get("prompt") if isinstance(attachment, dict) else None
+    else:
+        return None
+    if isinstance(content, str) and content.startswith("<task-notification>"):
+        return content
+    return None
+
+
+def spawned_subagent_roster(transcript_path: Path) -> list:
+    """Every subagent this session SPAWNED, in spawn order, with its last event.
+
+    Each entry is a dict: agent_id, description, spawned_at, last_event,
+    last_event_at. Ordinary reading of one session's own transcript.
+
+    **Spawned, not running.** The roster deliberately does not try to say
+    which subagents are alive. On 2026-08-23 the merge-lane seat's fixer for
+    pull request #150 was NOT running when its session was recycled: it had
+    finished a round and was sitting idle, resumable, still owning the
+    unfinished fix. Its branch and worktree survived on disk; only the
+    knowledge that it existed was lost. A roster filtered to running
+    subagents would have excluded the one orphan it was built to catch, so
+    the writer records what a machine can know and the successor judges which
+    entries still own work. The user ruled on 2026-08-23 that killing and
+    restarting subagents is the standing policy and that the fix is to record
+    them, not to wait for them.
+
+    **Liveness is not inferred from unmatched tool_use/tool_result pairs**,
+    and that is worth stating because it is the obvious wrong answer: the
+    `Agent` tool returns its result at SPAWN time ("Async agent launched
+    successfully... you will be notified when it completes"), so every spawn
+    is a matched pair whatever becomes of the subagent. Completion arrives
+    later, as separate `<task-notification>` records.
+
+    **Background monitors are excluded structurally, not by their ids.** A
+    monitor's tool result carries `taskId`/`persistent` and no `agentId`, so
+    keying spawns on `status == "async_launched"` with an `agentId` selects
+    subagents only. Measured on the 2026-08-23 transcripts, where nine
+    subagents and seven monitors ran in one session.
+    """
+    roster = []
+    by_agent_id = {}
+    with transcript_path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not any(marker in line for marker in SUBAGENT_EVENT_RECORD_MARKERS):
+                continue
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue  # the transcript is read while its writer is still running
+            if not isinstance(record, dict):
+                continue
+            stamp = timestamp_to_whole_seconds(record.get("timestamp", ""))
+
+            result = record.get("toolUseResult")
+            if isinstance(result, dict):
+                agent_id = result.get("agentId")
+                if result.get("status") == "async_launched" and agent_id:
+                    if agent_id not in by_agent_id:
+                        entry = {
+                            "agent_id": agent_id,
+                            # Collapsed: a description is free text from the
+                            # spawning call, and a newline inside one would
+                            # split the roster's line in the handoff file.
+                            "description": collapse_to_one_line(str(result.get("description") or "")),
+                            "spawned_at": stamp,
+                            "last_event": "spawned",
+                            "last_event_at": stamp,
+                        }
+                        by_agent_id[agent_id] = entry
+                        roster.append(entry)
+                    continue
+                resumed = by_agent_id.get(result.get("resumedAgentId"))
+                if resumed is not None:
+                    resumed["last_event"] = "resumed"
+                    resumed["last_event_at"] = stamp
+                    continue
+
+            notification = task_notification_text(record)
+            if notification is None:
+                continue
+            task_id = re.search(r"<task-id>(.*?)</task-id>", notification)
+            status = re.search(r"<status>(.*?)</status>", notification)
+            entry = by_agent_id.get(task_id.group(1)) if task_id else None
+            if entry is None or status is None:
+                continue
+            # Only a CHANGE of status is a new event. The same completion is
+            # announced up to three times, so taking every announcement would
+            # date the event at its last echo rather than at its arrival.
+            if status.group(1) != entry["last_event"]:
+                entry["last_event"] = status.group(1)
+                entry["last_event_at"] = stamp
+    return roster
+
+
+def spawned_subagent_field_lines(roster) -> list:
+    """Render a roster as the handoff file's numbered `key: value` lines."""
+    lines = []
+    for ordinal, entry in enumerate(roster, start=1):
+        described = f' "{entry["description"]}"' if entry["description"] else ""
+        lines.append(
+            f"{SPAWNED_SUBAGENT_FIELD_PREFIX}{ordinal}: {entry['agent_id']}{described}"
+            f" spawned {entry['spawned_at']},"
+            f" last event {entry['last_event']} {entry['last_event_at']}"
+        )
+    return lines
+
+
+def spawned_subagent_roster_for_this_session(working_directory: Path):
+    """Return (field lines, one line for the console) for the running session.
+
+    Never raises, on the same principle as the branch-protection audit below:
+    a broken derivation must not break a handoff. When it cannot produce a
+    roster it says so on the console, so the retiring agent knows to name its
+    subagents in the next step by hand rather than assuming they were
+    recorded — silence about subagents is the failure this field exists to
+    remove, and a silent failure to derive them would reinstate it.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_id:
+        return [], ("spawned-subagent roster: not derived — CLAUDE_CODE_SESSION_ID is unset, so this "
+                    "script cannot find the transcript. Name any subagents in the next step by hand.")
+    try:
+        transcript_path = find_session_transcript(session_id, working_directory)
+        if transcript_path is None:
+            return [], (f"spawned-subagent roster: not derived — no single transcript found for session "
+                        f"{session_id} under {PROJECTS_ROOT}. Name any subagents in the next step by hand.")
+        roster = spawned_subagent_roster(transcript_path)
+    except Exception as error:  # noqa: BLE001 - the roster never blocks a handoff
+        return [], (f"spawned-subagent roster: not derived — {type(error).__name__}: {error}. "
+                    "Name any subagents in the next step by hand.")
+    if not roster:
+        return [], "spawned-subagent roster: this session spawned no subagents"
+    return (spawned_subagent_field_lines(roster),
+            f"spawned-subagent roster: {len(roster)} subagent(s) recorded for the successor")
+
+
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
-                       verbatim_lines=()) -> None:
+                       spawned_subagent_lines=(), verbatim_lines=()) -> None:
     """Write the handoff file in one step, so no reader sees it half-written."""
     lines = [
         f"written-at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -168,6 +371,11 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
     ]
     if dont_restart:
         lines.append("dont-restart: the user asked to be consulted before a relaunch")
+
+    # The subagents this session spawned die with it, and until this field
+    # existed nothing told the successor they had ever run (2026-08-23; see
+    # spawned_subagent_roster). Written as ordinary fields, before the block.
+    lines.extend(spawned_subagent_lines)
 
     # LAST, always: a block's content lines can look like fields, and only the
     # position guarantees they cannot shadow one.
@@ -301,9 +509,12 @@ def main(argv=None) -> int:
         return 2
 
     counter = next_restart_counter(handoff_path, state_path)
+    spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(Path.cwd())
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart,
+                       spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines)
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")
+    print(f"handoff-write-and-check-supervisor: {roster_report}")
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
     alive, explanation = supervisor.supervisor_liveness(state_path)
