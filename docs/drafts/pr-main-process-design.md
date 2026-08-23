@@ -1078,28 +1078,54 @@ conclusion: improvised per-merge gates regress; the committed gate is the
 fix.
 
 **A third specimen, and it widens the class beyond the merge gate**
-(git-infra seat, 2026-08-23, self-reported to the merge seat). Correcting
-#149, that seat cherry-picked `HEAD@{0}`, which resolved inside a fresh
-worktree rather than the seat branch it meant. The cherry-pick no-opped; the
-push answered `Everything up-to-date`; both outputs had been truncated with
-`tail`. Every visible sign said success and nothing had happened. It was
-caught only because the seat then read the file back **from `origin/`**
-rather than trusting the push output, and it redid the work with an explicit
-SHA.
+(git-infra seat, 2026-08-23, self-reported and then corrected by that seat
+against its own transcript, which the merge seat read rather than relaying).
+The command, verbatim from the transcript, the tail of a longer `&&` chain:
 
-Nothing shipped wrong, but the shape is the same as #125 and #141 and the
-operation is different — a push, not a merge — so the rule generalizes past
-the merge door: **a check whose output cannot distinguish "it worked" from
-"I looked at nothing" is not a check.** `Everything up-to-date` is that
-sentence exactly; so is an inline-comment count printed beside a merge. The
-countermeasure the seat used is the one to standardize: verify an operation
-by reading back the state it was supposed to produce, from the authority
-(here `origin/`), not by reading the tool's report of its own success.
+    git -C "$PRWT" cherry-pick HEAD@{0} 2>&1 | tail -2 && \
+    git -C "$PRWT" push 2>&1 | tail -1 && \
+    git worktree remove "$PRWT" && echo cleaned
 
-Also worth carrying from this specimen: `tail` on a command's output is not
-neutral. It discarded the lines that would have shown the no-op, and it did
-so in the same breath as the check. Truncating the output of a verification
-step is itself a way to blind it.
+`HEAD@{0}` resolved in the freshly added worktree `$PRWT`, whose reflog holds
+the branch tip rather than the commit just made in the seat's own worktree.
+So the cherry-pick had nothing to apply and failed. The chain then ran to
+completion: the push answered `Everything up-to-date`, the worktree was
+removed, and `cleaned` printed. Every visible sign said success and the
+correction had not been made.
+
+**The mechanism is the pipe, not the truncation.** A pipeline's exit status
+is its LAST command's, and `tail` always succeeds, so the failed cherry-pick
+could not stop the `&&` chain. `2>&1 | tail -2` did not hide the evidence —
+`nothing to commit, working tree clean` was sitting in the visible output.
+It replaced the failure signal with a success one.
+
+**And it was caught by eye**, by the seat reading those two lines in the
+result. That is the honest and less flattering account, corrected by that
+seat when this entry first credited its `origin/` read-back with the catch:
+the read-back was the redo's verification, adopted afterwards. Eyes are
+exactly what this class defeats, so a specimen caught by eye is a near-miss,
+not a working control.
+
+Nothing shipped wrong, but the shape matches #125 and #141 while the
+operation differs — a push, not a merge — so the rule is not about the merge
+door: **a check whose output cannot distinguish "it worked" from "I looked at
+nothing" is not a check.** `Everything up-to-date` is that sentence exactly;
+so is an inline-comment count printed beside a merge.
+
+Three countermeasures, in the order they bite:
+
+1. **Never pipe a command whose failure is supposed to stop a chain.** Piping
+   through `tail`, `head`, `grep` or `wc` replaces its exit status with the
+   filter's. Use `set -o pipefail`, test `PIPESTATUS`, or run the command
+   unpiped and filter afterwards. This is the one that would have prevented
+   this specimen.
+2. **Verify by reading back the state the operation was supposed to produce,
+   from the authority** — here `origin/` — not from the tool's report of its
+   own success. This is the redo's method and the durable habit.
+3. **Truncating a verification step's output is a hazard in its own right,**
+   because the tell-tale line is usually the one cut. It did not bite here —
+   the line survived inside `tail -2` — but it remains a way to blind a check
+   even where the exit status is handled correctly.
 
 **What it must gate on:** the channel **digest** (`id`+`updated_at` across
 all three channels) — never counts, never `commit_id`. #141 demonstrated
