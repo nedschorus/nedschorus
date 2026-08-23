@@ -611,7 +611,7 @@ def main():
 
     def capture_command(command, *arguments, **keywords):
         captured["command"] = list(command)
-        return sp.CompletedProcess(list(command), 0, "", "")
+        return subprocess.CompletedProcess(list(command), 0, "", "")
 
     try:
         runner_memories.subprocess.run = capture_command
