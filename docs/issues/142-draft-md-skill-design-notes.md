@@ -42,7 +42,7 @@ Scrubbing is relocation, not deletion (user-ruled 2026-08-23, on his worry that 
 
 Kept: the reason a rule exists, which is what lets an agent judge an unanticipated case — the cut is decision history, not reasons. The pattern already exists here: the audit prompts hold their rulings and recovery pointers in a maintainer header that the runner splits off, so the reviewing agent receives instruction only.
 
-Open, for the user's ruling: whether documents whose purpose is to record decisions keep their ruling stamps. Those stamps serve a live mechanism — reviewers are instructed to hunt "ruled"/"RULED" annotations so they flag collisions with settled decisions instead of silently re-litigating them, and scrubbing designs under review would remove that detector's input. The draft skill states the exception as recommended (a document whose purpose is recording decisions keeps rulings and dates as its content); the user has not ruled on it.
+Settled 2026-08-23 by the genre-suffix ruling ([nedschorus#152](https://github.com/nedschorus/nedschorus/issues/152)): a document that only reports what happened carries a genre suffix — `-log`, `-report`, or `-capture` — which takes it out of the review path entirely, so it keeps its ruling stamps as content and draft-md never touches it. The drafting rules need no exception clause; the filename decides. This also preserves the detector those stamps feed: reviewers hunt "ruled"/"RULED" annotations to flag collisions with settled decisions instead of silently re-litigating them, and the documents carrying those stamps are exactly the ones the suffix protects.
 
 ## A referring phrase names what it refers to (user-directed 2026-08-23, relayed from the git-infra seat)
 
