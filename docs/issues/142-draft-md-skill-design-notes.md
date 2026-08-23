@@ -44,6 +44,14 @@ Kept: the reason a rule exists, which is what lets an agent judge an unanticipat
 
 Open, for the user's ruling: whether documents whose purpose is to record decisions keep their ruling stamps. Those stamps serve a live mechanism — reviewers are instructed to hunt "ruled"/"RULED" annotations so they flag collisions with settled decisions instead of silently re-litigating them, and scrubbing designs under review would remove that detector's input. The draft skill states the exception as recommended (a document whose purpose is recording decisions keeps rulings and dates as its content); the user has not ruled on it.
 
+## A referring phrase names what it refers to (user-directed 2026-08-23, relayed from the git-infra seat)
+
+His diagnosis, verbatim: an "interesting failure mode ... sounds like a bad or ambiguous english prompt or instruction which needs to be cleaned up."
+
+The specimen: a normative document stated that a restriction was "proven, not merely configured" — a term of art in that document separating a settings read from a demonstrated refusal — and named the restriction only as "the restriction", relying on the sentence one line above it. About six hundred words were later inserted between the two. The sentence did not change, and it silently began asserting that a different restriction, enabled after the experiment ran and never tested, had been proven by controlled test. The false claim landed on the phrase a reader trusts most, and nothing in the sentence looked wrong afterward.
+
+The bar: a referring phrase names its referent. "The restriction", "this check", "that experiment", "the same rule" are safe only while the referent is adjacent, and adjacency does not survive editing — any later insertion moves it. The cost is asymmetric: naming costs three words, while the failure produces a confident false statement in a document others act on. This pairs with the every-step-answers bar; both concern text that cannot tell its reader when it has stopped being true. Wording is working material until walked.
+
 ## Build path
 
 Per the skill-authoring checklist (`docs/wiki/queue/skill-authoring-checklist.md`); the skill text itself gets a zero-context read and a walk before adoption. Timing user-ruled: end of the clarity-registers walk ([nedschorus#138](https://github.com/nedschorus/nedschorus/issues/138)) or soon after.
