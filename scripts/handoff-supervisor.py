@@ -189,8 +189,31 @@ def elapsed_phrase(written_at: str) -> str:
     return f"written {amount} ago — the longer the gap, the more will have changed since"
 
 
+def pinned_task_list_id() -> str:
+    """The seat-keyed task list id the launchers pin, or "" when unpinned.
+
+    scripts/launch-claude-mac and scripts/launch-claude-ubuntu export
+    CLAUDE_CODE_TASK_LIST_ID="<seat name>-tasks" into the seat's environment.
+    This supervisor is started inside that environment and passes it on by
+    inheritance to every session it launches, so when the variable is set,
+    ALL of a seat's generations read and write one store,
+    ~/.claude/tasks/<seat name>-tasks/, and the session id names no store at
+    all. Read from the environment rather than recomposed from --agent: the
+    launcher is the one place the id is composed, and a second composition
+    here would be a second thing to keep in step.
+    """
+    return os.environ.get("CLAUDE_CODE_TASK_LIST_ID", "").strip()
+
+
 def task_count_for(session_id: str) -> int:
-    directory = TASKS_ROOT / session_id
+    """How many task records the session with this id will actually see.
+
+    Under a pinned list the session id names nothing and the count comes
+    from the pinned store — which is the whole point of the ignition
+    count-check: it must state what the successor will find, not what some
+    directory named after its id holds.
+    """
+    directory = TASKS_ROOT / (pinned_task_list_id() or session_id)
     return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
 
 
@@ -204,7 +227,14 @@ def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
     (per-upgrade canary re-runs were dropped as a remembered duty,
     user-ruled 2026-08-12); the canaries in handoff-supervisor-test.py
     (--canary) diagnose it when that fires.
+
+    None of that applies under a pinned list, which is why this returns 0
+    without copying there: the retiring and successor sessions already share
+    one store, so there is no source and no destination to speak of, and the
+    detection story above describes the un-pinned path only.
     """
+    if pinned_task_list_id():
+        return 0
     source = TASKS_ROOT / retiring_session_id
     if not source.is_dir():
         return 0
@@ -596,8 +626,16 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     print(f"handoff-supervisor: {queue_status}")
 
     successor_session_id = str(uuid.uuid4())
-    copied = preseed_tasks(retiring_session_id, successor_session_id)
-    print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
+    # Two stories, and the console must not tell the wrong one: under a
+    # pinned list nothing is carried because nothing needs to be, and
+    # printing "carried 0 task record(s)" there reads as a failure to carry.
+    pinned_list = pinned_task_list_id()
+    if pinned_list:
+        print(f"handoff-supervisor: tasks live in the seat-pinned list {pinned_list}; "
+              f"the successor opens that same list, so nothing is carried")
+    else:
+        copied = preseed_tasks(retiring_session_id, successor_session_id)
+        print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
 
     prompt = build_ignition_prompt(
         extract_path, handoff_fields, task_count_for(successor_session_id), queue_status

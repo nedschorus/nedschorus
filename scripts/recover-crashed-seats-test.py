@@ -676,6 +676,30 @@ with tempfile.TemporaryDirectory() as temporary:
           and "abc-123" in box_tokens
           and "--handoff-dir" in box_tokens,
           box_command)
+    # nedschorus#141 review F2: this branch composes the supervisor command
+    # itself instead of running the launcher, so it must carry the seat
+    # environment the launcher would have set. Without it a recovered box
+    # generation has no task tools and no pin, and its list is invisible with
+    # no error. Asserted on the composed string parsed as the launch shell
+    # parses it, and on the id being derived from the SEAT NAME.
+    # `export NAME=value;` splits into two tokens, the second keeping the
+    # statement's trailing semicolon, so compare with it stripped.
+    box_assignments = [token.rstrip(";") for token in box_tokens]
+    check("task list: the box branch pins the list to the seat name",
+          f"CLAUDE_CODE_TASK_LIST_ID={workspace.name}-tasks" in box_assignments,
+          box_command)
+    check("task list: the box branch enables the task tools",
+          "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in box_assignments,
+          box_command)
+    # `marker in box_command` first, so a missing export FAILS this case
+    # rather than raising out of the suite: str.index on an absent marker
+    # tracebacks, which reads as a broken harness instead of a caught defect.
+    check("task list: both exports precede the supervisor on the box command line",
+          all(marker in box_command
+              and box_command.index(marker) < box_command.index("handoff-supervisor.py")
+              for marker in ("CLAUDE_CODE_TASK_LIST_ID",
+                             "CLAUDE_CODE_ENABLE_TODO_TOOLS")),
+          box_command)
 
     # PR #134 review finding 1: an apostrophe in an operator's directory path
     # must survive the one shell parse each composed value gets — the

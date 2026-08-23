@@ -238,7 +238,14 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # Warning 1 — the store is ONE copy on ONE disk, outside the repository:
 # $HOME/.claude/tasks/<name>-tasks/ on this Mac. It is not committed, not
 # backed up with the repository, and not shared with the box, so the same
-# seat name on both machines keeps two unrelated lists.
+# seat name on both machines keeps two unrelated lists. On THIS Mac the
+# reverse also holds, and it is the sharper half: the legacy system's
+# wrapper (~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341) composes
+# the identical "<name>-tasks" id into the same $HOME/.claude/tasks/, so a
+# nedschorus seat and a nedlern agent of the same name share ONE list rather
+# than colliding visibly. No such pair exists today; whether the id should
+# carry a per-system prefix is a question with the user, not something this
+# comment decides.
 #
 # Warning 2 — a session started OUTSIDE this launcher binds ELSEWHERE, and
 # the failure is silent. Without this export, `claude` falls back to the
@@ -258,8 +265,12 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # them. Measured on this Mac 2026-08-22 (Claude Code 2.1.238, model
 # claude-sonnet-5): with the enable variable unset, the pin alone does
 # nothing — TaskCreate is not among the visible tools and no store directory
-# is ever created. Both variables are therefore required, and neither is
-# useful alone.
+# is ever created. The two are not symmetric, and it is worth being exact,
+# because reading them as interchangeable is what hid the supervisor's stale
+# accounting for a review round: the PIN alone does nothing, while ENABLE
+# alone gives a seat working task tools on a session-keyed store — a real
+# list, just one that starts empty at every recycle. Both are needed for a
+# list that is the SEAT's.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 export CLAUDE_CODE_TASK_LIST_ID='$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
