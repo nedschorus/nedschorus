@@ -838,6 +838,46 @@ with tempfile.TemporaryDirectory() as temporary:
         else:
             os.environ["NEDSCHORUS_AGENTS_ROOT"] = saved_root
 
+    # User-ruled 2026-08-22: recovery's verdicts are durably logged. The
+    # printed reports otherwise live only in the operator's scrollback, and
+    # a post-crash investigator needs the decision AS MADE AT THE TIME —
+    # state moves after a recovery, so the verdict may not be re-derivable.
+    # Driven through main(), where the logging hook lives.
+    workspace = Workspace(root / "r22")
+    all_dead()
+    write_transcript(workspace.project_directory(), "logged-resume", "real work",
+                     records=5)
+    capture_launches(workspace)
+    exit_code = recovery.main(["seat-a",
+                               "--agents-root", str(workspace.agents_root),
+                               "--handoff-dir", str(workspace.handoffs),
+                               "--projects-root", str(workspace.projects)])
+    log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+    log_text = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+    check("LOG: a recovery run appends its verdict, timestamped",
+          exit_code == 0 and "relaunched resuming logged-resume" in log_text
+          and log_text[:4].isdigit()
+          and "+00:00 " in log_text.splitlines()[0],
+          (exit_code, log_text))
+    exit_code = recovery.main(["seat-a", "--dry-run",
+                               "--agents-root", str(workspace.agents_root),
+                               "--handoff-dir", str(workspace.handoffs),
+                               "--projects-root", str(workspace.projects)])
+    after_dry_run = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+    check("LOG: --dry-run logs nothing — it changes nothing, and it is the probe",
+          exit_code == 0 and after_dry_run == log_text,
+          after_dry_run)
+    patch("tmux_session_alive_anywhere",
+          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+    exit_code = recovery.main(["seat-a",
+                               "--agents-root", str(workspace.agents_root),
+                               "--handoff-dir", str(workspace.handoffs),
+                               "--projects-root", str(workspace.projects)])
+    after_refusal = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+    check("LOG: a refusal is a decision too — logged, run exits 1",
+          exit_code == 1 and "REFUSED" in after_refusal,
+          after_refusal)
+
     import subprocess as real_subprocess
     completed = real_subprocess.run(
         [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")),
