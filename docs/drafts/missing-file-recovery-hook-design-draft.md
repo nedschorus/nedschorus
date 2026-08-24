@@ -211,6 +211,57 @@ Any error inside the hook — an unparseable payload, a crashed subprocess, a mi
 
 `scripts/find-deleted-path-across-backups.py` prints prose for a human. The hook needs machine-readable results, so the script gains a **`--json` mode** emitting one object per surface with its outcome, path, timestamp, sha256 and recovery command. The prose renderer becomes a formatter over that same structure, which stops the two disagreeing about a field they both render — it does not stop a field being added to the JSON and never surfaced in prose, so the renderer needs its own test. **Sequencing:** `--json` lands as a follow-on to PR nedschorus#146 rather than inside it, so this design is not blocked on that PR merging, but the hook is.
 
+**The envelope**, settled here rather than left to the build:
+
+```json
+{
+  "schema_version": 1,
+  "query": {
+    "path": "/Users/el/agents/mac-ubuntu-bridge/docs/foo.md",
+    "kind": "path",
+    "bound": {"deleted_at": "2026-08-14T09:12:03-07:00", "commit": "ab541cc"}
+  },
+  "surfaces": [
+    {
+      "surface": "timemachine",
+      "outcome": "BLOCKED",
+      "reason": "reading the backup volume needs root",
+      "action": {"command": "sudo mount_apfs -o ro -s ...", "then": "retry"},
+      "locations": [{"name": "My Passport for Mac", "outcome": "BLOCKED"}],
+      "hits": []
+    },
+    {
+      "surface": "git",
+      "outcome": "FOUND",
+      "reason": null,
+      "action": null,
+      "locations": [{"name": "worktree", "outcome": "FOUND"}],
+      "hits": [{
+        "path": "docs/foo.md",
+        "snapshot_id": "65b382a01",
+        "timestamp": "2026-08-13T22:04:11-07:00",
+        "sha256": "...",
+        "recovery_command": "git show 65b382a01:docs/foo.md"
+      }]
+    }
+  ],
+  "agreement": {"sha256": "...", "surfaces": ["git", "timeshift"]}
+}
+```
+
+`snapshot_id` carries each surface's own native name — `2026-08-23-192723`, a git sha — because that is what the recovery command needs; `timestamp` is ISO 8601 with an offset because that is what ordering needs. One field for both would make every consumer parse names into times.
+
+Four rules make the envelope enforce the outcome contract rather than merely carry it:
+
+1. **`hits` is non-empty if and only if `outcome` is `FOUND`.** A surface cannot carry hits while reporting NOT_FOUND, or report FOUND holding nothing.
+2. **`reason` is non-null exactly when the outcome is `BLOCKED` or `UNAVAILABLE`.** `action` may appear on either, since UNAVAILABLE carries a fixing command when one exists — so the outcome, not the presence of `action`, is what separates them.
+3. **`locations` always lists every location the surface has, each with its own outcome**, which makes the combination rule below auditable instead of asserted. The defect raised as F6 in PR nedschorus#146 — transcripts reporting NOT FOUND when the Mac was searched and ned-box was unreachable — is visible in this shape rather than hidden behind a rolled-up value.
+4. **An unknown `schema_version` is refused and logged, not parsed.** The reason is scheduled rather than hypothetical: this design lands `--json` and the BLOCKED outcome as *separate* follow-ons to that PR, and the Mac and ned-box update independently.
+
+**Exit status:** `--json` exits 0 whenever it produced a valid document, including when every surface is NOT_FOUND; nonzero means no document was produced. The hook's fail-open rule has to tell "ran, found nothing" from "crashed", and without this both look like empty output.
+
+JSON spells the outcomes `FOUND`, `NOT_FOUND`, `BLOCKED`, `UNAVAILABLE`; prose keeps `NOT FOUND`.
+
 ### Extracting the path from a Bash failure
 
 `Read` and `Edit` hand the path over directly. `Bash` does not: it sits inside the error text, positioned differently by each program. These patterns, applied in order to each line of `error`, cover every shape the 486-transcript census produced:
@@ -238,7 +289,6 @@ These patterns are a build artifact with a test rather than prose to be re-deriv
 ### Deliberately left to the build
 
 - The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
-- The **`--json` envelope**: the field names are listed above, the object's outer shape and how the four outcomes are encoded are not.
 - The **root list** for cross-machine re-anchoring, below — no configuration mechanism for it exists yet.
 
 ## What it hands back
@@ -264,6 +314,10 @@ Every surface reports one of four outcomes, and the last three are never conflat
 - **NOT FOUND** — this surface was genuinely searched and does not have it.
 - **BLOCKED** — this surface was *not* searched, because one named action would be needed first, and that action is carried with the result resolved to something runnable. The distinguishing test against UNAVAILABLE is whether the surface was attempted: BLOCKED was not attempted and can be, UNAVAILABLE was attempted and failed or could not be reached.
 - **UNAVAILABLE** — this surface could not be searched, with the reason, and the command that would fix it *when a command would*. Some obstacles — a disconnected disk, a sleeping machine — need an action rather than a command, and the reason is then stated without one.
+
+**The four are the states of one small state machine, which is what makes the set closed rather than a list someone can extend by taste.** FOUND and NOT FOUND are terminal: the surface has answered. UNAVAILABLE is terminal for now — nothing anyone can do at this moment moves it. BLOCKED is the only state with an outgoing edge, and its `action` is that edge's label: run the command and the surface moves to FOUND or NOT FOUND. This is also why BLOCKED could not remain a field on UNAVAILABLE — a field can describe a state, but it cannot be a transition. And it gives the test any future outcome has to pass: name its transitions, or it is not a state and does not belong in the set.
+
+The hook's bounded wait is this machine's one automatic transition attempt: it holds BLOCKED open for `ROOT_MOUNT_WAIT_SECONDS` to see whether someone takes the edge, then reports whichever state it is in.
 
 An agent told "not found" stops looking; an agent told "Time Machine needs a snapshot mounted, here is the command" asks for it. A surface that cannot be read must never render as empty.
 
