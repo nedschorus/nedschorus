@@ -178,15 +178,46 @@ Exit 0 always. **When it has something to say**, one JSON object on stdout:
 
 **The note carries provenance, never content.** Measured 2026-08-23: a note saying *"deleted in `ab541cc`, recover with `git show 65b382a01:<path>`"* was acted on — the agent ran the command itself and recovered the file. A note pointing at a copy the hook had already placed in a scratch directory was refused as a prompt injection, correctly, because an unexplained file appearing on disk is indistinguishable from an attack. So the note names a source the agent can verify and the command that reads it. **The hook never copies a file anywhere.**
 
-**This is the hook's note.** The fuller table under [What it hands back](#what-it-hands-back) is what the *script* prints when a person runs it, and the `--json` mode carries the same fields for both. One line per surface that found it, plus — for the locked-backup branch alone — one BLOCKED line, which carries the resolved command and is addressed to the agent rather than describing a result:
+**The script may, because nobody was surprised by it.** When a person runs the script, nothing appeared unbidden — they asked. So the script takes a flag that writes the candidate versions into a gitignored `missing-file-recovery-candidates/` directory, one file per distinct version, named by rank and short sha. The case that earns it is the one that cannot be repeated cheaply: the operator typed a root password, the external backup was mounted, the script read it, and then the mount goes away. A copy made while the mount was up preserves something that cost a password. Local snapshots do not need it, since re-mounting them is unprivileged and repeatable, which is why the note hands out that command instead.
+
+**The note's unit is a distinct version, not a surface.** Surfaces are who was asked; versions are what came back. An earlier form printed one line per surface that found the file and then a line saying the checksums agreed — so three surfaces holding identical bytes rendered as three commands for one file, followed by an explanation that they were the same file all along. The summary line was the useful one. The note is therefore rendered by content: identical bytes collapse to a single answer no matter how many places hold them, and the places appear only as the evidence that they agree.
+
+**The `--json` envelope stays surface-oriented and is not changed by this.** It has to be: the outcome contract is a statement about each surface, and BLOCKED and UNAVAILABLE describe surfaces, not versions. The envelope is the record of who was asked and what they said; the note is a rendering of it for someone deciding what to do. Two jobs, two shapes.
+
+The common case is one version, and it should read as simply as it is:
 
 ```
-missing-file recovery: <path> was deleted <timestamp> in <commit>.
-  git        git show <sha>:<path>
-  timeshift  scp nedlern@ned-box:<snapshot path> .
-  local      mount_apfs -o ro -s <snapshot> <data-device> <mp> && cat <mp>/<path>
-  sha256: git, timeshift and local agree
+missing-file recovery: docs/foo.md was deleted 2026-08-14T09:12:03-07:00 in ab541cc.
+One version survives, identical in git, timeshift and local snapshots.
+  8.1 kB, committed 2026-08-13T22:04:11-07:00 — verifiable
+  git show 65b382a01:docs/foo.md
 ```
+
+When versions differ, at most three are shown, newest first, **selected by distinct content rather than by date** — three snapshots of identical bytes are one answer, not three:
+
+```
+missing-file recovery: docs/foo.md was deleted 2026-08-14T09:12:03-07:00 in ab541cc.
+Two distinct versions survive.
+  1  newest, 8.4 kB, 2026-08-14T08:57:11-07:00 — unverified (local snapshot; timeshift agrees)
+     mount_apfs -o ro -s <snapshot> <data-device> <mp> && cat <mp>/docs/foo.md
+  2  newest committed, 8.1 kB, 2026-08-13T22:04:11-07:00 — verifiable
+     git show 65b382a01:docs/foo.md
+  full list: scripts/find-deleted-path-across-backups.py docs/foo.md
+```
+
+**Why those two candidates in particular.** The pair that matters is *the newest version that existed* and *the newest version that was committed*. The difference between them is exactly the uncommitted work — which is the reason four of the five surfaces are in this design at all; if git always held the latest, the rest would be decoration. When the two are the same content, there is one answer and the note says so.
+
+**Verifiable, not authoritative.** git's copy is content-addressed, so an agent can prove the bytes are what was committed. A backup copy cannot be proved that way. That makes it *unverified*, not *untrue* — and a version that exists only in a backup is still the file that was lost, so recency leads and the label follows. Demoting it would hand back stale work. The document reasons the same way one level up: agreement across independent surfaces is evidence against corruption in storage, not evidence about the original.
+
+**The escape hatch for a bad newest version.** A file that was already broken when it was written agrees with itself everywhere, so no amount of cross-surface agreement detects it. Two things help. Size is the practical signal — an unfinished or truncated file is usually much smaller than the version before it — so every candidate carries its size, and when a newer version is under **half** the size of an older one the note says so in words rather than leaving the reader to compare:
+
+```
+  note: 1 is 1.2 kB against 8.4 kB for 2 — the newer version may be truncated.
+```
+
+Half is a judgment, not a measurement, and is recorded as one. An absolute floor was considered and rejected: a 2 kB script is complete and a 4 kB draft is a stub, so any fixed number is file-type folklore, while the ratio compares a file against itself. The second help is that a committed version has usually been through review, which is a better reason to fall back to it than any claim about git being more trustworthy in principle.
+
+**Three is also a judgment**, not a measurement. Nothing here measures how often several distinct versions survive. The note ends with the script invocation that lists everything for that path, so the cap costs nothing: the hook summarises and the script exhausts.
 
 The blocked form, which is what the operator hears about:
 
