@@ -90,7 +90,7 @@ Two filters, in order, both free:
    | `does not exist in` | `git show <sha>:<path>` |
 
    Everything else exits immediately. The first row crosses programs, which is why it is a substring test rather than a per-program list; the git rows are separate because **git never emits the first string at all** — `git add docs/nope.md` says `fatal: pathspec 'docs/nope.md' did not match any files`. An earlier draft of this design listed git under the first row, which made the `pathspec` extraction pattern below unreachable. Wordings outside this table are an accepted residual, not a claim of completeness.
-2. **Transient paths.** Skip paths under `/tmp` and `/private/tmp`, the per-session scratchpad directory the harness provides, `node_modules`, anything inside a `.git` directory, and `__pycache__`. A missing file in those is expected.
+2. **Transient paths.** Skip paths under `/tmp` and `/private/tmp`, `node_modules`, anything inside a `.git` directory, and `__pycache__` — **with one carve-out: the per-session scratchpad directory the harness provides is searched, not skipped.** A missing file in the others is expected. One in the scratchpad is a loss: the harness instructs every agent to write intermediate work there, git never tracks that work, and Time Machine excludes the scratchpad root, so the copy in a local snapshot or a transcript is the only copy there is. Because the scratchpad sits *under* `/private/tmp`, the carve-out is tested **before** the prefix skip, not after — a build that applies the prefixes first never reaches it.
 
 A missing **program** (`env: python3`) passes the signature test and is an accepted residual: the search will simply find nothing, at the cost of one git query.
 
@@ -320,7 +320,9 @@ All measured 2026-08-23 on this Mac and ned-box; re-measure after a macOS or Cla
 | local snapshots mount, read and unmount | all three unprivileged | `mount_apfs -o ro` against the Data volume as the ordinary user, read `CLAUDE.md`, `diskutil unmount` |
 | local snapshot retention | 24 kept: 15 same-day, 5 previous day, 2 each on 2026-07-27 and 07-28, nothing between | `tmutil listlocalsnapshotdates /` |
 | Time Machine backup interval | hourly (`AutoBackupInterval = 3600`), `AutoBackup = 1` | `defaults read /Library/Preferences/com.apple.TimeMachine.plist`, readable unprivileged |
-| fleet paths excluded from backup | none — `~/Projects`, `~/agents`, `~/.claude`, `~/Documents` all `[Included]` | `tmutil isexcluded` |
+| fleet paths excluded from backup | `~/Projects`, `~/agents`, `~/.claude`, `~/Documents` all `[Included]`; **the scratchpad root `/private/tmp/claude-501` is `[Excluded]`** while `/private/tmp` itself is `[Included]` | `tmutil isexcluded` |
+| scratchpad content inside a local snapshot | 35,150 files under `/private/tmp/claude-501` — so the exclusion above does not reach local snapshots | `find` inside snapshot `com.apple.TimeMachine.2026-08-23-192233.local`, mounted `mount_apfs -o ro` as the ordinary user |
+| failures whose path is in `/tmp` or a scratchpad | 8 of 34 | census of short (≤400 char) `is_error` results matching filter 1 across 552 transcripts, 2026-08-23 — a stricter cut than the 66/486 census above, not a restatement of it |
 | macOS version these hold for | 26.5 | `sw_vers` |
 | a hook's `additionalContext` reaches the model on `PostToolUseFailure` | yes — quoted back verbatim, delivered next to the tool result | probe hook returning `hookSpecificOutput.additionalContext`, `claude -p` asked to quote what it saw |
 | a provenance-shaped note is acted on | yes — the agent ran `git show <sha>:<path>` itself and recovered the file | same probe, real repository |
