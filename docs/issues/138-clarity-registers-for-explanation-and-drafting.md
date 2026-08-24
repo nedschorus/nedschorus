@@ -35,7 +35,7 @@ Grounding observation (2026-08-22): when the user asks a question, the answering
    paragraph.*
 5. CLAUDE.md drafting bullet: exact text, and when it lands (now, or pointing at
    md-write once built).
-   *processed 2026-08-22 → accepted for CLAUDE.md and landed (dcd5310). The
+   *processed 2026-08-22 → accepted for CLAUDE.md and landed as the drafting bullet in `CLAUDE.md`, carried by PR #157. The
    AGENTS.md half RULED past the presented options: converted to a pointer at
    CLAUDE.md with the user's qualifier (Claude references typically apply to
    Codex unless Claude-specific with no Codex equivalent), on his nedlern
