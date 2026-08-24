@@ -9,7 +9,7 @@ When an agent in this fleet tries to open a file that is not there, nothing toda
 
 The search script is written and under review as [PR nedschorus#146](https://github.com/nedschorus/nedschorus/pull/146) on branch `find-deleted-path-across-backups`; it is **not on main**, so `scripts/find-deleted-path-across-backups.py` will not resolve in a checkout of main until that PR lands. The hook is designed here and unbuilt.
 
-Costs and capabilities stated below were measured on 2026-08-23 rather than assumed, **except** those listed under [Verify at build](#verify-at-build), which names what is not yet established. Two widely-repeated claims about Time Machine were disproved while measuring — see [Measured facts](#measured-facts-this-design-rests-on).
+Costs and capabilities stated below were measured on 2026-08-23 rather than assumed, **except** those listed under [Verify at build](#verify-at-build) and the open items at the end of [The hook, specified](#the-hook-specified). Where a figure is absent — the cost of a local-snapshot mount, for one — it was not measured, and its absence is the signal rather than an omission. Two widely-repeated claims about Time Machine were disproved while measuring — see [Measured facts](#measured-facts-this-design-rests-on).
 
 ## The failure this fixes
 
@@ -17,13 +17,13 @@ On 2026-08-23 an agent followed a citation in [nedschorus#46](https://github.com
 
 Three details make this the design's shape rather than just its motivation:
 
-1. **The content was never lost.** It is in git, in thirteen agent transcripts across both machines, in eleven Timeshift snapshots, and in Time Machine. All four were confirmed by running the script against that exact path.
+1. **The content was never lost.** It is in git, in thirteen agent transcripts across both machines, in eleven Timeshift snapshots, and in Time Machine — four of the five surfaces, each confirmed by running the script against that exact path. The fifth, local snapshots, does **not** have it: their retention does not reach back to 2026-08-14 (see below). The Time Machine confirmation required a snapshot to be mounted first, which a person did; the script read it, but did not mount it.
 2. **git finds a deleted path, and then the obvious next step fails.** `git log -- <path>` does return the file's history — 8 commits for the path above, on this branch and on main — and the newest of them is the commit that *deleted* it. That commit's tree no longer holds the blob, so `git show <sha>:<path>` fails, and an agent that takes the newest commit and asks for its content is told the content is not there. Recovery requires walking back until a tree actually contains the blob. (`--all` additionally matters when a path survives only on refs unreachable from HEAD; `--full-history` when history simplification would prune the commits that touched it.)
 3. **There was no moment of giving up.** The agent read the citation, saw nothing, and kept building. No decision to abandon the search was ever taken, so nothing was there to remind — which is why the fix has to fire on the failure itself rather than rely on the agent noticing it needs help.
 
 A written convention was considered and rejected as the *primary* fix. This project has recorded that layer failing before — [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) is described in its own records as "this project's record of a written convention losing to trained habit", and [46-ghi-info-agent-design.md](../issues/46-ghi-info-agent-design.md) demotes CLAUDE.md to ambient documentation. That is evidence against relying on a note, not proof that no instruction could ever work.
 
-**A gap this design must close, raised by PR #146's review:** the script is currently referenced nowhere outside its own two files, so the argument "a script does not have to be remembered" is not yet true of it. The hook is what makes it true. Until the hook exists, the script needs a reference in `docs/agents/fleet-instructions.md`, where fleet tooling is named.
+**A gap this design must close, raised by PR #146's review:** the script is currently referenced nowhere outside `scripts/find-deleted-path-across-backups.py` and its own test file, so the argument "a script does not have to be remembered" is not yet true of it. The hook is what makes it true. Until the hook exists, the script needs a reference in `docs/agents/fleet-instructions.md`, where fleet tooling is named — added in the same PR that lands the script, and left in place afterwards, since a hook that fires only on tool failures still leaves a person searching by hand with nothing to find.
 
 ## The five surfaces
 
@@ -32,29 +32,29 @@ A written convention was considered and rejected as the *primary* fix. This proj
 | **local snapshots** | hourly Time Machine snapshots on the Mac's **internal** disk, present whether or not the backup disk is attached | mount one read-only and test the path inside | one mount, **no privilege** | none |
 | **git** | this repository's history | one query, then a walk back to a commit whose tree holds the blob | **95 ms** to ask, **70 ms** to recover | none |
 | **Timeshift** | snapshots on ned-box under `/mnt/backup/timeshift/snapshots`, reached over ssh as `nedlern@ned-box` | snapshots are ordinary directories — test the path inside each of 133 | **1.3 s** | none |
-| **transcripts** | agent session JSONL under `~/.claude/projects` on the Mac **and** on ned-box | grep 530 files | **4.2 s** | none |
+| **transcripts** | agent session JSONL under `~/.claude/projects` on the Mac **and** on ned-box | grep 530 files — the Mac's 486 plus the box's | **4.2 s** | none |
 | **Time Machine** | APFS snapshots on the Mac's external backup disk | see below — not like the others | **160 ms** to enumerate; **8.4 s** to mount; ordinary filesystem cost to read once mounted | root to mount only |
 
-Transcripts earn their place for a reason the other three cannot cover: a transcript holds what a tool call *returned*, so it can hold the content of a file that was never committed and never survived to a snapshot. It is not immune to loss — output can be truncated, and transcripts are themselves deletable — but it is the only surface fed by reading rather than by storing.
+Transcripts earn their place for a reason none of the other four can cover: a transcript holds what a tool call *returned*, so it can hold the content of a file that was never committed and never survived to a snapshot. It is not immune to loss — output can be truncated, and transcripts are themselves deletable — but it is the only surface fed by reading rather than by storing.
 
 ## Local snapshots — the cheapest surface, and the shortest memory
 
-macOS keeps Time Machine snapshots on the Mac's own internal disk, hourly (`AutoBackupInterval = 3600`), independent of whether the external backup disk is attached. They are the only Mac-side surface that needs **no privilege and no external disk**: `mount_apfs -o ro` against the Data volume, reading inside, and `diskutil unmount` all succeed as an ordinary user.
+macOS keeps Time Machine snapshots on the Mac's own internal disk, hourly (`AutoBackupInterval = 3600`), independent of whether the external backup disk is attached. They need **no privilege and no external disk**: `mount_apfs -o ro` against the Data volume, reading inside, and `diskutil unmount` all succeed as an ordinary user. git and the Mac-side transcripts are cheap and unprivileged too — what is distinctive here is that this is the only surface offering a **point-in-time copy of the working tree** without a password or an attached drive.
 
 Two mechanics a builder will otherwise get wrong:
 
-- The **Data** volume carries them. `diskutil apfs listSnapshots /` lists only `com.apple.os.update-*` snapshots for the root volume; the user-file snapshots are on `/System/Volumes/Data`, whose device must be resolved at runtime. `tmutil listlocalsnapshotdates /` lists the dates.
+- The **Data** volume carries them. `diskutil apfs listSnapshots /` lists only `com.apple.os.update-*` snapshots for the root volume; the user-file snapshots are on `/System/Volumes/Data`, whose device comes from `diskutil info /System/Volumes/Data` — the `Device Node` line — resolved at runtime rather than remembered, for the same reason as the backup volume's. `tmutil listlocalsnapshotdates /` lists the dates.
 - Their names end `.local`, distinguishing them from the `.backup` snapshots on the external destination.
 
 **Its memory is short, and that bounds what it can be trusted for.** Retention measured 2026-08-23: 24 snapshots — 15 from that day, 5 from the day before, and two each from 27 and 28 July, with nothing at all in between. So it covers roughly the last day and a half densely and keeps a few older survivors by luck. **It would not have recovered the 2026-08-14 file this design exists for.** It is the right first place to look for something lost minutes or hours ago, and no substitute for the archive surfaces.
 
-Nothing this fleet cares about is excluded from it: `tmutil isexcluded` reports `~/Projects`, `~/agents`, `~/.claude` and `~/Documents` all `[Included]`.
+The four Mac-side locations this fleet works in are not excluded from it: `tmutil isexcluded` reports `~/Projects`, `~/agents`, `~/.claude` and `~/Documents` all `[Included]`. That is the extent of what was checked — it says nothing about other Mac paths, and nothing at all about ned-box, which Time Machine does not back up.
 
 ## Time Machine, specifically
 
 Time Machine is the surface this project got wrong, including two claims it repeated until they were tested. Both are false:
 
-- **"Reading a Time Machine snapshot needs root."** It does not. Reading inside a mounted snapshot needs no privilege, and neither does unmounting (`diskutil unmount` succeeds as an ordinary user). Root is required for one operation in the measured path: `mount_apfs`.
+- **"Reading a Time Machine snapshot needs root."** It does not. Reading inside a mounted snapshot needs no privilege, and neither does unmounting (`diskutil unmount` succeeds as an ordinary user). Root is required for one operation: `mount_apfs` **against the external backup volume**. The same binary runs unprivileged against the **internal Data volume**, which is why local snapshots need no password at all — the difference is the volume, not the command, and a builder who generalises either way gets it wrong. A hook has no terminal, so it can never satisfy an interactive password prompt.
 - **"Backup content is protected by Full Disk Access."** It is not. The appearance of protection came from the `<date>.previous` trees on the backup volume, which are **sparse remnants** — one inspected tree contained only `Library` under the user's home, so `Projects` returned "No such file or directory" because it genuinely was not there. `sudo` fails identically, which is the tell. **No Full Disk Access grant is needed and none should be requested.** (Full Disk Access relaxes macOS privacy controls for an application across the machine; it does not override file ownership or ACLs. It is still far broader than this design requires, which is the point.)
 
 What is actually true, on the configuration measured:
@@ -80,34 +80,45 @@ Because the event fires on every tool call the harness records as failed, and mo
 
 Two filters, in order, both free:
 
-1. **Signature.** The error contains `No such file or directory` (the shape produced by `ls`, `cat`, `wc`, `cd`, `env`, `git fatal:` and Python's `FileNotFoundError` alike) or the Read tool's `File does not exist`. Everything else exits immediately. This is a substring test rather than a per-program list because the census showed the substring crosses programs; it will still miss wordings outside those two, which is an accepted residual rather than a claim of completeness.
+1. **Signature.** The error contains, **case-insensitively**, one of:
+
+   | substring | produced by |
+   |---|---|
+   | `no such file or directory` | `ls`, `cat`, `wc`, bash `cd`, `env`, Python's `FileNotFoundError` — and zsh's `cd`, which is **lowercase**, which is why the test cannot be case-sensitive |
+   | `file does not exist` | the `Read` and `Edit` tools |
+   | `did not match any file` | `git add`, `git ls-files --error-unmatch` |
+   | `does not exist in` | `git show <sha>:<path>` |
+
+   Everything else exits immediately. The first row crosses programs, which is why it is a substring test rather than a per-program list; the git rows are separate because **git never emits the first string at all** — `git add docs/nope.md` says `fatal: pathspec 'docs/nope.md' did not match any files`. An earlier draft of this design listed git under the first row, which made the `pathspec` extraction pattern below unreachable. Wordings outside this table are an accepted residual, not a claim of completeness.
 2. **Transient paths.** Skip paths under `/tmp` and `/private/tmp`, the per-session scratchpad directory the harness provides, `node_modules`, anything inside a `.git` directory, and `__pycache__`. A missing file in those is expected.
 
 A missing **program** (`env: python3`) passes the signature test and is an accepted residual: the search will simply find nothing, at the cost of one git query.
 
-An earlier proposal added a third filter reading the *command's intent* — skip `ls`, `test`, `cd`. It was measured and **rejected**: of the 8 failures that filter would have passed through to a search, roughly 3 were real losses, and it missed shapes whose wording did not match its patterns (`bash: line 1: cd:`, `python3: can't open file`). A proposal to gate on "has git ever tracked this path" was also **rejected**, for a better reason: four of the five surfaces are cheap and unprivileged, so gating them saves little.
+An earlier proposal added a third filter reading the *command's intent* — skip `ls`, `test`, `cd`. It was measured and **rejected**, for two separate reasons. It did not remove much noise: with the filter in place, 8 failures still reached the search stage and only about 3 of them were real losses. And it discarded real losses whose wording did not match its patterns, `bash: line 1: cd:` and `python3: can't open file` among them. So it was both imprecise and lossy. A proposal to gate on "has git ever tracked this path" was also **rejected**, for a better reason: four of the five surfaces need no privilege, and the two filters above already remove the bulk of ordinary failures, so a further gate buys little. "Cheap" here means unprivileged and local-ish, not instantaneous — transcripts cost seconds, and the failed tool call stays open for them. That is the price of the design, and the filters rather than a gate are what keep it from being paid on every `grep` that finds nothing.
 
 ## What the hook does when it fires
 
 When both filters pass, the search runs in this order:
 
 1. **Local snapshots.** No network, no privilege, and they answer the "deleted it minutes ago" case outright.
-2. **git.** Its answer bounds which Time Machine snapshot is worth mounting. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
+2. **git.** Its answer bounds which Time Machine snapshot is worth mounting. When git has never heard of the path — the case transcripts exist for, a file never committed — there is no bound, and the Time Machine branch reports UNAVAILABLE naming that as the reason rather than mounting a snapshot chosen at random. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
 3. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
 
-The failed tool call stays open while this runs. A surface that does not answer within its command timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open.
+**The hook never mounts an external Time Machine snapshot.** That needs root, and a hook fired inside a tool call has no terminal to prompt on. So its Time Machine step is: search if a snapshot is *already* mounted, and otherwise report UNAVAILABLE carrying the `mount_apfs` command. The 8.4-second mount in the surfaces table is a cost the **script** pays when a person runs it, never the hook. Local snapshots are the opposite case and the hook does mount those, because that mount is unprivileged.
 
-No step waits on a person. If Time Machine needs a snapshot mounted, the report says so and gives the command rather than prompting. The willingness to wait belongs to the script, when someone runs it deliberately, and summoning the operator with a password window is an explicit flag rather than the default.
+The failed tool call stays open while this runs. A surface that does not answer within its timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open. The timeouts are the script's, and the script states them rather than this document: today `SHORT_TIMEOUT_SECONDS` for ordinary commands and `LONG_TIMEOUT_SECONDS` for history walks and ssh. Naming values here would duplicate them into two places that then drift.
 
-Finer-grained parallelism is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree rather than a search. It would matter for a bare filename with no known directory, where every tree needs a `find`. **Version 1 does not run that fan-out**; a fragment search is answered from git, Timeshift and transcripts, and the Time Machine branch reports UNAVAILABLE with the reason.
+No step waits on a person. If Time Machine needs a snapshot mounted, the report says so and gives the command — `sudo mount_apfs -o ro -s <snapshot> <device> <mountpoint>`, with the snapshot and device resolved and substituted — rather than prompting. The willingness to wait belongs to the script, when someone runs it deliberately, and summoning the operator with a password window is an explicit flag rather than the default.
+
+Finer-grained parallelism is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree rather than a search. It would matter for a bare filename with no known directory, where every tree needs a `find`. **Version 1 does not run that fan-out** on either snapshot surface: a fragment search is answered from git, Timeshift and transcripts, and **both** Time Machine and local snapshots report UNAVAILABLE naming the fan-out as the reason. Local snapshots face the identical problem — a bare filename needs a `find` across mounted trees, not a `stat` — so they are excluded on the same grounds rather than left undefined.
 
 ## The hook, specified
 
-Settled here so the build has no interface left to invent. The one thing deliberately left open is named at the end.
+Settled here so the build invents as little as possible. What remains open is named at the end — and it is more than one item, because a claim of completeness would be the same kind of unearned absolute this document has had to remove elsewhere.
 
 ### Where it lives and how it is wired
 
-`.claude/hooks/missing-file-recovery-injector.py`, registered in `.claude/settings.json` beside the existing guards — which makes adding it a guarded change needing the user's walked approval, like every other `.claude/` edit:
+`.claude/hooks/missing-file-recovery-notice.py`, registered in `.claude/settings.json`, which already holds this project's `PreToolUse` guard hooks. Editing that file is itself guarded: `.claude/hooks/instruction-file-guard.py` blocks writes anywhere under `.claude/` unless the user has approved them item by item in a review session (this project calls that a *walk*). So landing this hook requires his approval as a separate step, and cannot be done as a side effect of the build:
 
 ```json
 "PostToolUseFailure": [
@@ -115,13 +126,13 @@ Settled here so the build has no interface left to invent. The one thing deliber
     "matcher": "Read|Edit|Bash",
     "hooks": [
       { "type": "command",
-        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/missing-file-recovery-injector.py" }
+        "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/missing-file-recovery-notice.py" }
     ]
   }
 ]
 ```
 
-`Edit` is included because an edit against a deleted path fails the same way and is the same loss. Other tools are excluded: their failures are not missing files.
+`Edit` is included because an edit against a deleted path fails the same way and is the same loss. Other tools are excluded **as a judgment, not because their failures cannot be missing files** — a `Write` into a directory that does not exist, or a `Grep` given a deleted `path`, both fail on a missing path. They are left out because their failures are dominated by other causes and the matcher is cheaper to widen later than to narrow. A future agent revisiting this is looking at a decision, not a fact.
 
 ### What it reads
 
@@ -129,7 +140,7 @@ From the payload, measured 2026-08-23: `tool_name`, `error`, `cwd`, `session_id`
 
 ### What it returns
 
-One JSON object on stdout, exit 0:
+Exit 0 always. **When it has something to say**, one JSON object on stdout:
 
 ```json
 {"hookSpecificOutput": {"hookEventName": "PostToolUseFailure",
@@ -140,23 +151,23 @@ One JSON object on stdout, exit 0:
 
 **The note carries provenance, never content.** Measured 2026-08-23: a note saying *"deleted in `ab541cc`, recover with `git show 65b382a01:<path>`"* was acted on — the agent ran the command itself and recovered the file. A note pointing at a copy the hook had already placed in a scratch directory was refused as a prompt injection, correctly, because an unexplained file appearing on disk is indistinguishable from an attack. So the note names a source the agent can verify and the command that reads it. **The hook never copies a file anywhere.**
 
-Its shape, one line per surface that found it:
+**This is the hook's note.** The fuller table under [What it hands back](#what-it-hands-back) is what the *script* prints when a person runs it, and the `--json` mode carries the same fields for both. One line per surface that found it:
 
 ```
 missing-file recovery: <path> was deleted <date> in <commit>.
   git        git show <sha>:<path>
   timeshift  scp nedlern@ned-box:<snapshot path> .
-  local      <path inside a mounted local snapshot>
+  local      mount_apfs -o ro -s <snapshot> <data-device> <mp> && cat <mp>/<path>
   sha256: git, timeshift and local agree
 ```
 
 ### Fail-open, structurally
 
-Any error inside the hook — an unparseable payload, a crashed subprocess, a missing script — exits 0 with no stdout and one line in its own log. **A hook that can block a tool call is a hook that can wedge the fleet**, and this one has no reason to block anything. A deliberately-crashing build of it must demonstrably let the tool call through; that is a test, not an aspiration.
+Any error inside the hook — an unparseable payload, a crashed subprocess, a missing script — exits 0 with no stdout and one line appended to `~/.claude/missing-file-recovery-notice.log`. The name avoids `injector`: this document uses *injection* for the attack an agent must be suspicious of, and the most-grepped string this design creates should not carry that sense. **A hook that can block a tool call is a hook that can wedge the fleet**, and this one has no reason to block anything. A deliberately-crashing build of it must demonstrably let the tool call through; that is a test, not an aspiration.
 
 ### How it calls the search
 
-`scripts/find-deleted-path-across-backups.py` prints prose for a human. The hook needs machine-readable results, so the script gains a **`--json` mode** emitting one object per surface with its outcome, path, timestamp, sha256 and recovery command. The prose renderer becomes a formatter over that same structure, so the two cannot drift apart.
+`scripts/find-deleted-path-across-backups.py` prints prose for a human. The hook needs machine-readable results, so the script gains a **`--json` mode** emitting one object per surface with its outcome, path, timestamp, sha256 and recovery command. The prose renderer becomes a formatter over that same structure, which stops the two disagreeing about a field they both render — it does not stop a field being added to the JSON and never surfaced in prose, so the renderer needs its own test. **Sequencing:** `--json` lands as a follow-on to PR nedschorus#146 rather than inside it, so this design is not blocked on that PR merging, but the hook is.
 
 ### Extracting the path from a Bash failure
 
@@ -169,25 +180,29 @@ Any error inside the hook — an unparseable payload, a crashed subprocess, a mi
 | `No such file or directory: '(.+?)'` | `FileNotFoundError: [Errno 2] No such file or directory: '/x/y'` |
 | `pathspec '(.+?)' did not match` | `fatal: pathspec 'docs/x' did not match any files` |
 | `^\S+: (.+?): open: No such file` | `wc: /x/y: open: No such file or directory` |
-| `cd: ?(.+?): No such file or directory` | `bash: line 1: cd: /x/y: ...` and `(eval):cd:1: no such file or directory: /x/y` |
+| `cd: (.+?): [Nn]o such file or directory` | bash only: `bash: line 1: cd: /x/y: No such file or directory` |
+| `no such file or directory: (.+?)$` | zsh, which puts the path **after** the message: `zsh:cd:1: no such file or directory: /x/y`. A single `cd:`-anchored pattern cannot serve both shells — against zsh it captures the line number, `1`, and the hook then searches five surfaces for a file called `1`. |
 | `^\S+: (.+?): No such file or directory` | `cat: /x/y: No such file or directory` — the general last resort |
 
 The rules around them:
 
 - **First match wins**, in the order above, so the specific patterns run before the general one and `ls: cannot access '/x'` is not mis-read by the last row.
 - **No match means silence.** The hook exits 0 without searching rather than guessing.
-- **A missing program is not a missing file.** `env: python3: No such file or directory` matches the last row and yields `python3`; a candidate containing no `/` that names no existing directory entry is discarded.
-- **Only the first candidate is searched**, and the note names which path it searched, so a reader can see what was and was not looked for.
+- **A missing program is not a missing file.** `env: python3: No such file or directory` matches the last row and yields `python3`. Discriminate on the error itself rather than on the candidate: a line beginning `env: `, or containing `command not found`, is a program lookup and is skipped before extraction. Testing the candidate instead does not work — "names no existing entry" is true of every genuinely missing file, which is the whole point.
+- **Two different orderings, and they compose in this order.** Within one line, the first *pattern* that matches wins. Across a multi-line error — a Python traceback, a script failing several commands — the first *line* that yields a candidate wins, and later lines are not searched. The note names the path it searched, so a reader can see what was looked for and infer what was not.
 
-These patterns are a build artifact with a test rather than prose to be re-derived: the 66 census lines are the corpus, and the test asserts the extracted path for each.
+These patterns are a build artifact with a test rather than prose to be re-derived. The corpus is the 66 census lines, but the assertion is not "the right path" for all of them — most are not lost files. Each line is labelled with one of three expected outcomes and the test asserts that: **a path** (a genuine missing-file Bash failure), **skipped** (a program lookup, or a Read/Edit failure where the path arrives in `tool_input` and no extraction happens), or **no match** (a wording outside the table, which must produce silence rather than a guess).
 
 ### Deliberately left to the build
 
-The **thresholds inside the transcript classifier** — how large a neighbouring block of text must be to count as "content likely present". No measurement exists to set them, they are cheap to tune against the corpus once the classifier runs, and a number invented here would be an unmeasured claim of exactly the kind this document has already had to remove.
+- The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
+- The **`--json` envelope**: the field names are listed above, the object's outer shape and how the three outcomes are encoded are not.
+- The **flag that opens a password window**, which is named nowhere; the build picks it.
+- The **root list** for cross-machine re-anchoring, below — no configuration mechanism for it exists yet.
 
 ## What it hands back
 
-**Locations and an agreement line — not a copy.** Every copy found is checksummed with SHA-256 where it lies — the full digest is compared, an abbreviation is displayed — and the surfaces are compared:
+**This is the script's report to a person**, not the hook's note above. Locations and an agreement line — not a copy. Every copy found is checksummed with SHA-256 where it lies — the full digest is compared, an abbreviation is displayed — and the surfaces are compared:
 
 ```
 git          2026-08-12  109 lines  sha256 3f2a91…
@@ -210,27 +225,27 @@ Every surface reports one of three outcomes, and the last two are never conflate
 
 An agent told "not found" stops looking; an agent told "Time Machine needs a snapshot mounted, here is the command" asks for it. A surface that cannot be read must never render as empty.
 
-**A surface with more than one location reports the honest combination.** Transcripts live on this Mac *and* on ned-box; Timeshift is reached over ssh. The rule: FOUND if any location found it; otherwise UNAVAILABLE if any location could not be searched, naming which one and stating what the searched locations returned; otherwise NOT FOUND. Without this, a run that searched the Mac and could not reach the box reports NOT FOUND — the exact dishonesty this contract exists to prevent. (This is also finding F6 on PR #146, where the built script has the defect.)
+**A surface with more than one location reports the honest combination.** Transcripts live on this Mac *and* on ned-box; Timeshift is reached over ssh. The rule: FOUND if any location found it; otherwise UNAVAILABLE if any location could not be searched, naming which one and stating what the searched locations returned; otherwise NOT FOUND. Without this, a run that searched the Mac and could not reach the box reports NOT FOUND — the exact dishonesty this contract exists to prevent. (The built script has this defect today: it reports the transcripts surface as NOT FOUND when the Mac was searched and ned-box was unreachable. Raised in PR nedschorus#146's review as F6.)
 
 ### Transcripts report three states, not one
 
-Transcripts match on the path *string*, and an agent searching for a file has usually just typed that path — so its own session always matches. Observed in testing: a lone hit that was the searching session quoting the filename. Reporting that as "found in 1 transcript" reads as recovery and is not. So:
+Transcripts match on the path *string*, and an agent searching for a file has usually just typed that path — so its own session usually matches. Not always: path resolution converts what was typed into other forms, and an agent that typed `notes.md` against a search issued for the absolute path does not self-match at all. Observed in testing: a lone hit that was the searching session quoting the filename. Reporting that as "found in 1 transcript" reads as recovery and is not. So:
 
 - **content likely present** — the path appears alongside a large body of text, the shape of a tool result that read the file. Reported as **FOUND**.
 - **mentioned only** — the name appears, with no content near it. Reported as **NOT FOUND**, with the mentions listed underneath as leads: the surface was searched and does not hold the content, and a name turning up is worth seeing without being recovery.
-- **the searcher's own session** — excluded by session id *before* classification, so it never reaches the vocabulary at all.
+- **the searcher's own session** — excluded by session id, but **only when it classifies as "mentioned only"**. That is the noise case: the agent typed the path a moment ago and its own transcript echoes it. An own-session hit carrying *content* is kept, because it is the one case this surface exists for — an agent that read a never-committed file at 10:00 and finds it gone at 11:00 has the whole tool result sitting in its own transcript, and excluding by session id alone would silently throw away the only copy in existence.
 
 These are a refinement of what "has the content" means for a surface that can hold a filename without holding the file. They do not replace the three outcomes above; every transcript result still resolves to exactly one of them.
 
 ## Path resolution
 
-The same file has several names, and getting this wrong is already a live defect: two findings on PR #146 are exactly this — the documented absolute-path form makes git report NOT FOUND with a confidently false message, and a dotfile fragment can return a FOUND pointing at an unrelated file.
+The same file has several names, and getting this wrong is already a live defect: two defects of exactly this kind are open against the built script (PR nedschorus#146, findings F3 and F5). Given an absolute path, git reports NOT FOUND with a confidently false message, because `git cat-file` cannot address a blob by absolute path. And a dotfile fragment can return FOUND pointing at an unrelated file, because the fragment normaliser strips leading dots along with leading slashes.
 
 The rules, made possible by the payload carrying `cwd`:
 
-- Resolve a relative path against the failing call's `cwd`. Expand a leading `~` against the home directory **of the account the failing call ran as** — which for a box-side path is the box account, not the Mac's.
-- Keep **two forms** and use each where it belongs: the form **relative to the repository root** for git — both for `git log` pathspecs and for `git show <sha>:<path>` tree-object syntax, neither of which accepts an absolute path — and the **absolute** form for filesystem backups.
-- **Re-anchor across machines.** `/Users/el/agents/mac-ubuntu-bridge/X` on the Mac is `/home/nedlern/Projects/nedschorus/X` on ned-box, and the same relative path exists under several seat directories there. All configured roots are searched and **every hit is reported with its full path**, newest first, rather than one being chosen — a hit under a different seat is a different file and the reader must see which.
+- Resolve a relative path against the failing call's `cwd`, and expand a leading `~` against **this Mac's** home directory. Nothing in the payload says which account a call ran as, so a rule keyed on that would not be implementable: a Bash call that reached the box did so inside a command string this design does not parse. Box-side paths arrive already absolute in practice, which is why this is a tolerable simplification rather than a silent one.
+- Keep **two forms** and use each where it belongs: the form **relative to the repository root** for git, and the **absolute** form for filesystem backups. The reason is narrower than it looks and worth stating exactly, because a builder who tests the wrong half will conclude the rule is unnecessary: `git log` *does* accept an absolute pathspec inside the worktree (it rejects one outside, with a different message). `git show <sha>:<path>` does **not** — it takes tree-object syntax and answers an absolute path with `fatal: path '…' exists on disk, but not in '<sha>'`. Since `git show` is the command the note hands to the agent, the repository-relative form is the one that must be carried.
+- **Re-anchor across machines.** `/Users/el/agents/mac-ubuntu-bridge/X` on the Mac corresponds to `/home/nedlern/Projects/nedschorus/X` on ned-box. The mapping is many-to-one in both directions and the document should not pretend otherwise: this Mac path is a git worktree, so several Mac-side checkouts map to the same box path, and the box runs one seat per directory, so the same relative path exists under several seat roots there. Every root is searched and **every hit is reported with its full path**, newest first, rather than one being chosen — a hit under a different seat is a different file and the reader must see which. The list of roots is configuration the build must introduce; it does not exist today, and hard-coding today's paths would rot at the next seat.
 - Match fragments as **trailing path suffixes at component boundaries**, so `notes.md` does not match `my-notes.md`. Multiple matches are all reported, newest first.
 
 ## Where a model is used, and where it is not
@@ -247,7 +262,7 @@ Two different things are tested, with separate corpora and separate verdicts. Co
 Corpus: the 66 real missing-file error lines already extracted from 486 transcripts. Small enough to hand-label honestly, and it is real traffic rather than invented cases. **Measures false positives.**
 
 **2. The search — given a path, is the content found?**
-Corpus: the **294 distinct paths git has ever deleted** in this repository, filtered. Unfiltered, it is not a set of losses: it contains renames (the content moved and nothing was lost), paths deleted and later re-added, and deliberate removals — a `NOT FOUND` on any of those is correct, not a false negative. Filtering out paths whose content survives under another name and paths later re-added leaves a set where git genuinely should find the content, and a `NOT FOUND` on *that* set is a real false negative with no labelling required.
+Corpus: the **294 distinct paths git has ever deleted** in this repository, unfiltered — and the reason not to filter is the interesting part. An earlier draft proposed removing renames and re-adds on the grounds that a `NOT FOUND` on them is correct. That is backwards. This design recovers by walking back until a tree holds the blob, and for a rename, a re-add or a deliberate removal **the old blob is still in history**, so the correct answer for every one of the 294 is FOUND. A `NOT FOUND` on any of them means the walk is broken — so the paths the filter would have removed are precisely the ones that catch the core mechanism failing. The corpus needs no labelling because its expected answer is uniform.
 
 Two limits, stated because the corpus is easy to overclaim:
 
@@ -260,8 +275,8 @@ Two further corpora:
   - **git** — commit it, delete it, assert byte-identical recovery. Seconds; belongs in the ordinary suite.
   - **local snapshots** — the same cycle after one hourly snapshot. A slow test, not a CI test.
   - **Timeshift** — the same, after one 10-minute box snapshot. Slow test.
-  - **Time Machine** — needs a backup run to complete, which is hours. A manual test, run occasionally, never automated.
-- **Timeshift differential** — files present in an old box snapshot and absent now: real losses with known recoverability, exercising the box surface instead of using git as both question and answer.
+  - **Time Machine** — needs a backup run to complete, which is hours. **Not a CI test**, which is a scheduling constraint rather than an automation barrier; the fleet already runs long-latency work on a schedule. Its trigger is the same one the measured-facts table names: run it after a macOS upgrade, and whenever the Time Machine branch is changed.
+- **Timeshift differential** — files present in an old box snapshot and absent now. This escapes git's circularity but reproduces the same shape one surface over: a corpus drawn from Timeshift, tested against Timeshift, agrees with itself if snapshot enumeration is systematically wrong. It is only worth running if each candidate's recoverability is confirmed against a *different* surface first — git or Time Machine — which is what makes it evidence rather than an echo.
 
 ## Deliberately not in version 1
 
@@ -281,10 +296,11 @@ These are **not** established by the measurements below; they are what the build
 - The trigger and search corpora run as one suite that reports false positives and false negatives **separately**.
 - A surface that cannot be searched renders as UNAVAILABLE, never NOT FOUND, for every input form the tool accepts: repository-relative, absolute, and fragment.
 - Nothing writes to backup state. The state changes are: `diskutil mount` of the backup volume (an ordinary mount of a disk the user attached), a read-only snapshot mount, and its unmount.
+- **Whether `diskutil mount` of the destination starts a backup.** Auto-backup is on and hourly, and mounting a destination macOS has been waiting for is a plausible trigger; a backup writes backup state, runs for hours, and holds the volume busy. This was not measured and the claim above is not closed until it is. If it does trigger one, the silent auto-mount is the wrong default and becomes an explicit flag.
 
 ## Measured facts this design rests on
 
-All measured 2026-08-23 on this Mac and ned-box; re-measure after a macOS or Claude Code upgrade by re-running the commands named here.
+All measured 2026-08-23 on this Mac and ned-box; re-measure after a macOS or Claude Code upgrade. Rows whose method reads "timed" or "live test" record a single observation on a warm system and name no repeatable command — they are order-of-magnitude evidence, not benchmarks, and a re-measurement will not be strictly comparable. Making them comparable means writing the timing harness the build does not yet have.
 
 | fact | value | how it was established |
 |---|---|---|
