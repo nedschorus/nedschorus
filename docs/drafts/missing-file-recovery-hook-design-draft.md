@@ -129,7 +129,13 @@ It then resolves the full command — `sudo mount_apfs -o ro -s <snapshot> <devi
 
 **Two channels, because one of them can be swallowed.** The note reaches the model through `additionalContext` and is written *to the agent*, instructing it to put the command in front of the operator rather than consume it silently — the operator runs it with the CLI's `!` prefix. But an agent can read a note and move on, so the hook also speaks: one `say` line naming the seat and the file. That is the only channel here that does not depend on the agent cooperating, which is its whole justification.
 
-**`say` is macOS-only.** On ned-box there is no equivalent this design can assume — the box is headless, so neither a speech binary nor a desktop notification daemon is a safe bet. A hook installed there therefore has **one** channel, the note, and must state that rather than calling a missing binary or failing silently. Whether the box gets a second channel is unsettled and listed below.
+**`say` is macOS-only, and on ned-box nothing should replace it.** The hook's configuration lives in `.claude/settings.json`, which is committed, so a copy of this hook can run on ned-box as well as on the Mac. The reason it stays silent there is not that Linux lacks a speech binary — it is that the box is headless and nobody sits at it. Speech addresses a person in the room, and on ned-box there is no room. So the call is guarded on a **platform check**, not on whether a binary happens to be installed: the check records the intent, where a missing binary would only record a crash.
+
+**In version 1 the box has no BLOCKED case at all**, so the guard costs nothing. BLOCKED arises only for the Mac's external Time Machine, and Time Machine does not back up ned-box. The single route by which a box-side miss could reach the Mac's backups is the cross-machine re-anchoring described below, whose list of roots version 1 does not have. Stated here so a later reader does not mistake the box's silence for an oversight.
+
+**When re-anchoring does land, the channel is still on the Mac** — `say` there, reached over ssh — because that is where the operator is. A future builder should not go looking for a Linux speech package.
+
+**The assumption underneath all of this, stated so it can be found when it breaks:** the operator is at a Mac. That holds for this fleet today and it is what makes one `say` line the right second channel. It stops holding the moment a collaborator without a Mac joins — Windows especially — which is a known future direction and deliberately not version 1's problem.
 
 Finer-grained parallelism is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree rather than a search. It would matter for a bare filename with no known directory, where every tree needs a `find`. **Version 1 does not run that fan-out** on either snapshot surface: a fragment search is answered from git, Timeshift and transcripts, and **both** Time Machine and local snapshots report UNAVAILABLE naming the fan-out as the reason. Local snapshots face the identical problem — a bare filename needs a `find` across mounted trees, not a `stat` — so they are excluded on the same grounds rather than left undefined.
 
@@ -233,7 +239,6 @@ These patterns are a build artifact with a test rather than prose to be re-deriv
 
 - The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
 - The **`--json` envelope**: the field names are listed above, the object's outer shape and how the four outcomes are encoded are not.
-- The **notification channel on ned-box**, where `say` does not exist and the machine is headless. Version 1 leaves the box with the note alone and says so; a second channel there is unspecified because nothing has been measured about what the box can reach.
 - The **root list** for cross-machine re-anchoring, below — no configuration mechanism for it exists yet.
 
 ## What it hands back
