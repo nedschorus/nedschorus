@@ -106,11 +106,24 @@ When both filters pass, the search runs in this order:
 2. **git.** Its answer bounds which Time Machine snapshot is worth mounting. When git has never heard of the path — the case transcripts exist for, a file never committed — there is no bound, and the Time Machine branch reports UNAVAILABLE naming that as the reason rather than mounting a snapshot chosen at random. **The bound is the date the file was deleted, not the date it was last modified** — the newest commit whose tree still holds the blob is usually older than the deletion, and using it selects a snapshot from before the last useful one. The deletion date comes from the `--diff-filter=D` commit for that path.
 3. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
 
-**The hook never mounts an external Time Machine snapshot.** That needs root, and a hook fired inside a tool call has no terminal to prompt on. So its Time Machine step is: search if a snapshot is *already* mounted, and otherwise report UNAVAILABLE carrying the `mount_apfs` command. The 8.4-second mount in the surfaces table is a cost the **script** pays when a person runs it, never the hook. Local snapshots are the opposite case and the hook does mount those, because that mount is unprivileged.
+**The hook never mounts an external Time Machine snapshot.** That needs root, and a hook fired inside a tool call has no terminal to prompt on. So its Time Machine step is: search if a snapshot is *already* mounted, and otherwise report UNAVAILABLE carrying the `mount_apfs` command. The 8.4-second mount in the surfaces table is a cost the **script** pays when a person runs it, never the hook. The script, which does have a terminal, takes **`--prompt-for-root`**: without it the script prints the resolved `sudo mount_apfs` command and carries on; with it the script runs that command itself, so `sudo` prompts in the terminal the person is already sitting at. It is off by default and exists only on the script — a flag that opened a password window from a hook would be a window with no terminal behind it. Local snapshots are the opposite case and the hook does mount those, because that mount is unprivileged.
 
 The failed tool call stays open while this runs. A surface that does not answer within its timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open. The timeouts are the script's, and the script states them rather than this document: today `SHORT_TIMEOUT_SECONDS` for ordinary commands and `LONG_TIMEOUT_SECONDS` for history walks and ssh. Naming values here would duplicate them into two places that then drift.
 
-No step waits on a person. If Time Machine needs a snapshot mounted, the report says so and gives the command — `sudo mount_apfs -o ro -s <snapshot> <device> <mountpoint>`, with the snapshot and device resolved and substituted — rather than prompting. The willingness to wait belongs to the script, when someone runs it deliberately, and summoning the operator with a password window is an explicit flag rather than the default.
+**Two different passwords, and only one of them is this design's problem.** The backup volume is encrypted — `diskutil info` reports `FileVault: Yes` — but its key lives in the keychain, so macOS mounts it without asking anyone, and `diskutil mount "<destination>"` runs unprivileged. That password never appears here. The one that does is `sudo`, for `mount_apfs` against that volume, which is the single privileged operation in the whole design. A reader who conflates the two concludes the design needs the operator to unlock a disk, and it does not.
+
+**The hook asks for that `sudo` password, through the agent, and waits a bounded time for it.** This reverses an earlier decision that the hook never waits on a person; the reversal is deliberate, and the reason is that the alternative is silence about the one surface that still holds the file. The step runs only when all four of these hold, which is what keeps it rare:
+
+1. every free surface has already missed;
+2. `tmutil listbackups -d "<destination>"` — **unprivileged**, 62 backups on the measured volume — shows a backup whose timestamp predates the deletion. When none does, the password cannot help, and the hook says nothing rather than sending someone after it;
+3. `sudo -n true` fails, meaning no credential is cached. It exits 1 without prompting, so probing costs nothing and never summons a password window by accident;
+4. the search is for a known path, not a fragment.
+
+It then resolves the full command — `sudo mount_apfs -o ro -s <snapshot> <device> <mountpoint>`, every field substituted, nothing left for a person to work out — and holds the failed tool call for `ROOT_MOUNT_WAIT_SECONDS`, **100 on the operator's ruling**. If the mount appears within that window the search completes and the note carries the recovered location. If it does not, the note is returned unchanged. **Declining costs the operator nothing**, which is why waiting is acceptable at all. The hook's own entry in `.claude/settings.json` needs an explicit `timeout` above that wait, or the harness ends the hook before the wait does; that file already uses the field.
+
+**Two channels, because one of them can be swallowed.** The note reaches the model through `additionalContext` and is written *to the agent*, instructing it to put the command in front of the operator rather than consume it silently — the operator runs it with the CLI's `!` prefix. But an agent can read a note and move on, so the hook also speaks: one `say` line naming the seat and the file. That is the only channel here that does not depend on the agent cooperating, which is its whole justification.
+
+**`say` is macOS-only.** On ned-box there is no equivalent this design can assume — the box is headless, so neither a speech binary nor a desktop notification daemon is a safe bet. A hook installed there therefore has **one** channel, the note, and must state that rather than calling a missing binary or failing silently. Whether the box gets a second channel is unsettled and listed below.
 
 Finer-grained parallelism is unnecessary for a known path: because one mount exposes every retained tree, testing a path across them is a `stat` per tree rather than a search. It would matter for a bare filename with no known directory, where every tree needs a `find`. **Version 1 does not run that fan-out** on either snapshot surface: a fragment search is answered from git, Timeshift and transcripts, and **both** Time Machine and local snapshots report UNAVAILABLE naming the fan-out as the reason. Local snapshots face the identical problem — a bare filename needs a `find` across mounted trees, not a `stat` — so they are excluded on the same grounds rather than left undefined.
 
@@ -199,7 +212,7 @@ These patterns are a build artifact with a test rather than prose to be re-deriv
 
 - The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
 - The **`--json` envelope**: the field names are listed above, the object's outer shape and how the three outcomes are encoded are not.
-- The **flag that opens a password window**, which is named nowhere; the build picks it.
+- The **notification channel on ned-box**, where `say` does not exist and the machine is headless. Version 1 leaves the box with the note alone and says so; a second channel there is unspecified because nothing has been measured about what the box can reach.
 - The **root list** for cross-machine re-anchoring, below — no configuration mechanism for it exists yet.
 
 ## What it hands back
@@ -283,7 +296,7 @@ Two further corpora:
 ## Deliberately not in version 1
 
 - **A CLAUDE.md note as the primary fix.** The hook executes rather than advises, and this project has watched the written-convention layer lose to trained habit before.
-- **Blocking the agent to wait for a password.** The hook prints the command; the script waits when a person runs it.
+- **Blocking the agent to wait for a password *unconditionally*.** The bounded wait above is in version 1, but only behind all four of its conditions. A hook that holds a tool call open whenever any surface might want a password is not.
 - **A Full Disk Access grant.** Shown unnecessary, and broader than this design needs.
 - **The `find` fan-out across every dated tree** for fragment searches on Time Machine.
 - **The model-based fragment disambiguator.** Deferred; version 1 reports all candidates.
@@ -318,6 +331,11 @@ All measured 2026-08-23 on this Mac and ned-box; re-measure after a macOS or Cla
 | Time Machine unmount | unprivileged (`diskutil unmount`) | live test |
 | dated trees exposed by one mount | 91 | live test |
 | observed failed-mount signature | exit 66, `volume could not be mounted` | live test |
+| backup destination is encrypted, and unlocks without a prompt | `FileVault: Yes`, volume mounted with nothing typed — the key is in the keychain | `tmutil destinationinfo`, then `diskutil info "My Passport for Mac"` |
+| backup dates and times enumerable without root | 62 backups, `2025-11-13-103029` .. `2026-08-23-192723` | `tmutil listbackups -d "<destination>"` as uid 501, exit 0 |
+| the paths `listbackups` prints are names, not mounts | reading one gives `No such file or directory`, and nothing mounts | `ls` on the returned `/Volumes/.timemachine/...` path as uid 501 |
+| a cached root credential can be probed without prompting | `sudo -n true` exits 1, prints `a password is required`, opens no window | run as uid 501 |
+| backups sharing a single calendar date | 7 on 2026-08-23, of 62 across 56 distinct dates | same `listbackups` output |
 | Full Disk Access required | **no** — sparse `.previous` trees explain the apparent block | `ls -la` on the tree, plus the same read under `sudo` |
 | local snapshots mount, read and unmount | all three unprivileged | `mount_apfs -o ro` against the Data volume as the ordinary user, read `CLAUDE.md`, `diskutil unmount` |
 | local snapshot retention | 24 kept: 15 same-day, 5 previous day, 2 each on 2026-07-27 and 07-28, nothing between | `tmutil listlocalsnapshotdates /` |
