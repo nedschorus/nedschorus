@@ -18,7 +18,7 @@ Grounding observation (2026-08-22): when the user asks a question, the answering
    the real failure); short-and-dense named as joint failure modes, replacing the
    two-short-replies preference; before/after shown with whatever surrounding
    context a naive reader needs. Trigger broadened to any clarify request.
-   Landed at commit c28a061: .claude/output-styles/zero-context-explanation.md
+   Landed as `.claude/output-styles/zero-context-explanation.md`
    plus the fleet-wide outputStyle settings key (instruction-file guard passed
    via its approval-marker lane).*
 3. walk-me-through amendment: every item written for a reader with no conversation
