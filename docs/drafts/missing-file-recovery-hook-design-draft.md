@@ -110,9 +110,9 @@ When both filters pass, the search runs in this order:
    **One residual this exposes, which a date hid.** A commit timestamp is when the deletion was *recorded*, which is later — sometimes much later — than when the file left the disk. So the newest snapshot predating the commit can still be missing the file. The walk therefore continues to the next older candidate on a miss rather than concluding NOT FOUND on the first one, and NOT FOUND means every candidate predating the bound was tested.
 3. **Timeshift, transcripts and Time Machine, concurrently** — they are independent, so they overlap rather than sum.
 
-**The hook never mounts an external Time Machine snapshot.** That needs root, and a hook fired inside a tool call has no terminal to prompt on. So its Time Machine step is: search if a snapshot is *already* mounted, and otherwise report UNAVAILABLE carrying the `mount_apfs` command. The 8.4-second mount in the surfaces table is a cost the **script** pays when a person runs it, never the hook. The script, which does have a terminal, takes **`--prompt-for-root`**: without it the script prints the resolved `sudo mount_apfs` command and carries on; with it the script runs that command itself, so `sudo` prompts in the terminal the person is already sitting at. It is off by default and exists only on the script — a flag that opened a password window from a hook would be a window with no terminal behind it. Local snapshots are the opposite case and the hook does mount those, because that mount is unprivileged.
+**The hook never mounts an external Time Machine snapshot itself.** That needs root, and a hook has no terminal to prompt on. Its Time Machine step is: search if a snapshot is *already* mounted; otherwise report UNAVAILABLE carrying the resolved `mount_apfs` command — and, when the four conditions above are met, ask through the agent and wait `ROOT_MOUNT_WAIT_SECONDS` for someone else to run it, then search if it appeared. The hook still never holds the credential and never issues the mount; what changed is that it asks and waits rather than reporting and moving on. The 8.4-second mount in the surfaces table is a cost the **script** pays when a person runs it, never the hook. The script, which does have a terminal, takes **`--prompt-for-root`**: without it the script prints the resolved `sudo mount_apfs` command and carries on; with it the script runs that command itself, so `sudo` prompts in the terminal the person is already sitting at. It is off by default and exists only on the script — a flag that opened a password window from a hook would be a window with no terminal behind it. Local snapshots are the opposite case and the hook does mount those, because that mount is unprivileged.
 
-The failed tool call stays open while this runs. A surface that does not answer within its timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open. The timeouts are the script's, and the script states them rather than this document: today `SHORT_TIMEOUT_SECONDS` for ordinary commands and `LONG_TIMEOUT_SECONDS` for history walks and ssh. Naming values here would duplicate them into two places that then drift.
+The failed tool call stays open while this runs. A surface that does not answer within its timeout is reported UNAVAILABLE with the timeout as the reason, so an unreachable machine cannot hold the call open. The timeouts are the script's, and the script states them rather than this document: today `SHORT_TIMEOUT_SECONDS` for ordinary commands and `LONG_TIMEOUT_SECONDS` for history walks and ssh. Naming values here would duplicate them into two places that then drift. `ROOT_MOUNT_WAIT_SECONDS` is the deliberate exception: its value is 100 because the operator ruled that number, so the document carries it as provenance the script cannot supply, and the script takes it from here rather than the reverse.
 
 **Two different passwords, and only one of them is this design's problem.** The backup volume is encrypted — `diskutil info` reports `FileVault: Yes` — but its key lives in the keychain, so macOS mounts it without asking anyone, and `diskutil mount "<destination>"` runs unprivileged. That password never appears here. The one that does is `sudo`, for `mount_apfs` against that volume, which is the single privileged operation in the whole design. A reader who conflates the two concludes the design needs the operator to unlock a disk, and it does not.
 
@@ -122,6 +122,8 @@ The failed tool call stays open while this runs. A surface that does not answer 
 2. `tmutil listbackups -d "<destination>"` — **unprivileged**, 62 backups on the measured volume — shows a backup whose timestamp predates the deletion. When none does, the password cannot help, and the hook says nothing rather than sending someone after it;
 3. `sudo -n true` fails, meaning no credential is cached. It exits 1 without prompting, so probing costs nothing and never summons a password window by accident;
 4. the search is for a known path, not a fragment.
+
+A path git has never tracked cannot satisfy condition 2 — there is no deletion commit, so there is no bound, so no backup can be shown to predate anything. The wait and the `say` line therefore never fire for a never-committed file, which is the case transcripts and local snapshots exist to answer. That follows from the no-bound rule above, and is stated here because a builder reading only this list would not derive it.
 
 It then resolves the full command — `sudo mount_apfs -o ro -s <snapshot> <device> <mountpoint>`, every field substituted, nothing left for a person to work out — and holds the failed tool call for `ROOT_MOUNT_WAIT_SECONDS`, **100 on the operator's ruling**. If the mount appears within that window the search completes and the note carries the recovered location. If it does not, the note is returned unchanged. **Declining costs the operator nothing**, which is why waiting is acceptable at all. The hook's own entry in `.claude/settings.json` needs an explicit `timeout` above that wait, or the harness ends the hook before the wait does; that file already uses the field.
 
@@ -166,11 +168,11 @@ Exit 0 always. **When it has something to say**, one JSON object on stdout:
                         "additionalContext": "<the note>"}}
 ```
 
-**Silence is the default.** When no surface has the file, the hook prints nothing and exits 0. A hook that speaks on every failure becomes noise, and noise is what agents learn to skip.
+**Silence is the default.** When no surface has the file, the hook prints nothing and exits 0. A hook that speaks on every failure becomes noise, and noise is what agents learn to skip. **One branch is exempt**, and it is the only one: when a backup predating the deletion exists but is locked behind a `sudo` password, no surface *has* the file yet the hook is not entitled to be silent — silence there is indistinguishable from "it is gone", when in fact it is reachable and nobody was told. That branch emits its note whether or not the wait succeeds. Its four conditions are what keep the exemption from swallowing the rule.
 
 **The note carries provenance, never content.** Measured 2026-08-23: a note saying *"deleted in `ab541cc`, recover with `git show 65b382a01:<path>`"* was acted on — the agent ran the command itself and recovered the file. A note pointing at a copy the hook had already placed in a scratch directory was refused as a prompt injection, correctly, because an unexplained file appearing on disk is indistinguishable from an attack. So the note names a source the agent can verify and the command that reads it. **The hook never copies a file anywhere.**
 
-**This is the hook's note.** The fuller table under [What it hands back](#what-it-hands-back) is what the *script* prints when a person runs it, and the `--json` mode carries the same fields for both. One line per surface that found it:
+**This is the hook's note.** The fuller table under [What it hands back](#what-it-hands-back) is what the *script* prints when a person runs it, and the `--json` mode carries the same fields for both. One line per surface that found it, plus — for the locked-backup branch alone — one line per surface that is *reachable but blocked*, which carries the resolved command and is addressed to the agent rather than describing a result:
 
 ```
 missing-file recovery: <path> was deleted <timestamp> in <commit>.
@@ -179,6 +181,19 @@ missing-file recovery: <path> was deleted <timestamp> in <commit>.
   local      mount_apfs -o ro -s <snapshot> <data-device> <mp> && cat <mp>/<path>
   sha256: git, timeshift and local agree
 ```
+
+The blocked form, which is what the operator hears about:
+
+```
+missing-file recovery: <path> is not in git, timeshift, transcripts or local snapshots.
+  timemachine  UNAVAILABLE — needs root. Backup <timestamp> predates the deletion and very
+               likely holds it. Ask the operator to run this, then retry:
+               sudo mount_apfs -o ro -s <snapshot> <device> <mountpoint>
+```
+
+**This stays UNAVAILABLE; it does not become a fourth outcome.** The three-outcome contract — FOUND, NOT FOUND, UNAVAILABLE — is the script's, it is under review, and widening it from a design document would change a contract in one place and leave its implementation and tests in another. What this branch adds is a *field on* UNAVAILABLE: an action the operator can take, resolved to a runnable command, present only when one exists. Every other UNAVAILABLE leaves it empty, which is the honest reading — the surface could not be consulted and nothing anyone does right now changes that.
+
+Whether that field deserves promotion to a distinct outcome is a real question and is left open below: the case for it is that "UNAVAILABLE" tells the operator nothing is being asked of him, which here is false.
 
 ### Fail-open, structurally
 
@@ -216,6 +231,7 @@ These patterns are a build artifact with a test rather than prose to be re-deriv
 
 - The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
 - The **`--json` envelope**: the field names are listed above, the object's outer shape and how the three outcomes are encoded are not.
+- **Whether "reachable but blocked" deserves its own outcome.** It is carried as a field on UNAVAILABLE, which keeps the script's three-outcome contract intact. The argument for promoting it is that UNAVAILABLE otherwise reads as "nothing to be done", and in this one case something can be. Deliberately not settled here, because the contract belongs to the script and changing it from a design document would split it across two places.
 - The **notification channel on ned-box**, where `say` does not exist and the machine is headless. Version 1 leaves the box with the note alone and says so; a second channel there is unspecified because nothing has been measured about what the box can reach.
 - The **root list** for cross-machine re-anchoring, below — no configuration mechanism for it exists yet.
 
