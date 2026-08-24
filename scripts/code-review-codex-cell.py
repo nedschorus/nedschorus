@@ -22,9 +22,11 @@ must not drift are pinned:
 What this deliberately does not do: accept custom review instructions.
 On codex-cli 0.147.0 a [PROMPT] is mutually exclusive with --base and
 switches to custom-review mode, losing the built-in rubric (measured
-2026-08-19). Durable repository review rules belong in AGENTS.md per
-Codex's documented mechanism; merge-decision checks belong to the
-deferred pr-merge-decision component (nedschorus#105).
+2026-08-19). Durable repository review rules belong in CLAUDE.md, the
+single rules home both runtimes read: Codex reaches it through AGENTS.md,
+which is a pointer at CLAUDE.md rather than a second home; merge-decision
+checks belong to the deferred pr-merge-decision component
+(nedschorus#105).
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
 for every `codex exec` this repository launches; the other two sites
