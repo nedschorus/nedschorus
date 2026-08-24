@@ -172,7 +172,7 @@ Exit 0 always. **When it has something to say**, one JSON object on stdout:
 
 **The note carries provenance, never content.** Measured 2026-08-23: a note saying *"deleted in `ab541cc`, recover with `git show 65b382a01:<path>`"* was acted on — the agent ran the command itself and recovered the file. A note pointing at a copy the hook had already placed in a scratch directory was refused as a prompt injection, correctly, because an unexplained file appearing on disk is indistinguishable from an attack. So the note names a source the agent can verify and the command that reads it. **The hook never copies a file anywhere.**
 
-**This is the hook's note.** The fuller table under [What it hands back](#what-it-hands-back) is what the *script* prints when a person runs it, and the `--json` mode carries the same fields for both. One line per surface that found it, plus — for the locked-backup branch alone — one line per surface that is *reachable but blocked*, which carries the resolved command and is addressed to the agent rather than describing a result:
+**This is the hook's note.** The fuller table under [What it hands back](#what-it-hands-back) is what the *script* prints when a person runs it, and the `--json` mode carries the same fields for both. One line per surface that found it, plus — for the locked-backup branch alone — one BLOCKED line, which carries the resolved command and is addressed to the agent rather than describing a result:
 
 ```
 missing-file recovery: <path> was deleted <timestamp> in <commit>.
@@ -186,14 +186,16 @@ The blocked form, which is what the operator hears about:
 
 ```
 missing-file recovery: <path> is not in git, timeshift, transcripts or local snapshots.
-  timemachine  UNAVAILABLE — needs root. Backup <timestamp> predates the deletion and very
-               likely holds it. Ask the operator to run this, then retry:
+  timemachine  BLOCKED — backup <timestamp> predates the deletion and very likely holds it,
+               but reading it needs root. Ask the operator to run this, then retry:
                sudo mount_apfs -o ro -s <snapshot> <device> <mountpoint>
 ```
 
-**This stays UNAVAILABLE; it does not become a fourth outcome.** The three-outcome contract — FOUND, NOT FOUND, UNAVAILABLE — is the script's, it is under review, and widening it from a design document would change a contract in one place and leave its implementation and tests in another. What this branch adds is a *field on* UNAVAILABLE: an action the operator can take, resolved to a runnable command, present only when one exists. Every other UNAVAILABLE leaves it empty, which is the honest reading — the surface could not be consulted and nothing anyone does right now changes that.
+**BLOCKED is a fourth outcome, and the set becomes FOUND, NOT FOUND, UNAVAILABLE, BLOCKED.** The three were an honesty contract — never report NOT FOUND for a surface that was not actually consulted — and this case does not fit any of them: the surface was not consulted, and it *could* be. Filing it as UNAVAILABLE tells the operator nothing is being asked of him, which here is false, and it is the one branch where the hook is permitted to break its silence rule and interrupt him. A state the code already branches on belongs in the contract that describes the code.
 
-Whether that field deserves promotion to a distinct outcome is a real question and is left open below: the case for it is that "UNAVAILABLE" tells the operator nothing is being asked of him, which here is false.
+**The line between BLOCKED and UNAVAILABLE is whether the surface was attempted.** BLOCKED means it was not attempted because a named action would be needed first, and that action is carried with it, resolved to something runnable. UNAVAILABLE means it was attempted and failed, or could not be reached at all — including every nonzero `mount_apfs` exit, which stays UNAVAILABLE and never becomes BLOCKED, since a mount that was tried and failed is not waiting on anybody.
+
+**Sequencing, the same as `--json` above and for the same reason:** the fourth outcome lands as a follow-on to PR nedschorus#146 rather than inside it. That PR is reviewing the three-outcome implementation now, and a second topic must not ride along on it.
 
 ### Fail-open, structurally
 
@@ -230,8 +232,7 @@ These patterns are a build artifact with a test rather than prose to be re-deriv
 ### Deliberately left to the build
 
 - The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
-- The **`--json` envelope**: the field names are listed above, the object's outer shape and how the three outcomes are encoded are not.
-- **Whether "reachable but blocked" deserves its own outcome.** It is carried as a field on UNAVAILABLE, which keeps the script's three-outcome contract intact. The argument for promoting it is that UNAVAILABLE otherwise reads as "nothing to be done", and in this one case something can be. Deliberately not settled here, because the contract belongs to the script and changing it from a design document would split it across two places.
+- The **`--json` envelope**: the field names are listed above, the object's outer shape and how the four outcomes are encoded are not.
 - The **notification channel on ned-box**, where `say` does not exist and the machine is headless. Version 1 leaves the box with the note alone and says so; a second channel there is unspecified because nothing has been measured about what the box can reach.
 - The **root list** for cross-machine re-anchoring, below — no configuration mechanism for it exists yet.
 
