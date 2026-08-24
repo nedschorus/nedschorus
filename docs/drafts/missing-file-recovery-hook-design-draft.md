@@ -258,15 +258,16 @@ This addresses the concern behind an earlier idea of returning the latest three 
 
 ### The honesty contract
 
-Every surface reports one of three outcomes, and the last two are never conflated:
+Every surface reports one of four outcomes, and the last three are never conflated:
 
 - **FOUND** — with the exact command that recovers the content.
 - **NOT FOUND** — this surface was genuinely searched and does not have it.
+- **BLOCKED** — this surface was *not* searched, because one named action would be needed first, and that action is carried with the result resolved to something runnable. The distinguishing test against UNAVAILABLE is whether the surface was attempted: BLOCKED was not attempted and can be, UNAVAILABLE was attempted and failed or could not be reached.
 - **UNAVAILABLE** — this surface could not be searched, with the reason, and the command that would fix it *when a command would*. Some obstacles — a disconnected disk, a sleeping machine — need an action rather than a command, and the reason is then stated without one.
 
 An agent told "not found" stops looking; an agent told "Time Machine needs a snapshot mounted, here is the command" asks for it. A surface that cannot be read must never render as empty.
 
-**A surface with more than one location reports the honest combination.** Transcripts live on this Mac *and* on ned-box; Timeshift is reached over ssh. The rule: FOUND if any location found it; otherwise UNAVAILABLE if any location could not be searched, naming which one and stating what the searched locations returned; otherwise NOT FOUND. Without this, a run that searched the Mac and could not reach the box reports NOT FOUND — the exact dishonesty this contract exists to prevent. (The built script has this defect today: it reports the transcripts surface as NOT FOUND when the Mac was searched and ned-box was unreachable. Raised in PR nedschorus#146's review as F6.)
+**A surface with more than one location reports the honest combination.** Transcripts live on this Mac *and* on ned-box; Timeshift is reached over ssh. The rule: FOUND if any location found it; otherwise UNAVAILABLE if any location could not be searched, naming which one and stating what the searched locations returned; otherwise NOT FOUND. Without this, a run that searched the Mac and could not reach the box reports NOT FOUND — the exact dishonesty this contract exists to prevent. BLOCKED has no place in this rule yet and none is invented for it: the only surface that can be BLOCKED is the external Time Machine, which has one location. If a multi-location surface ever gains a blocked state, its precedence against the other three has to be decided then, on the case that produces it. (The built script has this defect today: it reports the transcripts surface as NOT FOUND when the Mac was searched and ned-box was unreachable. Raised in PR nedschorus#146's review as F6.)
 
 ### Transcripts report three states, not one
 
@@ -276,7 +277,7 @@ Transcripts match on the path *string*, and an agent searching for a file has us
 - **mentioned only** — the name appears, with no content near it. Reported as **NOT FOUND**, with the mentions listed underneath as leads: the surface was searched and does not hold the content, and a name turning up is worth seeing without being recovery.
 - **the searcher's own session** — excluded by session id, but **only when it classifies as "mentioned only"**. That is the noise case: the agent typed the path a moment ago and its own transcript echoes it. An own-session hit carrying *content* is kept, because it is the one case this surface exists for — an agent that read a never-committed file at 10:00 and finds it gone at 11:00 has the whole tool result sitting in its own transcript, and excluding by session id alone would silently throw away the only copy in existence.
 
-These are a refinement of what "has the content" means for a surface that can hold a filename without holding the file. They do not replace the three outcomes above; every transcript result still resolves to exactly one of them.
+These are a refinement of what "has the content" means for a surface that can hold a filename without holding the file. They do not replace the four outcomes above; every transcript result still resolves to exactly one of them.
 
 ## Path resolution
 
