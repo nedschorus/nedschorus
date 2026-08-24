@@ -1273,13 +1273,26 @@ kills the session until that file appears, so the moment of the recycle is
 the agent's own to choose, and deferring it is structurally possible.
 
 **Subagents spawned by that session die with it.** On 2026-08-23 this seat
-commissioned a subagent to fix the review findings on pull request #150. The
-session recycled and the subagent died. Its work was NOT lost — its git
-worktree and branch survived on disk at exactly the reviewed head — but its
-*ownership* was: nothing in the handoff said the pull request had a fixer.
-The successor found the orphan only because the retiring agent happened to
-mention it in a sentence of prose, which is the faculty most degraded at
-recycle time.
+commissioned a subagent which authored the change on pull request #150. That
+subagent finished its round and sat idle, still owning the pull request's
+unfixed review findings, when the session recycled — and it died with it. Its
+work was NOT lost: its git worktree and branch survived on disk at exactly the
+reviewed head. Its *ownership* was: nothing structural in the handoff said the
+pull request had a fixer at all. The successor found the orphan only because
+the retiring agent happened to mention it in a sentence of prose, which is the
+faculty most degraded at recycle time.
+
+*Corrected 2026-08-23, after an independent reviewer checked this paragraph
+against the transcripts and found it wrong.* The first version said a subagent
+had been commissioned "to fix the review findings on #150" before the recycle.
+The transcripts say otherwise: the fixer was spawned at 21:20:43Z, #150 was
+opened at 21:32:07Z, its reviewer completed at 21:54:40Z, and the session died
+at 22:08:12Z — the agent actually named "Fix PR 150 review findings" was
+spawned by the SUCCESSOR at 22:25:28Z. The retiring session's own handoff prose
+was accurate; this document's compression of it was not. The substance of the
+rulings below is unaffected, and the correction is recorded rather than made
+silently, because a ruling whose cited incident does not survive checking is
+worth less than one that does.
 
 **RULED: kill and restart uniformly; do not defer the recycle.** The
 alternative considered and rejected was a conditional rule — let a subagent
