@@ -94,14 +94,16 @@ def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
                 pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
                 report_path = record_dir / f"{runtime}-{pass_token}-{tier}.md"
                 stderr_path = record_dir / (report_path.name + ".stderr.log")
-                out = open(report_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
+                # The reviewer writes the report itself; the cell is told
+                # where. Capturing the model's chat text was what lost
+                # findings written before a tool call (measured 2026-08-23),
+                # so nothing here redirects stdout into the report any more.
                 err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
                 process = subprocess.Popen(  # pylint: disable=consider-using-with
                     [str(launcher), "--cell", cell_pass, "--tier", tier,
-                     "--target", str(target)],
-                    stdout=out, stderr=err, stdin=subprocess.DEVNULL,
+                     "--target", str(target), "--report", str(report_path)],
+                    stdout=err, stderr=err, stdin=subprocess.DEVNULL,
                 )
-                out.close()
                 err.close()
                 running[report_path] = (process, stderr_path)
     return running
@@ -119,9 +121,25 @@ def wait_for_cells(running: dict) -> list:
             if code is None:
                 continue
             del running[report_path]
-            if code == 0:
+            # A cell's exit code is not on its own evidence that a review
+            # happened: the report is (nedschorus#164). The cell enforces the
+            # same rule, and the grid checks again rather than trusting it,
+            # because the grid is what tells the reviewing agent below what to
+            # believe — and eight "saved" lines over empty files read as eight
+            # reviewers finding nothing.
+            has_report = (
+                report_path.is_file()
+                and report_path.read_text(encoding="utf-8").strip() != ""
+            )
+            if code == 0 and has_report:
                 stderr_path.unlink(missing_ok=True)
                 print(f"saved: {report_path}", flush=True)
+                continue
+            if code == 0 and not has_report:
+                failures.append(report_path.name)
+                print(f"FAILED (exit 0, no report): {report_path.name} — the cell "
+                      f"reported success without writing a review; treat as failed "
+                      f"and rerun (stderr kept: {stderr_path})", flush=True)
                 continue
             failures.append(report_path.name)
             hint = ""

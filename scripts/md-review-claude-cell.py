@@ -2,37 +2,35 @@
 """Run one Claude cell of an md-review grid against a document.
 
 One invocation = one cell — the twin of the Codex cell launcher
-(scripts/md-review-codex-cell.py). The prompt templates in
-.claude/skills/md-review/prompts/ are the single prompt source for BOTH
-runtimes' cells: both launchers read the same template files, so the two
-legs cannot drift apart.
+(scripts/md-review-codex-cell.py). Everything the two do apart from
+invoking their model lives in scripts/md-review-cell-common.py and is
+imported by both, so the legs cannot drift. Read that file for the report
+contract, the write-detection rule, and why the reviewer writes a file
+rather than answering in chat.
 
 Usage:
-  scripts/md-review-claude-cell.py --cell restate --tier floor --target docs/drafts/foo.md
-  scripts/md-review-claude-cell.py --cell defect-hunt --tier good --target .claude/skills/x/SKILL.md
+  scripts/md-review-claude-cell.py --cell restate --tier floor \\
+      --target docs/drafts/foo.md \\
+      --report md-review-records/2026-01-01-foo/claude-restate-floor.md
 
-The cell's final message prints to stdout after a provenance stamp; progress
-stays on stderr. A tier may run more than one model; TIER_TO_CLAUDE_MODEL_CHAIN
-in this file's source is the mapping.
-Exit codes: 0 a model in the chain ran, 2 bad invocation, otherwise the exit
-code of the LAST model attempted — so a 2 from the final attempt is
-indistinguishable here from a bad invocation; stderr names every attempt.
+The reviewer writes its findings to --report. This program prints progress
+to stderr and nothing to stdout.
 
-The cell runs with this repository as its working directory, so its
-instruction floor is the checkout's — never the invoking session's
-project. The floor is CLAUDE.md only: Claude Code does not read
-AGENTS.md (verified 2026-08-20, tools-disallowed probe), which is why a
-rule meant for both runtimes is duplicated into both files rather than
-shared through one.
+Exit codes: 0 a model produced a report, 1 every model in the tier's chain
+failed to produce one, 2 bad invocation or a refusal that names its fix.
 """
 
-import argparse
+import importlib.util
 import pathlib
-import subprocess
 import sys
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+_common_spec = importlib.util.spec_from_file_location(
+    "md_review_cell_common", pathlib.Path(__file__).with_name("md-review-cell-common.py")
+)
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
+
+PROGRAM = "md-review-claude-cell"
 
 # Tier -> the Claude models to try, in order. One place to update as models
 # change. User-picked (good = Fable-class, floor = Sonnet-class, re-ruled
@@ -68,118 +66,44 @@ TIER_TO_REASONING_EFFORT = {
     "floor": "high",
 }
 
-# Read-only tool set: a review cell inspects, never edits. Comma-joined so
-# the variadic --allowedTools option parses it as one token.
-ALLOWED_TOOLS = "Read,Grep,Glob"
+# The reviewer reads the document and writes one file: its report. Write is
+# present because the report is a file now — the common module explains why
+# writes are detected rather than blocked.
+ALLOWED_TOOLS = "Read,Grep,Glob,Write"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument("--cell", required=True, choices=["restate", "defect-hunt"])
-    parser.add_argument("--tier", required=True, choices=["good", "floor"])
-    parser.add_argument(
-        "--target", required=True, help="document path, relative to the repo root or absolute"
-    )
-    parser.add_argument("--model", help="explicit Claude model id; overrides the tier mapping")
-    args = parser.parse_args()
+def invocation_builder(effort: str):
+    """The one thing that differs between the two cells.
 
-    target = pathlib.Path(args.target)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
-    if not target.is_file():
-        print(f"md-review-claude-cell: target not found: {target}", file=sys.stderr)
-        return 2
+    Returns the callback the shared chain runner uses: given a model and the
+    composed prompt, it yields the argv to run and the text to feed on stdin.
 
-    template_path = PROMPTS_DIR / f"{args.cell}.md"
-    if not template_path.is_file():
-        print(f"md-review-claude-cell: prompt template missing: {template_path}", file=sys.stderr)
-        return 2
-    prompt = template_path.read_text(encoding="utf-8").replace("{TARGET_PATH}", str(target))
-
-    # An explicit --model is honored exactly, with no fallback: a caller who
-    # names a model is answering the question the chain exists to answer, and
-    # silently running a different one would defeat the request.
-    chain = (args.model,) if args.model else TIER_TO_CLAUDE_MODEL_CHAIN[args.tier]
-    effort = TIER_TO_REASONING_EFFORT[args.tier]
-
-    completed = None
-    failed_attempts: list[str] = []
-    for model in chain:
+    The prompt travels via stdin, not as a positional argument: the CLI's
+    variadic options (--allowedTools) swallow a trailing positional
+    (measured 2026-08-05: the cell ran with no input at all), and
+    subprocess.run(input=...) writes stdin and closes it, so the
+    inherited-open-stdin deadlock class is avoided by construction.
+    """
+    def build_invocation(model: str, prompt: str):
         command = [
-            "claude",
-            "-p",
+            "claude", "-p",
             "--model", model,
             "--effort", effort,
             "--output-format", "text",
             "--allowedTools", ALLOWED_TOOLS,
         ]
+        return command, prompt
+    return build_invocation
 
-        # The prompt travels via stdin, not as a positional argument: the CLI's
-        # variadic options (--allowedTools) swallow a trailing positional
-        # (measured 2026-08-05: the cell ran with no input at all), and
-        # subprocess.run(input=...) writes stdin and closes it, so the
-        # inherited-open-stdin deadlock class is avoided by construction.
-        completed = subprocess.run(
-            command,
-            input=prompt,
-            stdout=subprocess.PIPE,
-            stderr=sys.stderr,
-            cwd=REPO_ROOT,
-            text=True,
-            check=False,
-        )
-        if completed.returncode == 0:
-            break
 
-        if completed.stdout:
-            print(completed.stdout, file=sys.stderr)
-        failed_attempts.append(f"{model} (exit {completed.returncode})")
-        print(
-            f"md-review-claude-cell: {model} failed (exit {completed.returncode})"
-            + (" — if the error above says the CLI is not logged in, ask the user to run: claude login"
-               if "auth" in (completed.stdout or "").lower() or "login" in (completed.stdout or "").lower()
-               else ""),
-            file=sys.stderr,
-        )
-
-    if completed is None or completed.returncode != 0:
-        print(
-            "md-review-claude-cell: every model for this cell failed — "
-            + ", ".join(failed_attempts)
-            + ". No report was produced; the cell failed rather than degrading "
-              "to a report nobody asked for.",
-            file=sys.stderr,
-        )
-        return completed.returncode if completed is not None else 2
-
-    if failed_attempts:
-        print(
-            f"md-review-claude-cell: fell back to {model} after "
-            + ", ".join(failed_attempts)
-            + ". The report's provenance stamp records this.",
-            file=sys.stderr,
-        )
-
-    # Provenance header for the review record: the which-cells-earn-their-keep
-    # analysis needs every cell output pinned to its exact model and effort
-    # (tier names drift across model eras; pins do not). `model=` always names
-    # the model that actually produced the text below it; when the tier's first
-    # choice failed, `fallback_from=` records what was tried and why, so a
-    # degraded cell is visible in the record rather than only in a log.
-    fallback_note = (
-        f"fallback_from={'+'.join(failed_attempts).replace(' ', '')} "
-        if failed_attempts else ""
+def main() -> int:
+    return common.run_cell(
+        program=PROGRAM, runtime="claude", description=__doc__,
+        model_help="explicit Claude model id; overrides the tier mapping",
+        tier_to_model_chain=TIER_TO_CLAUDE_MODEL_CHAIN,
+        tier_to_effort=TIER_TO_REASONING_EFFORT,
+        invocation_builder=invocation_builder,
     )
-    print(
-        f"<!-- provenance: runtime=claude model={model} "
-        f"{fallback_note}"
-        f"effort={effort} cell={args.cell} "
-        f"tier={args.tier} target={args.target} -->\n"
-    )
-    print(completed.stdout)
-    return 0
 
 
 if __name__ == "__main__":

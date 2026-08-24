@@ -1,48 +1,63 @@
 #!/usr/bin/env python3
-"""Run one Codex cell of a md-review clarity matrix against a document.
+"""Run one Codex cell of an md-review grid against a document.
 
-One invocation = one cell. The prompt templates in
-.claude/skills/md-review/prompts/ are the single prompt source for BOTH
-runtimes' cells: Claude subagent cells are prompted with the same template
-text, so the two legs cannot drift apart.
+One invocation = one cell — the twin of the Claude cell launcher
+(scripts/md-review-claude-cell.py). Everything the two do apart from
+invoking their model lives in scripts/md-review-cell-common.py and is
+imported by both, so the legs cannot drift. Read that file for the report
+contract, the write-detection rule, and why the reviewer writes a file
+rather than answering in chat.
 
 Usage:
-  scripts/md-review-codex-cell.py --cell restate --tier floor --target docs/cross-project/foo.md
-  scripts/md-review-codex-cell.py --cell defect-hunt --tier good --target .claude/skills/x/SKILL.md
+  scripts/md-review-codex-cell.py --cell restate --tier floor \\
+      --target docs/cross-project/foo.md \\
+      --report md-review-records/2026-01-01-foo/codex-restate-floor.md
 
-The cell's final message prints to stdout; codex progress output stays on
-stderr.
+The reviewer writes its findings to --report. This program prints progress
+to stderr and nothing to stdout.
 
-Exit codes: 0 the cell ran and its report printed; 64 this script refused
-the invocation and never launched codex (a target that is not a file, a
-missing prompt template, or a command-line error argparse caught); any other
-value is `codex exec`'s own, passed through unchanged. 64 rather than the
-conventional 2 because `codex exec` ITSELF exits 2 when it rejects a command
-line, so a 2 out of this script has to stay readable as what it is -- codex
-refusing the command this script composed, a defect here rather than a
-caller's typo. The measurements behind that, and what exit 0 does and does
-not promise, are written once in scripts/code-review-codex-cell.py's
-docstring under the heading
-EXIT CODES
+Exit codes: 0 a model produced a report, 1 every model in the tier's chain
+failed to produce one, 2 bad invocation or a refusal that names its fix.
+
+WHY THE SANDBOX IS NO LONGER READ-ONLY. This cell used to run
+`--sandbox read-only` and take the review out through
+`--output-last-message`. Both legs captured only the model's final message,
+and text written before a tool call is discarded by that capture (measured
+2026-08-23), so a reviewer that interleaved reading and writing shipped its
+closing line and none of its findings. The reviewer now writes its report
+itself, which needs write access. Per the user's ruling the same day, writes
+are detected rather than blocked: the report goes under the gitignored
+md-review-records/ tree, so a clean `git status` afterwards means the
+reviewer wrote only where it was told, and the shared module reports any
+tracked-file change as a stray write.
+
+WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS: written once, in
+scripts/code-review-codex-cell.py's docstring, under that heading.
 """
 
-import argparse
+import importlib.util
 import pathlib
-import subprocess
 import sys
-import tempfile
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+_common_spec = importlib.util.spec_from_file_location(
+    "md_review_cell_common", pathlib.Path(__file__).with_name("md-review-cell-common.py")
+)
+common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(common)
 
-# Tier -> Codex model id. One place to update as models change. Good tier
-# user-picked and live-verified 2026-08-03; floor moved terra -> luna at the
-# user's direction 2026-08-11, live-verified the same day (the bare names
-# "sol"/"luna" are rejected by the CLI; the version-prefixed ids are the
-# accepted form).
-TIER_TO_CODEX_MODEL = {
-    "good": "gpt-5.6-sol",
-    "floor": "gpt-5.6-luna",
+PROGRAM = "md-review-codex-cell"
+
+# Tier -> the Codex models to try, in order. Single-entry chains: an
+# Anthropic credit exhaustion — the failure that gave the Claude cell its
+# fallback — does not touch these models, and no equivalent has been
+# observed here. The shape is a chain anyway so both cells run the same
+# shared loop; adding a fallback is one entry, not a code change.
+# The version-prefixed ids are the accepted form (user's direction
+# 2026-08-11, live-verified the same day: the bare names "sol"/"luna" are
+# rejected by the CLI).
+TIER_TO_CODEX_MODEL_CHAIN = {
+    "good": ("gpt-5.6-sol",),
+    "floor": ("gpt-5.6-luna",),
 }
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
@@ -53,103 +68,39 @@ TIER_TO_REASONING_EFFORT = {
     "floor": "xhigh",
 }
 
-# This script's own refusals, kept off every code `codex exec` produces so a
-# passed-through code stays readable as codex's. sysexits.h's EX_USAGE; the
-# reasoning is under Exit codes above.
-EXIT_BAD_INVOCATION = 64
 
+def invocation_builder(effort: str):
+    """The one thing that differs between the two cells.
 
-class BadInvocationArgumentParser(argparse.ArgumentParser):
-    """argparse's own command-line errors join EXIT_BAD_INVOCATION.
-
-    argparse exits 2 on a missing or unknown option, and 2 is also what
-    `codex exec` returns when IT rejects a command line -- so leaving the
-    default in place would keep the two layers indistinguishable for the
-    commonest bad invocation there is, a mistyped flag. Usage text and
-    message are argparse's, unchanged; only the exit code moves.
+    Returns the callback the shared chain runner uses: given a model and the
+    composed prompt, it yields the argv to run and the text to feed on stdin.
+    Codex takes the prompt as a positional argument, so the stdin slot is
+    None — which the shared runner turns into an explicitly closed stdin
+    rather than an inherited one.
     """
-
-    def error(self, message):
-        self.print_usage(sys.stderr)
-        self.exit(EXIT_BAD_INVOCATION, f"{self.prog}: error: {message}\n")
+    def build_invocation(model: str, prompt: str):
+        command = [
+            "codex", "exec",
+            "--sandbox", "workspace-write",
+            "--disable", "memories",
+            "-C", str(common.REPO_ROOT),
+        ]
+        if model:
+            command += ["-m", model]
+        command += ["-c", f"model_reasoning_effort={effort}"]
+        command.append(prompt)
+        return command, None
+    return build_invocation
 
 
 def main() -> int:
-    parser = BadInvocationArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    return common.run_cell(
+        program=PROGRAM, runtime="codex", description=__doc__,
+        model_help="explicit Codex model id; overrides the tier mapping",
+        tier_to_model_chain=TIER_TO_CODEX_MODEL_CHAIN,
+        tier_to_effort=TIER_TO_REASONING_EFFORT,
+        invocation_builder=invocation_builder,
     )
-    parser.add_argument("--cell", required=True, choices=["restate", "defect-hunt"])
-    parser.add_argument("--tier", required=True, choices=["good", "floor"])
-    parser.add_argument(
-        "--target", required=True, help="document path, relative to the repo root or absolute"
-    )
-    parser.add_argument("--model", help="explicit Codex model id; overrides the tier mapping")
-    args = parser.parse_args()
-
-    target = pathlib.Path(args.target)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
-    if not target.is_file():
-        print(f"md-review-codex-cell: target not found: {target}", file=sys.stderr)
-        return EXIT_BAD_INVOCATION
-
-    template_path = PROMPTS_DIR / f"{args.cell}.md"
-    if not template_path.is_file():
-        print(f"md-review-codex-cell: prompt template missing: {template_path}", file=sys.stderr)
-        return EXIT_BAD_INVOCATION
-    prompt = template_path.read_text(encoding="utf-8").replace("{TARGET_PATH}", str(target))
-
-    model = args.model or TIER_TO_CODEX_MODEL[args.tier]
-    last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="md-review-cell-")[1])
-    command = [
-        "codex", "exec",
-        "--sandbox", "read-only",
-        # Codex's machine-wide memory store off for this cell: a review cell
-        # must be naive, not carrying forward what Codex concluded reviewing
-        # this project before, and these automated runs should not deposit
-        # findings in the user's personal store. The full reasoning, the
-        # verification, and what the flag leaves open are written once in
-        # scripts/code-review-codex-cell.py's docstring, under the heading
-        # WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS
-        "--disable", "memories",
-        "-C", str(REPO_ROOT),
-        "--output-last-message", str(last_message_path),
-    ]
-    if model:
-        command += ["-m", model]
-    command += ["-c", f"model_reasoning_effort={TIER_TO_REASONING_EFFORT[args.tier]}"]
-    command.append(prompt)
-
-    # stdin MUST be closed explicitly: `codex exec` treats a piped-open stdin
-    # as content to append and reads it to EOF before starting the turn, so an
-    # inherited never-closing descriptor deadlocks the cell (measured
-    # 2026-08-03: four cells frozen 24 minutes in background execution).
-    completed = subprocess.run(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        print(
-            f"md-review-codex-cell: codex exec failed (exit {completed.returncode})",
-            file=sys.stderr,
-        )
-        return completed.returncode
-
-    # Provenance header for the review record: the which-cells-earn-their-keep
-    # analysis needs every cell output pinned to its exact model and effort
-    # (tier names drift across model eras; pins do not). User-required 2026-08-04.
-    print(
-        f"<!-- provenance: runtime=codex model={model or 'config-default'} "
-        f"effort={TIER_TO_REASONING_EFFORT[args.tier]} cell={args.cell} "
-        f"tier={args.tier} target={args.target} -->\n"
-    )
-    print(last_message_path.read_text(encoding="utf-8"))
-    last_message_path.unlink(missing_ok=True)
-    return 0
 
 
 if __name__ == "__main__":
