@@ -52,6 +52,28 @@ The specimen: a normative document stated that a restriction was "proven, not me
 
 The bar: a referring phrase names its referent. "The restriction", "this check", "that experiment", "the same rule" are safe only while the referent is adjacent, and adjacency does not survive editing — any later insertion moves it. The cost is asymmetric: naming costs three words, while the failure produces a confident false statement in a document others act on. This pairs with the every-step-answers bar; both concern text that cannot tell its reader when it has stopped being true. Wording is working material until walked.
 
+## Externalities in durable prose (user-directed 2026-08-24; the genre split is open)
+
+His words, ruling on the draft's opening paragraph: "why mention externalities - it just confuses the reviewers. This document is about what this does, not the rest of the world." Applied at once — the draft had disclaimed which file placement belongs to by naming the unbuilt `md-write` skill, and both outward references came out. The opening now reads: "This skill governs how that prose gets drafted, not where it lands." The boundary survives as a bound on this skill; the account of another component's responsibilities is gone.
+
+The class this names has no home yet. draft-md's scrub list cuts provenance, historical narrative, document commentary, action-neutral hedges, future intentions, and unearned cross-references. None of those covers a sentence that describes what some other component is responsible for. It belongs on that list, and at composition time rather than at review, because the scrub list is already the list of what earns no place.
+
+Open, and his question: whether the rule can be flat. His words: "that also may need to be part of a md-review or md-write that applies to designs as opposed to readme's or overviews or non designs of all sorts." It cannot be flat. A design document's subject often is the rest of the world — what it sits beside, what it replaces, which interface it consumes. An overview is almost nothing else. Instruction prose is the genre where an externality is pure noise. So the rule needs a genre to key on, and the project's genre vocabulary today is the suffix convention of [nedschorus#152](https://github.com/nedschorus/nedschorus/issues/152), which names only `-log`, `-report`, and `-capture` and is commissioned but unbuilt. Extending that vocabulary to mark designs and overviews is where the split belongs; putting the taxonomy inside draft-md would give it something it does not own, which is the same shape of defect as the reference just cut.
+
+Not yet routed: whether this becomes an addition to nedschorus#152 or a separate issue runs through the ghi-write skill, after the draft-md review walk closes.
+
+## Genre, and why mandatory fields exist (user-directed 2026-08-24; all three open)
+
+Three directions from one message, recorded because each changes something the skill says.
+
+**What the drafting register is for, and what it can skip.** His words: "if it's not intened to be read as english, we dont need it to be clear english." That is a cleaner basis for the report-genre exclusion than the draft's own. A `-log`, `-report`, or `-capture` file is read as a record, not as prose, so the discipline that makes prose clear has nothing to do for it. It reaches the same exclusion the genre-suffix ruling reached, by a reason a reader can apply to a file the suffix convention never anticipated.
+
+**How a drafting agent learns the genre: ask, do not infer.** His words: "if the md file is intended to be a spec or design, one simple approach is to ask the user if it's intended to be a spec or design, which has more rules than just prompts or instructions or whatever. And this maybe particularly relevent to designs or specs (or some prompts or instrucitons that execute them)." This is a lighter mechanism than growing the suffix vocabulary of [nedschorus#152](https://github.com/nedschorus/nedschorus/issues/152), and the two are not exclusive: the suffix names the genre after the fact, the question settles it before drafting starts. Open: which of the two draft-md relies on, and what the larger rule set for a spec or design actually contains.
+
+**Why tags and mandatory fields exist at all.** His words: "A lot of our tags or manditory fields are designed to enable us to use state machines, that is if X do Y, if no X do Z, or stuff like that. Understanding how state machines pervade our designs and prompts should help us not forget why we need specific fields or tags."
+
+This is the reason underneath the steps-always-emit bar, and it is stronger than the reason the draft currently gives. The draft says an unconditional answer "lets the consumer verify the step ran at all" — true, but that is auditing. The state-machine reading says something harder: the consumer is a branch, `if X do Y, if no X do Z`, and a step that stays silent on one outcome leaves that branch with no defined transition. The consumer is not merely unable to audit; it has no rule to follow. It also supplies the boundary the bar has been missing. The counterexample four reviewers raised — a monitor or alert that speaks only on its condition — is not a step whose result something else branches on, so the bar was never about it.
+
 ## Build path
 
 Per the skill-authoring checklist (`docs/wiki/queue/skill-authoring-checklist.md`); the skill text itself gets a zero-context read and a walk before adoption. Timing user-ruled: end of the clarity-registers walk ([nedschorus#138](https://github.com/nedschorus/nedschorus/issues/138)) or soon after.
