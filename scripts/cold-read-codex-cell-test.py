@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for md-review-codex-cell.py — its exit codes, and only those.
+"""Tests for cold-read-codex-cell.py — its exit codes, and only those.
 
 WHY THIS SEAM. Until 2026-08-23 the cell used 2 for its own refusals and
 passed `codex exec`'s exit code through when codex failed, and codex exits 2
@@ -14,7 +14,7 @@ WHAT CHANGED SINCE THAT FIX, and why half of this file was rewritten. The
 cell no longer passes codex's exit code through, so the passthrough cases
 that pinned it have nothing left to pin. The reviewer now writes its findings
 to --report rather than answering in chat, and the cell hands its models to
-the chain runner in scripts/md-review-cell-common.py: a model that fails is a
+the chain runner in scripts/cold-read-cell-common.py: a model that fails is a
 model the chain falls back from, and the caller is told whether ANY model
 produced a review — 1 when none did, however each of them failed. The old
 cases are replaced by what the chain actually does when codex exits 2 or 7,
@@ -39,13 +39,13 @@ Everything else about this cell — the model and effort pins, the memory store
 being off for the launch, the stray-write detector, the provenance stamp's
 fields — is NOT covered here; this file was written for the exit-code seam
 and does not stand in for a full suite. The shared module's own behaviour is
-covered in scripts/md-review-cell-common-test.py.
+covered in scripts/cold-read-cell-common-test.py.
 
 Every case runs the cell with a stub `codex` first on PATH, so no model is
 ever called: the stub is the seam that lets the cell's own logic be tested
 without the model, the money, or the wait.
 
-Run: python3 scripts/md-review-codex-cell-test.py
+Run: python3 scripts/cold-read-codex-cell-test.py
 """
 
 import os
@@ -54,7 +54,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-CELL_SCRIPT = Path(__file__).with_name("md-review-codex-cell.py")
+CELL_SCRIPT = Path(__file__).with_name("cold-read-codex-cell.py")
 
 # A stub codex that writes the report the cell is waiting for, then exits 0 —
 # the successful-cell path. The path arrives by environment: the cell puts it
@@ -63,7 +63,7 @@ CELL_SCRIPT = Path(__file__).with_name("md-review-codex-cell.py")
 # reworded.
 STUB_CODEX_WRITES_REPORT = """#!/usr/bin/env python3
 import os, sys
-with open(os.environ["MD_REVIEW_CODEX_CELL_TEST_STUB_REPORT_PATH"], "w",
+with open(os.environ["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"], "w",
           encoding="utf-8") as handle:
     handle.write("STUB CODEX CELL REPORT\\n")
 sys.exit(0)
@@ -104,7 +104,7 @@ def run_cell(stub_directory, stub_body, report_path, *arguments):
     stub.chmod(0o755)
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
-    environment["MD_REVIEW_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), "--report", str(report_path), *arguments],
         capture_output=True, text=True, check=False, env=environment,

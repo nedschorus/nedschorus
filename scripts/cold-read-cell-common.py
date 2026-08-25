@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Everything an md-review cell does except invoke its model.
+"""Everything a cold-read cell does except invoke its model.
 
 WHY THIS FILE EXISTS (user-ruled 2026-08-23). The Claude and Codex cells
 are meant to differ in one thing only: the invocation of the model. Every
@@ -34,7 +34,7 @@ kept, so no later reader can mistake a stub for a clean result.
 WRITES ARE DETECTED, NOT BLOCKED (user-ruled 2026-08-23). The reviewer
 needs write access to produce its report, so the read-only tool set that
 used to force findings through chat text is gone. What replaces it is
-cheap and exact: the report goes in `md-review-records/`, which is
+cheap and exact: the report goes in `cold-read-records/`, which is
 gitignored and therefore invisible to `git status`. Before the model runs
 and again afterwards the cell records what every path `git status` names
 holds, and reports the DIFFERENCE -- so a dirty tree the run did not cause
@@ -56,7 +56,7 @@ import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 CELL_CHOICES = ["restate", "defect-hunt"]
 TIER_CHOICES = ["good", "floor"]
@@ -185,13 +185,13 @@ class WriteDetectorUnavailable(Exception):
 
 
 # The phrase both "the check did not run" messages below carry, and the
-# phrase scripts/md-review-grid.py greps a cell's stderr log for. The grid
+# phrase scripts/cold-read-grid.py greps a cell's stderr log for. The grid
 # deletes that log on the success path, so a message it does not lift there
 # is a message nobody ever reads -- and these two are the ones that say the
 # run was never checked, which is the outcome likeliest to be mistaken for a
 # clean one. This is a contract with that file, not a sentence to reword in
 # passing: change it here and in the grid together, and
-# scripts/md-review-grid-test.py fails if only one of the two moves.
+# scripts/cold-read-grid-test.py fails if only one of the two moves.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
 
 
@@ -229,7 +229,7 @@ def working_tree_state() -> set:
     CONTENT, NOT NAMES, and that is the whole point of the pairing. A
     snapshot of names alone cannot see an edit to a path that was already
     dirty when it was taken: the name is in both snapshots and cancels out of
-    the comparison. md-review's ordinary subject is a draft that has not
+    the comparison. A cold read's ordinary subject is a draft that has not
     landed, so the document under review -- the very file a reviewer is most
     likely to edit by accident -- is normally already dirty, and the detector
     was blind in exactly the case it exists for (measured on nedschorus#167:
@@ -280,7 +280,7 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
     """Paths that changed during the run -- the DELTA, not the tree's state.
 
     Without a baseline this reported every already-dirty path as the
-    reviewer's doing. md-review's ordinary subject is a draft that has not
+    reviewer's doing. A cold read's ordinary subject is a draft that has not
     landed, so the ordinary run starts dirty and all eight cells would
     accuse the reviewer of changes it never made. A detector that cries wolf
     on the common case is one its readers learn to skip.

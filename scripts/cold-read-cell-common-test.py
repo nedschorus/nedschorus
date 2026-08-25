@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for md-review-cell-common.py — everything an md-review cell does
+"""Tests for cold-read-cell-common.py — everything a cold-read cell does
 except invoke its model.
 
 HOW A CASE RUNS. Each case builds a throwaway git repository holding a copy
@@ -8,7 +8,7 @@ launcher inside it with a stub `claude` first on PATH. Two seams make that
 work. The cell takes its repository root from its own location on disk, so a
 copy of the scripts is a cell whose whole world is the scratch repository —
 no case can touch this checkout. And the stub is the model: it is driven by
-MD_REVIEW_CELL_TEST_STUB_PLAN, a JSON map from model id to what that
+COLD_READ_CELL_TEST_STUB_PLAN, a JSON map from model id to what that
 attempt should do, so a chain of failures and fallbacks is arranged without
 a model call, the money, or the half hour. Only the Claude leg is launched,
 because what is under test is the module both legs share.
@@ -19,7 +19,7 @@ WHAT IS PINNED HERE.
     detector exists for the accident of 2026-08-24, when a reviewer edited
     the document under review mid-flight and invalidated a full eight-cell
     run. Until nedschorus#167 it compared the NAMES git called dirty before
-    and after, and md-review's ordinary subject is a draft that has not
+    and after, and a cold read's ordinary subject is a draft that has not
     landed: the document under review is normally dirty already, its name is
     in both snapshots, and the guard was silent in exactly the case it was
     added for. The already-dirty case below fails against that code and the
@@ -61,7 +61,7 @@ WHAT IS PINNED HERE.
     reviewing agent failed reviews are absent, and the skill sends it to read
     every report present. A report exists if and only if the run succeeded.
 
-Run: python3 scripts/md-review-cell-common-test.py
+Run: python3 scripts/cold-read-cell-common-test.py
 """
 
 import json
@@ -74,26 +74,26 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 CELL_SCRIPT_NAMES = (
-    "md-review-cell-common.py",
-    "md-review-claude-cell.py",
-    "md-review-codex-cell.py",
+    "cold-read-cell-common.py",
+    "cold-read-claude-cell.py",
+    "cold-read-codex-cell.py",
 )
 
 # The document each case reviews, and the one a reviewer would edit by
 # accident: it is committed first, then modified without being committed, so
-# the run starts with it dirty — md-review's ordinary condition.
-TARGET_RELATIVE_PATH = "docs/drafts/md-review-cell-common-test-target.md"
+# the run starts with it dirty — a cold read's ordinary condition.
+TARGET_RELATIVE_PATH = "docs/drafts/cold-read-cell-common-test-target.md"
 
 # The phrase both "the check did not run" messages must carry, spelled out
-# here rather than imported: it is a contract with scripts/md-review-grid.py,
+# here rather than imported: it is a contract with scripts/cold-read-grid.py,
 # which greps a cell's stderr log for this text, and a test that read the
 # phrase from the module it tests would pass however either side was reworded.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
 
 # A stand-in for the `claude` CLI. It does what
-# MD_REVIEW_CELL_TEST_STUB_PLAN tells it to for the model it was launched
+# COLD_READ_CELL_TEST_STUB_PLAN tells it to for the model it was launched
 # with: "report" is text to write to the report path (absent means write
 # nothing, which is how a model that dies quietly looks), "edit" is a
 # [path, text] pair to append to some other file — a reviewer editing the
@@ -111,10 +111,10 @@ except OSError:
     pass
 argv = sys.argv
 model = argv[argv.index("--model") + 1] if "--model" in argv else "*"
-plan = json.loads(os.environ["MD_REVIEW_CELL_TEST_STUB_PLAN"])
+plan = json.loads(os.environ["COLD_READ_CELL_TEST_STUB_PLAN"])
 step = plan.get(model, plan.get("*", {}))
 if "report" in step:
-    with open(os.environ["MD_REVIEW_CELL_TEST_STUB_REPORT_PATH"], "w",
+    with open(os.environ["COLD_READ_CELL_TEST_STUB_REPORT_PATH"], "w",
               encoding="utf-8") as handle:
         handle.write(step["report"])
 if "edit" in step:
@@ -171,19 +171,19 @@ def build_scratch_repository(scratch):
     for script_name in CELL_SCRIPT_NAMES:
         shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
         (repository / "scripts" / script_name).chmod(0o755)
-    scratch_prompts = repository / ".claude" / "skills" / "md-review" / "prompts"
+    scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
-    (repository / ".gitignore").write_text("md-review-records/\n", encoding="utf-8")
+    (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
     git(repository, "config", "user.email", "test@test.invalid")
-    git(repository, "config", "user.name", "md-review-cell-common test")
+    git(repository, "config", "user.name", "cold-read-cell-common test")
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "seed")
     return repository
@@ -192,7 +192,7 @@ def build_scratch_repository(scratch):
 def dirty_the_target(repository):
     """Leave the document under review modified and uncommitted.
 
-    This is the ordinary state of an md-review subject, and the state in
+    This is the ordinary state of a cold-read subject, and the state in
     which the name-only detector went blind.
     """
     with (repository / TARGET_RELATIVE_PATH).open("a", encoding="utf-8") as handle:
@@ -207,11 +207,11 @@ def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
     stub.chmod(0o755)
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
-    environment["MD_REVIEW_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
-    environment["MD_REVIEW_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    environment["COLD_READ_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
+    environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     environment.update(environment_overrides or {})
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "md-review-claude-cell.py"),
+        [sys.executable, str(repository / "scripts" / "cold-read-claude-cell.py"),
          "--cell", "restate", "--tier", "floor",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
@@ -229,7 +229,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # detector the delta is empty and nothing is printed.
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "md-review-records" / "run-a" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-a" / "claude-restate-floor.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -249,8 +249,8 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "md-review-records" / "run-b" / "claude-restate-floor.md"
-    created_relative_path = "docs/drafts/md-review-cell-common-test-created.md"
+    report = repository / "cold-read-records" / "run-b" / "claude-restate-floor.md"
+    created_relative_path = "docs/drafts/cold-read-cell-common-test-created.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -268,7 +268,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "md-review-records" / "run-c" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-c" / "claude-restate-floor.md"
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
     )
@@ -285,7 +285,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    visible_report_relative_path = "docs/drafts/md-review-cell-common-test-report.md"
+    visible_report_relative_path = "docs/drafts/cold-read-cell-common-test-report.md"
     report = repository / visible_report_relative_path
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
@@ -322,7 +322,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # author. Both must fail, and the cell must say so.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "md-review-records" / "run-d" / "claude-restate-good.md"
+    report = repository / "cold-read-records" / "run-d" / "claude-restate-good.md"
     result = run_claude_cell(
         repository, stubs,
         {"claude-fable-5": {"report": "STUB REVIEW: findings the first model wrote\n",
@@ -346,7 +346,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # a file that is still there and carries no provenance stamp.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "md-review-records" / "run-e" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-e" / "claude-restate-floor.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "FINDINGS: 1. something real\nclean sections: none\n",
@@ -366,11 +366,11 @@ with tempfile.TemporaryDirectory() as scratch:
     # Two ways the check cannot run, and both must be distinguishable from a
     # clean result — that is the whole reason WriteDetectorUnavailable is an
     # exception and not a path-shaped string. Both lines carry the phrase
-    # scripts/md-review-grid.py greps this cell's log for before deleting it;
-    # scripts/md-review-grid-test.py pins the other end of that contract.
+    # scripts/cold-read-grid.py greps this cell's log for before deleting it;
+    # scripts/cold-read-grid-test.py pins the other end of that contract.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "md-review-records" / "run-f" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-f" / "claude-restate-floor.md"
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
         environment_overrides={"GIT_DIR": str(scratch / "no-such-git-directory")},
@@ -382,7 +382,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "md-review-records" / "run-g" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-g" / "claude-restate-floor.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -406,7 +406,7 @@ with tempfile.TemporaryDirectory() as scratch:
 # and a check that missed a claim because of where its line ended would be a
 # check that passes for the wrong reason.
 codex_cell_prose = " ".join(
-    (SCRIPTS_DIR / "md-review-codex-cell.py").read_text(encoding="utf-8").split())
+    (SCRIPTS_DIR / "cold-read-codex-cell.py").read_text(encoding="utf-8").split())
 check("the Codex cell does not claim a clean git status proves anything",
       "a clean `git status` afterwards means" not in codex_cell_prose,
       "the docstring still promises a guarantee the ordinary dirty tree cannot give")

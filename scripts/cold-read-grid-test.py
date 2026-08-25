@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for md-review-grid.py — what a grid run tells the agent reading it.
+"""Tests for cold-read-grid.py — what a grid run tells the agent reading it.
 
 HOW A CASE RUNS. Each case builds a throwaway git repository holding a copy
 of the grid, the two cell launchers, the module they share and the prompt
@@ -33,7 +33,7 @@ WHAT IS PINNED HERE.
     lift stops happening, and keeping the log would leave eight files in
     every record set for the reviewing agent to sort through.
 
-Run: python3 scripts/md-review-grid-test.py
+Run: python3 scripts/cold-read-grid-test.py
 """
 
 import os
@@ -45,22 +45,22 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 GRID_SCRIPT_NAMES = (
-    "md-review-grid.py",
-    "md-review-cell-common.py",
-    "md-review-claude-cell.py",
-    "md-review-codex-cell.py",
+    "cold-read-grid.py",
+    "cold-read-cell-common.py",
+    "cold-read-claude-cell.py",
+    "cold-read-codex-cell.py",
 )
 
-TARGET_RELATIVE_PATH = "docs/drafts/md-review-grid-test-target.md"
+TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 
 # A stand-in for both runtimes. It takes the report path from the prompt it
 # was given rather than from the environment, because the grid gives each of
 # its eight cells a different one and only the prompt carries which: the
 # Claude leg feeds the prompt on stdin, the Codex leg passes it as an
 # argument, so the stub reads both and looks for a path under the records
-# tree. MD_REVIEW_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
+# tree. COLD_READ_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
 # — a reviewer editing the document instead of reviewing it.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import os, re, sys
@@ -71,13 +71,13 @@ try:
 except OSError:
     pass
 prompt += " " + " ".join(sys.argv)
-match = re.search(r"[^\s\"']+md-review-records/[^\s\"']+\.md", prompt)
+match = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
 if match is None:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
     sys.exit(3)
 with open(match.group(0), "w", encoding="utf-8") as handle:
     handle.write("STUB REVIEW: one restatement\n")
-edited_path = os.environ.get("MD_REVIEW_GRID_TEST_STUB_EDIT_PATH")
+edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write("The reviewer's own edit, which it should not have made.\n")
@@ -111,17 +111,17 @@ def build_scratch_repository(scratch, name):
     for script_name in GRID_SCRIPT_NAMES:
         shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
         (repository / "scripts" / script_name).chmod(0o755)
-    scratch_prompts = repository / ".claude" / "skills" / "md-review" / "prompts"
+    scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
-    (repository / ".gitignore").write_text("md-review-records/\n", encoding="utf-8")
+    (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
     git(repository, "config", "user.email", "test@test.invalid")
-    git(repository, "config", "user.name", "md-review-grid test")
+    git(repository, "config", "user.name", "cold-read-grid test")
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "seed")
     return repository
@@ -137,7 +137,7 @@ def run_grid(repository, stub_directory, environment_overrides=None):
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment.update(environment_overrides or {})
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "md-review-grid.py"),
+        [sys.executable, str(repository / "scripts" / "cold-read-grid.py"),
          "--target", TARGET_RELATIVE_PATH],
         capture_output=True, text=True, check=False, env=environment,
     )
@@ -145,7 +145,7 @@ def run_grid(repository, stub_directory, environment_overrides=None):
 
 def record_directory_of(repository):
     """The record directory the run just made. One per case, by construction."""
-    directories = sorted((repository / "md-review-records").glob("*"))
+    directories = sorted((repository / "cold-read-records").glob("*"))
     return directories[-1] if directories else None
 
 
@@ -189,7 +189,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-stray-write")
     result = run_grid(
         repository, stubs,
-        {"MD_REVIEW_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)},
+        {"COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]

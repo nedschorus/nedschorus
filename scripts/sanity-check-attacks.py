@@ -2,7 +2,7 @@
 """Run a sanity-check: independent audits, each on both runtimes, over one document.
 
 The sanity-check is this project's second review instrument, separate from
-md-review (`scripts/md-review-grid.py`, the prose-and-clarity review) and
+the cold read (`scripts/cold-read-grid.py`, the prose-and-clarity review) and
 never part of it. Three audits, each in its own
 fresh context:
 
@@ -43,10 +43,10 @@ Operating rules:
   therefore runs as two review agents, one per runtime, named
   `<audit>-<runtime>` in this runner's output.
 - Run it only by deliberate decision — never wire it into automation. A
-  revision of an already-sanity-checked document earns no automatic rerun. Run it after md-review has passed, not before. It
+  revision of an already-sanity-checked document earns no automatic rerun. Run it after the cold read has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
   plans — never records (documents that only report what happened).
-  "md-review passed" is the natural moment to ask
+  "the cold read passed" is the natural moment to ask
   whether a document deserves its sanity-check; a PR carrying an actionable MD with
   no sign of a past sanity-check may have one suggested — a note, never a gate.
 - The requesting agent triages: follows up the warnings described below,
@@ -154,7 +154,7 @@ RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # `git status --ignored` — was ruled out (user, 2026-08-23): it enumerates and
 # fingerprints every ignored file in the repository, one subprocess each, to
 # catch a rare write. Writes to other ignored paths (ghi-mirror/,
-# md-review-records/, __pycache__/) are therefore still undetected; the test
+# cold-read-records/, __pycache__/) are therefore still undetected; the test
 # file asserts that limit rather than leaving it to be discovered. Each entry
 # is a literal path — a directory, walked, or a single file — never a glob
 # pattern: git's ignore syntax is not interpreted here.
@@ -283,7 +283,7 @@ def injected_instruction_files() -> list:
 
 def assemble_prompt(attack: str, target: str, context: list, problem_statement: pathlib.Path) -> str:
     # Data only below the rule: every instruction lives in the prompt MDs,
-    # which are md-reviewed; nothing reviewable hides here (user-ruled
+    # which get a cold read; nothing reviewable hides here (user-ruled
     # 2026-08-17).
     if attack == "fresh-eyes":
         problem = problem_statement.read_text(encoding="utf-8")
@@ -495,7 +495,7 @@ def tracked_files_corpus() -> tuple:
         except (OSError, UnicodeDecodeError):
             continue
     # One entry per file, never concatenated: a joined corpus would let a quote
-    # match across a file boundary (md-review finding, verified by construction).
+    # match across a file boundary (cold-read finding, verified by construction).
     return tuple(pieces)
 
 
@@ -763,7 +763,7 @@ def main() -> int:
         section = fresh_eyes_text[start:end].strip()
         # The section's closing sentence points at the marker and body below
         # it, which this surface deliberately omits — printed here it would
-        # dangle (md-review finding).
+        # dangle (cold-read finding).
         tail_start = section.rfind("\n\nEverything below the marker")
         if tail_start != -1:
             section = section[:tail_start].rstrip()
@@ -823,7 +823,7 @@ def main() -> int:
 
     # Validate every prompt this run will use before any cell launches, so a
     # broken boundary fails before model cost — as documented; until 2026-08-21
-    # validation ran lazily inside each cell (md-review finding, verified).
+    # validation ran lazily inside each cell (cold-read finding, verified).
     for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
         prompt_body(attack)
 

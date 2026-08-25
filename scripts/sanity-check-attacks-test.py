@@ -284,7 +284,7 @@ def main():
     # not every ignored path — enumerating and fingerprinting every ignored
     # file in the repository to catch a rare write was ruled out (user,
     # 2026-08-23). A write to any other ignored path (ghi-mirror/,
-    # md-review-records/, __pycache__/) is still invisible, and this case
+    # cold-read-records/, __pycache__/) is still invisible, and this case
     # states that limit in code. It passes both before and after case 7's
     # fix: it is documentation of the carve-out, never evidence for the fix,
     # and it fails if the watch ever silently becomes repository-wide.

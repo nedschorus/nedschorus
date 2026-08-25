@@ -68,4 +68,4 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 
 ---
 
-ADMISSION COMPLETE 2026-08-06: 21 lines walked; five survive (3, 10, 11, 12, 13); the assembled floor is [claude-md-admitted.md](claude-md-admitted.md), which md-reviews (the grid's first full run) and then lands as `/CLAUDE.md`.
+ADMISSION COMPLETE 2026-08-06: 21 lines walked; five survive (3, 10, 11, 12, 13); the assembled floor is [claude-md-admitted.md](claude-md-admitted.md), which gets a cold read (the grid's first full run) and then lands as `/CLAUDE.md`.

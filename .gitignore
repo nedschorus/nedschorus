@@ -35,7 +35,7 @@ CLAUDE.local.md
 __pycache__/
 *.pyc
 
-# md-review grid output: machine-local review evidence, never committed
+# cold-read grid output: machine-local review evidence, never committed
 # (user-ruled 2026-08-14). The founding plan's disposal rule already covers
 # this class — "an evidence archive or reference file DELETES, with the
 # extracted decisions memorialized in their governing documents and a
@@ -44,11 +44,11 @@ __pycache__/
 # A review's findings belong in the document it reviewed; the transcripts
 # that produced them are working material, deleted when the work they served
 # lands. Everything deleted stays retrievable: git show db917b5:<path>
-md-review-records/
+cold-read-records/
 
 # sanity-check records: the second review instrument's output
 # (scripts/sanity-check-attacks.py) — same class and disposal as
-# md-review-records: machine-local working material, deleted when the work it
+# cold-read-records: machine-local working material, deleted when the work it
 # served lands; git history is the archive
 sanity-check-records/
 
