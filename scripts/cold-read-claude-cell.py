@@ -21,6 +21,15 @@ failed to produce one; 64 this program refused the invocation and never
 launched a model, naming its own fix. 64 rather than the conventional 2 for
 the reason written beside EXIT_BAD_INVOCATION in
 scripts/cold-read-cell-common.py, which both cells share.
+
+WHY A CLAUDE CELL'S STAMP CARRIES NO `tokens=` FIELD. Every stamp records
+`duration_s=` (user-ruled 2026-08-25), and Codex cells also record `tokens=`
+because the Codex CLI prints a total. The Claude CLI prints no equivalent, so
+there is no figure to record and the field is omitted rather than filled with
+a zero -- an omitted field reads as "not reported", a zero would read as "this
+cell cost nothing". If the CLI starts printing a "tokens used" line, the
+shared parser in scripts/cold-read-cell-common.py picks it up with no change
+here.
 """
 
 import importlib.util

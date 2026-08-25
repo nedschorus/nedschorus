@@ -44,7 +44,21 @@ every exit path, including failures, because a reviewer that edited the
 document instead of reviewing it leaves an edit worth naming whether or not
 it also produced a report. This follows the project's rule that a guard names the behavior
 it defends against: the behavior here is an ordinary agent writing to the
-wrong path by accident, not an attacker.
+wrong path by accident, not an attacker. The check is ungated by runtime,
+deliberately -- see `report_stray_writes` for the incident that ruling comes
+from (nedschorus#161).
+
+A RUN REPORTS WHAT IT ACTUALLY DID (user-ruled 2026-08-25). Three of this
+module's habits used to hide the run's own facts from the record it produced.
+It declared "the model exited without writing" while a complete review sat one
+character away in a sibling directory the model had created itself -- so a
+cell now looks there before it declares failure (`recover_near_miss_report`).
+It threw away the runtime's stderr on every successful run, which is the only
+channel carrying the Codex CLI's token total -- so stderr is captured and
+re-emitted, and the total is parsed out of it (`parse_tokens_used`). And its
+provenance stamp recorded what the cell was asked to do but nothing about what
+the doing cost -- so `duration_s=`, and `tokens=` where the runtime reports
+one, are now stamped alongside the model and the tier.
 """
 
 from __future__ import annotations
@@ -52,8 +66,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import pathlib
+import re
+import shutil
 import subprocess
 import sys
+import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
@@ -298,6 +315,90 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
     return sorted(changed)
 
 
+# The phrase the grid greps this cell's stderr log for, so a recovery is
+# visible on the grid's own output rather than only in a log the grid deletes
+# on success. Kept as a constant because it is a contract with
+# scripts/cold-read-grid.py, not a sentence anyone should reword in passing.
+NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
+
+
+def recover_near_miss_report(
+    program: str, report: pathlib.Path, attempt_started_at: float,
+) -> bool:
+    """Look for this attempt's report one directory away before failing it.
+
+    WHAT HAPPENED (2026-08-25). A Codex cell was given
+    `cold-read-records/2026-08-25-ghi-write-SKILL-prewalk-c6fb95f/codex-hunt-floor.md`
+    and wrote a complete 33-finding review to
+    `...-c6fb95c/codex-hunt-floor.md` -- one character different, in a sibling
+    directory it created itself. The cell reported "the model exited without
+    writing", which was true of the path it watched and false of the work: a
+    finished review existed and the run threw it away. Losing a review to a
+    typo in a directory name is not a review that did not happen.
+
+    WHAT IS AND IS NOT ACCEPTED. Exactly one candidate is recovered: a file of
+    the report's own name, in a sibling of the record directory, whose mtime is
+    at or after this ATTEMPT's start. Zero candidates is the ordinary failure
+    and stays one. Two or more is refused rather than guessed at, because
+    picking one would put a review under a stamp that may not describe it.
+
+    WHY THE ATTEMPT'S START AND NOT THE CELL'S. The ruling says "since the run
+    started". Per-attempt is a strict subset of that and is what keeps the
+    provenance stamp honest: a chain runs several models against one report
+    path, and a sibling stray left by a model that failed would otherwise be
+    recovered during a later model's attempt and stamped with the later
+    model's name. The stamp must name whoever wrote the text under it.
+
+    Either way this prints what it looked for, so a cell that fails here says
+    where it searched rather than only that it found nothing.
+    """
+    record_dir = report.parent
+    siblings_root = record_dir.parent
+    cutoff_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(attempt_started_at))
+    candidates = []
+    if siblings_root.is_dir():
+        for sibling in sorted(siblings_root.iterdir()):
+            if not sibling.is_dir() or sibling == record_dir:
+                continue
+            candidate = sibling / report.name
+            if not candidate.is_file():
+                continue
+            if candidate.stat().st_mtime < attempt_started_at:
+                continue
+            if not candidate.read_text(encoding="utf-8").strip():
+                continue
+            candidates.append(candidate)
+
+    if len(candidates) == 1:
+        found = candidates[0]
+        # move, not copy: two copies of one review under two names is the
+        # ambiguity this recovery exists to remove. The empty sibling directory
+        # is left standing -- it is evidence of the miss, and `git status`
+        # never sees it because the records tree is gitignored.
+        shutil.move(str(found), str(report))
+        print(
+            f"{program}: {NEAR_MISS_RECOVERY_PHRASE} — the model wrote "
+            f"{found} instead of {report}, a sibling of the record directory "
+            f"it was given. The file has been moved into place and stamped; "
+            f"the review itself is intact.",
+            file=sys.stderr,
+        )
+        return True
+
+    found_text = (
+        "nothing" if not candidates
+        else "more than one, which is ambiguous and so refused: "
+             + ", ".join(str(candidate) for candidate in candidates)
+    )
+    print(
+        f"{program}: no near-miss report to recover — looked for a file named "
+        f"{report.name}, modified at or after {cutoff_text}, in the sibling "
+        f"directories of {record_dir}, and found {found_text}.",
+        file=sys.stderr,
+    )
+    return False
+
+
 def verify_report(program: str, report: pathlib.Path) -> None:
     """Enforce: a report exists iff the run succeeded.
 
@@ -323,9 +424,36 @@ def verify_report(program: str, report: pathlib.Path) -> None:
         )
 
 
+# The Codex CLI ends a run with a line of the form "tokens used: 12,345", on
+# stderr, which is the only stream this is ever read from -- stdout is the
+# model's own words and a reviewer may write that phrase in its findings.
+# The Claude CLI prints no equivalent, so a claude cell simply has no token
+# figure and the stamp omits the field rather than guessing at one. The
+# pattern lives here rather than in the Codex launcher because that launcher's
+# one job is building an invocation -- giving it a second responsibility is
+# how the two legs start to drift, which is the defect this module exists to
+# prevent. A runtime that starts printing the same line gets the field for
+# free.
+TOKENS_USED_PATTERN = re.compile(r"tokens used[:\s]+([\d,]+)", re.IGNORECASE)
+
+
+def parse_tokens_used(runtime_output: str) -> str:
+    """The token total a runtime reported, or "" when it reported none.
+
+    The LAST match wins: a CLI that prints a running count and then a total
+    ends with the total. Commas are stripped so the stamp carries a number a
+    reader can add up. An absent figure returns "" and the caller omits the
+    field -- an omitted field reads as "not reported", and a zero would read
+    as "this run cost nothing", which is never true.
+    """
+    matches = TOKENS_USED_PATTERN.findall(runtime_output or "")
+    return matches[-1].replace(",", "") if matches else ""
+
+
 def stamp_provenance(
     report: pathlib.Path, *, runtime: str, model: str, effort: str,
-    cell: str, tier: str, target_argument: str, fallback_from: str = "",
+    cell: str, tier: str, target_argument: str, duration_s: int,
+    fallback_from: str = "", tokens: str = "",
 ) -> None:
     """Prepend the provenance line the records convention requires.
 
@@ -333,11 +461,29 @@ def stamp_provenance(
     it. `fallback_from=` appears only when an earlier model in a chain
     failed, so a degraded cell is visible in the record rather than only
     in a log.
+
+    WHAT A CELL COST IS PART OF WHAT IT DID (user-ruled 2026-08-25). Until
+    that ruling the stamp recorded every input to the run -- runtime, model,
+    effort, cell, tier, target -- and nothing about the run itself, so a
+    record set answered "what was asked for" and could not answer "what did
+    this cost". Measured that day: across six grids the only recoverable token
+    figure came from the single cell that FAILED, because failure is the one
+    path that kept the runtime's output. `duration_s=` is wall seconds for the
+    whole cell including any failed attempts ahead of the one that worked --
+    the cell's cost, not the winning model's. `tokens=` is present only when
+    the runtime reported a total; see `parse_tokens_used`.
+
+    FIELD ORDER IS DELIBERATE: `target=` stays last because its value is a
+    path, and a path with a space in it would swallow whatever followed for
+    any reader splitting this line on whitespace. Everything added here goes
+    in front of it.
     """
     fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
+    tokens_note = f"tokens={tokens} " if tokens else ""
     stamp = (
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
-        f"effort={effort} cell={cell} tier={tier} target={target_argument} -->\n\n"
+        f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
+        f"{tokens_note}target={target_argument} -->\n\n"
     )
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -345,7 +491,7 @@ def stamp_provenance(
 def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
-    baseline,
+    baseline, cell_started_at: float,
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
 
@@ -366,9 +512,17 @@ def run_model_chain(
     produced -- so the chain advances. Before the report became a file, "exited
     0 having written nothing" was indistinguishable from success, so a model
     that died quietly ended the chain with a clean-looking stamp.
+
+    The one thing that can now put a file at that path other than the model
+    writing there directly is `recover_near_miss_report`, and it keeps the
+    invariant rather than bending it: it accepts only a file whose mtime falls
+    at or after the moment THIS attempt began, so what it moves into place was
+    written during the attempt being judged and the stamp still names whoever
+    wrote the text beneath it.
     """
     failed_attempts: list[str] = []
     produced_by = ""
+    produced_tokens = ""
     for model in chain:
         # THE STATE RESET, and the reason this loop is safe to read. The report
         # path is this chain's only state variable, and `verify_report` below
@@ -383,6 +537,13 @@ def run_model_chain(
         # nobody enumerated. It cannot destroy a good report: a successful
         # attempt breaks out of the loop before another begins.
         report.unlink(missing_ok=True)
+        # THE ATTEMPT'S OWN CLOCK. `recover_near_miss_report` credits a stray
+        # file to this attempt only if it was written after this moment, so
+        # the clock is read here -- inside the loop, after the state reset --
+        # and not once for the cell. A per-cell clock would let a stray from
+        # a failed model be recovered during a later model's attempt and
+        # stamped with the later model's name.
+        attempt_started_at = time.time()
         command, stdin_text = build_invocation(model, prompt)
         # stdin MUST be closed explicitly when a runtime takes the prompt as an
         # argument. `codex exec` treats a piped-open stdin as content to append
@@ -395,18 +556,26 @@ def run_model_chain(
             {"input": stdin_text} if stdin_text is not None
             else {"stdin": subprocess.DEVNULL}
         )
-        # stdout is CAPTURED, not discarded, and re-emitted when an attempt
-        # fails. The grid decides whether to tell the user his CLI is logged out
-        # by searching this cell's stderr log for the runtime's own words, so
-        # sending them to DEVNULL leaves that guard reading a channel that can
-        # never carry what it tests for. Measured 2026-08-23: when Fable ran out
-        # of credits the whole log was 54 bytes -- "claude-fable-5 failed (exit
-        # 1)" -- and the runtime's explanation was nowhere in it.
+        # BOTH STREAMS ARE CAPTURED, and stderr is re-emitted unconditionally.
+        # stdout has been captured since 2026-08-23, when Fable ran out of
+        # credits and the whole cell log came to 54 bytes -- "claude-fable-5
+        # failed (exit 1)" -- with the runtime's own explanation nowhere in it;
+        # the grid decides whether to tell the user his CLI is logged out by
+        # searching this cell's log for the runtime's words, so a discarded
+        # stream leaves that guard reading a channel that cannot carry what it
+        # tests for. stderr joined it 2026-08-25: it had been passed straight
+        # through to the log, which the grid DELETES on success, and it is the
+        # only channel carrying the Codex CLI's token total -- so across six
+        # grids that day the one recoverable token figure came from the one
+        # cell that failed. Capturing costs the live stream, which nothing
+        # watches: the grid redirects this into a file it reads only after the
+        # process exits. Re-emitting happens before any branch below, so every
+        # exit path still leaves the runtime's own words in the log.
         try:
             completed = subprocess.run(
                 command,
                 stdout=subprocess.PIPE,
-                stderr=sys.stderr,
+                stderr=subprocess.PIPE,
                 cwd=REPO_ROOT,
                 text=True,
                 check=False,
@@ -420,12 +589,21 @@ def run_model_chain(
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"{program}: {model} could not be run: {error}", file=sys.stderr)
             continue
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr, end="")
         if completed.returncode != 0:
             failed_attempts.append(f"{model}(exit{completed.returncode})")
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
             print(f"{program}: {model} failed (exit {completed.returncode})", file=sys.stderr)
             continue
+        # The near-miss check goes HERE and not on the non-zero-exit path
+        # above: the 2026-08-25 incident was a model that exited 0 having
+        # written a complete review to a sibling directory of the one it was
+        # given. A model that exited non-zero has told us it failed, and its
+        # leavings are not a review to go looking for.
+        if not report.is_file():
+            recover_near_miss_report(program, report, attempt_started_at)
         try:
             verify_report(program, report)
         except CellRefusal as refusal:
@@ -433,6 +611,17 @@ def run_model_chain(
             print(str(refusal), file=sys.stderr)
             continue
         produced_by = model
+        # THIS ATTEMPT'S STDERR, and nothing else. Two narrowings, each
+        # closing a way the stamp could name a cost that was not this cell's.
+        # Per-attempt, because a concatenation across attempts would stamp a
+        # failed model's total onto the model that succeeded. stderr only,
+        # because stdout is the model's own chat text: a reviewer of a document
+        # about model costs can quite reasonably write "tokens used: 12,345"
+        # in its commentary, and reading stdout would stamp the reviewer's
+        # sentence as the run's price. The Codex CLI prints its total on
+        # stderr; a runtime that prints one elsewhere simply has no figure
+        # here, which is the honest answer.
+        produced_tokens = parse_tokens_used(completed.stderr or "")
         break
 
     if not produced_by:
@@ -472,7 +661,9 @@ def run_model_chain(
     stamp_provenance(
         report, runtime=runtime, model=produced_by, effort=effort, cell=cell,
         tier=tier, target_argument=target_argument,
+        duration_s=int(time.time() - cell_started_at),
         fallback_from="+".join(failed_attempts),
+        tokens=produced_tokens,
     )
     report_stray_writes(program, baseline, report)
     print(f"{program}: report written to {report}", file=sys.stderr)
@@ -490,6 +681,12 @@ def run_cell(
     builds its own invocation, and nothing else. Anything that grows here
     grows for both legs at once and cannot drift between them.
     """
+    # The cell's clock starts here, before anything else this program does,
+    # so `duration_s=` in the stamp is the cost of the whole cell -- every
+    # failed attempt in the chain included -- rather than of the attempt that
+    # happened to succeed. A reader budgeting a grid wants what the cell cost
+    # him, not what its last model cost.
+    cell_started_at = time.time()
     parser = build_argument_parser(description, model_help)
     args = parser.parse_args()
 
@@ -528,6 +725,7 @@ def run_cell(
         build_invocation=invocation_builder(effort), prompt=prompt,
         report=report, cell=args.cell, tier=args.tier,
         target_argument=args.target, baseline=baseline,
+        cell_started_at=cell_started_at,
     )
 
 
@@ -543,6 +741,20 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     reported as what it is rather than passed off as a clean result. Both
     ways the check can fail to run carry STRAY_WRITE_CHECK_SKIPPED_PHRASE,
     because the grid lifts those lines out of this log before deleting it.
+
+    RUNTIME-AGNOSTIC ON PURPOSE, and this is the one thing not to "optimize"
+    here (nedschorus#161). The fleet's other review instrument,
+    scripts/sanity-check-attacks.py, gates this same comparison on
+    `runtime == "codex"`, on the premise that claude cells are launched
+    without a write tool and therefore cannot write. On 2026-08-21 a
+    fresh-eyes claude agent wrote a 25,170-byte file into the worktree root
+    during a live run and nothing reported it -- the agent disclosed the write
+    itself, in the last line of its own report, and that was the only notice
+    anyone got. A runtime whose compliance is never compared cannot be
+    reported non-compliant. Here the call sits on the shared path both
+    launchers run, so neither runtime can be skipped without deleting the call
+    for both; scripts/cold-read-cell-common-test.py drives a stray write
+    through each launcher so a gate cannot be reintroduced quietly.
     """
     if baseline is None:
         print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
