@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Run one Codex cell of an md-review grid against a document.
+"""Run one Codex cell of a cold-read grid against a document.
 
 One invocation = one cell — the twin of the Claude cell launcher
-(scripts/md-review-claude-cell.py). Everything the two do apart from
-invoking their model lives in scripts/md-review-cell-common.py and is
+(scripts/cold-read-claude-cell.py). Everything the two do apart from
+invoking their model lives in scripts/cold-read-cell-common.py and is
 imported by both, so the legs cannot drift. Read that file for the report
 contract, the write-detection rule, and why the reviewer writes a file
 rather than answering in chat.
 
 Usage:
-  scripts/md-review-codex-cell.py --cell restate --tier floor \\
+  scripts/cold-read-codex-cell.py --cell restate --tier floor \\
       --target docs/cross-project/foo.md \\
-      --report md-review-records/2026-01-01-foo/codex-restate-floor.md
+      --report cold-read-records/2026-01-01-foo/codex-restate-floor.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -27,7 +27,7 @@ and text written before a tool call is discarded by that capture (measured
 closing line and none of its findings. The reviewer now writes its report
 itself, which needs write access. Per the user's ruling the same day, writes
 are detected rather than blocked: the report goes under the gitignored
-md-review-records/ tree, so a clean `git status` afterwards means the
+cold-read-records/ tree, so a clean `git status` afterwards means the
 reviewer wrote only where it was told, and the shared module reports any
 tracked-file change as a stray write.
 
@@ -40,12 +40,12 @@ import pathlib
 import sys
 
 _common_spec = importlib.util.spec_from_file_location(
-    "md_review_cell_common", pathlib.Path(__file__).with_name("md-review-cell-common.py")
+    "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py")
 )
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 
-PROGRAM = "md-review-codex-cell"
+PROGRAM = "cold-read-codex-cell"
 
 # Tier -> the Codex models to try, in order. Single-entry chains: an
 # Anthropic credit exhaustion — the failure that gave the Claude cell its

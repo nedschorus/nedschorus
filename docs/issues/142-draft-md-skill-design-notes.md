@@ -4,7 +4,7 @@ Working material for whoever builds the skill. Each section marks what the user 
 
 ## What draft-md is (ruled 2026-08-22)
 
-The drafting stage for durable MDs, run before md-review. The name is ruled: the user prefers `draft-md` because "md-write sounds like a final product." The stages stay deliberately separate — draft-md produces the draft, md-review checks it, and the user walks near-final MDs before they land. draft-md plus md-review together are what "writing an MD" means in this project.
+The drafting stage for durable MDs, run before the cold read. The name is ruled: the user prefers `draft-md` because "md-write sounds like a final product." The stages stay deliberately separate — draft-md produces the draft, the cold read checks it, and the user walks near-final MDs before they land. draft-md plus the cold read together are what "writing an MD" means in this project.
 
 Boundary against the founding plan's `md-write` commission (its still-unbuilt sibling skill): md-write keeps the disposition machinery — search existing pairs, choose NEW / REVISE / REPLACE / REMOVE, route ambiguity to the draft queue — deciding *which file* text lands in. draft-md governs *how the prose is written* once there is prose to write. Open: the founding plan embedded the zero-context-reader rule in md-write's commission; under this split it belongs to draft-md — the migration is settled at whichever skill builds first.
 
@@ -17,7 +17,7 @@ Boundary against the founding plan's `md-write` commission (its still-unbuilt si
 
 ## Scope on edits: the diff defines the governed text (ruled in direction; mechanism open)
 
-The user's worry, verbatim in substance: applying draft-md to a whole existing file would churn paragraphs that are already vetted — walked, ruled — and a ruling silently rewritten is a ruling destroyed. The scope rule: **draft-md governs only the text being composed** — a new file's whole text, or exactly what an edit adds or changes. Untouched text is out of bounds regardless of its vetting history. A drafting agent that suspects a neighboring untouched paragraph is wrong raises it as a question (or routes it to md-review), never silently improves it. Mechanical edits — paths, dates, renames — are exempt from the register entirely.
+The user's worry, verbatim in substance: applying draft-md to a whole existing file would churn paragraphs that are already vetted — walked, ruled — and a ruling silently rewritten is a ruling destroyed. The scope rule: **draft-md governs only the text being composed** — a new file's whole text, or exactly what an edit adds or changes. Untouched text is out of bounds regardless of its vetting history. A drafting agent that suspects a neighboring untouched paragraph is wrong raises it as a question (or routes it to a cold read), never silently improves it. Mechanical edits — paths, dates, renames — are exempt from the register entirely.
 
 The user's mechanism (2026-08-22): determine the governed text with a diff at **sentence or paragraph granularity, not line granularity** — prose reflows, and a line-based diff shows a rewrapped paragraph as wholly changed, which would wrongly pull vetted text into scope. The no-hard-wrap rule above makes this automatic, but only for files written under it or converted to it (user-confirmed 2026-08-22): in a compliant file one paragraph is one line, so git's ordinary line diff is a paragraph diff and the governed text falls out of `git diff` with no custom tooling; `git diff --word-diff` refines within a paragraph if the build wants sentence granularity. Existing hard-wrapped files need a one-time mechanical unwrap before their line diffs are clean — verifiably whitespace-only (collapse all whitespace in both versions; the text must be byte-identical), so it is a mechanical edit outside the register, at the cost of one whitespace commit in each file's history. Open at build: whether paragraph granularity suffices or word-diff refinement is wanted, and when the bulk unwrap runs.
 
@@ -25,8 +25,8 @@ The user's mechanism (2026-08-22): determine the governed text with a diff at **
 
 Not every existing MD was ever vetted, by human or review. The plan:
 
-1. A vetting-evidence inventory script, git history first: this project stamps rulings into commits ("user-ruled", "user-walked"), md-review dispositions, and sanity-check records, so `git log --follow` per actionable MD scores vetting evidence cheaply. A model pass classifies only the ambiguous files; mining session transcripts (the user's jsonl idea) is the fallback for anything predating commit discipline. Output is computed on demand — no stored per-file markers to go stale.
-2. The unvetted actionable MDs then go through **md-review** — the retrofit tool this project already has — findings walked to the user as usual. draft-md is never the retrofit tool; it is the composition-time register.
+1. A vetting-evidence inventory script, git history first: this project stamps rulings into commits ("user-ruled", "user-walked"), cold-read dispositions, and sanity-check records, so `git log --follow` per actionable MD scores vetting evidence cheaply. A model pass classifies only the ambiguous files; mining session transcripts (the user's jsonl idea) is the fallback for anything predating commit discipline. Output is computed on demand — no stored per-file markers to go stale.
+2. The unvetted actionable MDs then go through **a cold read** — the retrofit tool this project already has — findings walked to the user as usual. draft-md is never the retrofit tool; it is the composition-time register.
 
 ## Steps always emit their answer (user-ruled 2026-08-23; routed here by his instruction, relayed from the git-infra seat)
 

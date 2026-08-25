@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Everything an md-review cell does except invoke its model.
+"""Everything a cold-read cell does except invoke its model.
 
 WHY THIS FILE EXISTS (user-ruled 2026-08-23). The Claude and Codex cells
 are meant to differ in one thing only: the invocation of the model. Every
@@ -34,7 +34,7 @@ kept, so no later reader can mistake a stub for a clean result.
 WRITES ARE DETECTED, NOT BLOCKED (user-ruled 2026-08-23). The reviewer
 needs write access to produce its report, so the read-only tool set that
 used to force findings through chat text is gone. What replaces it is
-cheap and exact: the report goes in `md-review-records/`, which is
+cheap and exact: the report goes in `cold-read-records/`, which is
 gitignored and therefore invisible to `git status`. The cell snapshots the
 working tree before the model runs and again afterwards, and reports the
 DIFFERENCE -- so a dirty tree the run did not cause is not blamed on the
@@ -54,7 +54,7 @@ import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 CELL_CHOICES = ["restate", "defect-hunt"]
 TIER_CHOICES = ["good", "floor"]
@@ -165,7 +165,7 @@ def stray_writes_since(baseline: set) -> list[str]:
     """Paths that changed during the run -- the DELTA, not the tree's state.
 
     Without a baseline this reported every already-dirty path as the
-    reviewer's doing. md-review's ordinary subject is a draft that has not
+    reviewer's doing. A cold read's ordinary subject is a draft that has not
     landed, so the ordinary run starts dirty and all eight cells would
     accuse the reviewer of changes it never made. A detector that cries wolf
     on the common case is one its readers learn to skip.

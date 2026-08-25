@@ -1,6 +1,6 @@
 ---
 name: draft-md
-description: Use when composing durable MD prose — a new document, or new or changed paragraphs in an existing one — before md-review sees it. Not for mechanical edits (a path, a date, a rename), not for code, and not for files whose names end in -log, -report, or -capture.
+description: Use when composing durable MD prose — a new document, or new or changed paragraphs in an existing one — before the cold read sees it. Not for mechanical edits (a path, a date, a rename), not for code, and not for files whose names end in -log, -report, or -capture.
 ---
 
 # draft-md
@@ -11,7 +11,7 @@ Work in this order: settle what you are governing, draft the answer, clear the b
 
 ## What this governs
 
-Only the text you are composing: a new document's whole text, or exactly the paragraphs an edit adds or changes. In a file that keeps each paragraph on one line, `git diff` shows that governed text directly. Untouched text is out of bounds no matter how it reads to you — a ruling from the user's item-by-item review (a walk) may be exactly why it reads that way. If an untouched paragraph looks wrong, raise it as a question or route the file to md-review; never improve it silently.
+Only the text you are composing: a new document's whole text, or exactly the paragraphs an edit adds or changes. In a file that keeps each paragraph on one line, `git diff` shows that governed text directly. Untouched text is out of bounds no matter how it reads to you — a ruling from the user's item-by-item review (a walk) may be exactly why it reads that way. If an untouched paragraph looks wrong, raise it as a question or route the file to a cold read; never improve it silently.
 
 Two kinds of file are outside this skill entirely. Mechanical edits — a path, a date, a rename — need no drafting register. And a document that only reports what happened is not instruction: those carry a genre suffix in their name — `-log` for an account that accumulates entries, `-report` for the output of one run, `-capture` for an artifact saved off a real run — and their history is their content. Do not draft them here.
 
@@ -70,4 +70,4 @@ Keep the reason a rule exists — what it protects against — because that is w
 
 Run one zero-context read: a fresh subagent with no conversation history, handed only the draft plus the project's CLAUDE.md, asked what the text means and where it stumbles. Fix the stumbles. Where the reader's restatement of a passage is clearer than the draft, revise the draft toward the restatement — the author's sentences do not outrank the reader's. Any stumble you chose not to fix goes in the commit message, so the next reviewer sees what you left and why.
 
-Then the normal pipeline: md-review — the durable prose this skill governs is the same "documents of lasting value" md-review exists for — and the user walks near-final MDs before they land.
+Then the normal pipeline: the cold read — the durable prose this skill governs is the same "documents of lasting value" a cold read exists for — and the user walks near-final MDs before they land.

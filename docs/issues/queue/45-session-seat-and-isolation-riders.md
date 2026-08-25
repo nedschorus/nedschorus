@@ -24,9 +24,9 @@ Several sessions pushing to one shared agent branch produced the `Merge remote-t
 
 Instruction-class text, so it lands through the user's walk.
 
-## 4. md-review the fleet paths reference
+## 4. Cold-read the fleet paths reference
 
-`docs/cross-project/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the md-review skill's stated target. Not yet reviewed.
+`docs/cross-project/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the cold-read skill's stated target. Not yet reviewed.
 
 ## 5. Migrating `choirmaster` to a machine-suffixed name
 

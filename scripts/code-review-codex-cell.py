@@ -8,7 +8,7 @@ rather than a shell line in one seat's transcript, and so the pins that
 must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
-    scripts/md-review-codex-cell.py: good = gpt-5.6-sol at xhigh);
+    scripts/cold-read-codex-cell.py: good = gpt-5.6-sol at xhigh);
   - the sandbox, read-only AT THE PARENT LEVEL -- this machine's Codex
     config defaults to workspace-write, so a reviewer that forgets this
     flag can write (the nested `review` parser rejects --sandbox; parent
@@ -30,7 +30,7 @@ checks belong to the deferred pr-merge-decision component
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
 for every `codex exec` this repository launches; the other two sites
-(scripts/md-review-codex-cell.py, scripts/sanity-check-attacks.py) pass the
+(scripts/cold-read-codex-cell.py, scripts/sanity-check-attacks.py) pass the
 same flag and point here.
 
 Codex keeps a memory store under `~/.codex/` that Codex processes on this
@@ -127,7 +127,7 @@ import pathlib
 import subprocess
 import sys
 
-# One place to update as models change, matching md-review-codex-cell.py's
+# One place to update as models change, matching cold-read-codex-cell.py's
 # good tier (user-picked 2026-08-03; xhigh "OK for codex" same date).
 CODEX_MODEL = "gpt-5.6-sol"
 REASONING_EFFORT = "xhigh"
@@ -235,7 +235,7 @@ def main(argv=None) -> int:
         return 1
 
     # Provenance header, so a report read later is pinned to its inputs
-    # (the md-review cells' convention, user-required 2026-08-04).
+    # (the cold-read cells' convention, user-required 2026-08-04).
     report = output_path.read_text(encoding="utf-8")
     kind = "base" if arguments.base else "commit"
     output_path.write_text(

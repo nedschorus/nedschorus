@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Run one Claude cell of an md-review grid against a document.
+"""Run one Claude cell of a cold-read grid against a document.
 
 One invocation = one cell — the twin of the Codex cell launcher
-(scripts/md-review-codex-cell.py). Everything the two do apart from
-invoking their model lives in scripts/md-review-cell-common.py and is
+(scripts/cold-read-codex-cell.py). Everything the two do apart from
+invoking their model lives in scripts/cold-read-cell-common.py and is
 imported by both, so the legs cannot drift. Read that file for the report
 contract, the write-detection rule, and why the reviewer writes a file
 rather than answering in chat.
 
 Usage:
-  scripts/md-review-claude-cell.py --cell restate --tier floor \\
+  scripts/cold-read-claude-cell.py --cell restate --tier floor \\
       --target docs/drafts/foo.md \\
-      --report md-review-records/2026-01-01-foo/claude-restate-floor.md
+      --report cold-read-records/2026-01-01-foo/claude-restate-floor.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -25,17 +25,25 @@ import pathlib
 import sys
 
 _common_spec = importlib.util.spec_from_file_location(
-    "md_review_cell_common", pathlib.Path(__file__).with_name("md-review-cell-common.py")
+    "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py")
 )
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 
-PROGRAM = "md-review-claude-cell"
+PROGRAM = "cold-read-claude-cell"
 
 # Tier -> the Claude models to try, in order. One place to update as models
-# change. User-picked (good = Fable-class, floor = Sonnet-class, re-ruled
-# 2026-08-17, replacing the 2026-08-04 Opus-class good tier); exact ids
-# verified against live subagent transcripts 2026-08-04.
+# change. User-picked (good = Opus-class, floor = Sonnet-class, re-ruled
+# 2026-08-25; the good tier was Opus-class until 2026-08-17 and Fable-class
+# from then until the 2026-08-25 ruling below); exact ids verified against
+# live subagent transcripts 2026-08-04.
+#
+# WHY OPUS LEADS THE GOOD TIER (user-ruled 2026-08-25: "If opus is better, we
+# should switch to that."). Measured that day by running the good-tier Claude
+# slot both ways over the same documents: Opus produced 44 findings against
+# Fable's 24 on one document, and 38 against 21 on the other. Whole-grid
+# coverage was unchanged — the other seven cells found what they found either
+# way — so what the swap buys is depth in this one slot, not a wider grid.
 #
 # WHY A CHAIN RATHER THAN ONE ID (user-ruled 2026-08-23). On 2026-08-23 the
 # account's Fable credits ran out. The measured blast radius was two cells of
@@ -45,15 +53,21 @@ PROGRAM = "md-review-claude-cell"
 # below. The grid's failure note does tell the operator to rerun failed cells
 # singly with the cell launchers, but it names no flag, so reaching for the
 # override took knowing it was there. What the chain buys is that the
-# eight-cell run stops degrading into a manual per-cell rerun. Opus-class is
-# the named fallback because it was this tier's own pin until 2026-08-17.
+# eight-cell run stops degrading into a manual per-cell rerun. Fable-class is
+# the named fallback because it was this tier's own pin from 2026-08-17 until
+# the swap above, so a fallback run is the grid as it stood the day before.
 #
-# The fallback is never silent: the report's provenance stamp names the model
-# that actually produced it, and records what was asked for first and why that
-# attempt failed. A record naming a model that did not write it would be worse
-# than a failed cell, because the failure is visible and the false stamp is not.
+# The fallback is never silent, in two places (user-ruled 2026-08-25: "I'm ok
+# with the fable falling back to opus too. I just don't want it to fail
+# silently"). The report's provenance stamp names the model that actually
+# produced it and records what was asked for first and why that attempt
+# failed; and the grid lifts this cell's own "fell back to" line out of the
+# stderr log it would otherwise delete, printing it as `FELL BACK:` where the
+# reviewing agent reads it. A record naming a model that did not write it
+# would be worse than a failed cell, because the failure is visible and the
+# false stamp is not.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
-    "good": ("claude-fable-5", "claude-opus-5"),
+    "good": ("claude-opus-5", "claude-fable-5"),
     "floor": ("claude-sonnet-5",),
 }
 

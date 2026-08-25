@@ -8,7 +8,7 @@ They belong together because most share a shape and one authoring standard, so t
 
 **Reading the issues:** every item's substance lives in its GitHub issue, reached with `gh issue view <n> --repo nedschorus/nedschorus`. If `gh` is unauthenticated or the network is down, stop and tell the user rather than working from the summaries below — they are orientation, not specification.
 
-A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `md-review`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
+A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `cold-read`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
 
 **Your work is done when** each issue below is either built and landed, ruled out with the reason recorded in the issue, or left with a stated blocker. You will not finish all seven in one series — build one, hand off, and let the next session take the next. Then write a handoff and stop.
 
@@ -34,13 +34,13 @@ Find the project's **skill-authoring checklist** under `docs/` and follow it —
 
 1. **A skill is instruction-class**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
-3. **Zero-context readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets an md-review before it lands, which is `scripts/md-review-grid.py`.
+3. **Zero-context readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets a cold read before it lands, which is `scripts/cold-read-grid.py`.
 
-Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, md-review the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
+Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, cold-read the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
 
 ## Boundaries
 
-The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the md-review grid. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
+The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the cold-read grid. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
 
 Using the review machinery on your own draft is ordinary work, not a boundary crossing. Changing how it behaves is.
 
