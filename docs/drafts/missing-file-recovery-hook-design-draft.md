@@ -159,7 +159,9 @@ Settled here so the build invents as little as possible. What remains open is na
 ]
 ```
 
-`Edit` is included because an edit against a deleted path fails the same way and is the same loss. Other tools are excluded **as a judgment, not because their failures cannot be missing files** — a `Write` into a directory that does not exist, or a `Grep` given a deleted `path`, both fail on a missing path. They are left out because their failures are dominated by other causes and the matcher is cheaper to widen later than to narrow. A future agent revisiting this is looking at a decision, not a fact.
+`Edit` is included because an edit against a deleted path fails the same way and is the same loss.
+
+**`Glob` and `Grep` finding nothing is not a failure, and the hook correctly never fires for it.** Measured 2026-08-24: an empty `Glob` returns `No files found` with `is_error` false, so the harness records no failure and there is no event. That is the right behaviour rather than a gap to close — those tools are how an agent *asks whether* something exists, and treating every fruitless search as a lost file would fire the hook constantly, which is the noise the filters exist to prevent. The accepted consequence, stated so a later reader sees it was decided: an agent that reaches for `Glob` first gets no help at that moment. It usually then tries to read the path it expected, which does fail, and the hook fires there — so the help arrives one step later rather than never. Other tools are excluded **as a judgment, not because their failures cannot be missing files** — a `Write` into a directory that does not exist, or a `Grep` given a deleted `path`, both fail on a missing path. They are left out because their failures are dominated by other causes and the matcher is cheaper to widen later than to narrow. A future agent revisiting this is looking at a decision, not a fact.
 
 ### What it reads
 
@@ -174,7 +176,11 @@ Exit 0 always. **When it has something to say**, one JSON object on stdout:
                         "additionalContext": "<the note>"}}
 ```
 
-**Silence is the default.** When no surface has the file, the hook prints nothing and exits 0. A hook that speaks on every failure becomes noise, and noise is what agents learn to skip. **One branch is exempt**, and it is the only one: when a backup predating the deletion exists but is locked behind a `sudo` password, no surface *has* the file yet the hook is not entitled to be silent — silence there is indistinguishable from "it is gone", when in fact it is reachable and nobody was told. That branch emits its note whether or not the wait succeeds. Its four conditions are what keep the exemption from swallowing the rule.
+**Silence is the default.** When no surface has the file, the hook prints nothing and exits 0. A hook that speaks on every failure becomes noise, and noise is what agents learn to skip.
+
+**A path that never existed gets different words from a file that is genuinely gone.** A typo — `docs/fooo.md` — searches all five surfaces, finds nothing, and today falls into the same silence as a real loss that could not be recovered. Those deserve to read differently, and git already computed the fact that separates them: whether the path was **ever tracked**. When it was not, and no other surface holds it, the note says so — *no history has a file at this path; check the path* — rather than saying nothing. When it was tracked and is gone, that is a loss and the silence is honest.
+
+   This is not the git-tracking **gate** rejected earlier, and the difference is worth keeping straight: that proposal was to skip the search unless git knew the path, which would have discarded the never-committed files this design exists to recover. This searches every surface first and uses the tracking fact only to word the outcome. A nearest-tracked-sibling suggestion was considered and left out — that is fragment search, deferred below. **One branch is exempt**, and it is the only one: when a backup predating the deletion exists but is locked behind a `sudo` password, no surface *has* the file yet the hook is not entitled to be silent — silence there is indistinguishable from "it is gone", when in fact it is reachable and nobody was told. That branch emits its note whether or not the wait succeeds. Its four conditions are what keep the exemption from swallowing the rule.
 
 **The note carries provenance, never content.** Measured 2026-08-23: a note saying *"deleted in `ab541cc`, recover with `git show 65b382a01:<path>`"* was acted on — the agent ran the command itself and recovered the file. A note pointing at a copy the hook had already placed in a scratch directory was refused as a prompt injection, correctly, because an unexplained file appearing on disk is indistinguishable from an attack. So the note names a source the agent can verify and the command that reads it. **The hook never copies a file anywhere.**
 
@@ -319,7 +325,6 @@ These patterns are a build artifact with a test rather than prose to be re-deriv
 
 ### Deliberately left to the build
 
-- The **thresholds inside the transcript classifier** — how large a neighbouring block of text must count as "content likely present". No measurement exists to set them and none of the four corpora below is the right evidence: they hold error lines and git paths, not labelled transcript excerpts. So the build owes a fifth, small corpus — transcript hits hand-labelled *content present* / *mentioned only* — and the threshold is tuned against that. A number invented here would be an unmeasured claim of exactly the kind this document has had to remove.
 
 ## What it hands back
 
@@ -359,6 +364,10 @@ Transcripts match on the path *string*, and an agent searching for a file has us
 
 - **content likely present** — the path appears alongside a large body of text, the shape of a tool result that read the file. Reported as **FOUND**.
 - **mentioned only** — the name appears, with no content near it. Reported as **NOT FOUND**, with the mentions listed underneath as leads: the surface was searched and does not hold the content, and a name turning up is worth seeing without being recovery.
+
+  **The line between those two is reported, not judged.** Each hit carries the size of the block the path was found in, and that measurement is what the reader sees: a 40 kB block containing the path is self-evidently a tool result that read the file, a 90-byte one is a mention. An earlier draft made this a tuned threshold and left the number to the build, along with a hand-labelled corpus to tune it against. Both are gone. A constant buries the basis for a decision the reader can make better themselves, and the same principle governs the note one level up — report the candidates, mark them, and let the reader choose rather than building machinery to choose for them.
+
+  **What the reader does when size is not enough** is search by content instead of by path: the script takes a distinctive phrase from the lost file and searches the transcripts for that. Version 1 does not have it — fragment search is deferred below — and this is the case that makes it worth building, because reporting rather than guessing only works if the reader has a way to ask a sharper question.
 - **the searcher's own session** — excluded by session id, but **only when it classifies as "mentioned only"**. That is the noise case: the agent typed the path a moment ago and its own transcript echoes it. An own-session hit carrying *content* is kept, because it is the one case this surface exists for — an agent that read a never-committed file at 10:00 and finds it gone at 11:00 has the whole tool result sitting in its own transcript, and excluding by session id alone would silently throw away the only copy in existence.
 
 These are a refinement of what "has the content" means for a surface that can hold a filename without holding the file. They do not replace the four outcomes above; every transcript result still resolves to exactly one of them.
