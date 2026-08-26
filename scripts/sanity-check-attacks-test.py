@@ -2,13 +2,13 @@
 """Tests for sanity-check-attacks.py — the worktree write detector, the record
 directory claim, the prompt-body boundary, and the codex cells' memory switch.
 
-The detector's only value is being trustworthy about whether a codex cell
+The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
 it raises about a write no cell made is the same defect wearing the opposite
 sign: it teaches its reader to skip the warning that means something. Each
 case below builds a scratch repository, snapshots it, simulates a cell write —
 or a legitimate one that must stay quiet — and asserts what is named. The
-holes under test were found reviewing PRs #98, #102 and #147:
+holes under test were found reviewing PRs #98, #102 and #147, and nedschorus#161:
 
   - a file already dirty before the run, rewritten by a cell (label
     comparison misses it; content hashes catch it)
@@ -27,6 +27,10 @@ holes under test were found reviewing PRs #98, #102 and #147:
     its own cells' stray writes, and a ledger entry that assumed the record
     directory was still ignored, which named the runner's own report wherever
     that ignore rule was absent
+  - the check itself gated to codex, so a claude cell's write went unseen: on
+    2026-08-21 a claude cell wrote a 25,170-byte file to the worktree root and
+    nothing caught it, because run_cell only ran the comparison for codex
+    (nedschorus#161)
 
 Run: python3 scripts/sanity-check-attacks-test.py
 """
@@ -503,6 +507,41 @@ def main():
               f"second directory was {second}")
     if records_root is not None:
         runner.RECORDS_ROOT = records_root
+
+    # Case 18: run_cell's worktree check must run for a claude cell, not only
+    # a codex one. On 2026-08-21 a claude cell wrote a 25,170-byte file to the
+    # worktree root anyway, and run_cell's `if runtime == "codex":` gate never
+    # looked (nedschorus#161). run_claude is replaced by a stand-in so no
+    # model is called, and report_ledger is a bare stand-in too — cases 1-17
+    # above already cover the real ledger's bookkeeping; this case is about
+    # the gate in run_cell, exercised directly, not the ledger it calls.
+    import contextlib
+    import io
+
+    class StubLedger:
+        def __init__(self, stray):
+            self._stray = stray
+
+        def stray_paths_since(self, baseline):
+            return self._stray
+
+        def write_report(self, out_path, text):
+            return False
+
+    runner_gate = load_runner()
+    stray_name = "stray-file-a-claude-cell-should-not-write.md"
+    runner_gate.run_claude = lambda prompt: (0, "the cell's report body\n")
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        runner_gate.run_cell(
+            "cut", "claude", "docs/agents/sanity-checker-cut-attack-prompt.md",
+            [], pathlib.Path("unused-problem-statement.md"),
+            pathlib.Path("unused-out-dir"), {}, (), StubLedger([stray_name]))
+    output = buffer.getvalue()
+    check("a claude cell that leaves a stray path behind is warned about, "
+          "same as a codex cell",
+          f"WARNING: cut-claude modified the worktree: {stray_name}" in output,
+          f"output was {output!r}")
 
     # The prompt-body boundary. The marker replaced a bare `---` rule, which is
     # ordinary markdown: a horizontal rule anywhere above the intended split
