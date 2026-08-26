@@ -65,6 +65,16 @@ WHAT IS PINNED HERE.
     strays into some other file is reported and the run still exits 0, so a
     stray write on its own is a warning and not a failure.
 
+  - Every file the grid writes into a record directory is named for the run
+    (user-ruled 2026-08-25) — `<record directory name>--<runtime>-<pass>-<tier>.md`,
+    and `<record directory name>--reference-check.md` for the pre-pass. Before
+    that prefix, all eight of a run's reports were named for the cell alone,
+    so a report on its own said nothing about which run produced it, and two
+    grids running at once in one checkout each held a file of every one of
+    those eight names. The cases below assert the prefix on every file in the
+    set, so a report that loses it fails here rather than in a record nobody
+    can place.
+
   - An unreviewable target is refused before anything is created. Documents
     whose stem ends in `-log`, `-report` or `-capture` only record what
     happened, and nedschorus#152 takes them out of the review path; the same
@@ -305,20 +315,28 @@ with tempfile.TemporaryDirectory() as scratch:
               for report in reports),
           [report.name for report in reports
            if "<!-- TARGET CHANGED DURING RUN:" not in report.read_text(encoding="utf-8")])
-    stamped_lines = (record_directory / "claude-restate-good.md").read_text(
-        encoding="utf-8").split("\n")
+    stamped = record_directory / f"{record_directory.name}--claude-restate-good.md"
+    check("the set holds a report named for both the run and the cell",
+          stamped.is_file(), sorted(path.name for path in record_directory.iterdir()))
+    # Read once, and survive an absent file: a name this suite got wrong should
+    # fail by name above, not end the run in a traceback that takes the
+    # remaining cases with it.
+    stamped_text = stamped.read_text(encoding="utf-8") if stamped.is_file() else ""
+    stamped_lines = stamped_text.split("\n") if stamped_text else ["", ""]
     check("a stamped report keeps its provenance stamp as the first line",
           stamped_lines[0].startswith("<!-- provenance:"), repr(stamped_lines[0]))
     check("the marker goes immediately after the stamp",
           stamped_lines[1].startswith("<!-- TARGET CHANGED DURING RUN:"),
           repr(stamped_lines[1]))
     check("the reviewer's own text survives the marking",
-          "STUB REVIEW: one restatement" in "\n".join(stamped_lines),
-          repr(stamped_lines[:4]))
+          "STUB REVIEW: one restatement" in stamped_text, repr(stamped_text[:200]))
     # The reference-integrity pre-pass carries no provenance stamp, so its
     # marker goes at the very top.
-    unstamped_lines = (record_directory / "reference-check.md").read_text(
-        encoding="utf-8").split("\n")
+    unstamped = record_directory / f"{record_directory.name}--reference-check.md"
+    check("the reference-integrity pre-pass is named for the run too",
+          unstamped.is_file(), sorted(path.name for path in record_directory.iterdir()))
+    unstamped_text = unstamped.read_text(encoding="utf-8") if unstamped.is_file() else ""
+    unstamped_lines = unstamped_text.split("\n") if unstamped_text else [""]
     check("a report with no stamp takes the marker at the top",
           unstamped_lines[0].startswith("<!-- TARGET CHANGED DURING RUN:"),
           repr(unstamped_lines[0]))
@@ -401,18 +419,23 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid prints RECOVERED: for each cell that recovered a report",
           len(recovered_lines) == 8, f"lifted lines were {recovered_lines!r}")
-    check("the RECOVERED line names the cell it belongs to",
-          any(line.startswith("RECOVERED: claude-restate-good.md")
-              for line in recovered_lines),
-          f"lifted lines were {recovered_lines!r}")
     # Two directories now: the one the grid made and the one the stubs
     # invented. The grid's is the one holding the reference-integrity
-    # pre-pass, which no stub ever writes.
+    # pre-pass, which no stub ever writes — the invented one's name differs by
+    # a character, so picking either by sort order would be picking by luck.
     record_directories = sorted(
         directory for directory in (repository / "cold-read-records").iterdir()
         if directory.is_dir())
-    grid_record_directories = [directory for directory in record_directories
-                               if (directory / "reference-check.md").is_file()]
+    grid_record_directories = [
+        directory for directory in record_directories
+        if (directory / f"{directory.name}--reference-check.md").is_file()]
+    recovered_record_directory_name = (
+        grid_record_directories[0].name if grid_record_directories else "")
+    check("the RECOVERED line names the cell it belongs to, run and all",
+          any(line.startswith(
+              f"RECOVERED: {recovered_record_directory_name}--claude-restate-good.md")
+              for line in recovered_lines),
+          f"lifted lines were {recovered_lines!r}")
     check("the recovered reports are back in the directory the grid made",
           len(grid_record_directories) == 1
           and len(list(grid_record_directories[0].glob("*.md"))) == 9,
@@ -461,6 +484,32 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stderr={result.stderr!r}")
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
+
+    # --- Every file in the set is named for the run ------------------------
+    # A report carried out of its directory, or read beside another run's,
+    # still says which run wrote it. That prefix is also what lets a cell's
+    # recovery search the whole records tree by exact name.
+    record_directories = sorted(
+        directory for directory in (repository / "cold-read-records").iterdir()
+        if directory.is_dir())
+    check("the accepted run left exactly one record directory",
+          len(record_directories) == 1,
+          [directory.name for directory in record_directories])
+    record_directory = record_directories[0]
+    written_names = sorted(path.name for path in record_directory.iterdir())
+    check("every file the run wrote carries the record directory's name",
+          all(name.startswith(f"{record_directory.name}--")
+              for name in written_names),
+          [name for name in written_names
+           if not name.startswith(f"{record_directory.name}--")])
+    expected_names = sorted(
+        [f"{record_directory.name}--reference-check.md"]
+        + [f"{record_directory.name}--{runtime}-{pass_token}-{tier}.md"
+           for runtime in ("claude", "codex")
+           for pass_token in ("restate", "hunt")
+           for tier in ("good", "floor")])
+    check("the set holds the eight cells plus the reference-integrity pre-pass",
+          written_names == expected_names, written_names)
 
 print()
 if failures:

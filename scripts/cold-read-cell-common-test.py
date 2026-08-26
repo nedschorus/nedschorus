@@ -76,6 +76,15 @@ WHAT IS PINNED HERE.
     a file that predates the attempt is left alone, so yesterday's abandoned
     stray is not stamped with today's model.
 
+    The search covers the whole `cold-read-records/` tree — a neighbouring
+    record directory, and the root of the tree itself — because the file name
+    carries the run (user-ruled 2026-08-25): the grid writes
+    `<record directory name>--<runtime>-<pass>-<tier>.md`, so an exact-name
+    match belongs to this run and to no other. The case that proves the point
+    is the concurrent one: a second grid's report for the same cell, written
+    while this attempt ran, is NOT this attempt's report, and the cell fails
+    rather than taking it.
+
   - The stamp carries what the cell cost. `duration_s=` on every stamp, and
     `tokens=` when the runtime reported a total. Absent is absent: a claude
     cell, and a codex cell whose CLI printed no total, carry no `tokens=`
@@ -131,9 +140,13 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-cell-common-test-target.md"
 # phrase from the module it tests would pass however either side was reworded.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
 
-# What a stub writes when it writes its review one directory away, so a case
-# can tell the recovered review apart from one written where it was asked for.
+# What a stub writes when it puts its review somewhere other than the path it
+# was given, so a case can tell each recovered review apart from one written
+# where it was asked for.
 NEAR_MISS_REVIEW_TEXT = "STUB REVIEW: written one character away\n"
+RECORDS_ROOT_REVIEW_TEXT = "STUB REVIEW: written flat into the records root\n"
+CONCURRENT_RUN_REVIEW_TEXT = (
+    "STUB REVIEW: a concurrent grid's review of another document\n")
 
 # A stand-in for the `claude` and `codex` CLIs. It does what
 # COLD_READ_CELL_TEST_STUB_PLAN tells it to for the model it was launched
@@ -143,8 +156,9 @@ NEAR_MISS_REVIEW_TEXT = "STUB REVIEW: written one character away\n"
 # document instead of reviewing it — "break_git" is a .git directory to
 # rename aside, which leaves a cell whose baseline was taken and whose
 # post-run check cannot run, "near_miss" reproduces the 2026-08-25 accident
-# (see below), "stderr" and "stdout" are the runtime's own words on each
-# stream, and "exit" is the code to exit with.
+# (see below), "report_at_records_root" and "concurrent_run_report" are the
+# other two places a report can turn up, "stderr" and "stdout" are the
+# runtime's own words on each stream, and "exit" is the code to exit with.
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
 STUB_MODEL_RUNTIME = """#!/usr/bin/env python3
@@ -180,6 +194,22 @@ for replacement_character in step.get("near_miss", []):
     sibling.mkdir(parents=True, exist_ok=True)
     (sibling / report_path.name).write_text(
         NEAR_MISS_REVIEW_TEXT, encoding="utf-8")
+# The right file name in the wrong place, twice over. Flat in the root of the
+# records tree, the name still says which run wrote it, so it is recoverable.
+# In another run's record directory under that run's own name, it is a second
+# grid's finished review of some other document, and taking it would stamp
+# this run's provenance onto the wrong text while leaving that run with
+# nothing.
+if step.get("report_at_records_root"):
+    (report_path.parent.parent / report_path.name).write_text(
+        RECORDS_ROOT_REVIEW_TEXT, encoding="utf-8")
+concurrent_run_report = step.get("concurrent_run_report")
+if concurrent_run_report:
+    other_directory_name, other_file_name = concurrent_run_report
+    other_directory = report_path.parent.parent / other_directory_name
+    other_directory.mkdir(parents=True, exist_ok=True)
+    (other_directory / other_file_name).write_text(
+        CONCURRENT_RUN_REVIEW_TEXT, encoding="utf-8")
 if "edit" in step:
     edited_path, added_text = step["edit"]
     with open(edited_path, "a", encoding="utf-8") as handle:
@@ -195,7 +225,9 @@ if "stderr" in step:
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
-""".replace("NEAR_MISS_REVIEW_TEXT", repr(NEAR_MISS_REVIEW_TEXT))
+""".replace("NEAR_MISS_REVIEW_TEXT", repr(NEAR_MISS_REVIEW_TEXT)
+).replace("RECORDS_ROOT_REVIEW_TEXT", repr(RECORDS_ROOT_REVIEW_TEXT)
+).replace("CONCURRENT_RUN_REVIEW_TEXT", repr(CONCURRENT_RUN_REVIEW_TEXT))
 
 failures = []
 
@@ -310,6 +342,28 @@ def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="codex",
                              environment_overrides=environment_overrides)
+
+
+def report_path_for(repository, case_slug, runtime):
+    """A report path shaped exactly as the grid names one: the record
+    directory's own name, then `--`, then the cell.
+
+    The prefix is what makes the recovery below safe to search the whole
+    records tree with (user-ruled 2026-08-25): one file name belongs to one
+    run. It also gives each case a record directory of its own, so one case's
+    leavings can never be a candidate for the next case's recovery. The cases
+    at the top of this file name their reports directly instead, because what
+    they pin — the stray-write detector — does not turn on the name.
+    """
+    record_directory_name = f"2026-08-25-{case_slug}-aaaaaaa"
+    return (repository / "cold-read-records" / record_directory_name
+            / f"{record_directory_name}--{runtime}-hunt-floor.md")
+
+
+def near_miss_directory_of(report):
+    """Where a stub writes when its plan says to write one character away:
+    the record directory's name with its last character replaced."""
+    return report.parent.parent / (report.parent.name[:-1] + "X")
 
 
 def provenance_stamp_of(report):
@@ -508,7 +562,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # to; the recovery itself lives on the shared path and serves both.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-h" / "codex-restate-floor.md"
+    report = report_path_for(repository, "near-miss", "codex")
     result = run_codex_cell(repository, stubs, {"*": {"near_miss": ["X"]}}, report)
     check("a report written one directory away is recovered, and the cell succeeds",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -523,14 +577,14 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the recovery is announced on stderr for the grid to lift",
           "recovered a near-miss report" in result.stderr, repr(result.stderr))
     check("the near-miss copy is moved, not copied",
-          not (report.parent.parent / "run-X" / report.name).exists(),
+          not (near_miss_directory_of(report) / report.name).exists(),
           "two files now hold one review, which is the ambiguity recovery removes")
 
     # Two candidates is ambiguous, and a guess would put a review under a
     # stamp that may not describe it. Refused, and the refusal names both.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-i" / "codex-restate-floor.md"
+    report = report_path_for(repository, "two-candidates", "codex")
     result = run_codex_cell(repository, stubs, {"*": {"near_miss": ["X", "Y"]}}, report)
     check("two near-miss candidates fail the cell rather than being guessed between",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -544,22 +598,24 @@ with tempfile.TemporaryDirectory() as scratch:
     # that lost a review.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-j" / "codex-restate-floor.md"
+    report = report_path_for(repository, "no-candidate", "codex")
     result = run_codex_cell(repository, stubs, {"*": {}}, report)
     check("a run that wrote nothing anywhere still fails",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the failure names what it looked for",
           "no near-miss report to recover" in result.stderr
           and report.name in result.stderr
-          and "sibling directories of" in result.stderr, repr(result.stderr))
+          and "anywhere under" in result.stderr
+          and str(repository / "cold-read-records") in result.stderr,
+          repr(result.stderr))
 
     # A file that predates the attempt is not this attempt's report. Without
     # the mtime cutoff, yesterday's abandoned stray would be recovered today
     # and stamped with today's model.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-k" / "codex-restate-floor.md"
-    stale_sibling_report = report.parent.parent / "run-X" / report.name
+    report = report_path_for(repository, "stale-sibling", "codex")
+    stale_sibling_report = near_miss_directory_of(report) / report.name
     stale_sibling_report.parent.mkdir(parents=True, exist_ok=True)
     stale_sibling_report.write_text("STUB REVIEW: from a run that finished yesterday\n",
                                     encoding="utf-8")
@@ -573,6 +629,60 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no report was fabricated from the stale sibling",
           not report.is_file(), f"{report} exists")
 
+    # A report written flat into the records root, rather than into any record
+    # directory, is still this run's report: the name says so. The search
+    # covers the root of the tree and not only the directories under it.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "flat-in-records-root", "codex")
+    result = run_codex_cell(
+        repository, stubs, {"*": {"report_at_records_root": True}}, report,
+    )
+    check("a report written flat into cold-read-records/ is recovered",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the report recovered from the records root is at the path given",
+          report.is_file(), f"{report} absent")
+    recovered_text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("it holds what the model wrote in the records root",
+          RECORDS_ROOT_REVIEW_TEXT.strip() in recovered_text, repr(recovered_text[:200]))
+    check("the copy in the records root is moved, not copied",
+          not (report.parent.parent / report.name).exists(),
+          "two files now hold one review")
+
+    # THE CASE THE RUN-NAMED FILE EXISTS FOR (user-ruled 2026-08-25). A second
+    # grid, running at the same time in the same checkout, writes its own
+    # report for the same cell while this attempt runs. Under the old bare
+    # names both files were `codex-hunt-floor.md`, and this cell could recover
+    # the other run's correctly placed report: this run would then hold a
+    # review of the wrong document under its stamp, and the other run would
+    # lose the review it produced. The prefix is what makes the two
+    # distinguishable, and this case is what proves the distinction holds.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "concurrent-run", "codex")
+    concurrent_report = (
+        report.parent.parent / report.parent.name.replace("aaaaaaa", "bbbbbbb")
+        / report.name.replace("aaaaaaa", "bbbbbbb"))
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"concurrent_run_report": [concurrent_report.parent.name,
+                                         concurrent_report.name]}},
+        report,
+    )
+    check("a concurrent run's report is not recovered as this run's",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("no report was fabricated from the concurrent run's file",
+          not report.is_file(), f"{report} exists")
+    check("the concurrent run keeps the report it wrote",
+          concurrent_report.is_file(),
+          f"{concurrent_report} was taken from the run that wrote it")
+    check("the failure names the file it looked for, prefix and all",
+          "no near-miss report to recover" in result.stderr
+          and report.name in result.stderr
+          and "anywhere under" in result.stderr
+          and str(repository / "cold-read-records") in result.stderr,
+          repr(result.stderr))
+
     # --- What the cell cost is part of what it did ------------------------
     # Until 2026-08-25 the stamp recorded every input to the run — runtime,
     # model, effort, cell, tier, target — and nothing about the run itself,
@@ -580,7 +690,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # "what did this cost".
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-l" / "claude-restate-floor.md"
+    report = report_path_for(repository, "duration-claude", "claude")
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
     )
@@ -600,7 +710,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # recoverable token figure came from the single cell that FAILED.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-m" / "codex-restate-floor.md"
+    report = report_path_for(repository, "tokens-codex", "codex")
     result = run_codex_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -622,7 +732,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # Reading stdout would stamp the reviewer's sentence as the run's price.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-n" / "codex-restate-floor.md"
+    report = report_path_for(repository, "tokens-in-chat-text", "codex")
     result = run_codex_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -638,7 +748,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # reported", where a zero would read as "this cell cost nothing".
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-o" / "codex-restate-floor.md"
+    report = report_path_for(repository, "no-tokens-codex", "codex")
     result = run_codex_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
     )
@@ -657,7 +767,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-p" / "codex-restate-floor.md"
+    report = report_path_for(repository, "stray-codex", "codex")
     result = run_codex_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",

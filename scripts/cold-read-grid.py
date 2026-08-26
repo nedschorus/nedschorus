@@ -69,9 +69,11 @@ Walk that with the user using the walk-me-through skill, ordered from most
 important to least. The walk's anchor is {record_dir}/dispositions.md.
 
 These records are machine-local and gitignored (user-ruled 2026-08-14): never
-commit them. Delete {record_dir} once the work it served has landed — the
-findings belong in the reviewed document, the rulings in its governing
-document, and this directory is the working material that produced them."""
+commit them. Leave {record_dir} in place once the work it served has landed —
+these records are kept, not deleted: like other logs they are useful for
+analysis later (user-ruled 2026-08-25). The findings still belong in the
+reviewed document and the rulings in its governing document; this directory is
+what produced them, not where they live."""
 
 
 def make_record_dir(target: pathlib.Path) -> pathlib.Path:
@@ -101,7 +103,8 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{clean}`")
     if not candidates:
         lines.append("- no path-like references found")
-    (record_dir / "reference-check.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (record_dir / f"{record_dir.name}--reference-check.md").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8")
 
 
 def target_content_fingerprint(target: pathlib.Path) -> str:
@@ -172,7 +175,20 @@ def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
         for cell_pass in PASSES:
             for tier in TIERS:
                 pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
-                report_path = record_dir / f"{runtime}-{pass_token}-{tier}.md"
+                # THE FILE NAME CARRIES THE RUN (user-ruled 2026-08-25). Every
+                # file this grid writes into a record directory is prefixed
+                # with that directory's own name, so a report says which run
+                # produced it wherever it is later found or copied. Before
+                # this, all eight of a run's reports were named for the cell
+                # alone -- `codex-hunt-floor.md` and seven like it -- and two
+                # grids running at once in one checkout (three did that day)
+                # each had a file of every one of those names. A cell of the
+                # first run that wrote nothing could then have the second
+                # run's correctly placed report recovered as its own: the
+                # first run holds a review of the wrong document under its
+                # stamp, and the second loses the review it produced.
+                report_path = record_dir / (
+                    f"{record_dir.name}--{runtime}-{pass_token}-{tier}.md")
                 stderr_path = record_dir / (report_path.name + ".stderr.log")
                 # The reviewer writes the report itself; the cell is told
                 # where. Capturing the model's chat text was what lost
