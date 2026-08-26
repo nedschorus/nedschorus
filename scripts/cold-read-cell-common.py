@@ -50,8 +50,12 @@ from (nedschorus#161).
 A RUN REPORTS WHAT IT ACTUALLY DID (user-ruled 2026-08-25). Three of this
 module's habits used to hide the run's own facts from the record it produced.
 It declared "the model exited without writing" while a complete review sat one
-character away in a sibling directory the model had created itself -- so a
-cell now looks there before it declares failure (`recover_near_miss_report`).
+character away in a directory the model had created itself -- so a cell now
+searches the whole `cold-read-records/` tree for a file of its report's own
+name before it declares failure (`recover_near_miss_report`). That search is
+safe to widen because every file the grid writes into a record directory is
+named for the run: `<record directory name>--<runtime>-<pass>-<tier>.md`, so
+one file name belongs to one run and cannot be another run's report.
 It threw away the runtime's stderr on every successful run, which is the only
 channel carrying the Codex CLI's token total -- so stderr is captured and
 re-emitted, and the total is parsed out of it (`parse_tokens_used`). And its
@@ -63,6 +67,7 @@ one, are now stamped alongside the model and the tier.
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
 import shutil
@@ -200,62 +205,77 @@ NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
 def recover_near_miss_report(
     program: str, report: pathlib.Path, attempt_started_at: float,
 ) -> bool:
-    """Look for this attempt's report one directory away before failing it.
+    """Look through the records tree for this attempt's report before failing it.
 
-    WHAT HAPPENED (2026-08-25). A Codex cell was given
-    `cold-read-records/2026-08-25-ghi-write-SKILL-prewalk-c6fb95f/codex-hunt-floor.md`
-    and wrote a complete 33-finding review to
-    `...-c6fb95c/codex-hunt-floor.md` -- one character different, in a sibling
+    WHAT HAPPENED (2026-08-25). A Codex cell was given a report path inside
+    `cold-read-records/2026-08-25-ghi-write-SKILL-prewalk-c6fb95f/` and wrote a
+    complete 33-finding review into `...-c6fb95c/` -- one character different, a
     directory it created itself. The cell reported "the model exited without
     writing", which was true of the path it watched and false of the work: a
     finished review existed and the run threw it away. Losing a review to a
     typo in a directory name is not a review that did not happen.
 
-    WHAT IS AND IS NOT ACCEPTED. Exactly one candidate is recovered: a file of
-    the report's own name, in a sibling of the record directory, whose mtime is
-    at or after this ATTEMPT's start. Zero candidates is the ordinary failure
-    and stays one. Two or more is refused rather than guessed at, because
-    picking one would put a review under a stamp that may not describe it.
+    WHY AN EXACT NAME IS ENOUGH TO SEARCH ON, and why this looks through the
+    whole tree rather than at neighbouring directories only. Every file the
+    grid writes into a record directory carries the run's own name:
+    `2026-08-25-ghi-write-SKILL--codex-hunt-floor.md` is written by one run and
+    by no other. Before that prefix existed, every run's Codex defect-hunt cell
+    on the floor tier wrote `codex-hunt-floor.md`, so two grids running at once
+    in one checkout each had a file of that name -- and a cell of the first run
+    that wrote nothing could pick up the second run's correctly placed report,
+    move it under the first run's stamp, and leave the second run without the
+    review it had produced (user-ruled 2026-08-25). With the run in the name,
+    a file of the report's exact name is this run's report wherever it sits.
+
+    WHAT IS AND IS NOT ACCEPTED. Exactly one candidate is recovered: a
+    non-empty file whose name is exactly the report's own, anywhere under the
+    record directory's parent -- the `cold-read-records/` tree, which includes
+    a file left loose in the root of it and one inside a directory a model
+    invented -- whose mtime is at or after this ATTEMPT's start, and which is
+    not the expected path itself. Zero candidates is the ordinary failure and
+    stays one. Two or more is refused rather than guessed at, because picking
+    one would put a review under a stamp that may not describe it.
 
     WHY THE ATTEMPT'S START AND NOT THE CELL'S. The ruling says "since the run
     started". Per-attempt is a strict subset of that and is what keeps the
     provenance stamp honest: a chain runs several models against one report
-    path, and a sibling stray left by a model that failed would otherwise be
-    recovered during a later model's attempt and stamped with the later
-    model's name. The stamp must name whoever wrote the text under it.
+    path, and a stray left by a model that failed would otherwise be recovered
+    during a later model's attempt and stamped with the later model's name.
+    The stamp must name whoever wrote the text under it.
 
     Either way this prints what it looked for, so a cell that fails here says
     where it searched rather than only that it found nothing.
     """
     record_dir = report.parent
-    siblings_root = record_dir.parent
+    records_root = record_dir.parent
     cutoff_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(attempt_started_at))
     candidates = []
-    if siblings_root.is_dir():
-        for sibling in sorted(siblings_root.iterdir()):
-            if not sibling.is_dir() or sibling == record_dir:
+    for directory, _subdirectories, file_names in os.walk(records_root):
+        for file_name in file_names:
+            if file_name != report.name:
                 continue
-            candidate = sibling / report.name
-            if not candidate.is_file():
+            candidate = pathlib.Path(directory) / file_name
+            if candidate == report or not candidate.is_file():
                 continue
             if candidate.stat().st_mtime < attempt_started_at:
                 continue
             if not candidate.read_text(encoding="utf-8").strip():
                 continue
             candidates.append(candidate)
+    candidates.sort()
 
     if len(candidates) == 1:
         found = candidates[0]
         # move, not copy: two copies of one review under two names is the
-        # ambiguity this recovery exists to remove. The empty sibling directory
-        # is left standing -- it is evidence of the miss, and `git status`
-        # never sees it because the records tree is gitignored.
+        # ambiguity this recovery exists to remove. The directory the model
+        # invented is left standing -- it is evidence of the miss, and `git
+        # status` never sees it because the records tree is gitignored.
         shutil.move(str(found), str(report))
         print(
             f"{program}: {NEAR_MISS_RECOVERY_PHRASE} — the model wrote "
-            f"{found} instead of {report}, a sibling of the record directory "
-            f"it was given. The file has been moved into place and stamped; "
-            f"the review itself is intact.",
+            f"{found} instead of {report}, elsewhere under {records_root}. "
+            f"The file has been moved into place and stamped; the review "
+            f"itself is intact.",
             file=sys.stderr,
         )
         return True
@@ -267,8 +287,8 @@ def recover_near_miss_report(
     )
     print(
         f"{program}: no near-miss report to recover — looked for a file named "
-        f"{report.name}, modified at or after {cutoff_text}, in the sibling "
-        f"directories of {record_dir}, and found {found_text}.",
+        f"{report.name}, modified at or after {cutoff_text}, anywhere under "
+        f"{records_root}, and found {found_text}.",
         file=sys.stderr,
     )
     return False
@@ -390,10 +410,11 @@ def run_model_chain(
 
     The one thing that can now put a file at that path other than the model
     writing there directly is `recover_near_miss_report`, and it keeps the
-    invariant rather than bending it: it accepts only a file whose mtime falls
-    at or after the moment THIS attempt began, so what it moves into place was
-    written during the attempt being judged and the stamp still names whoever
-    wrote the text beneath it.
+    invariant rather than bending it: it accepts only a file of this report's
+    exact name -- a name that carries the run, so it belongs to no other run --
+    whose mtime falls at or after the moment THIS attempt began, so what it
+    moves into place was written during the attempt being judged and the stamp
+    still names whoever wrote the text beneath it.
     """
     failed_attempts: list[str] = []
     produced_by = ""
@@ -474,9 +495,9 @@ def run_model_chain(
             continue
         # The near-miss check goes HERE and not on the non-zero-exit path
         # above: the 2026-08-25 incident was a model that exited 0 having
-        # written a complete review to a sibling directory of the one it was
-        # given. A model that exited non-zero has told us it failed, and its
-        # leavings are not a review to go looking for.
+        # written a complete review to a record directory one character from
+        # the one it was given. A model that exited non-zero has told us it
+        # failed, and its leavings are not a review to go looking for.
         if not report.is_file():
             recover_near_miss_report(program, report, attempt_started_at)
         try:

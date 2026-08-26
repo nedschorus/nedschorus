@@ -11,7 +11,7 @@ rather than answering in chat.
 Usage:
   scripts/cold-read-claude-cell.py --cell restate --tier floor \\
       --target docs/drafts/foo.md \\
-      --report cold-read-records/2026-01-01-foo/claude-restate-floor.md
+      --report cold-read-records/2026-01-01-foo/2026-01-01-foo--claude-restate-floor.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.

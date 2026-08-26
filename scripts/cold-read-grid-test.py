@@ -31,6 +31,15 @@ what it actually did".
     reports are kept — they are evidence — but marked, announced, and the run
     exits non-zero.
 
+Also pinned: EVERY FILE THE GRID WRITES INTO A RECORD DIRECTORY IS NAMED FOR
+THE RUN (user-ruled 2026-08-25) — `<record directory name>--<runtime>-<pass>-
+<tier>.md`, and `<record directory name>--reference-check.md` for the
+pre-pass. Before that prefix, all eight of a run's reports were named for the
+cell alone, so a report on its own said nothing about which run produced it
+and two grids running at once in one checkout each held a file of every one of
+those eight names. The cases below assert the prefix on every file in the set,
+so a report that loses it fails here rather than in a record nobody can place.
+
 Also pinned: the grid lifts a cell's near-miss recovery onto its own output as
 `RECOVERED:`, the way it already lifts `STRAY WRITE:` and `FELL BACK:`. That
 branch is also the branch that deletes the cell's log, so a line not lifted
@@ -153,6 +162,26 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unedited target is not reported as changed",
           "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
 
+    # EVERY FILE IN THE SET IS NAMED FOR THE RUN. A report carried out of its
+    # directory, or read beside another run's, still says which run wrote it.
+    record_dirs = sorted((repo / "cold-read-records").iterdir())
+    check("the accepted run left exactly one record directory",
+          len(record_dirs) == 1, [str(d) for d in record_dirs])
+    record_dir = record_dirs[0]
+    written = sorted(p.name for p in record_dir.iterdir())
+    check("every file the run wrote carries the record directory's name",
+          all(name.startswith(f"{record_dir.name}--") for name in written),
+          [name for name in written
+           if not name.startswith(f"{record_dir.name}--")])
+    expected_names = sorted(
+        [f"{record_dir.name}--reference-check.md"]
+        + [f"{record_dir.name}--{runtime}-{pass_token}-{tier}.md"
+           for runtime in ("claude", "codex")
+           for pass_token in ("restate", "hunt")
+           for tier in ("good", "floor")])
+    check("the set holds the eight cells plus the reference-integrity pre-pass",
+          written == expected_names, written)
+
 # --- The grid lifts a cell's recovery onto its own output ------------------
 with tempfile.TemporaryDirectory() as scratch:
     repo = build_scratch_repository(
@@ -164,8 +193,10 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
     check("the grid prints RECOVERED: for each cell that recovered a report",
           result.stdout.count("RECOVERED: ") == 8, repr(result.stdout))
-    check("the RECOVERED line names the cell it belongs to",
-          "RECOVERED: codex-hunt-floor.md" in result.stdout, repr(result.stdout))
+    recovered_record_dir = sorted((repo / "cold-read-records").iterdir())[0]
+    check("the RECOVERED line names the cell it belongs to, run and all",
+          f"RECOVERED: {recovered_record_dir.name}--codex-hunt-floor.md"
+          in result.stdout, repr(result.stdout))
 
 # --- The target is frozen for the run --------------------------------------
 with tempfile.TemporaryDirectory() as scratch:
@@ -196,19 +227,27 @@ with tempfile.TemporaryDirectory() as scratch:
           [r.name for r in reports
            if "<!-- TARGET CHANGED DURING RUN:" not in r.read_text(encoding="utf-8")])
 
-    stamped = record_dir / "codex-hunt-floor.md"
-    stamped_lines = stamped.read_text(encoding="utf-8").split("\n")
+    stamped = record_dir / f"{record_dir.name}--codex-hunt-floor.md"
+    check("the set holds a report named for both the run and the cell",
+          stamped.is_file(), sorted(p.name for p in record_dir.iterdir()))
+    # Read once, and survive an absent file: a name this suite got wrong should
+    # fail by name here, not end the run in a traceback that takes the
+    # remaining cases with it.
+    stamped_text = stamped.read_text(encoding="utf-8") if stamped.is_file() else ""
+    stamped_lines = stamped_text.split("\n") if stamped_text else ["", ""]
     check("a stamped report keeps its provenance stamp as the first line",
           stamped_lines[0].startswith("<!-- provenance:"), repr(stamped_lines[0]))
     check("the marker goes immediately after the stamp",
           stamped_lines[1].startswith("<!-- TARGET CHANGED DURING RUN:"),
           repr(stamped_lines[1]))
     check("the reviewer's own text survives the marking",
-          "STUB REPORT: one finding" in stamped.read_text(encoding="utf-8"),
-          repr(stamped.read_text(encoding="utf-8")[:200]))
+          "STUB REPORT: one finding" in stamped_text, repr(stamped_text[:200]))
 
-    unstamped_lines = (record_dir / "reference-check.md").read_text(
-        encoding="utf-8").split("\n")
+    unstamped = record_dir / f"{record_dir.name}--reference-check.md"
+    check("the reference-integrity pre-pass is named for the run too",
+          unstamped.is_file(), sorted(p.name for p in record_dir.iterdir()))
+    unstamped_text = unstamped.read_text(encoding="utf-8") if unstamped.is_file() else ""
+    unstamped_lines = unstamped_text.split("\n") if unstamped_text else [""]
     check("a report with no stamp takes the marker at the top",
           unstamped_lines[0].startswith("<!-- TARGET CHANGED DURING RUN:"),
           repr(unstamped_lines[0]))

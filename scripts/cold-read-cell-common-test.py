@@ -25,6 +25,15 @@ what it actually did".
     and refuses to guess between several; a file that predates the attempt is
     not this attempt's report and is left alone.
 
+    The search covers the whole `cold-read-records/` tree — a neighbouring
+    record directory, and the root of the tree itself — because the file name
+    carries the run (user-ruled 2026-08-25): the grid writes
+    `<record directory name>--<runtime>-<pass>-<tier>.md`, so an exact-name
+    match belongs to this run and to no other. The case that proves the point
+    is the concurrent one: a second grid's report for the same cell, written
+    while this attempt ran, is NOT this attempt's report, and the cell fails
+    rather than taking it.
+
   - THE STAMP CARRIES WHAT THE CELL COST. `duration_s=` on every stamp,
     `tokens=` when the runtime reported a total. Absent is absent: a claude
     cell, and a codex cell whose CLI printed no total, carry no `tokens=`
@@ -109,6 +118,29 @@ for replacement in ("X", "Y"):
         "STUB REPORT: one of two candidates\\n", encoding="utf-8")
 """
 
+# A model that writes its report under the right file name into the root of
+# the records tree rather than into any record directory.
+BODY_WRITES_FLAT_INTO_THE_RECORDS_ROOT = """
+given = pathlib.Path(report)
+(given.parent.parent / given.name).write_text(
+    "STUB REPORT: written flat into the records root\\n", encoding="utf-8")
+"""
+
+# A SECOND GRID'S REPORT, landing while this attempt runs. Same cell, same
+# runtime, same day, different run — so a different prefix. This is the file
+# the recovery must not take: it is a finished review of whatever THAT grid was
+# reviewing, and moving it here would put the wrong document's review under
+# this run's stamp and leave the other run with no report at all.
+BODY_WRITES_A_CONCURRENT_RUNS_REPORT = """
+given = pathlib.Path(report)
+other_run = given.parent.name.replace("aaaaaaa", "bbbbbbb")
+other_dir = given.parent.parent / other_run
+other_dir.mkdir(parents=True, exist_ok=True)
+(other_dir / given.name.replace("aaaaaaa", "bbbbbbb")).write_text(
+    "STUB REPORT: a concurrent grid's review of another document\\n",
+    encoding="utf-8")
+"""
+
 BODY_WRITES_NOTHING = """
 pass
 """
@@ -185,10 +217,16 @@ def build_scratch_repository(root):
 
 
 def report_path_for(repo, case_slug, runtime):
-    """A fresh record directory per case, so one case's near-miss leavings are
-    never a candidate for the next case's recovery."""
-    return (repo / "cold-read-records" / f"2026-08-25-{case_slug}-aaaaaaa"
-            / f"{runtime}-hunt-floor.md")
+    """A report path shaped exactly as the grid names one: the record
+    directory's own name, then `--`, then the cell.
+
+    A fresh record directory per case, so one case's near-miss leavings are
+    never a candidate for the next case's recovery — and with the run in the
+    file name, that isolation now holds by name rather than by mtime alone.
+    """
+    record_dir_name = f"2026-08-25-{case_slug}-aaaaaaa"
+    return (repo / "cold-read-records" / record_dir_name
+            / f"{record_dir_name}--{runtime}-hunt-floor.md")
 
 
 def run_cell(repo, stub_bin, runtime, body, report, extra_arguments=()):
@@ -263,7 +301,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the failure names what it looked for",
           "no near-miss report to recover" in result.stderr
           and report.name in result.stderr
-          and "sibling directories of" in result.stderr, repr(result.stderr))
+          and "anywhere under" in result.stderr
+          and str(repo / "cold-read-records") in result.stderr, repr(result.stderr))
 
     # A file that predates the attempt is not this attempt's report. Without the
     # mtime cutoff, yesterday's abandoned stray would be recovered today and
@@ -283,6 +322,50 @@ with tempfile.TemporaryDirectory() as scratch:
           stale_file.is_file(), "an older run's file was consumed by this one")
     check("no report was fabricated from the stale sibling",
           not report.is_file(), f"{report} exists")
+
+    # A report written flat into the records root, rather than into any record
+    # directory, is still this run's report: the name says so. The search
+    # covers the root of the tree and not only the directories under it.
+    report = report_path_for(repo, "flat-in-records-root", "codex")
+    result = run_cell(repo, stub_bin, "codex",
+                      BODY_WRITES_FLAT_INTO_THE_RECORDS_ROOT, report)
+    check("a report written flat into cold-read-records/ is recovered",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the report recovered from the records root is at the path given",
+          report.is_file(), f"{report} absent")
+    text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("it holds what the model wrote in the records root",
+          "written flat into the records root" in text, repr(text[:200]))
+    check("the copy in the records root is moved, not copied",
+          not (report.parent.parent / report.name).exists(),
+          "two files now hold one review")
+
+    # THE CASE THE RUN-NAMED FILE EXISTS FOR (user-ruled 2026-08-25). A second
+    # grid, running at the same time in the same checkout, writes its own
+    # report for the same cell while this attempt runs. Under the old bare
+    # names both files were `codex-hunt-floor.md`, and this cell could recover
+    # the other run's correctly placed report: this run would then hold a
+    # review of the wrong document under its stamp, and the other run would
+    # lose the review it produced. The prefix is what makes the two
+    # distinguishable, and this case is what proves the distinction holds.
+    report = report_path_for(repo, "concurrent-run", "codex")
+    result = run_cell(repo, stub_bin, "codex",
+                      BODY_WRITES_A_CONCURRENT_RUNS_REPORT, report)
+    check("a concurrent run's report is not recovered as this run's",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("no report was fabricated from the concurrent run's file",
+          not report.is_file(), f"{report} exists")
+    concurrent_report = (
+        report.parent.parent / report.parent.name.replace("aaaaaaa", "bbbbbbb")
+        / report.name.replace("aaaaaaa", "bbbbbbb"))
+    check("the concurrent run keeps the report it wrote",
+          concurrent_report.is_file(),
+          f"{concurrent_report} was taken from the run that wrote it")
+    check("the failure names the file it looked for, prefix and all",
+          "no near-miss report to recover" in result.stderr
+          and report.name in result.stderr
+          and "anywhere under" in result.stderr
+          and str(repo / "cold-read-records") in result.stderr, repr(result.stderr))
 
     # --- 2. The stamp carries what the cell cost ---------------------------
     report = report_path_for(repo, "duration-claude", "claude")
