@@ -100,10 +100,12 @@ Running a sanity-check, and reading its output:
   the design's paths to forbid them, and those paths are coined names.
 - Every review agent may reach the internet to check facts: claude agents
   carry web tools and no write tools; codex agents run workspace-write with
-  network on, writes forbidden by prompt — a codex agent that modifies the
-  worktree is reported as `WARNING: <audit>-<runtime> modified the worktree:
-  <paths>` — with two codex agents running, the writer may be either; the
-  warning names the agent whose audit saw it.
+  network on, writes forbidden by prompt. Neither restriction proved airtight
+  — on 2026-08-21 a claude agent wrote a file to the worktree despite carrying
+  no write tools (nedschorus#161) — so the check below runs after every
+  agent, on both runtimes: one that modifies the worktree is reported as
+  `WARNING: <audit>-<runtime> modified the worktree: <paths>` — with two
+  agents running per audit, the warning names the one whose audit saw it.
 - What the write detector sees, and what it does not. It compares the worktree
   against a baseline taken before the agents launched: everything git reports
   as dirty or untracked, plus this runner's own record directory
@@ -299,7 +301,9 @@ def run_claude(prompt: str) -> tuple:
     # Every cell may check facts on the internet (user-ruled 2026-08-18);
     # isolation and write discipline are instructed in the prompts and
     # checked (leak scan; worktree check), never enforced here. The tool set
-    # still omits every write tool, so claude cells cannot write at all.
+    # omits every write tool, but that was not proof against an actual write:
+    # a claude cell wrote to the worktree anyway on 2026-08-21 (nedschorus#161),
+    # so run_cell's worktree check now runs for claude cells too, not only codex's.
     command = [
         "claude", "-p",
         "--model", CLAUDE_MODEL,
@@ -544,10 +548,10 @@ def reviewed_revision(baseline: dict) -> str:
 
 
 def stray_paths(baseline: dict, now: dict) -> list:
-    """Paths whose status or fingerprint changed while the cells ran — a codex
-    cell writing to the worktree, which its prompt forbids. Compared over the
-    union of both snapshots, so a file that appears, changes, or disappears
-    all count (Codex finding on PR #98)."""
+    """Paths whose status or fingerprint changed while the cells ran — a cell
+    writing to the worktree, which its prompt forbids on either runtime.
+    Compared over the union of both snapshots, so a file that appears,
+    changes, or disappears all count (Codex finding on PR #98)."""
     return sorted(path for path in set(now) | set(baseline)
                   if now.get(path) != baseline.get(path))
 
@@ -706,10 +710,9 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         return cell, False
     if not fresh_eyes:
         quote_scan(corpus, output, cell)
-    if runtime == "codex":
-        stray = report_ledger.stray_paths_since(baseline_status)
-        if stray:
-            print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
+    stray = report_ledger.stray_paths_since(baseline_status)
+    if stray:
+        print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
     revision = reviewed_revision(baseline_status)
     out_path = out_dir / f"{cell}.md"
