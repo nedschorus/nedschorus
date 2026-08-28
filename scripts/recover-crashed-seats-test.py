@@ -311,6 +311,16 @@ with tempfile.TemporaryDirectory() as temporary:
         check("supervisor plain launch still uses --session-id",
               launched and launched[0][0] == ["claude", "--session-id", "abc-123", "the prompt"],
               launched)
+        launched.clear()
+        # nedschorus#142 lane: a seat launched with its own name pins the title
+        # it answers to across machines, and turns Remote Control on so it is
+        # reachable at all. The name sits before the prompt positional.
+        supervisor_module.launch_agent_session("claude", "abc-123", Path("/tmp"),
+                                               "the prompt", remote_control_name="prof")
+        check("supervisor launch names the seat for cross-machine messaging",
+              launched and launched[0][0] == ["claude", "--session-id", "abc-123",
+                                              "--remote-control", "prof", "the prompt"],
+              launched)
     finally:
         supervisor_module.subprocess.Popen = real_popen
 
@@ -446,7 +456,7 @@ with tempfile.TemporaryDirectory() as temporary:
     state_seen_at_launch = {}
     class StopLoop(Exception):
         pass
-    def probe_launch(agent_command, session_id, working_directory, prompt, resume=False):
+    def probe_launch(agent_command, session_id, working_directory, prompt, resume=False, remote_control_name=""):
         state_seen_at_launch.update(json.loads(
             (workspace.handoffs / "seat-a-supervisor-state.json").read_text()))
         state_seen_at_launch["resume_flag"] = resume
@@ -520,7 +530,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # P3-4: the supervisor's own default prompt on a resume launch is the
     # truthful crash-recovery text, not ask-for-work.
     launched_prompts = []
-    def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False):
+    def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False, remote_control_name=""):
         launched_prompts.append((prompt, resume))
         raise StopIteration()
     sup = supervisor_module

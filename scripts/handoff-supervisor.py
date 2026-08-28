@@ -431,7 +431,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 
 
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
-                         prompt: str, resume: bool = False):
+                         prompt: str, resume: bool = False,
+                         remote_control_name: str = ""):
     """Start one interactive session, inheriting this console's terminal.
 
     resume=True launches `--resume <id>` instead of `--session-id <id>`: the
@@ -440,12 +441,26 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     place (--fork-session is the opt-out), so the state file's session_id
     stays correct for extraction at the next recycle — confirmed live
     2026-08-21, when the crash-recovered seats' transcripts grew under
-    their original ids."""
+    their original ids.
+
+    remote_control_name launches with `--remote-control <name>`, which turns
+    Remote Control on for the session and fixes the name it answers to. Both
+    halves matter for cross-machine agent messaging: a session on another
+    machine is reachable only while it is connected to Remote Control, and it
+    is addressed by its Remote Control title, never by its local session name.
+    Left to itself the CLI derives that title from the conversation and
+    rewrites it as the conversation moves on, so a seat's address drifts under
+    anyone trying to use it — observed 2026-08-27, when the Mac's mac-prof
+    seat answered from three different titles inside twenty minutes. Passing
+    the seat's own name pins it: this seat is `prof` on every machine, for the
+    life of the session. An empty value launches without the flag, leaving the
+    CLI's own defaults in charge."""
     flag = "--resume" if resume else "--session-id"
-    return subprocess.Popen(
-        [agent_command, flag, session_id, prompt],
-        cwd=str(working_directory),
-    )
+    command = [agent_command, flag, session_id]
+    if remote_control_name:
+        command += ["--remote-control", remote_control_name]
+    command.append(prompt)
+    return subprocess.Popen(command, cwd=str(working_directory))
 
 
 class AdoptedSession:
@@ -764,7 +779,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, prompt,
-                resume=resume_first_launch,
+                resume=resume_first_launch, remote_control_name=settings.agent,
             )
             resume_first_launch = False  # recovery applies to the first launch only
 
