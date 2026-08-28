@@ -757,7 +757,13 @@ def run_boot_ignition_case(workspace: Path):
     stub_agent.write_text(
         "#!/bin/sh\n"
         "exec >/dev/null 2>&1\n"
-        f"printf '%s\\n' \"$3\" > '{record_path}'\n"  # argv: --session-id <id> <prompt>
+        # The prompt is the LAST argument, whatever flags precede it:
+        # launch_agent_session appends it after --session-id and any
+        # --remote-control. Reading it by position ("$3") was correct until
+        # --remote-control landed (fe70fe3), after which this stub recorded the
+        # flag name instead of the prompt and the case below failed.
+        "for launched_prompt; do :; done\n"
+        f"printf '%s\\n' \"$launched_prompt\" > '{record_path}'\n"
         "exit 0\n",
         encoding="utf-8",
     )
