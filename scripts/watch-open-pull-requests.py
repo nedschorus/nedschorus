@@ -42,9 +42,13 @@ request's author, which for this project is usually the account that
 opened it rather than the seat that wrote the work.
 
 Deliberately not emitted: a pull request closing or merging, review and
-comment activity, check runs. They are all watchable the same way and none
-of them is what the hand-written loop was for; adding them is a later
-change with its own argument, not a freebie.
+comment activity, check runs, and a draft being marked ready for review.
+That last one is easy to miss because a draft DOES get an OPENED line
+carrying `[draft]`: the draft flag is not part of the event key, so when the
+author later marks it ready at an unchanged head, nothing is emitted. They
+are all watchable the same way and none of them is what the hand-written
+loop was for; adding them is a later change with its own argument, not a
+freebie.
 
 Baseline. The first successful poll establishes what "already open" means
 and emits no events for it, exactly as watch-agent-dialogs.py begins a
@@ -62,12 +66,34 @@ blind, and another when the query next succeeds. Silence is never how a
 failure is reported here: a watcher that goes quiet on error is
 indistinguishable from a quiet repository, and the seat relying on it
 believes it has coverage it does not have. The compared state is NOT
-touched by a failed poll, so blindness delays events rather than losing
-them: a pull request that opens while the watch is blind is reported as
-OPENED on the first poll that succeeds. The blind line is printed once per
-episode rather than once per failed poll (a per-poll line would bury the
-events either side of it); the recovery line carries how many polls failed
-and roughly how long the blindness lasted.
+touched by a failed poll, so a pull request that opens while the watch is
+blind and is STILL OPEN at recovery is reported as OPENED on the first poll
+that succeeds.
+
+Two limits on that, because the wider claim — that blindness only delays
+events — is false, and a reader acting on it would be wrong twice.
+
+First, only what is still open at recovery can be recovered. A pull request
+that opens and closes entirely inside a blind window is never reported, and
+a head that moves and moves back is not either. Low consequence here: the
+seat's hold clock restarts from the most recent push, so intermediate heads
+do not matter, and a pull request opened and closed while blind was never
+one this seat could act on.
+
+Second, and sharper: blindness BEFORE the first successful poll loses
+openings outright. With no baseline to compare against, the program cannot
+distinguish "opened during the outage" from "already open when I started",
+so those pull requests are absorbed into the baseline and no OPENED line is
+emitted for them. This is not a logic bug — with no prior state the
+distinction does not exist — but it is the likeliest blind episode of all,
+because seat boot is exactly when a first poll fails. So the recovery line
+says it happened, in those words, rather than leaving a reader to infer it
+from a silence; and --from-start turns the baseline itself into events.
+
+The blind line is printed once per episode rather than once per failed poll
+(a per-poll line would bury the events either side of it); the recovery
+line carries how many polls failed and roughly how long the blindness
+lasted.
 
 The query's exit status is the query's own. `gh` is run through
 subprocess.run with no shell and nothing piped into or out of it, and its
@@ -108,10 +134,16 @@ cases. Depending on the time of day, event latency can be anywhere from 30s
 to 6h" (docs.github.com/en/rest/activity/events, read 2026-08-23). Asking
 for the open pull requests directly is both fresher and authoritative.
 
-What the poll costs. One `gh api graphql` request per poll: at the default
-60-second interval that is 60 requests an hour against an authenticated
-limit of 5,000 an hour — 1.2% of the budget. Measured 2026-08-23 against
-this repository: the query reports `rateLimit { cost }` of 1 point, the
+What the poll costs. One `gh api graphql` request per poll while every open
+pull request fits one page, and one request per page beyond that — the query
+paginates, so a repository with more open pull requests than the page size
+costs proportionally more. At this project's scale that is one request, and
+at the default 60-second interval that is 60 requests an hour against an
+authenticated limit of 5,000 an hour — 1.2% of the budget. Measured
+2026-08-23 against this repository: a variant of the query asking for
+`rateLimit { cost }` reports 1 point — the committed query does not ask for
+it, so running exactly what ships will not reproduce that number; add the
+selection to reproduce it. The
 GraphQL budget is 5,000 points an hour, and the whole response for 4 open
 pull requests is 1,023 bytes. (The same query as a REST `GET
 /repos/{owner}/{repo}/pulls` call was 87,784 bytes for those same 4 pull
@@ -441,15 +473,30 @@ def main(argv=None):
             if blind_since is None:
                 blind_since = time.monotonic()
                 emit("WATCH: query failed, so this watch is BLIND until it "
-                     "recovers (nothing is being seen; what happens while "
-                     "blind is reported when it recovers): "
+                     "recovers (nothing is being seen; once a baseline "
+                     "exists, what happens while blind is reported when it "
+                     "recovers): "
                      + one_line_snippet(reason, FAILURE_REASON_SNIPPET_CHARS))
             time.sleep(arguments.poll_seconds)
             continue
 
         if blind_since is not None:
+            # A blind episode that PRECEDES the first successful poll cannot
+            # be recovered from: with no baseline, a pull request that opened
+            # during the outage is indistinguishable from one that was open
+            # all along, and it is absorbed into the baseline silently. The
+            # program's own BLIND line promised otherwise until this was said
+            # out loud; an agent reading the stream by its stated contract saw
+            # a recovery, saw no events, and concluded nothing had opened.
+            # Seat boot is when a first poll is likeliest to fail, so this is
+            # the common case rather than the exotic one.
             emit(f"WATCH: query recovered after {failed_polls} failed poll(s), "
-                 f"about {time.monotonic() - blind_since:.0f}s blind")
+                 f"about {time.monotonic() - blind_since:.0f}s blind"
+                 + ("" if known_head_shas is not None else
+                    " — and this watch had NO BASELINE yet, so anything that "
+                    "opened during that blindness is absorbed into the "
+                    "baseline below and gets no OPENED line (--from-start "
+                    "reports the baseline as events)"))
             blind_since = None
             failed_polls = 0
 

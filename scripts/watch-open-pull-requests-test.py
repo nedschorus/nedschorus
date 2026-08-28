@@ -189,12 +189,29 @@ class WatcherProcess:
 
 
 def wait_for_calls(fake_gh, wanted, timeout=10.0):
-    """True once the fake `gh` has been called at least `wanted` times."""
+    """Block until the fake `gh` has been called `wanted` times, and CHECK it.
+
+    This used to return a boolean that every one of its call sites discarded,
+    which made the polls it waits for unproven. The damage was not theoretical:
+    the cases that read "polls that change nothing produce no further lines"
+    passed vacuously, because zero polls also produce no further lines. A fake
+    that was never invoked — a broken control-directory variable, a hung child
+    — would have timed out here silently and left the suite reporting success
+    for a watcher it never ran.
+
+    So the wait now records a failure of its own when it times out. Waiting for
+    a count and never checking it is the same defect this whole program exists
+    to prevent, one level up: a signal whose absence is indistinguishable from
+    the quiet everything-is-fine case.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if fake_gh.call_count() >= wanted:
             return True
         time.sleep(0.02)
+    check(f"the fake gh was called at least {wanted} time(s) within {timeout}s "
+          "— everything asserted after this point depends on those polls",
+          False, f"call_count={fake_gh.call_count()}")
     return False
 
 
@@ -250,10 +267,45 @@ def run_unit_cases():
     # reported as OPENED again at the next poll.
     # ------------------------------------------------------------------
     from_node = watcher_module.pull_request_from_node
-    check("a node with no head sha is a failure, not a dropped pull request",
+    check("pull_request_from_node reports a missing head sha as a reason",
           from_node({"number": 3, "title": "t"})[0] is None
           and "head commit sha" in from_node({"number": 3, "title": "t"})[1],
           str(from_node({"number": 3, "title": "t"})))
+
+    # The case above tests the HELPER. The property that matters is the
+    # CALLER's: fetch_open_pull_requests must return the failure rather than
+    # skip the node. Nothing asserted that until now, and the gap was not
+    # cosmetic — changing the caller's `return None, reason` to `continue`
+    # left the entire suite passing, while producing exactly the behaviour the
+    # program's docstring calls wrong: the dropped pull request would be
+    # re-reported as OPENED at every poll, forever.
+    class FakeCompletedProcess:
+        def __init__(self, stdout):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    saved_run_gh = watcher_module.run_gh
+    try:
+        watcher_module.run_gh = lambda *_a, **_k: FakeCompletedProcess(
+            graphql_body([pull_request_node(3, "c" * 12),
+                          {"number": 4, "title": "malformed"}]))
+        fetched, reason = watcher_module.fetch_open_pull_requests("o/n", "tok")
+        check("one malformed node fails the whole poll, dropping nothing",
+              fetched is None and reason is not None and "head commit sha" in reason,
+              f"fetched={fetched!r} reason={reason!r}")
+
+        # Proves the harness above can succeed, so the case before it is a
+        # real refusal rather than a fake that never worked.
+        watcher_module.run_gh = lambda *_a, **_k: FakeCompletedProcess(
+            graphql_body([pull_request_node(3, "c" * 12)]))
+        fetched, reason = watcher_module.fetch_open_pull_requests("o/n", "tok")
+        check("the same harness with only well-formed nodes returns them",
+              reason is None and fetched is not None and len(fetched) == 1
+              and fetched[0]["number"] == 3,
+              f"fetched={fetched!r} reason={reason!r}")
+    finally:
+        watcher_module.run_gh = saved_run_gh
     check("a deleted author becomes (unknown), not a crash",
           from_node(pull_request_node(3, "cccccccccccc"))[0] is not None
           and from_node({"number": 3, "headRefOid": "c" * 12,
@@ -453,6 +505,41 @@ def run_subprocess_cases():
                if "query recovered" in line][0]
               < [index for index, line in enumerate(lines)
                  if "PR #150 OPENED" in line][0],
+              "\n".join(lines))
+
+        # ------------------------------------------------------------------
+        # Blindness BEFORE the first successful poll is the case the block
+        # above does not cover, and the one the program used to describe
+        # wrongly. With no baseline there is nothing to compare against, so a
+        # pull request that opened during the outage is indistinguishable from
+        # one that was open all along: it is absorbed into the baseline and
+        # gets no OPENED line. That is unavoidable. What is not unavoidable is
+        # a recovery line that reads exactly like the recoverable case — an
+        # agent following the stated contract would see recovery, see no
+        # events, and conclude nothing had opened. Seat boot is when a first
+        # poll is likeliest to fail, so this is the common blind episode.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "blind-before-baseline")
+        fake_gh.answer(stdout="", exit_code=1,
+                       stderr="gh: HTTP 503 Service Unavailable")
+        watcher = WatcherProcess(environment=fake_gh.environment(),
+                                 token_file=token_file)
+        watcher.wait_for("WATCH: query failed")
+        fake_gh.answer(graphql_body([
+            pull_request_node(160, "e" * 40, "opened before any baseline"),
+            pull_request_node(161, "f" * 40, "also opened before any baseline")]))
+        recovered = watcher.wait_for("WATCH: query recovered after ")
+        watcher.wait_for("open at baseline")
+        calls_now = fake_gh.call_count()
+        wait_for_calls(fake_gh, calls_now + 3)
+        lines = watcher.stop()
+        check("recovering with no baseline says the openings are absorbed",
+              recovered and any("query recovered" in line and "NO BASELINE" in line
+                                for line in lines),
+              "\n".join(lines))
+        check("and it does not silently claim those pull requests as events",
+              not any("PR #160 OPENED" in line or "PR #161 OPENED" in line
+                      for line in lines),
               "\n".join(lines))
 
         # ------------------------------------------------------------------
