@@ -24,12 +24,20 @@ What is pinned here:
     codes, and the cases below hold that seam from both sides: every bad
     invocation of the cell exits 64, while a codex that EXITS carries its
     own code through unchanged -- including 2, which is what codex returns
-    when IT rejects a command line. A codex killed by a SIGNAL is the one
-    case that is not unchanged: Python reports the death as a negative
-    returncode and sys.exit takes it modulo 256, so SIGKILL surfaces as 247
-    and SIGTERM as 241, measured by the cases below. Both stay clear of
-    every code this cell spends on a meaning of its own, which is what the
-    seam actually requires. Until 2026-08-23 the cell used 2
+    when IT rejects a command line. A codex killed by a SIGNAL that this
+    cell did not ask for is transformed rather than carried: Python reports
+    the death as a negative returncode and sys.exit takes it modulo 256, so
+    SIGKILL surfaces as 247 and SIGTERM as 241, measured by the cases below.
+    Both stay clear of every code this cell spends on a meaning of its own,
+    which is what the seam actually requires.
+
+    Two other paths also do not carry codex's code, and both are the `1`
+    row rather than this one: a codex that exits 0 having written no report
+    (a case below pins it), and a codex still running at
+    REVIEW_TIMEOUT_SECONDS, which subprocess kills with SIGKILL and which
+    reaches the caller as 1 through the TimeoutExpired handler -- so "killed
+    by SIGKILL" alone does not predict 247. No case here covers the timeout
+    path. Until 2026-08-23 the cell used 2
     for its own refusals too, so two opposite meanings -- the caller invoked
     this cell wrongly, versus this cell invoked codex wrongly -- arrived as
     the same number, and only the second is a defect in this repository. The
