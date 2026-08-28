@@ -29,17 +29,30 @@ recycle kills the session, and the session's in-process subagents die with
 it: on 2026-08-27 a seat dispatched a builder subagent at 20:38, the hook
 fired at 50% at 20:43, and the subagent died four minutes into its job. So
 at the threshold the hook first asks whether any Agent-tool subagent is
-still in flight. While one is, it says so and does NOT fire — and writes no
-marker, so the same question is asked again at the next turn boundary. That
-is what detects the finish: a subagent's completion notification is itself
-a turn, so the first boundary after the last subagent finishes is the one
-that fires. The standing ruling that a recycle records its subagents rather
+still in flight. The first time one is, it says so — spawn no new subagents,
+the handoff fires when they finish — and records that it has said it, in a
+deferral marker beside the fired one. At every later boundary while the wait
+continues it exits silently. Saying it again would refuse the stop again, and
+a hook that refuses the stop at every boundary drives an otherwise idle
+session into a loop of short turns, one model call each, for as long as the
+subagent runs. Going quiet costs nothing: the completion notification wakes
+the session by itself, and the boundary that ends that turn is where the scan
+finds nothing in flight and the handoff fires. The standing ruling that a recycle records its subagents rather
 than waiting for them (2026-08-23, [nedschorus#153]) still governs
 everything else; this deferral is its one bounded exception, and
 --ceiling-used-percentage is the bound. Above the ceiling the handoff fires
 whatever is running, because a session deferring to a subagent that never
 finishes would run out of context instead of recycling — which is a worse
 loss than the one this defers.
+
+TWO MARKERS, both in the handoff directory and both named for the session.
+`<session>-handoff-asked` is the older one and keeps its meaning exactly: it
+is written when the handoff fires, and it is what stops the reminder
+repeating while the agent composes the handoff. `<session>-handoff-deferred`
+is written the first time the hook defers, and its whole job is to keep the
+deferral quiet once it has been said. It is left in place when the handoff
+finally fires — the fired marker is what governs repeats, and clearing the
+deferral marker there would tell nobody anything.
 
 IN FLIGHT means spawned and not yet finished, both read from the transcript.
 A spawn is a tool result carrying `status: async_launched` and an `agentId`;
@@ -57,7 +70,9 @@ from the tail, but a spawn can be hours back, so this read cannot be a tail
 read. Measured at roughly 2.5 ms per megabyte: 7 ms on the 3.5 MB transcript of
 the session this change came from, and 8.7 ms on the largest transcript
 measured, 3.9 MB. It is paid only between the threshold and the fire:
-never below the threshold, and never once the marker is written.
+never below the threshold, and never once the fired marker is written. A
+silent deferred boundary still pays it, because whether the wait is over is
+exactly what it is asking.
 
 TWO WAYS THE SCAN CAN BE WRONG, both bounded by the ceiling. An agent
 resumed by SendMessage runs again with no new spawn record, so its earlier
@@ -290,9 +305,16 @@ def main(argv=None) -> int:
     if used < arguments.ceiling_used_percentage:
         subagents_in_flight = spawned_subagent_ids_in_flight(transcript_path)
         if subagents_in_flight:
-            # Deliberately no marker. The deferral has to be re-decided at
-            # every turn boundary, because the boundary that follows the last
-            # completion notification is the one that fires.
+            deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+            if deferred_marker.exists():
+                return 0  # said once already; let the session go idle and wait
+
+            try:
+                HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
+                deferred_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
+            except OSError:
+                pass  # as with the fired marker: speak now, repeat next turn
+
             print(
                 HANDOFF_DEFERRED_NOTICE.format(
                     used_percentage=used, subagent_count=len(subagents_in_flight)

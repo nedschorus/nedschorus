@@ -255,8 +255,15 @@ with tempfile.TemporaryDirectory() as workspace:
         hook.HANDOFF_DIRECTORY / f"{DEFERRAL_PROBE_SESSION_ID}-handoff-asked")
     ceiling_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{CEILING_PROBE_SESSION_ID}-handoff-asked")
-    deferral_marker_file.unlink(missing_ok=True)
-    ceiling_marker_file.unlink(missing_ok=True)
+    # The second marker: written the first time the hook defers, so the
+    # deferral is said once instead of at every boundary.
+    deferred_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{DEFERRAL_PROBE_SESSION_ID}-handoff-deferred")
+    ceiling_deferred_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{CEILING_PROBE_SESSION_ID}-handoff-deferred")
+    for probe_marker in (deferral_marker_file, ceiling_marker_file,
+                         deferred_marker_file, ceiling_deferred_marker_file):
+        probe_marker.unlink(missing_ok=True)
     # On a fresh machine nothing has created the handoff directory yet.
     hook.HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
@@ -320,10 +327,21 @@ with tempfile.TemporaryDirectory() as workspace:
               "Context at 55%" in result.stderr, result.stderr[:200])
         check("the deferral tells the agent to spawn no more subagents",
               "Spawn no new subagents" in result.stderr, result.stderr[:200])
-        # No marker is the mechanism, not an oversight: the check has to run
-        # again at the next turn boundary, and the completion notification
-        # that ends the wait is itself a turn.
-        check("a deferral writes no fired marker, so the next turn asks again",
+        check("a deferral writes the deferral marker and not the fired one",
+              deferred_marker_file.exists() and not deferral_marker_file.exists(),
+              f"deferred={deferred_marker_file.exists()} "
+              f"fired={deferral_marker_file.exists()}")
+
+        # Said once, then quiet. Speaking at every boundary would refuse the
+        # stop at every boundary, which drives an idle session into a loop of
+        # short turns for as long as the subagent runs; the completion
+        # notification wakes it without any help from this hook.
+        result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
+                           "transcript_path": str(running)})
+        check("a second deferred turn is silent, so the session can go idle",
+              result.returncode == 0 and not result.stderr.strip(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("a silent deferred turn still writes no fired marker",
               not deferral_marker_file.exists(), str(deferral_marker_file))
 
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
@@ -333,8 +351,21 @@ with tempfile.TemporaryDirectory() as workspace:
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         check("firing after a deferral writes the fired marker",
               deferral_marker_file.exists(), str(deferral_marker_file))
+        # Left in place: the fired marker is what governs repeats, and
+        # clearing this one at the fire would tell nobody anything.
+        check("firing leaves the deferral marker where it was",
+              deferred_marker_file.exists(), str(deferred_marker_file))
         deferral_marker_file.unlink(missing_ok=True)
+        deferred_marker_file.unlink(missing_ok=True)
 
+        # The ceiling overrides a deferral already in progress: this session
+        # deferred at 55%, kept working, and arrived at 70% with the subagent
+        # still running.
+        result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
+                           "transcript_path": str(running)})
+        check("the ceiling session defers first, as the deferral session did",
+              result.returncode == 2 and "handoff deferred" in result.stderr,
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
         result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
                            "transcript_path": str(past_ceiling)})
         check("above the ceiling the handoff fires with a subagent still running",
@@ -343,6 +374,7 @@ with tempfile.TemporaryDirectory() as workspace:
         check("firing above the ceiling writes the fired marker",
               ceiling_marker_file.exists(), str(ceiling_marker_file))
         ceiling_marker_file.unlink(missing_ok=True)
+        ceiling_deferred_marker_file.unlink(missing_ok=True)
 
         result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
                            "transcript_path": str(running)},
@@ -351,6 +383,7 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         ceiling_marker_file.unlink(missing_ok=True)
+        ceiling_deferred_marker_file.unlink(missing_ok=True)
 
         below_threshold = transcript_of(workspace, "deferral-below-threshold.jsonl", [
             usage_record(100_000, cache_read=300_000),  # 40% — nothing to say yet
@@ -375,6 +408,8 @@ with tempfile.TemporaryDirectory() as workspace:
         marker_file.unlink(missing_ok=True)
         deferral_marker_file.unlink(missing_ok=True)
         ceiling_marker_file.unlink(missing_ok=True)
+        deferred_marker_file.unlink(missing_ok=True)
+        ceiling_deferred_marker_file.unlink(missing_ok=True)
 
 print()
 if failures:
