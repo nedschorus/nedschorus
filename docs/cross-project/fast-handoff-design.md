@@ -36,7 +36,7 @@ A recycle kills the session, and the session's in-process subagents die with it:
 - **No completion notification.** Nothing wakes the commissioning session when the job ends; someone goes and looks.
 - **Its own permission mode**, fixed at launch rather than inherited from the session that dispatched it.
 - **Nobody watches it wedge.** Stuck-state detection is the open gap in [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27), so a headless job that stalls stalls quietly.
-- **It is invisible to the spawned-subagent roster** ([nedschorus#153](https://github.com/nedschorus/nedschorus/pull/153), open at the time of writing), which reads the session transcript for spawns the Agent tool recorded there. A detached session leaves no such record, so the successor is not told it exists unless the brief or the next step says so.
+- **It is invisible to the spawned-subagent roster** (specified above, and merged 2026-08-28 as [nedschorus#153](https://github.com/nedschorus/nedschorus/pull/153)), which reads the session transcript for spawns the Agent tool recorded there. A detached session leaves no such record, so the successor is not told it exists unless the brief or the next step says so.
 
 ## The handoff file format
 
