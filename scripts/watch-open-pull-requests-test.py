@@ -477,6 +477,19 @@ def run_subprocess_cases():
               blind and any("BLIND until it recovers" in line
                             and "HTTP 503" in line for line in watcher.lines),
               "\n".join(watcher.lines))
+        # The blind line promises to FLAG what the blindness cost, and that
+        # verb is load-bearing. An earlier wording promised the recovery line
+        # would say "what was and was not captured"; with a baseline the
+        # recovery line reports only counts and duration, so a reader had to
+        # take the ABSENCE of a loss clause as the reassurance — the
+        # absence-as-signal shape this program exists to avoid. A promise to
+        # flag is kept by saying nothing when nothing was lost, which is what
+        # the pair of checks here and after recovery pins.
+        check("the blind line promises to flag what the blindness cost",
+              any("BLIND until it recovers" in line
+                  and "flags anything the blindness cost" in line
+                  for line in watcher.lines),
+              "\n".join(watcher.lines))
 
         calls_now = fake_gh.call_count()
         wait_for_calls(fake_gh, calls_now + 5)
@@ -498,6 +511,14 @@ def run_subprocess_cases():
               "\n".join(lines))
         check("a pull request opened while blind is reported on recovery",
               missed_open, "\n".join(lines))
+        # The other half of the flagging promise: a baseline existed, so
+        # nothing was lost, so the recovery line flags nothing — and the
+        # events it delayed arrive right behind it. Silence here is the
+        # promise being kept, not the promise going unmet.
+        check("with a baseline, the recovery line flags no loss",
+              all("NO BASELINE" not in line
+                  for line in lines if "query recovered" in line),
+              "\n".join(lines))
         check("a head that moved while blind is reported on recovery",
               missed_move, "\n".join(lines))
         check("the recovery line comes before the events it delayed",

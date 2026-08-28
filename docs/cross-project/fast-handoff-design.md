@@ -159,10 +159,19 @@ meets a handoff without it, derives an empty roster, and says nothing about
 subagents. Nothing migrates.
 
 **`last event` is stated, never interpreted.** It is whatever the transcript
-last recorded — `spawned`, `resumed`, `completed`, `killed` — and the ignition
-prompt tells the successor plainly that `completed` means the subagent
-stopped, not that its work is finished. Deciding which entries still own work
-is the successor's judgement, and the writer does not pretend to compute it.
+last recorded — `spawned`, `resumed`, or any `<status>` a notification
+carries, which across the measured transcripts means `completed`, `killed`,
+`failed` and `stopped`. That list is open by construction rather than
+exhaustive: the derivation copies the status through instead of matching it
+against a set, so a status the harness adds later appears here with no code
+change. `stopped` earns its place in the list because it is what the harness
+uses to report agents from a previous session with no completion record —
+the orphan report this whole roster exists to carry.
+
+The ignition prompt tells the successor plainly that `completed` means the
+subagent is no longer running, not that its work is done. Deciding which
+entries still own work is the successor's judgement, and the writer does not
+pretend to compute it.
 
 ## Rulings
 

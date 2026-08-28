@@ -487,9 +487,18 @@ def main(argv=None):
             failed_polls += 1
             if blind_since is None:
                 blind_since = time.monotonic()
+                # The promise here is FLAGGING, not reporting, and the
+                # difference is the point. An earlier wording said the
+                # recovery line "says what was and was not captured"; in the
+                # ordinary case that line reports only how many polls failed
+                # and for how long, so the reader had to take the absence of
+                # a loss clause as the reassurance — the absence-as-signal
+                # shape this file argues against under "Announcing
+                # blindness". A promise to flag is kept by saying nothing
+                # when nothing was lost.
                 emit("WATCH: query failed, so this watch is BLIND until it "
                      "recovers (nothing is being seen; the recovery line "
-                     "below says what was and was not captured): "
+                     "below flags anything the blindness cost): "
                      + one_line_snippet(reason, FAILURE_REASON_SNIPPET_CHARS))
             time.sleep(arguments.poll_seconds)
             continue
