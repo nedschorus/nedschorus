@@ -4,7 +4,7 @@ Queued for build after the `draft-md` skill exists (specification: `docs/issues/
 
 **What it does.** A PreToolUse hook on Write, Edit, and NotebookEdit, in the pattern of the three guards in `.claude/hooks/` (soft block; a deny message that teaches the sanctioned path; the shared approval-marker lane in `guard_approval_marker.py`). When the session itself writes a durable file, the hook soft-blocks and says: draft this under `draft-md`, or approve the direct write. Reason: the moment the skill must fire is the moment the session is about to write, mid-task, when skill descriptions are the last thing in mind; a hook runs at that moment deterministically.
 
-**Scope — where it fires.** Paths under `docs/issues/` (not `docs/issues/queue/`), `docs/wiki/` (not `docs/wiki/queue/`), and `.claude/skills/*/SKILL.md`. Never `md-review-records/` or other gitignored working material.
+**Scope — where it fires.** Paths under `docs/issues/` (not `docs/issues/queue/`), `docs/wiki/` (not `docs/wiki/queue/`), `docs/drafts/`, and `.claude/skills/*/SKILL.md`. `docs/drafts/` is in scope because it is a durable-file home like the others — it stages text whose own home is guarded or not yet decided, and the text is durable wherever it is sitting. Never `md-review-records/` or other gitignored working material.
 
 **Controls against over-triggering, in order of how much they buy.**
 1. A size floor: an Edit that changes fewer words than a sentence — a path, a date, a rename, a typo; the design notes' "mechanical edits" — passes untouched. Whether the floor is one sentence or one paragraph is set by watching false triggers for a week after the hook lands.
