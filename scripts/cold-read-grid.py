@@ -130,6 +130,19 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
         return ""
 
 
+TARGET_CHANGED_INSTRUCTIONS = """\
+The reports are in {record_dir}, and every one of them is marked: the document's
+bytes differed between the moment the cells launched and the moment the last one
+finished, so which text any one report describes is unknown.
+
+Do not triage this set as a review of the document. Stop editing the document
+and run the grid again against the settled text.
+
+Keep the set. Each report still records truthfully what one reviewer read, which
+is evidence of what the reviewers saw — not of how the file now stands.
+"""
+
+
 def mark_reports_target_changed(
     record_dir: pathlib.Path, target: pathlib.Path, before: str, after: str,
 ) -> str:
@@ -146,12 +159,22 @@ def mark_reports_target_changed(
     one reviewer read, which is evidence. What the marker removes is the
     possibility of reading them as a review of the file as it now stands.
     """
+    # WHAT THE TWO FINGERPRINTS PROVE, and no more: the bytes differed between
+    # the moment before the cells launched and the moment after the last one
+    # finished. They do not say when in that window the edit landed, so they
+    # cannot say that it landed while a reviewer was reading, nor which text
+    # any one report describes — the ordinary case is an edit part-way through,
+    # with some cells having opened the file before it and some after. The
+    # marker is the durable half of this check: these records are kept, so a
+    # sentence claiming more than the check knows would outlive the run.
     detail = (
-        f"{target} was edited while these reviews ran — sha256 {before[:12] or 'unreadable'} "
-        f"when the cells launched, {after[:12] or 'unreadable'} when the last one "
-        f"finished. Every report in this directory reviews the earlier text. Treat "
-        f"this set as evidence of what reviewers saw, not as a review of the "
-        f"current file; re-run the grid against the settled document."
+        f"{target}'s bytes differed between the moment the cells launched and the "
+        f"moment the last one finished — sha256 {before[:12] or 'unreadable'} then "
+        f"{after[:12] or 'unreadable'}. Which text any one report in this directory "
+        f"describes is unknown: the edit may have landed before a given reviewer "
+        f"opened the file or after. Treat this set as evidence of what reviewers "
+        f"saw, not as a review of the current file; re-run the grid against the "
+        f"settled document."
     )
     marker = f"{TARGET_CHANGED_MARKER_PREFIX} {detail} -->"
     for report_path in sorted(record_dir.glob("*.md")):
@@ -353,7 +376,12 @@ def main() -> int:
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
 
     print()
-    print(COMPLETION_INSTRUCTIONS.format(record_dir=record_dir))
+    # A moved target and a settled one call for opposite next actions, so they
+    # get different closing text: triage the set, or stop and run it again.
+    if target_changed:
+        print(TARGET_CHANGED_INSTRUCTIONS.format(record_dir=record_dir))
+    else:
+        print(COMPLETION_INSTRUCTIONS.format(record_dir=record_dir))
     if failures:
         print(f"\nNOTE: {len(failures)} review(s) failed and are absent from the "
               f"record: {', '.join(failures)}. Rerun them singly with the cell "

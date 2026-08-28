@@ -296,9 +296,26 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid says the target changed, on its own output, in one line",
           result.stdout.count("TARGET CHANGED DURING RUN:") == 1, repr(result.stdout))
-    check("the line names both fingerprints",
-          "when the cells launched" in result.stdout
-          and "when the last one finished" in result.stdout, repr(result.stdout))
+    check("the line names the window the two fingerprints bound",
+          "the moment the cells launched" in result.stdout
+          and "the moment the last one finished" in result.stdout, repr(result.stdout))
+    # The two fingerprints prove the bytes differed across the window and
+    # nothing else. Claiming the edit landed *while* a reviewer was reading, or
+    # that every report describes the text as it was before the edit, is false
+    # in the ordinary case — an edit part-way through, some cells having opened
+    # the file before it and some after. These records are kept, so a marker
+    # claiming more than the check knows would outlive the run that wrote it.
+    check("the line does not claim to know when in the window the edit landed",
+          "while these reviews ran" not in result.stdout, repr(result.stdout))
+    check("the line does not claim every report describes the earlier text",
+          "reviews the earlier text" not in result.stdout, repr(result.stdout))
+    # A moved target and a settled one call for opposite next actions, so the
+    # exit-3 path must not close with the instructions to triage the set.
+    check("a moved target does not get the closing instructions to triage",
+          "All eight reviews are complete" not in result.stdout, repr(result.stdout))
+    check("a moved target is told to stop editing and run the grid again",
+          "Stop editing the document" in result.stdout
+          and "Do not triage this set" in result.stdout, repr(result.stdout))
     record_directory = record_directory_of(repository)
     check("the stderr logs are deleted on this path too",
           record_directory is not None
@@ -365,6 +382,9 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("a target nobody edited is not reported as changed",
           "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
+    check("a settled target still gets the closing instructions to triage",
+          "All eight reviews are complete" in result.stdout
+          and "Stop editing the document" not in result.stdout, repr(result.stdout))
 
     # --- A cell that fell back says so ------------------------------------
     # The stub refuses to be claude-opus-5, which leads the Claude good tier.
