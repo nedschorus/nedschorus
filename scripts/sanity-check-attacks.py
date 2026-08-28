@@ -102,8 +102,8 @@ Running a sanity-check, and reading its output:
   carry web tools and no write tools; codex agents run workspace-write with
   network on, writes forbidden by prompt. Neither restriction proved airtight
   — on 2026-08-21 a claude agent wrote a file to the worktree despite carrying
-  no write tools (nedschorus#161) — so the check below runs after every
-  agent, on both runtimes: one that modifies the worktree is reported as
+  no write tools (nedschorus#161) — so the check below runs after every agent
+  that completes, on both runtimes: one that modifies the worktree is reported as
   `WARNING: <audit>-<runtime> modified the worktree: <paths>` — with two
   agents running per audit, the warning names the one whose audit saw it.
 - What the write detector sees, and what it does not. It compares the worktree
@@ -121,7 +121,13 @@ Running a sanity-check, and reading its output:
   ruled out (user, 2026-08-23) — and neither is a file that another overlapping
   run of this script creates elsewhere under `sanity-check-records/`, because
   each run reports only what it can account for: its own record directory, and
-  what was on disk when it started. While the agents run, make no changes in
+  what was on disk when it started. The largest gap is an agent that does not
+  complete: one that times out, cannot be launched, or exits non-zero returns
+  before the comparison runs, so an agent that wrote a file and then failed is
+  never checked — which is the reverse of what the reader would guess, since a
+  failing agent is the likelier one to have misbehaved. Closing those paths is
+  a change of behaviour beyond the gate removal the user ruled, and sits with
+  him. While the agents run, make no changes in
   this worktree yourself, the record directory included — the detector cannot
   tell your edits from a review agent's; work elsewhere until the run
   completes.
