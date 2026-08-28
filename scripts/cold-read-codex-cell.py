@@ -11,7 +11,7 @@ rather than answering in chat.
 Usage:
   scripts/cold-read-codex-cell.py --cell restate --tier floor \\
       --target docs/cross-project/foo.md \\
-      --report cold-read-records/2026-01-01-foo/codex-restate-floor.md
+      --report cold-read-records/2026-01-01-foo/2026-01-01-foo--codex-restate-floor.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -61,6 +61,17 @@ while "this file holds something else now" says the reviewer wrote it
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS: written once, in
 scripts/code-review-codex-cell.py's docstring, under that heading.
+
+WHAT THE CODEX CLI TELLS US ABOUT COST, and where it goes (user-ruled
+2026-08-25). This CLI ends a run with a line of the form "tokens used:
+12,345" on stderr, and it is the only place a cell's token cost is stated by
+anyone. The shared module captures stderr, parses that line, and stamps
+`tokens=` into the report's provenance line -- see `parse_tokens_used` in
+scripts/cold-read-cell-common.py, which is where the pattern lives so this
+launcher keeps its single job of building an invocation. If a future CLI
+version reworks or drops that line, the field simply goes absent from the
+stamps: an absent field reads as "not reported", which is the truth, and
+nothing else in the cell depends on it.
 """
 
 import importlib.util

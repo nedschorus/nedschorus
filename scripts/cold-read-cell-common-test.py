@@ -10,8 +10,13 @@ copy of the scripts is a cell whose whole world is the scratch repository —
 no case can touch this checkout. And the stub is the model: it is driven by
 COLD_READ_CELL_TEST_STUB_PLAN, a JSON map from model id to what that
 attempt should do, so a chain of failures and fallbacks is arranged without
-a model call, the money, or the half hour. Only the Claude leg is launched,
-because what is under test is the module both legs share.
+a model call, the money, or the half hour. Most cases launch the Claude leg
+alone, because what is under test is the module both legs share. The ones
+that launch the Codex leg do so for a reason named where they sit: a token
+total is a figure only the Codex CLI prints, the near-miss accident below
+happened to a Codex cell, and the stray-write detector is driven once through
+each launcher because a check that runs for one runtime and not the other is
+precisely the defect nedschorus#161 records.
 
 WHAT IS PINNED HERE.
 
@@ -61,15 +66,58 @@ WHAT IS PINNED HERE.
     reviewing agent failed reviews are absent, and the skill sends it to read
     every report present. A report exists if and only if the run succeeded.
 
+  - A near-miss report is recovered before failure is declared. On
+    2026-08-25 a Codex cell was given a record directory ending `-c6fb95f`
+    and wrote a complete 33-finding review into `-c6fb95c`, a sibling it
+    created itself, and the cell reported "the model exited without writing"
+    — true of the path it watched and false of the work. Exactly one
+    candidate is recovered; several are refused rather than guessed between,
+    because a guess puts a review under a stamp that may not describe it; and
+    a file that predates the attempt is left alone, so yesterday's abandoned
+    stray is not stamped with today's model.
+
+    The search covers the whole `cold-read-records/` tree — a neighbouring
+    record directory, and the root of the tree itself — because the file name
+    carries the run (user-ruled 2026-08-25): the grid writes
+    `<record directory name>--<runtime>-<pass>-<tier>.md`, so an exact-name
+    match belongs to this run and to no other. The case that proves the point
+    is the concurrent one: a second grid's report for the same cell, written
+    while this attempt ran, is NOT this attempt's report, and the cell fails
+    rather than taking it.
+
+  - The stamp carries what the cell cost. `duration_s=` on every stamp, and
+    `tokens=` when the runtime reported a total. Absent is absent: a claude
+    cell, and a codex cell whose CLI printed no total, carry no `tokens=`
+    field rather than a guessed zero, because a zero would read as "this cell
+    cost nothing". The total is read from the runtime's stderr and never from
+    its stdout, which is the model talking — a reviewer of a document about
+    model costs can write "tokens used: N" in its findings, and that sentence
+    is not what the run cost.
+
+  - The runtime's stderr survives a successful run. It used to be passed
+    straight through to the log scripts/cold-read-grid.py deletes on success,
+    which is why the only token figure recoverable from six grids on
+    2026-08-25 came from the one cell that failed.
+
+  - The stray-write detector runs for both runtimes. The cases above drive
+    the Claude launcher; the one at the end of the file drives the Codex
+    launcher through the same shared call. The fleet's other review
+    instrument gated the same comparison on `runtime == "codex"`, and on
+    2026-08-21 a claude agent wrote a 25KB file into a worktree undetected
+    (nedschorus#161). A pair of cases, one per launcher, is what makes a
+    reintroduced gate fail loudly instead of quietly.
+
 Run: python3 scripts/cold-read-cell-common-test.py
 """
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -92,14 +140,25 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-cell-common-test-target.md"
 # phrase from the module it tests would pass however either side was reworded.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
 
-# A stand-in for the `claude` CLI. It does what
+# What a stub writes when it puts its review somewhere other than the path it
+# was given, so a case can tell each recovered review apart from one written
+# where it was asked for.
+NEAR_MISS_REVIEW_TEXT = "STUB REVIEW: written one character away\n"
+RECORDS_ROOT_REVIEW_TEXT = "STUB REVIEW: written flat into the records root\n"
+CONCURRENT_RUN_REVIEW_TEXT = (
+    "STUB REVIEW: a concurrent grid's review of another document\n")
+
+# A stand-in for the `claude` and `codex` CLIs. It does what
 # COLD_READ_CELL_TEST_STUB_PLAN tells it to for the model it was launched
 # with: "report" is text to write to the report path (absent means write
 # nothing, which is how a model that dies quietly looks), "edit" is a
 # [path, text] pair to append to some other file — a reviewer editing the
 # document instead of reviewing it — "break_git" is a .git directory to
 # rename aside, which leaves a cell whose baseline was taken and whose
-# post-run check cannot run, and "exit" is the code to exit with.
+# post-run check cannot run, "near_miss" reproduces the 2026-08-25 accident
+# (see below), "report_at_records_root" and "concurrent_run_report" are the
+# other two places a report can turn up, "stderr" and "stdout" are the
+# runtime's own words on each stream, and "exit" is the code to exit with.
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
 STUB_MODEL_RUNTIME = """#!/usr/bin/env python3
@@ -110,13 +169,47 @@ try:
 except OSError:
     pass
 argv = sys.argv
-model = argv[argv.index("--model") + 1] if "--model" in argv else "*"
+# --model is the Claude leg's flag and -m the Codex leg's. A stub that knew
+# only one of them would answer every Codex plan with the "*" step, so no
+# chain could be arranged for that leg and a per-model case would pass for
+# the wrong reason.
+model = "*"
+for model_flag in ("--model", "-m"):
+    if model_flag in argv:
+        model = argv[argv.index(model_flag) + 1]
+        break
 plan = json.loads(os.environ["COLD_READ_CELL_TEST_STUB_PLAN"])
 step = plan.get(model, plan.get("*", {}))
+report_path = pathlib.Path(os.environ["COLD_READ_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
-    with open(os.environ["COLD_READ_CELL_TEST_STUB_REPORT_PATH"], "w",
-              encoding="utf-8") as handle:
-        handle.write(step["report"])
+    report_path.write_text(step["report"], encoding="utf-8")
+# The 2026-08-25 near-miss, reproduced: the model writes its whole review into
+# a record directory one character from the one it was given, having created
+# that directory itself. Each entry is the character it puts in place of the
+# last one of that directory's name, so several entries make several
+# candidates for the recovery to refuse to guess between.
+for replacement_character in step.get("near_miss", []):
+    sibling = (report_path.parent.parent
+               / (report_path.parent.name[:-1] + replacement_character))
+    sibling.mkdir(parents=True, exist_ok=True)
+    (sibling / report_path.name).write_text(
+        NEAR_MISS_REVIEW_TEXT, encoding="utf-8")
+# The right file name in the wrong place, twice over. Flat in the root of the
+# records tree, the name still says which run wrote it, so it is recoverable.
+# In another run's record directory under that run's own name, it is a second
+# grid's finished review of some other document, and taking it would stamp
+# this run's provenance onto the wrong text while leaving that run with
+# nothing.
+if step.get("report_at_records_root"):
+    (report_path.parent.parent / report_path.name).write_text(
+        RECORDS_ROOT_REVIEW_TEXT, encoding="utf-8")
+concurrent_run_report = step.get("concurrent_run_report")
+if concurrent_run_report:
+    other_directory_name, other_file_name = concurrent_run_report
+    other_directory = report_path.parent.parent / other_directory_name
+    other_directory.mkdir(parents=True, exist_ok=True)
+    (other_directory / other_file_name).write_text(
+        CONCURRENT_RUN_REVIEW_TEXT, encoding="utf-8")
 if "edit" in step:
     edited_path, added_text = step["edit"]
     with open(edited_path, "a", encoding="utf-8") as handle:
@@ -124,8 +217,17 @@ if "edit" in step:
 if "break_git" in step:
     git_directory = pathlib.Path(step["break_git"])
     git_directory.rename(git_directory.with_name(".git-renamed-by-the-stub"))
+# The two streams the cell treats differently: stderr is the CLI reporting,
+# which is where the Codex token total appears, and stdout is the model
+# talking. A case that needs the difference to matter writes both.
+if "stderr" in step:
+    sys.stderr.write(step["stderr"])
+if "stdout" in step:
+    sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
-"""
+""".replace("NEAR_MISS_REVIEW_TEXT", repr(NEAR_MISS_REVIEW_TEXT)
+).replace("RECORDS_ROOT_REVIEW_TEXT", repr(RECORDS_ROOT_REVIEW_TEXT)
+).replace("CONCURRENT_RUN_REVIEW_TEXT", repr(CONCURRENT_RUN_REVIEW_TEXT))
 
 failures = []
 
@@ -199,10 +301,19 @@ def dirty_the_target(repository):
         handle.write("An uncommitted revision, written before the review ran.\n")
 
 
-def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None):
+def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
+                      runtime="claude", environment_overrides=None):
+    """One cell launcher, run against a stub standing in for its runtime.
+
+    The stub is installed under the runtime's own name, because that is how
+    each launcher finds its CLI: `cold-read-claude-cell.py` execs `claude`
+    and `cold-read-codex-cell.py` execs `codex`, and a stub on PATH under
+    that name is the whole seam. Both legs share this one function so a case
+    written for either reads the same and neither leg can drift into a
+    private harness.
+    """
     stub_directory.mkdir(parents=True, exist_ok=True)
-    stub = stub_directory / "claude"
+    stub = stub_directory / runtime
     stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
     stub.chmod(0o755)
     environment = dict(os.environ)
@@ -211,12 +322,60 @@ def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
     environment["COLD_READ_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     environment.update(environment_overrides or {})
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "cold-read-claude-cell.py"),
+        [sys.executable, str(repository / "scripts" / f"cold-read-{runtime}-cell.py"),
          "--cell", "restate", "--tier", "floor",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
         capture_output=True, text=True, check=False, env=environment,
     )
+
+
+def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
+                    environment_overrides=None):
+    return run_cell_launcher(repository, stub_directory, plan, report_path,
+                             *arguments, runtime="claude",
+                             environment_overrides=environment_overrides)
+
+
+def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
+                   environment_overrides=None):
+    return run_cell_launcher(repository, stub_directory, plan, report_path,
+                             *arguments, runtime="codex",
+                             environment_overrides=environment_overrides)
+
+
+def report_path_for(repository, case_slug, runtime):
+    """A report path shaped exactly as the grid names one: the record
+    directory's own name, then `--`, then the cell.
+
+    The prefix is what makes the recovery below safe to search the whole
+    records tree with (user-ruled 2026-08-25): one file name belongs to one
+    run. It also gives each case a record directory of its own, so one case's
+    leavings can never be a candidate for the next case's recovery. The cases
+    at the top of this file name their reports directly instead, because what
+    they pin — the stray-write detector — does not turn on the name.
+    """
+    record_directory_name = f"2026-08-25-{case_slug}-aaaaaaa"
+    return (repository / "cold-read-records" / record_directory_name
+            / f"{record_directory_name}--{runtime}-hunt-floor.md")
+
+
+def near_miss_directory_of(report):
+    """Where a stub writes when its plan says to write one character away:
+    the record directory's name with its last character replaced."""
+    return report.parent.parent / (report.parent.name[:-1] + "X")
+
+
+def provenance_stamp_of(report):
+    """The report's provenance line, or "" when no report was written.
+
+    The stamp is the first line of every report the shared module produces,
+    and a case that searched the whole file for a field name could find one
+    the reviewer had written in its own findings.
+    """
+    if not report.is_file():
+        return ""
+    return report.read_text(encoding="utf-8").splitlines()[0]
 
 
 with tempfile.TemporaryDirectory() as scratch:
@@ -393,6 +552,235 @@ with tempfile.TemporaryDirectory() as scratch:
           STRAY_WRITE_CHECK_SKIPPED_PHRASE in result.stderr, repr(result.stderr))
     check("...and that line too says it is not a clean result",
           "failure to look, not a clean result" in result.stderr, repr(result.stderr))
+
+    # --- The near-miss report, found before failure is declared -----------
+    # The 2026-08-25 accident in one case: the model creates a record
+    # directory one character from the one it was given and writes its whole
+    # review there. The cell used to report "the model exited without
+    # writing", which was true of the path it watched and false of the work.
+    # Driven through the Codex launcher because that is the leg it happened
+    # to; the recovery itself lives on the shared path and serves both.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "near-miss", "codex")
+    result = run_codex_cell(repository, stubs, {"*": {"near_miss": ["X"]}}, report)
+    check("a report written one directory away is recovered, and the cell succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the recovered report is at the path the cell was given",
+          report.is_file(), f"{report} absent")
+    recovered_text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("the recovered report holds what the model actually wrote",
+          NEAR_MISS_REVIEW_TEXT.strip() in recovered_text, repr(recovered_text[:200]))
+    check("the recovered report is stamped like any other",
+          recovered_text.startswith("<!-- provenance: runtime=codex"),
+          repr(recovered_text[:120]))
+    check("the recovery is announced on stderr for the grid to lift",
+          "recovered a near-miss report" in result.stderr, repr(result.stderr))
+    check("the near-miss copy is moved, not copied",
+          not (near_miss_directory_of(report) / report.name).exists(),
+          "two files now hold one review, which is the ambiguity recovery removes")
+
+    # Two candidates is ambiguous, and a guess would put a review under a
+    # stamp that may not describe it. Refused, and the refusal names both.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "two-candidates", "codex")
+    result = run_codex_cell(repository, stubs, {"*": {"near_miss": ["X", "Y"]}}, report)
+    check("two near-miss candidates fail the cell rather than being guessed between",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the refusal says the candidates were ambiguous",
+          "more than one, which is ambiguous" in result.stderr, repr(result.stderr))
+    check("neither candidate was moved into place",
+          not report.is_file(), f"{report} exists")
+
+    # No candidate at all is the ordinary failure and stays one — but it now
+    # names where it looked, which is the whole difference from the message
+    # that lost a review.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "no-candidate", "codex")
+    result = run_codex_cell(repository, stubs, {"*": {}}, report)
+    check("a run that wrote nothing anywhere still fails",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the failure names what it looked for",
+          "no near-miss report to recover" in result.stderr
+          and report.name in result.stderr
+          and "anywhere under" in result.stderr
+          and str(repository / "cold-read-records") in result.stderr,
+          repr(result.stderr))
+
+    # A file that predates the attempt is not this attempt's report. Without
+    # the mtime cutoff, yesterday's abandoned stray would be recovered today
+    # and stamped with today's model.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "stale-sibling", "codex")
+    stale_sibling_report = near_miss_directory_of(report) / report.name
+    stale_sibling_report.parent.mkdir(parents=True, exist_ok=True)
+    stale_sibling_report.write_text("STUB REVIEW: from a run that finished yesterday\n",
+                                    encoding="utf-8")
+    an_hour_ago = time.time() - 3600
+    os.utime(stale_sibling_report, (an_hour_ago, an_hour_ago))
+    result = run_codex_cell(repository, stubs, {"*": {}}, report)
+    check("a sibling file older than the attempt is not recovered",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the stale sibling is left where it was",
+          stale_sibling_report.is_file(), "an older run's file was consumed by this one")
+    check("no report was fabricated from the stale sibling",
+          not report.is_file(), f"{report} exists")
+
+    # A report written flat into the records root, rather than into any record
+    # directory, is still this run's report: the name says so. The search
+    # covers the root of the tree and not only the directories under it.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "flat-in-records-root", "codex")
+    result = run_codex_cell(
+        repository, stubs, {"*": {"report_at_records_root": True}}, report,
+    )
+    check("a report written flat into cold-read-records/ is recovered",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the report recovered from the records root is at the path given",
+          report.is_file(), f"{report} absent")
+    recovered_text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("it holds what the model wrote in the records root",
+          RECORDS_ROOT_REVIEW_TEXT.strip() in recovered_text, repr(recovered_text[:200]))
+    check("the copy in the records root is moved, not copied",
+          not (report.parent.parent / report.name).exists(),
+          "two files now hold one review")
+
+    # THE CASE THE RUN-NAMED FILE EXISTS FOR (user-ruled 2026-08-25). A second
+    # grid, running at the same time in the same checkout, writes its own
+    # report for the same cell while this attempt runs. Under the old bare
+    # names both files were `codex-hunt-floor.md`, and this cell could recover
+    # the other run's correctly placed report: this run would then hold a
+    # review of the wrong document under its stamp, and the other run would
+    # lose the review it produced. The prefix is what makes the two
+    # distinguishable, and this case is what proves the distinction holds.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "concurrent-run", "codex")
+    concurrent_report = (
+        report.parent.parent / report.parent.name.replace("aaaaaaa", "bbbbbbb")
+        / report.name.replace("aaaaaaa", "bbbbbbb"))
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"concurrent_run_report": [concurrent_report.parent.name,
+                                         concurrent_report.name]}},
+        report,
+    )
+    check("a concurrent run's report is not recovered as this run's",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("no report was fabricated from the concurrent run's file",
+          not report.is_file(), f"{report} exists")
+    check("the concurrent run keeps the report it wrote",
+          concurrent_report.is_file(),
+          f"{concurrent_report} was taken from the run that wrote it")
+    check("the failure names the file it looked for, prefix and all",
+          "no near-miss report to recover" in result.stderr
+          and report.name in result.stderr
+          and "anywhere under" in result.stderr
+          and str(repository / "cold-read-records") in result.stderr,
+          repr(result.stderr))
+
+    # --- What the cell cost is part of what it did ------------------------
+    # Until 2026-08-25 the stamp recorded every input to the run — runtime,
+    # model, effort, cell, tier, target — and nothing about the run itself,
+    # so a record set answered "what was asked for" and could not answer
+    # "what did this cost".
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "duration-claude", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    check("a claude cell succeeds with a stub runtime",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    stamp = provenance_stamp_of(report)
+    check("a claude stamp carries duration_s",
+          re.search(r"\bduration_s=\d+\b", stamp) is not None, repr(stamp))
+    check("a claude stamp carries no tokens field, because claude reports none",
+          "tokens=" not in stamp, repr(stamp))
+    check("target= stays the last field, so a path with a space cannot swallow one",
+          stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # The Codex CLI ends a run with its token total on stderr. The regression
+    # underneath this one: stderr used to be passed straight to a log the
+    # grid deletes on success, so across six grids that day the only
+    # recoverable token figure came from the single cell that FAILED.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "tokens-codex", "codex")
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "stderr": "[2026-08-25T12:00:00] tokens used: 12,345\n"}},
+        report,
+    )
+    check("a codex cell whose CLI printed a token total succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    stamp = provenance_stamp_of(report)
+    check("the token total reaches the stamp, comma-free",
+          "tokens=12345" in stamp, repr(stamp))
+    check("that stamp carries duration_s too",
+          re.search(r"\bduration_s=\d+\b", stamp) is not None, repr(stamp))
+    check("the runtime's stderr survives a successful run",
+          "tokens used: 12,345" in result.stderr, repr(result.stderr))
+
+    # stdout is the model talking, and a reviewer of a document about model
+    # costs can quite reasonably write "tokens used: N" in its findings.
+    # Reading stdout would stamp the reviewer's sentence as the run's price.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "tokens-in-chat-text", "codex")
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "stdout": "The draft claims tokens used: 99,999 per run, which I doubt.\n"}},
+        report,
+    )
+    check("a cell whose reviewer only talked about tokens succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a number in the reviewer's own words is not stamped as the run's cost",
+          "tokens=" not in provenance_stamp_of(report), repr(provenance_stamp_of(report)))
+
+    # And an absent figure is absent: an omitted field reads as "not
+    # reported", where a zero would read as "this cell cost nothing".
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "no-tokens-codex", "codex")
+    result = run_codex_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    check("a codex cell whose CLI printed no total succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("an unreported token total is omitted, never guessed at",
+          "tokens=" not in provenance_stamp_of(report), repr(provenance_stamp_of(report)))
+
+    # --- The stray-write detector runs for the Codex leg too --------------
+    # The cases at the top of this file drive the Claude launcher; this one
+    # drives the Codex launcher through the same shared call, so the pair is
+    # one case per launcher. nedschorus#161: the fleet's other review
+    # instrument ran this comparison only after codex cells, and a claude
+    # agent wrote a 25KB file into a worktree that nothing reported. Removing
+    # the check for either leg fails here.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    dirty_the_target(repository)
+    report = report_path_for(repository, "stray-codex", "codex")
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "edit": [str(repository / TARGET_RELATIVE_PATH),
+                        "The reviewer's own edit, which it should not have made.\n"]}},
+        report,
+    )
+    check("a reviewer edit is reported as a stray write through the Codex launcher too",
+          stray_write_warning(result.stderr) != "", repr(result.stderr))
+    check("the Codex leg's warning names the file that was edited",
+          TARGET_RELATIVE_PATH in stray_write_warning(result.stderr), repr(result.stderr))
+    check("the Codex cell still succeeds — writes are detected, not blocked",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
 
 
 # --- What the cell docstrings promise about the detector -------------------
