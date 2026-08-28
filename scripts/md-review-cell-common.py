@@ -62,17 +62,56 @@ CELL_CHOICES = ["restate", "defect-hunt"]
 TIER_CHOICES = ["good", "floor"]
 
 
+# A cell's own refusals, kept off every code its runtime produces so that a
+# code coming out of a cell stays readable as whose it is. sysexits.h's
+# EX_USAGE. The collision it avoids was measured on the Codex leg
+# (nedschorus#162): `codex exec` itself exits 2 when it rejects a command
+# line, and 2 was what a cell returned for a caller's typo, so one number
+# meant both "the caller invoked this cell wrongly" and "this cell invoked its
+# runtime wrongly". The measurements behind the choice of 64 are written once,
+# in scripts/code-review-codex-cell.py's docstring under the heading
+# EXIT CODES
+#
+# Both cells use it, though only the Codex leg had the collision -- the
+# `claude` CLI was probed the same day and exits 1, not 2, on an unrecognized
+# option. One contract for both legs is worth more than a code that differs
+# per runtime for a reason nobody reading a grid's output can see, and this
+# module exists precisely so the two legs cannot differ in anything but the
+# invocation.
+EXIT_BAD_INVOCATION = 64
+
+
 class CellRefusal(Exception):
     """A refusal that names its own fix. Carries the exit code to return."""
 
-    def __init__(self, message: str, exit_code: int = 2):
+    def __init__(self, message: str, exit_code: int = EXIT_BAD_INVOCATION):
         super().__init__(message)
         self.exit_code = exit_code
 
 
+class BadInvocationArgumentParser(argparse.ArgumentParser):
+    """argparse's own command-line errors join EXIT_BAD_INVOCATION.
+
+    argparse exits 2 on a missing or unknown option, and 2 is also what
+    `codex exec` returns when IT rejects a command line -- so leaving the
+    default in place would keep the two layers indistinguishable for the
+    commonest bad invocation there is, a mistyped flag. Usage text and
+    message are argparse's, unchanged; only the exit code moves.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_BAD_INVOCATION, f"{self.prog}: error: {message}\n")
+
+
 def build_argument_parser(description: str, model_help: str) -> argparse.ArgumentParser:
-    """The argument surface both cells present. Identical by construction."""
-    parser = argparse.ArgumentParser(
+    """The argument surface both cells present. Identical by construction.
+
+    The parser is the subclass above, so a mistyped flag leaves through the
+    same door as the cell's own refusals rather than through argparse's
+    default 2.
+    """
+    parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--cell", required=True, choices=CELL_CHOICES)

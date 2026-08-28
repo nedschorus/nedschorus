@@ -16,8 +16,24 @@ Usage:
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
 
-Exit codes: 0 a model produced a report, 1 every model in the tier's chain
-failed to produce one, 2 bad invocation or a refusal that names its fix.
+Exit codes: 0 a model produced a report; 1 every model in the tier's chain
+failed to produce one, which includes every way `codex exec` itself can fail;
+64 this program refused the invocation and never launched codex (a target
+that is not a file, a report path that is not a file, a missing prompt
+template, or a command-line error argparse caught). 64 rather than the
+conventional 2 because `codex exec` ITSELF exits 2 when it rejects a command
+line, so a 2 out of this program would not say which layer refused.
+
+CODEX'S OWN EXIT CODE IS NO LONGER PASSED THROUGH, and that changed with the
+move to a report file. A failed model is now a model the chain falls back
+from, so what the caller needs from the exit code is whether any model
+produced a review, not which one failed how. The code codex returned, and
+codex's own words, go to this program's stderr -- which the grid keeps
+whenever a cell fails, and which is where a defect in the command this
+program composes is diagnosed. The measurements behind the choice of 64, and
+what an exit 0 from `codex exec` does and does not promise, are written once
+in scripts/code-review-codex-cell.py's docstring under the heading
+EXIT CODES
 
 WHY THE SANDBOX IS NO LONGER READ-ONLY. This cell used to run
 `--sandbox read-only` and take the review out through

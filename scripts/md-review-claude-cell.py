@@ -16,8 +16,11 @@ Usage:
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
 
-Exit codes: 0 a model produced a report, 1 every model in the tier's chain
-failed to produce one, 2 bad invocation or a refusal that names its fix.
+Exit codes: 0 a model produced a report; 1 every model in the tier's chain
+failed to produce one; 64 this program refused the invocation and never
+launched a model, naming its own fix. 64 rather than the conventional 2 for
+the reason written beside EXIT_BAD_INVOCATION in
+scripts/md-review-cell-common.py, which both cells share.
 """
 
 import importlib.util
