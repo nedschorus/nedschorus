@@ -145,6 +145,17 @@ class WriteDetectorUnavailable(Exception):
     """
 
 
+# The phrase both "the check did not run" messages below carry, and the
+# phrase scripts/md-review-grid.py greps a cell's stderr log for. The grid
+# deletes that log on the success path, so a message it does not lift there
+# is a message nobody ever reads -- and these two are the ones that say the
+# run was never checked, which is the outcome likeliest to be mistaken for a
+# clean one. This is a contract with that file, not a sentence to reword in
+# passing: change it here and in the grid together, and
+# scripts/md-review-grid-test.py fails if only one of the two moves.
+STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
+
+
 def path_content_fingerprint(path: pathlib.Path) -> str:
     """What one path holds right now, as a short string to compare later.
 
@@ -490,16 +501,19 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     up. Detection, never blocking, per the ruling in this module's docstring.
 
     `baseline` is None when the pre-run snapshot itself failed, which is
-    reported as what it is rather than passed off as a clean result.
+    reported as what it is rather than passed off as a clean result. Both
+    ways the check can fail to run carry STRAY_WRITE_CHECK_SKIPPED_PHRASE,
+    because the grid lifts those lines out of this log before deleting it.
     """
     if baseline is None:
-        print(f"{program}: no pre-run snapshot, so stray writes were not "
-              "checked for this run.", file=sys.stderr)
+        print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — no pre-run "
+              "snapshot of the working tree was taken. This is a failure to "
+              "look, not a clean result.", file=sys.stderr)
         return
     try:
         stray = stray_writes_since(baseline, own_report_path)
     except WriteDetectorUnavailable as error:
-        print(f"{program}: could not check for stray writes — git status "
+        print(f"{program}: {STRAY_WRITE_CHECK_SKIPPED_PHRASE} — git status "
               f"failed ({error}). This is a failure to look, not a clean "
               "result.", file=sys.stderr)
         return

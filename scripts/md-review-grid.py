@@ -132,16 +132,30 @@ def wait_for_cells(running: dict) -> list:
                 and report_path.read_text(encoding="utf-8").strip() != ""
             )
             if code == 0 and has_report:
-                # The cell writes its stray-write warning to this log and
-                # nowhere else, and this is the branch that deletes the log --
-                # so without lifting the warning out first, the one path where
-                # the detector actually runs is the path where its finding is
-                # destroyed. Carried onto the grid's own output, addressed to
-                # the reviewing agent reading these lines: a stray edit is
-                # ordinary cleanup for that agent, not something to escalate.
+                # The cell writes what its stray-write check found to this
+                # log and nowhere else, and this is the branch that deletes the
+                # log -- so without lifting those lines out first, the one path
+                # where the check runs is the path where its result is
+                # destroyed. Both outcomes are lifted, and the second is why
+                # this loop has two clauses rather than one. A cell whose
+                # `git status` could not answer -- an index.lock held by
+                # another agent in the same checkout is the ordinary way, and
+                # the cell says in as many words that this is a failure to
+                # look, not a clean result -- otherwise reported here exactly
+                # like a cell that looked and found nothing, and a whole grid
+                # run read as clean when nothing had been checked at all
+                # (nedschorus#167). The second clause matches the phrase the
+                # cell module pins for it as
+                # STRAY_WRITE_CHECK_SKIPPED_PHRASE; keep the two in step.
+                # Carried onto the grid's own output, addressed to the
+                # reviewing agent reading these lines: a stray edit is ordinary
+                # cleanup for that agent, not something to escalate.
                 for line in stderr_path.read_text(encoding="utf-8").splitlines():
                     if "changed files outside its report" in line:
                         print(f"STRAY WRITE: {line.strip()}", flush=True)
+                    if "stray writes were not checked for this run" in line:
+                        print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
+                              f"{line.strip()}", flush=True)
                 stderr_path.unlink(missing_ok=True)
                 print(f"saved: {report_path}", flush=True)
                 continue

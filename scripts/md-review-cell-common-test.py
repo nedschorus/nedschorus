@@ -50,6 +50,10 @@ WHAT IS PINNED HERE.
     later model that exits 0 having written nothing is credited with its
     predecessor's findings, under a provenance stamp naming the wrong model.
 
+  - Failing to look does not read as looking and finding nothing. When the
+    baseline could not be taken, or `git status` could not answer afterwards,
+    the cell says so in the words the grid lifts out of its log.
+
   - And when the model that wrote and then failed is the LAST in the chain,
     its file does not survive the run either. There is no next attempt to
     clear the path, so the cell used to say no report was produced while an
@@ -82,16 +86,24 @@ CELL_SCRIPT_NAMES = (
 # the run starts with it dirty — md-review's ordinary condition.
 TARGET_RELATIVE_PATH = "docs/drafts/md-review-cell-common-test-target.md"
 
+# The phrase both "the check did not run" messages must carry, spelled out
+# here rather than imported: it is a contract with scripts/md-review-grid.py,
+# which greps a cell's stderr log for this text, and a test that read the
+# phrase from the module it tests would pass however either side was reworded.
+STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
+
 # A stand-in for the `claude` CLI. It does what
 # MD_REVIEW_CELL_TEST_STUB_PLAN tells it to for the model it was launched
 # with: "report" is text to write to the report path (absent means write
 # nothing, which is how a model that dies quietly looks), "edit" is a
 # [path, text] pair to append to some other file — a reviewer editing the
-# document instead of reviewing it — and "exit" is the code to exit with.
+# document instead of reviewing it — "break_git" is a .git directory to
+# rename aside, which leaves a cell whose baseline was taken and whose
+# post-run check cannot run, and "exit" is the code to exit with.
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
 STUB_MODEL_RUNTIME = """#!/usr/bin/env python3
-import json, os, sys
+import json, os, pathlib, sys
 
 try:
     sys.stdin.read()  # the Claude leg feeds the prompt on stdin
@@ -109,6 +121,9 @@ if "edit" in step:
     edited_path, added_text = step["edit"]
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write(added_text)
+if "break_git" in step:
+    git_directory = pathlib.Path(step["break_git"])
+    git_directory.rename(git_directory.with_name(".git-renamed-by-the-stub"))
 sys.exit(step.get("exit", 0))
 """
 
@@ -184,7 +199,8 @@ def dirty_the_target(repository):
         handle.write("An uncommitted revision, written before the review ran.\n")
 
 
-def run_claude_cell(repository, stub_directory, plan, report_path, *arguments):
+def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
+                    environment_overrides=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_MODEL_RUNTIME, encoding="utf-8")
@@ -193,6 +209,7 @@ def run_claude_cell(repository, stub_directory, plan, report_path, *arguments):
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["MD_REVIEW_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["MD_REVIEW_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / "md-review-claude-cell.py"),
          "--cell", "restate", "--tier", "floor",
@@ -343,6 +360,39 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no report is left behind for a reader to mistake for a review",
           not report.exists(),
           "an unstamped report survived a run the cell called failed")
+
+
+    # --- Failing to look says so, in the words the grid lifts -------------
+    # Two ways the check cannot run, and both must be distinguishable from a
+    # clean result — that is the whole reason WriteDetectorUnavailable is an
+    # exception and not a path-shaped string. Both lines carry the phrase
+    # scripts/md-review-grid.py greps this cell's log for before deleting it;
+    # scripts/md-review-grid-test.py pins the other end of that contract.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "md-review-records" / "run-f" / "claude-restate-floor.md"
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+        environment_overrides={"GIT_DIR": str(scratch / "no-such-git-directory")},
+    )
+    check("a cell that could not take a baseline says the check did not run",
+          STRAY_WRITE_CHECK_SKIPPED_PHRASE in result.stderr, repr(result.stderr))
+    check("...and says a missing check is not a clean result",
+          "failure to look, not a clean result" in result.stderr, repr(result.stderr))
+
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "md-review-records" / "run-g" / "claude-restate-floor.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "break_git": str(repository / ".git")}},
+        report,
+    )
+    check("a cell whose post-run git status fails says the check did not run",
+          STRAY_WRITE_CHECK_SKIPPED_PHRASE in result.stderr, repr(result.stderr))
+    check("...and that line too says it is not a clean result",
+          "failure to look, not a clean result" in result.stderr, repr(result.stderr))
 
 
 # --- What the cell docstrings promise about the detector -------------------
