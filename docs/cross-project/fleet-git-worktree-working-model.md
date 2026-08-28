@@ -184,10 +184,9 @@ A re-registration was attempted and deliberately reverted (PR #103,
 records all three forms and their evidence. The closing ruling: a
 registration line carries no more machinery, because the forked-session
 wrong-copy failure this would guard against has never been observed —
-per the defensive-tightening rule (CLAUDE.md, user-ruled 2026-08-20),
-hardening needs a named behavior. Reopen trigger: that failure actually
-observed — a guard demonstrably running as another checkout's copy,
-with effect.
+per the reviewer rule in CLAUDE.md, hardening needs a named behavior.
+Reopen trigger: that failure actually observed — a guard demonstrably
+running as another checkout's copy, with effect.
 
 **R2. A session states and verifies its git context at start — satisfied
 by composition (ruled 2026-08-17), nothing built.** The four facts of
