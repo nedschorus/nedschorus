@@ -14,6 +14,7 @@ Prints one line per case and exits non-zero if any case fails.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -457,22 +458,39 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           "The clock read 2026-08-27 20:44 PDT at launch" in stamped, stamped[:300])
     check("ignition says where the successor's time stamps come from",
           "take every time stamp from `date`, never from estimate" in stamped, stamped[:300])
-    # A naive moment is read as local time and printed with the zone's name,
-    # which is what `date` prints and what the successor is told to compare.
+    # A naive moment is read as local time and printed with a zone attached,
+    # which is what the successor is told to compare against `date`. The zone
+    # ITSELF is not pinned — it is whichever zone the machine running this
+    # suite sits in — but something has to stand between the time and "at
+    # launch", or `astimezone()` could be deleted and this case stay green.
     naive_stamped = supervisor.build_ignition_prompt(
         Path("/tmp/d.md"), {"written-at": recent}, 0,
         launch_time=datetime(2026, 8, 27, 20, 44),
     )
     check("a naive launch moment still names a zone",
-          "The clock read 2026-08-27 20:44 " in naive_stamped
-          and " at launch" in naive_stamped, naive_stamped[:300])
+          bool(re.search(r"The clock read 2026-08-27 20:44 \S+ at launch", naive_stamped)),
+          naive_stamped[:300])
     # Read at the call, not defaulted in the signature: a supervisor runs for
     # days, and an import-time default would stamp every successor with the
-    # moment the supervisor started.
-    unstamped = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
-    check("an unsupplied launch clock is read when the prompt is built",
-          f"The clock read {datetime.now().astimezone().strftime('%Y-%m-%d')}" in unstamped,
-          unstamped[:300])
+    # moment the supervisor started. Asserting today's date cannot tell those
+    # two apart, since import and call fall on the same day. Replacing the
+    # module's clock AFTER import can: a signature default was evaluated
+    # before this stand-in existed, so it cannot produce the moment below.
+    class ClockStuckIn1999(supervisor.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = datetime(1999, 12, 31, 23, 58,
+                             tzinfo=timezone(timedelta(hours=-7), "PDT"))
+            return fixed.astimezone(tz) if tz is not None else fixed
+
+    real_datetime = supervisor.datetime
+    supervisor.datetime = ClockStuckIn1999
+    try:
+        unstamped = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
+    finally:
+        supervisor.datetime = real_datetime
+    check("an unsupplied launch clock is read at the call, not at import",
+          "The clock read 1999-12-31 23:58 PDT at launch" in unstamped, unstamped[:300])
 
     # --- Retention --------------------------------------------------------
     for generation in range(1, 6):
@@ -810,6 +828,17 @@ def run_boot_ignition_case(workspace: Path):
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("the ignition prompt carries the handoff's next step",
           "resume the audit" in launched, launched[:200])
+    # The boot-recovery path builds its own prompt: no dialog extract exists,
+    # so the next-step and the repository are the successor's whole context.
+    # That is the thinnest context this supervisor launches on, and it used to
+    # be the one launch that carried no clock at all (measured by the merge
+    # lane on #177, before BootRecoveryIgnitionPlan routed it through
+    # launch_clock_sentence).
+    check("the boot-recovery ignition prompt carries the launch clock, stamped and zoned",
+          bool(re.search(r"The clock read \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+ at launch", launched)),
+          launched[:400])
+    check("the boot-recovery ignition prompt names `date` as the source of stamps",
+          "take every time stamp from `date`, never from estimate" in launched, launched[:400])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
 

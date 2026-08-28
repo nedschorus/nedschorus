@@ -304,33 +304,60 @@ def next_step_from(handoff_fields: dict) -> str:
     return handoff_fields.get("next-step", "").strip()
 
 
+def launch_clock_sentence(launch_time: Optional[datetime] = None) -> str:
+    """The one sentence telling a successor what the clock read at its launch.
+
+    Every prompt the supervisor launches a session on carries this, whether
+    the successor gets a dialog extract or only its next-step: the context
+    that is thinnest is the one that can least afford a guessed time. The
+    wording is the user's, ruled verbatim in nedschorus#175; only the stamp
+    inside it is computed.
+
+    The stamp is local time with its zone abbreviation, formatted
+    %Y-%m-%d %H:%M %Z. That is not the layout bare `date` prints, but it is
+    the same clock, and `date +"%Y-%m-%d %H:%M %Z"` reproduces it exactly, so
+    the successor can hold the two side by side. Its resolution is a minute,
+    which is why callers in the supervisor read the moment immediately before
+    launching rather than earlier: any delay that crosses a minute boundary
+    makes an earlier reading print a minute that has already passed.
+
+    launch_time is read here when a caller does not supply one, in the body
+    rather than as a signature default: a default is evaluated once at import,
+    and this supervisor runs for days, so it would stamp the moment the
+    process started.
+    """
+    moment = launch_time if launch_time is not None else datetime.now()
+    if moment.tzinfo is None:
+        moment = moment.astimezone()  # a naive moment is local; name that zone
+    return (f"The clock read {moment.strftime('%Y-%m-%d %H:%M %Z')} at launch; "
+            "take every time stamp from `date`, never from estimate.")
+
+
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
                           queue_status: str = "", launch_time: Optional[datetime] = None) -> str:
     """Compose the successor's first prompt.
 
-    launch_time is the wall clock at launch, taken here when the caller does
-    not supply one; tests supply a fixed moment. It is read inside the call
-    rather than defaulted in the signature, because a signature default is
-    evaluated once at import and this supervisor runs for days — the stamp
-    would name the moment the process started, not the moment the successor
-    did.
+    launch_time is the wall clock the prompt reports. The supervisor reads it
+    immediately before launch_agent_session and passes it in — see
+    DialogIgnitionPlan, which holds everything else until that moment, so
+    that "The clock read ... at launch" names the launch and not an earlier
+    composition. A caller that supplies nothing gets the clock read here, at
+    the call: that is the path direct callers and tests take, and it is read
+    in the body rather than defaulted in the signature because a signature
+    default is evaluated once at import, and this supervisor runs for days —
+    the stamp would name the moment the process started.
 
     The successor is told the time because it cannot otherwise know it: it
     wakes with a dialog whose events are hours old and no sense of now. Left
     to estimate, one session's handoff stamps drifted by as much as an hour
-    and forty-five minutes, twice. The stamp is local time with its zone, the
-    form `date` prints, so the successor can see at a glance whether the clock
-    it reads matches the one it was given.
+    and forty-five minutes, twice. launch_clock_sentence carries the wording
+    and the format.
     """
     next_step = next_step_from(handoff_fields)
     elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
-    launch_moment = launch_time if launch_time is not None else datetime.now()
-    if launch_moment.tzinfo is None:
-        launch_moment = launch_moment.astimezone()  # name the zone, as `date` does
     lines = [
         f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
-        f"The clock read {launch_moment.strftime('%Y-%m-%d %H:%M %Z')} at launch; "
-        "take every time stamp from `date`, never from estimate.",
+        launch_clock_sentence(launch_time),
         f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
     ]
     if queue_status:
@@ -347,6 +374,52 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: 
     # one argv element, so newlines survive delivery. Joining it into the
     # preamble would flatten exactly what the block form exists to preserve.
     return f"{preamble}\n\nThen take the next step:\n{next_step}"
+
+
+@dataclass
+class DialogIgnitionPlan:
+    """The successor's first prompt, composed all but the clock.
+
+    Everything here is known when the retiring session's dialog is extracted.
+    The clock is not taken then, because a branch sync runs between that work
+    and the launch, and the prompt tells the successor "The clock read ... at
+    launch" — a stamp with minute resolution, which any delay across a minute
+    boundary makes wrong. Holding the parts and composing at the launch site
+    keeps the sentence true; compose() is called there with the moment just
+    read.
+    """
+    extract_path: Path
+    handoff_fields: dict
+    task_count: int
+    queue_status: str = ""
+
+    def compose(self, launch_time: datetime) -> str:
+        return build_ignition_prompt(self.extract_path, self.handoff_fields,
+                                     self.task_count, self.queue_status,
+                                     launch_time=launch_time)
+
+
+@dataclass
+class BootRecoveryIgnitionPlan:
+    """The prompt for a boot with a handoff but no dialog to hand over.
+
+    The retiring session's transcript could not be extracted — a new machine,
+    or the transcript is gone — so the next-step and the repository are the
+    successor's whole context. That is the thinnest context this supervisor
+    ever launches on, and the reason this plan exists rather than an f-string:
+    it composes at the launch site through the same clock sentence as the
+    dialog path, so the successor that can least afford a guessed time is not
+    the one launched without the clock.
+    """
+    next_step: str
+
+    def compose(self, launch_time: datetime) -> str:
+        return (
+            f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
+            "session's dialog extract is unavailable; this next-step and the "
+            "repository are your whole context.) "
+            f"{launch_clock_sentence(launch_time)}"
+        )
 
 
 def prune_old_generations(directory: Path, stem: str) -> None:
@@ -648,8 +721,10 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
                             handoff_fields: dict, generation: int):
     """Extract, archive, prune, and build the successor's launch.
 
-    Returns (successor_session_id, ignition_prompt), or (None, None) when
-    extraction failed and relaunching would lose the dialog.
+    Returns (successor_session_id, DialogIgnitionPlan), or (None, None) when
+    extraction failed and relaunching would lose the dialog. The plan is not
+    yet a prompt: the caller composes it at the launch, with the clock read
+    there, so the stamp the successor reads names its own launch.
     """
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
@@ -683,10 +758,10 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
         copied = preseed_tasks(retiring_session_id, successor_session_id)
         print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
 
-    prompt = build_ignition_prompt(
+    plan = DialogIgnitionPlan(
         extract_path, handoff_fields, task_count_for(successor_session_id), queue_status
     )
-    return successor_session_id, prompt
+    return successor_session_id, plan
 
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
@@ -709,6 +784,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
 
     adopted = settings.adopted_session
+    # Set when the next launch is an ignition: the prompt is composed from it
+    # at the launch site, so the clock it carries is read there.
+    ignition_plan = None
     # A fresh start always mints a new session id. Reusing the one in the state
     # file would launch `claude --session-id` against a transcript that already
     # exists — and if the supervisor died while its agent kept running, would put
@@ -769,7 +847,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                     return 0
             generation += 1
             retiring_session_id = state.get("session_id")
-            successor_session_id, ignition = (
+            successor_session_id, ignition_plan = (
                 carry_over_to_successor(settings, retiring_session_id, boot_fields, generation)
                 if retiring_session_id else (None, None)
             )
@@ -778,16 +856,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # gone). The next-step still carries the work: ignite with it
                 # alone rather than discarding the handoff.
                 successor_session_id = str(uuid.uuid4())
-                ignition = (
-                    f"{next_step_from(boot_fields)}\n\n(Recovered at supervisor boot: the "
-                    "previous session's dialog extract is unavailable; this next-step and the "
-                    "repository are your whole context.)"
-                )
+                ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
                 print("handoff-supervisor: igniting from an unconsumed handoff without a dialog extract")
             else:
                 print("handoff-supervisor: igniting from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
-            session_id, prompt = successor_session_id, ignition
+            session_id = successor_session_id
 
     while True:
         state.update({"session_id": session_id, "generation": generation})
@@ -804,6 +878,11 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             # directory, and changing files under a working agent is the one
             # thing this must never do.
             print(f"handoff-supervisor: {sync_working_branch_with_main(settings.working_directory)}")
+            if ignition_plan is not None:
+                # Here, not where the plan was made: the sync above takes as
+                # long as a fetch takes, and the prompt says "at launch".
+                prompt = ignition_plan.compose(datetime.now())
+                ignition_plan = None
             verb = "resuming" if resume_first_launch else "launching"
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
             process = launch_agent_session(
@@ -857,7 +936,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 write_supervisor_state(settings.state_path, state)
                 return 0
 
-        successor_session_id, prompt = carry_over_to_successor(
+        successor_session_id, ignition_plan = carry_over_to_successor(
             settings, session_id, handoff_fields, generation
         )
         if successor_session_id is None:
