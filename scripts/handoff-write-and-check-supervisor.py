@@ -219,9 +219,17 @@ def task_notification_text(record: dict):
     `user` record, and the copy is an `attachment` record.
 
     Every combination is read rather than only the delivered one, because the
-    first of them is a notification nothing ever delivered — a subagent
-    finishing as its session dies, which is the moment this roster exists for.
-    That case has a real specimen in every session measured.
+    first of them is a notification nothing ever delivered — and an
+    undelivered notification is invisible to a reader that only takes the
+    delivered turn.
+
+    What that combination actually held, stated as measured rather than as
+    imagined: all ten enqueue-only specimens across the three sessions carry
+    `killed` at the session's death — eight naming background tasks, and two
+    naming subagents, both in 3f4965a7. A subagent whose COMPLETION was
+    enqueued and never delivered has no specimen in any of the three. That
+    variant is handled because reading every combination is what makes any
+    undelivered notification visible, not because it was observed.
     """
     if record.get("type") == "user":
         message = record.get("message")
@@ -324,17 +332,35 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             notification = task_notification_text(record)
             if notification is None:
                 continue
-            task_id = re.search(r"<task-id>(.*?)</task-id>", notification)
             status = re.search(r"<status>(.*?)</status>", notification)
-            entry = by_agent_id.get(task_id.group(1)) if task_id else None
-            if entry is None or status is None:
+            if status is None:
                 continue
-            # Only a CHANGE of status is a new event. The same completion is
-            # announced up to three times, so taking every announcement would
-            # date the event at its last echo rather than at its arrival.
-            if status.group(1) != entry["last_event"]:
-                entry["last_event"] = status.group(1)
-                entry["last_event_at"] = stamp
+            # EVERY task-id in the notification, not just the first. One
+            # notification can name several agents under a single <status>:
+            # that is the shape the harness uses to report agents from a
+            # previous session with no completion record, which is the
+            # highest-value event this roster carries. Reading only the first
+            # left every later agent holding whatever it had before.
+            # Specimen, in this seat's own history: session 3f4965a7 at
+            # 2026-08-21T19:31:05Z names a3fe2b9aecae01f3b and
+            # a677554663305e800 — both subagents that session spawned — under
+            # <status>stopped</status>. Truncate that transcript at the
+            # notification and the single-id derivation reports the second
+            # agent as "killed at 18:38:09Z", 53 minutes early and under the
+            # wrong event name. Ids that name background tasks rather than
+            # subagents are not in by_agent_id and are skipped.
+            for task_id in re.findall(r"<task-id>(.*?)</task-id>",
+                                      notification):
+                entry = by_agent_id.get(task_id)
+                if entry is None:
+                    continue
+                # Only a CHANGE of status is a new event. The same completion
+                # is announced up to three times, so taking every announcement
+                # would date the event at its last echo rather than at its
+                # arrival.
+                if status.group(1) != entry["last_event"]:
+                    entry["last_event"] = status.group(1)
+                    entry["last_event_at"] = stamp
     return roster
 
 

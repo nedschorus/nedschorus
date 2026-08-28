@@ -444,9 +444,10 @@ def notification_records(task_id: str, status: str, summary: str, enqueued_at: s
     optionally removed from the queue. Measured across three real session
     transcripts, no notification body ever appears more than three times, and
     four combinations occur — see `task_notification_text` in the writer for
-    the counts. A subagent that finishes as its session is dying gets only the
-    enqueue, which is why the derivation reads every combination — and why it
-    must not count the echoes as separate events.
+    the counts. The enqueue-only combination is a notification nothing ever
+    delivered, which is invisible to a reader that takes only the delivered
+    turn; that is why the derivation reads every combination, and why it must
+    not count the echoes as separate events.
 
     This helper can emit all four records at once, which the real transcripts
     never do. That is deliberate: a fixture that emits the maximum exercises
@@ -467,6 +468,35 @@ def notification_records(task_id: str, status: str, summary: str, enqueued_at: s
         records.append({"type": "queue-operation", "operation": "remove", "timestamp": removed_at,
                         "sessionId": FIXTURE_SESSION_ID, "content": body})
     return records
+
+
+def multi_id_notification_records(task_ids: list, status: str, summary: str,
+                                  enqueued_at: str) -> list:
+    """One notification naming SEVERAL agents under a single <status>.
+
+    Shape taken from a real specimen rather than invented: session `3f4965a7`,
+    2026-08-21T19:31:05Z, names two subagents that session spawned —
+    a3fe2b9aecae01f3b and a677554663305e800 — under <status>stopped</status>,
+    the summary beginning "No completion record was found for 2 background
+    agents from the previous session". Five such multi-id bodies exist across
+    the transcripts under ~/.claude/projects.
+
+    This is the harness's way of reporting agents from a previous session with
+    no completion record, which is the single highest-value event this roster
+    carries. A derivation reading only the first <task-id> leaves every later
+    agent holding whatever it had before: truncate that real transcript at the
+    notification and the second agent reads "killed at 18:38:09Z", 53 minutes
+    early and under the wrong event name.
+    """
+    ids = "".join(f"<task-id>{task_id}</task-id>\n" for task_id in task_ids)
+    body = ("<task-notification>\n"
+            + ids
+            + f"<status>{status}</status>\n"
+            + f"<summary>{summary}</summary>\n"
+            "</task-notification>")
+    return [{"type": "queue-operation", "operation": "enqueue",
+             "timestamp": enqueued_at, "sessionId": FIXTURE_SESSION_ID,
+             "content": body}]
 
 
 def monitor_records(task_id: str, timestamp: str, killed_at: str) -> list:
@@ -507,6 +537,10 @@ FIXTURE_IDLE_AGENT = "afixture0idle0001"      # completed a round, then sat idle
 FIXTURE_SILENT_AGENT = "afixture0silent01"    # spawned, never notified (no real specimen)
 FIXTURE_UNDELIVERED_AGENT = "afixture0undeliv1"  # completion enqueued, never delivered
 FIXTURE_MONITOR_TASK = "b41fasmax"            # a background monitor, not a subagent
+# Two subagents reported together in ONE notification, the shape a real
+# specimen has (see multi_id_notification_records).
+FIXTURE_ORPHAN_FIRST = "afixture0orphan01"
+FIXTURE_ORPHAN_SECOND = "afixture0orphan02"
 
 
 def write_fixture_transcript(path: Path) -> None:
@@ -529,6 +563,35 @@ def write_fixture_transcript(path: Path) -> None:
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+
+def write_multi_id_fixture_transcript(path: Path) -> None:
+    """Two subagents, each given its own event, then BOTH named in one
+    notification — the orphan-report shape.
+
+    The second agent's single-id `killed` comes first so that a derivation
+    reading only the first id of the multi-id notification leaves it holding
+    that earlier, wrong event. That is the real specimen's shape: the agent
+    dropped by such a reader is not left blank, it is left confidently wrong.
+    """
+    records = [
+        spawn_record(FIXTURE_ORPHAN_FIRST, "Phase 0 inventory",
+                     "2026-08-21T17:26:13.019Z"),
+        spawn_record(FIXTURE_ORPHAN_SECOND, "Phase 1 inventory",
+                     "2026-08-21T17:26:21.400Z"),
+        *notification_records(FIXTURE_ORPHAN_SECOND, "killed",
+                              'Agent "Phase 1 inventory" was killed',
+                              "2026-08-21T18:38:09.932Z",
+                              delivered_at="2026-08-21T18:38:09.932Z"),
+        *multi_id_notification_records(
+            [FIXTURE_ORPHAN_FIRST, FIXTURE_ORPHAN_SECOND], "stopped",
+            "No completion record was found for 2 background agents from the "
+            "previous session",
+            "2026-08-21T19:31:05.013Z"),
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n",
+                    encoding="utf-8")
 
 
 def run_spawned_subagent_roster_cases(workspace: Path):
@@ -589,6 +652,26 @@ def run_spawned_subagent_roster_cases(workspace: Path):
                              'spawned at 2026-08-23T19:55:24Z, '
                              'last event completed at 2026-08-23T20:52:59Z'),
           field_lines[0])
+
+    # One notification, several agents. The harness reports agents from a
+    # previous session with no completion record this way, so this is the
+    # orphan report the roster exists to carry — and reading only the first
+    # <task-id> silently leaves the others on a stale event.
+    multi_path = workspace / "roster-multi-id.jsonl"
+    write_multi_id_fixture_transcript(multi_path)
+    multi = {entry["agent_id"]: entry
+             for entry in writer.spawned_subagent_roster(multi_path)}
+    check("every agent named in one notification gets the event, not just the first",
+          multi[FIXTURE_ORPHAN_FIRST]["last_event"] == "stopped"
+          and multi[FIXTURE_ORPHAN_SECOND]["last_event"] == "stopped",
+          str(multi))
+    check("and every one of them is dated when that notification arrived",
+          multi[FIXTURE_ORPHAN_FIRST]["last_event_at"] == "2026-08-21T19:31:05Z"
+          and multi[FIXTURE_ORPHAN_SECOND]["last_event_at"] == "2026-08-21T19:31:05Z",
+          str(multi))
+    check("a later-named agent is not left holding its earlier event",
+          multi[FIXTURE_ORPHAN_SECOND]["last_event_at"] != "2026-08-21T18:38:09Z",
+          str(multi[FIXTURE_ORPHAN_SECOND]))
 
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
