@@ -24,11 +24,108 @@ It fires ONCE per session: after firing it records the fact in the handoff
 directory, so the reminder does not repeat at every subsequent turn while
 the agent is composing the handoff.
 
+WHILE A SUBAGENT IS RUNNING THE HANDOFF WAITS (user-ruled 2026-08-27). A
+recycle kills the session, and the session's in-process subagents die with
+it: on 2026-08-27 a seat dispatched a builder subagent at 20:38, the hook
+fired at 50% at 20:43, and the subagent died four minutes into its job. So
+at the threshold the hook first asks whether any Agent-tool subagent is
+still in flight. The first time one is, it says so — spawn no new subagents,
+the handoff fires when they finish — and records that it has said it, in a
+deferral marker beside the fired one. At every later boundary while the wait
+continues it exits silently. Saying it again would refuse the stop again, and
+a hook that refuses the stop at every boundary drives an otherwise idle
+session into a loop of short turns, one model call each, for as long as the
+subagent runs. Going quiet costs nothing: the completion notification wakes
+the session by itself, and the boundary that ends that turn is where the scan
+finds nothing in flight and the handoff fires. The standing ruling that a recycle records its subagents rather
+than waiting for them (2026-08-23, [nedschorus#153]) still governs
+everything else; this deferral is its one bounded exception, and
+--ceiling-used-percentage is the bound. Above the ceiling the handoff fires
+whatever is running, because a session deferring to a subagent that never
+finishes would run out of context instead of recycling — which is a worse
+loss than the one this defers.
+
+TWO MARKERS, both in the handoff directory and both named for the session.
+`<session>-handoff-asked` is the older one and keeps its meaning exactly: it
+is written when the handoff fires, and it is what stops the reminder
+repeating while the agent composes the handoff. `<session>-handoff-deferred`
+is written the first time the hook defers, and its whole job is to keep the
+deferral quiet once it has been said. It is left in place when the handoff
+finally fires — the fired marker is what governs repeats, and clearing the
+deferral marker there would tell nobody anything.
+
+IN FLIGHT means spawned and not yet finished, both read from the transcript.
+A spawn is a tool result carrying `status: async_launched` and an `agentId`;
+a Monitor's tool result carries neither, so monitors are excluded by their
+shape rather than by a guess about their ids. A finish is that agent's id
+inside the `<task-id>` tag of a task-notification. The notification arrives
+in more than one record shape — as a `user` record when the session is idle
+enough to be interrupted, as an `attachment` plus `queue-operation` pair
+when it is busy — and in the 2026-08-27 transcript six of the fourteen
+finished subagents produced no `user` record at all, so the scan matches the
+tag wherever in a record it appears rather than keying on one shape.
+
+WHAT THE SCAN COSTS: the whole transcript, read once. The used share comes
+from the tail, but a spawn can be hours back, so this read cannot be a tail
+read. Measured at roughly 2 ms per megabyte: 7 ms on the 3.5 MB transcript of
+the session this change came from, and 8.7 ms on the largest transcript
+measured, 3.9 MB. Those are 2.0 and 2.23 ms per megabyte; the rate is
+given to one figure because it is a sizing aid, not a model, and an
+idle machine is what it assumes — the same scan under eight concurrent
+review subprocesses measured 24 to 48 ms. It is paid only between the threshold and the fire:
+never below the threshold, and never once the fired marker is written. A
+silent deferred boundary still pays it, because whether the wait is over is
+exactly what it is asking.
+
+WHAT THE SCAN DOES WHEN IT CANNOT TELL: it says so, and the handoff waits.
+A line that carries the spawn marker and does not parse, or a read error,
+raises TranscriptCouldNotBeFullyRead, and below the ceiling that defers
+exactly as a running subagent does, with a notice that says the count is
+unknown. Before that the two answers were one: an empty list meant both
+"nothing is running" and "I could not look", and main() fired on either.
+
+WHAT AN EMPTY LIST MEANS, EXACTLY: no parseable spawn record is without a
+completion. That is narrower than "nothing is running", and the difference is
+not academic. Only a line carrying the spawn marker is parsed at all, and
+across 550 real spawn records the marker sits a median 31.5% of the way into
+its line, so a record cut off before its marker is not a candidate — it is
+passed over in silence and still yields an empty list. Failing closed narrows
+this gap; it does not close it.
+
+HOW LIKELY A TRUNCATED RECORD IS, MEASURED (merge-lane review of PR #180,
+2026-08-28). An earlier version of this paragraph called a half-written final
+line "the ordinary state" of a transcript being appended to. That was asserted,
+not measured, and the measurements do not support it: of 841 transcripts on
+this machine, none ends mid-line; appending a median-sized spawn record
+(5.1 KB) 3,000 times while polling concurrently exposed no partial record, and
+800 appends of the largest observed record (86 KB) exposed none either. A
+realistically sized append reads atomically on this filesystem. What is NOT
+established is whether the harness writes each record in one write() call,
+which is why the case is guarded rather than dismissed: failing closed costs
+at most a deferral to the ceiling, and firing wrongly costs a subagent.
+
+THE READ-ERROR HALF IS NOT REACHABLE THROUGH main(). The used-share read runs
+first on the same file and exits the hook when it returns None, so a
+transcript this process cannot open never reaches the scan. The raise is kept
+for any other caller, and for a file that stops being readable between the two
+reads.
+
+TWO WAYS THE SCAN CAN STILL BE WRONG, both of them in the fire-too-early
+direction and neither bounded by the ceiling, because both look like a clean
+answer rather than a failure. An agent resumed by SendMessage runs again with
+no new spawn record, so its earlier completion still stands and the handoff
+fires while it works — the behaviour this project had before this change. A
+subagent stopped by TaskStop takes the same path as any other finish and is
+untested, because no specimen exists. A completion the scan misses errs the
+other way and defers the handoff no further than the ceiling.
+
 Threshold: --threshold-used-percentage, default 50.
+Ceiling: --ceiling-used-percentage, default 65.
 """
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -61,6 +158,42 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 # twice in a day: once when boundary judgment was removed, once when the writer
 # took over the fields.
 HANDOFF_INSTRUCTION = "Run the handoff skill now."
+
+# The deferral says the opposite of the instruction above, so it must not read
+# like it: the agent is being told to keep working, and told the one thing that
+# would extend the wait indefinitely.
+HANDOFF_DEFERRED_NOTICE = (
+    "Context at {used_percentage:.0f}% — handoff deferred while "
+    "{subagent_count} subagent(s) run. Spawn no new subagents; the handoff "
+    "fires when they finish, or when context reaches the ceiling."
+)
+
+# Said instead of the notice above when the scan could not finish. It reports
+# the wait without a count, because the count is exactly what is not known.
+HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
+    "Context at {used_percentage:.0f}% — handoff deferred: the transcript "
+    "could not be fully read, so how many subagents are running is unknown. "
+    "Spawn no new subagents; the handoff fires when they finish, or when "
+    "context reaches the ceiling."
+)
+
+class TranscriptCouldNotBeFullyRead(Exception):
+    """The in-flight scan could not read the whole transcript, so what it
+    found is not an answer about what is running.
+
+    Raised rather than returned so no caller can mistake it for "nothing in
+    flight". That mistake is the defect this class exists to prevent: an empty
+    list is falsy, `if subagents_in_flight:` reads it as an all-clear, and the
+    handoff fires and kills the subagent the deferral is for.
+    """
+
+
+# What a spawned subagent's tool result carries and a Monitor's does not.
+SPAWNED_SUBAGENT_STATUS = "async_launched"
+
+# A completion notification names the agent that finished in this tag, in every
+# record shape that carries the notification.
+TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
 
 
 def hook_payload_from_stdin() -> dict:
@@ -148,9 +281,97 @@ def context_used_percentage_from_transcript(transcript_path: str):
     return 100.0 * used_tokens / context_window_for(message.get("model", ""))
 
 
+def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
+    """Return the ids of the session's Agent-tool subagents still running.
+
+    A subagent is in flight when the transcript holds its spawn and no
+    completion notification naming it. Both halves are read from the whole
+    file, not the tail: a spawn can be hours behind the newest record, and a
+    session that missed one would kill a subagent it did not know about,
+    which is the failure this exists to prevent (2026-08-27).
+
+    The cheap substring test on each line is what keeps the whole-file read
+    affordable — a transcript is mostly large tool results, and only the few
+    lines that could matter are parsed. Cost and limits are in the module
+    docstring.
+
+    A spawn is identified structurally, by `status: async_launched` plus an
+    `agentId` in the tool result. Monitors and background shell commands also
+    produce task notifications, but their tool results carry no agentId, so
+    they never enter the spawned set and their notifications match nothing.
+
+    Order is spawn order, so a caller reporting the ids reports them in the
+    order the agent created them.
+
+    THE SCAN FAILS CLOSED (merge-lane review of PR #180, 2026-08-28). It
+    raises TranscriptCouldNotBeFullyRead rather than returning what it had,
+    in two cases: a line that looks like a spawn record but does not parse,
+    and a read error. Both mean the same thing — the scan could not tell —
+    and the previous version returned [] for both, which main() read as
+    "nothing is running" and fired on, killing the subagent this exists to
+    protect.
+
+    Not because a truncated record is common — it is not observed in
+    practice, and the module docstring gives the measurements — but because
+    the two answers cost differently. The usage reader may skip an unparsed
+    line safely: skipping it costs one turn's worth of freshness. Skipping it
+    here would convert "I could not tell" into "nothing is running", and only
+    one of those two answers kills work. Failing closed costs at most a
+    deferral to the ceiling.
+
+    Only a line carrying the spawn marker is parsed at all, so an ordinary
+    unparsed line is not a candidate and raises nothing. That also bounds what
+    this guard can catch: a spawn record truncated before its marker is
+    invisible to it. Completion tags are matched as text, so a truncated
+    notification loses a completion instead of gaining one, which fails closed
+    the same way: the subagent stays in flight and the handoff waits.
+
+    A transcript that is absent altogether still reports [], not unknown. It
+    is not a failure to read: a session with no transcript spawned nothing,
+    and main() cannot reach this scan on a transcript it could not read,
+    because the used-share read runs first on the same file and exits the
+    hook when it returns None.
+    """
+    path = Path(transcript_path).expanduser() if transcript_path else None
+    if path is None or not path.is_file():
+        return []
+
+    spawned_ids = []
+    finished_ids = set()
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if SPAWNED_SUBAGENT_STATUS in line:
+                    try:
+                        record = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as problem:
+                        # A candidate spawn record that will not parse: this
+                        # line may be the spawn of a subagent running right
+                        # now, half-written as the session appends it.
+                        raise TranscriptCouldNotBeFullyRead(
+                            f"{path}: a spawn record did not parse"
+                        ) from problem
+                    tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
+                    if isinstance(tool_result, dict) and \
+                            tool_result.get("status") == SPAWNED_SUBAGENT_STATUS:
+                        agent_id = tool_result.get("agentId")
+                        if agent_id and agent_id not in spawned_ids:
+                            spawned_ids.append(agent_id)
+                if "<task-id>" in line:
+                    finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
+    except OSError as problem:
+        raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
+
+    return [agent_id for agent_id in spawned_ids if agent_id not in finished_ids]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
     parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
+    parser.add_argument(
+        "--ceiling-used-percentage", type=float, default=65.0,
+        help="above this used share the handoff fires even with subagents in flight",
+    )
     arguments = parser.parse_args(argv)
 
     payload = hook_payload_from_stdin()
@@ -158,16 +379,54 @@ def main(argv=None) -> int:
     if not session_id:
         return 0  # no session to reason about; stay silent
 
+    transcript_path = payload.get("transcript_path", "")
     # Every session has a transcript, headless included; before the first
     # assistant turn completes there is nothing to measure and nothing near
     # the threshold either, so None simply stays silent.
-    used = context_used_percentage_from_transcript(payload.get("transcript_path", ""))
+    used = context_used_percentage_from_transcript(transcript_path)
     if used is None or used < arguments.threshold_used_percentage:
         return 0  # nothing measurable yet, or still plenty of room
 
     fired_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-asked"
     if fired_marker.exists():
         return 0  # already asked this session; do not nag every turn
+
+    # Below the ceiling, a running subagent postpones the handoff rather than
+    # dying with the session (user-ruled 2026-08-27; module docstring).
+    if used < arguments.ceiling_used_percentage:
+        # A scan that could not finish is treated as work in flight, not as an
+        # all-clear: "could not tell" and "nothing running" are different
+        # answers and only one of them is safe to fire on (merge-lane review
+        # of PR #180, 2026-08-28). Above the ceiling this block is skipped
+        # entirely, so an unknown postpones the handoff no further than a
+        # known subagent does.
+        try:
+            subagents_in_flight = spawned_subagent_ids_in_flight(transcript_path)
+            count_is_known = True
+        except TranscriptCouldNotBeFullyRead:
+            subagents_in_flight = None
+            count_is_known = False
+
+        if not count_is_known or subagents_in_flight:
+            deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
+            if deferred_marker.exists():
+                return 0  # said once already; let the session go idle and wait
+
+            try:
+                HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
+                deferred_marker.write_text(f"{used:.1f}\n", encoding="utf-8")
+            except OSError:
+                pass  # as with the fired marker: speak now, repeat next turn
+
+            notice = (
+                HANDOFF_DEFERRED_NOTICE.format(
+                    used_percentage=used, subagent_count=len(subagents_in_flight)
+                )
+                if count_is_known
+                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(used_percentage=used)
+            )
+            print(notice, file=sys.stderr)
+            return 2  # exit 2 surfaces stderr to the agent as a system message
 
     try:
         # Nothing guarantees the directory exists this early in a session, and a
