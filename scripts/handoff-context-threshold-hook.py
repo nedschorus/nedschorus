@@ -54,9 +54,10 @@ tag wherever in a record it appears rather than keying on one shape.
 
 WHAT THE SCAN COSTS: the whole transcript, read once. The used share comes
 from the tail, but a spawn can be hours back, so this read cannot be a tail
-read. Measured at roughly 2.5 ms per megabyte — 7 ms on a 3.5 MB transcript,
-the largest in this fleet — and it is paid only between the threshold and
-the fire: never below the threshold, and never once the marker is written.
+read. Measured at roughly 2.5 ms per megabyte: 7 ms on the 3.5 MB transcript of
+the session this change came from, and 8.7 ms on the largest transcript
+measured, 3.9 MB. It is paid only between the threshold and the fire:
+never below the threshold, and never once the marker is written.
 
 TWO WAYS THE SCAN CAN BE WRONG, both bounded by the ceiling. An agent
 resumed by SendMessage runs again with no new spawn record, so its earlier
