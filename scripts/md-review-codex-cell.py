@@ -27,9 +27,13 @@ and text written before a tool call is discarded by that capture (measured
 closing line and none of its findings. The reviewer now writes its report
 itself, which needs write access. Per the user's ruling the same day, writes
 are detected rather than blocked: the report goes under the gitignored
-md-review-records/ tree, so a clean `git status` afterwards means the
-reviewer wrote only where it was told, and the shared module reports any
-tracked-file change as a stray write.
+md-review-records/ tree, where `git status` cannot see it, and the shared
+module names any other path whose content changed while the reviewer ran. It
+compares content rather than the list of paths git calls dirty because an
+md-review subject is usually a draft that has not landed: the tree is
+already dirty when the run starts, so "dirty afterwards too" says nothing,
+while "this file holds something else now" says the reviewer wrote it
+(nedschorus#167).
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS: written once, in
 scripts/code-review-codex-cell.py's docstring, under that heading.

@@ -35,10 +35,11 @@ WRITES ARE DETECTED, NOT BLOCKED (user-ruled 2026-08-23). The reviewer
 needs write access to produce its report, so the read-only tool set that
 used to force findings through chat text is gone. What replaces it is
 cheap and exact: the report goes in `md-review-records/`, which is
-gitignored and therefore invisible to `git status`. The cell snapshots the
-working tree before the model runs and again afterwards, and reports the
-DIFFERENCE -- so a dirty tree the run did not cause is not blamed on the
-reviewer, and a file the reviewer newly created is not missed. It reports on
+gitignored and therefore invisible to `git status`. Before the model runs
+and again afterwards the cell records what every path `git status` names
+holds, and reports the DIFFERENCE -- so a dirty tree the run did not cause
+is not blamed on the reviewer, while a path the reviewer created, or edited
+though it was already dirty, is named. It reports on
 every exit path, including failures, because a reviewer that edited the
 document instead of reviewing it leaves an edit worth naming whether or not
 it also produced a report. This follows the project's rule that a guard names the behavior
@@ -49,6 +50,7 @@ wrong path by accident, not an attacker.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -143,25 +145,88 @@ class WriteDetectorUnavailable(Exception):
     """
 
 
+def path_content_fingerprint(path: pathlib.Path) -> str:
+    """What one path holds right now, as a short string to compare later.
+
+    Content rather than mtime: a tool that writes a file and puts its old
+    text back leaves a changed mtime and an unchanged document, and that is
+    not the event this guard exists for.
+
+    A path that is missing, a directory, or unreadable gets a marker rather
+    than a hash, so those states stay distinct from each other and from any
+    file content: a path absent at the baseline and holding a file afterwards
+    is a creation, not two markers that happen to differ. Read in blocks
+    because an untracked path git names here can be any size.
+    """
+    if path.is_dir():
+        return "directory"
+    fingerprint = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 16), b""):
+                fingerprint.update(block)
+    except FileNotFoundError:
+        return "absent"
+    except OSError as error:
+        return f"unreadable:{type(error).__name__}"
+    return fingerprint.hexdigest()
+
+
 def working_tree_state() -> set:
-    """Every path git reports as changed, INCLUDING untracked ones.
+    """Every path git reports as changed, INCLUDING untracked ones, each
+    paired with a fingerprint of what that path holds.
+
+    CONTENT, NOT NAMES, and that is the whole point of the pairing. A
+    snapshot of names alone cannot see an edit to a path that was already
+    dirty when it was taken: the name is in both snapshots and cancels out of
+    the comparison. md-review's ordinary subject is a draft that has not
+    landed, so the document under review -- the very file a reviewer is most
+    likely to edit by accident -- is normally already dirty, and the detector
+    was blind in exactly the case it exists for (measured on nedschorus#167:
+    a reviewer edit inside an already-dirty file yielded an empty delta,
+    while a file it newly created was reported).
 
     Untracked paths are included because the accident this detector exists
-    for -- an agent writing to a path it was not given -- most often creates
-    a file rather than editing one, and `--untracked-files=no` is blind to
-    exactly that. The gitignored records tree stays invisible either way,
-    which is what keeps a reviewer's own report out of the result.
+    for -- an agent writing to a path it was not given -- often creates a
+    file rather than editing one, and `--untracked-files=no` is blind to
+    exactly that. They are asked for one file at a time
+    (`--untracked-files=all`) rather than in git's default form: the default
+    collapses an untracked directory to the directory's name, so a file
+    created inside a directory that was already untracked would be invisible
+    here too. Naming each file also lets a caller subtract one exact path --
+    which is how a cell keeps its own report out of the result when the
+    report was written somewhere git can see. The gitignored records tree,
+    where reports ordinarily go, stays invisible either way.
     """
     completed = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--untracked-files=all"],
         cwd=REPO_ROOT, capture_output=True, text=True, check=False,
     )
     if completed.returncode != 0:
         raise WriteDetectorUnavailable(completed.stderr.strip() or "no detail")
-    return {line[3:] for line in completed.stdout.splitlines() if line[3:]}
+    return {
+        (name, path_content_fingerprint(REPO_ROOT / name))
+        for name in (line[3:] for line in completed.stdout.splitlines())
+        if name
+    }
 
 
-def stray_writes_since(baseline: set) -> list[str]:
+def repo_relative_name(path) -> str:
+    """git's name for a path inside this repository; "" for anything else.
+
+    Anything else is: no path at all (a cell that failed before it resolved
+    one), and a path outside the repository, which git never names and so
+    never needs subtracting.
+    """
+    if path is None:
+        return ""
+    try:
+        return str(pathlib.Path(path).resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return ""
+
+
+def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
     """Paths that changed during the run -- the DELTA, not the tree's state.
 
     Without a baseline this reported every already-dirty path as the
@@ -169,8 +234,18 @@ def stray_writes_since(baseline: set) -> list[str]:
     landed, so the ordinary run starts dirty and all eight cells would
     accuse the reviewer of changes it never made. A detector that cries wolf
     on the common case is one its readers learn to skip.
+
+    The cell's own report is subtracted, because writing it is the one write
+    the reviewer was asked for. It ordinarily needs no subtracting -- reports
+    go under the gitignored records tree, which git never names -- but the
+    grid's failure note tells the operator to rerun a failed cell singly with
+    the cell launchers, and an operator who then points --report somewhere
+    git can see was told to revert the review he had just asked for
+    (nedschorus#167).
     """
-    return sorted(working_tree_state() - baseline)
+    changed = {name for name, _fingerprint in working_tree_state() - baseline}
+    changed.discard(repo_relative_name(own_report_path))
+    return sorted(changed)
 
 
 def verify_report(program: str, report: pathlib.Path) -> None:
@@ -318,7 +393,7 @@ def run_model_chain(
               "stub that would read as a completed review.",
             file=sys.stderr,
         )
-        report_stray_writes(program, baseline)
+        report_stray_writes(program, baseline, report)
         return 1
 
     if failed_attempts:
@@ -334,7 +409,7 @@ def run_model_chain(
         tier=tier, target_argument=target_argument,
         fallback_from="+".join(failed_attempts),
     )
-    report_stray_writes(program, baseline)
+    report_stray_writes(program, baseline, report)
     print(f"{program}: report written to {report}", file=sys.stderr)
     return 0
 
@@ -364,13 +439,17 @@ def run_cell(
         print(f"{program}: could not snapshot the working tree ({error}); "
               "stray writes will not be checked for this run.", file=sys.stderr)
 
+    # None until resolve_report_path returns one: a refusal raised before that
+    # point still reports stray writes, and there is no report path to
+    # subtract from them yet.
+    report = None
     try:
         target = resolve_target(args.target)
         report = resolve_report_path(args.report)
         prompt = compose_prompt(args.cell, target, report)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
-        report_stray_writes(program, baseline)
+        report_stray_writes(program, baseline, report)
         return refusal.exit_code
 
     # An explicit --model is honored exactly, with no fallback: a caller who
@@ -387,7 +466,7 @@ def run_cell(
     )
 
 
-def report_stray_writes(program: str, baseline) -> None:
+def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     """Print what the run changed outside its report. Never raises.
 
     Called on every exit path, not only the successful one: a reviewer that
@@ -403,7 +482,7 @@ def report_stray_writes(program: str, baseline) -> None:
               "checked for this run.", file=sys.stderr)
         return
     try:
-        stray = stray_writes_since(baseline)
+        stray = stray_writes_since(baseline, own_report_path)
     except WriteDetectorUnavailable as error:
         print(f"{program}: could not check for stray writes — git status "
               f"failed ({error}). This is a failure to look, not a clean "
