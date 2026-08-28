@@ -67,9 +67,12 @@ tag wherever in a record it appears rather than keying on one shape.
 
 WHAT THE SCAN COSTS: the whole transcript, read once. The used share comes
 from the tail, but a spawn can be hours back, so this read cannot be a tail
-read. Measured at roughly 2.5 ms per megabyte: 7 ms on the 3.5 MB transcript of
+read. Measured at roughly 2 ms per megabyte: 7 ms on the 3.5 MB transcript of
 the session this change came from, and 8.7 ms on the largest transcript
-measured, 3.9 MB. It is paid only between the threshold and the fire:
+measured, 3.9 MB. Those are 2.0 and 2.23 ms per megabyte; the rate is
+given to one figure because it is a sizing aid, not a model, and an
+idle machine is what it assumes — the same scan under eight concurrent
+review subprocesses measured 24 to 48 ms. It is paid only between the threshold and the fire:
 never below the threshold, and never once the fired marker is written. A
 silent deferred boundary still pays it, because whether the wait is over is
 exactly what it is asking.
