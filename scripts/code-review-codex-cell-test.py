@@ -6,19 +6,31 @@ it with a stub `codex` first on PATH, so no real review is ever launched:
 the stub is the seam that lets the cell's own logic be tested without the
 model, the money, or the half hour.
 
-Three things are pinned here.
+What is pinned here:
 
   - Bad invocations are reported, not thrown -- asserted on the exit code AND
     on the absence of a traceback, because an unhandled exception exits 1 just
     as a reported failure does. The cell already answers a `--repo` that is
     not a checkout, and a `--base`/`--commit` that does not resolve, with a
-    message on stderr and exit 2. An `--output` naming something that is not a
-    regular file is the third of that kind: before 2026-08-23 a directory
+    message on stderr and its bad-invocation exit code. An `--output` naming
+    something that is not a regular file is another of that kind: before 2026-08-23 a directory
     there reached `unlink()` and died on a traceback (PermissionError on
     macOS, IsADirectoryError on Linux). The guard is deliberately wider than
     "is a directory", so a FIFO case holds it there -- and the FIFO is the
     input where the old code did not traceback at all but silently succeeded,
     consuming the FIFO and writing a regular file over it.
+
+  - This cell's own refusals and codex's failures carry DIFFERENT exit
+    codes, and the cases below hold that seam from both sides: every bad
+    invocation of the cell exits 64, while a codex that fails is passed
+    through with codex's exact code -- including 2, which is what codex
+    returns when IT rejects a command line. Until 2026-08-23 the cell used 2
+    for its own refusals too, so two opposite meanings -- the caller invoked
+    this cell wrongly, versus this cell invoked codex wrongly -- arrived as
+    the same number, and only the second is a defect in this repository. The
+    argparse cases are in the set deliberately: argparse's default is also 2,
+    so moving only the hand-written checks would have left the commonest bad
+    invocation there is, a mistyped flag, still colliding.
 
   - The pre-run delete of the output file still happens. It is there so
     that a stale report from an earlier run cannot survive a run in which
@@ -82,6 +94,24 @@ with open(target, "w", encoding="utf-8") as handle:
 sys.exit(0)
 """
 
+def stub_codex_writes_then_exits(code):
+    """A stub codex that writes its report and THEN fails with `code`.
+
+    Writing first is the point: it puts a report on disk for the failure
+    path to delete, so a case can pin "a report exists if and only if the
+    run succeeded" on the passthrough path too.
+    """
+    return (
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "argv = sys.argv\n"
+        'target = argv[argv.index("--output-last-message") + 1]\n'
+        'open(target, "w", encoding="utf-8").write("PARTIAL STUB REPORT\\n")\n'
+        'sys.stderr.write("stub codex: simulated failure\\n")\n'
+        f"sys.exit({code})\n"
+    )
+
+
 failures = []
 
 
@@ -138,22 +168,22 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The bad invocations the cell already answered ---------------------
     # Recorded here as the convention the --output check below matches: a
-    # message on stderr and exit 2, never a traceback.
+    # message on stderr and exit 64, never a traceback.
     not_a_checkout = scratch / "not-a-checkout"
     not_a_checkout.mkdir()
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT,
                       "--commit", head_sha, "--repo", str(not_a_checkout),
                       "--output", str(scratch / "report-a.md"))
-    check("--repo that is not a checkout exits 2",
-          result.returncode == 2, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("--repo that is not a checkout exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("--repo that is not a checkout says so on stderr",
           "is not a checkout" in result.stderr, repr(result.stderr))
 
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT,
                       "--commit", "no-such-commit", "--repo", str(checkout),
                       "--output", str(scratch / "report-b.md"))
-    check("--commit that does not resolve exits 2",
-          result.returncode == 2, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("--commit that does not resolve exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("--commit that does not resolve says so on stderr",
           "does not resolve to a commit" in result.stderr, repr(result.stderr))
 
@@ -165,8 +195,8 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT,
                       "--commit", head_sha, "--repo", str(checkout),
                       "--output", str(existing_directory))
-    check("--output naming an existing directory exits 2",
-          result.returncode == 2, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("--output naming an existing directory exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("--output naming an existing directory says so on stderr",
           "is not a regular file" in result.stderr, repr(result.stderr))
     check("--output naming an existing directory does not raise",
@@ -185,13 +215,32 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT,
                       "--commit", head_sha, "--repo", str(checkout),
                       "--output", str(fifo_output))
-    check("--output naming an existing FIFO exits 2",
-          result.returncode == 2, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("--output naming an existing FIFO exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("--output naming an existing FIFO says so on stderr",
           "is not a regular file" in result.stderr, repr(result.stderr))
     check("--output naming an existing FIFO leaves it a FIFO",
           fifo_output.is_fifo(),
           "the guard narrowed to directories only; the FIFO was consumed")
+
+    # --- The bad invocations argparse catches, not the cell's own code -----
+    # These reach the same channel by a different route: argparse's default
+    # is usage text and exit 2, which is exactly the code codex uses to
+    # reject a command line, so the cell overrides it. A mistyped flag is
+    # the commonest bad invocation there is; leaving it at 2 would have left
+    # the collision in place for the case that happens most.
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT,
+                      "--commit", head_sha, "--repo", str(checkout))
+    check("a missing required option exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a missing required option still prints argparse's usage text",
+          "usage:" in result.stderr, repr(result.stderr))
+
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT,
+                      "--commit", head_sha, "--repo", str(checkout),
+                      "--output", str(scratch / "report-c.md"), "--no-such-flag")
+    check("an unrecognized option exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
 
     # --- The normal paths, which must keep working -------------------------
     fresh_report = scratch / "fresh-report.md"
@@ -238,6 +287,27 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a stale report does not survive a run that wrote nothing",
           not stale_report.exists(),
           "the pre-run delete is gone; a stale report can be stamped as fresh")
+
+    # --- Codex's own failures pass through, code intact --------------------
+    # 2 is the case the cell's own refusals were moved off on 2026-08-23:
+    # codex exits 2 when IT rejects a command line, so a 2 out of this cell
+    # must mean "codex refused the command this cell composed" -- a defect in
+    # this repository -- and nothing else. If a future edit routes the cell's
+    # own refusals back onto 2, or normalizes codex's codes to a fixed
+    # failure value, one of these two cases fails.
+    for codex_exit_code in (2, 7):
+        passthrough_report = scratch / f"passthrough-{codex_exit_code}.md"
+        result = run_cell(stubs, stub_codex_writes_then_exits(codex_exit_code),
+                          "--commit", head_sha, "--repo", str(checkout),
+                          "--output", str(passthrough_report))
+        check(f"a codex that exits {codex_exit_code} is passed through unchanged",
+              result.returncode == codex_exit_code,
+              f"exit {result.returncode}; stderr={result.stderr!r}")
+        check(f"a codex that exits {codex_exit_code} is reported, not thrown",
+              "Traceback" not in result.stderr, repr(result.stderr))
+        check(f"no report survives a codex that exits {codex_exit_code}",
+              not passthrough_report.exists(),
+              "a partial report outlived a failed run and can be read as a review")
 
     # --- The memory store is off for the launch ----------------------------
     # Why this matters and what it does not cover: the cell's own docstring,

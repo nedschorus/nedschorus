@@ -110,12 +110,71 @@ such sessions with cwd=/Users/el/agents/merge-lane were found carrying it. So
 a review is memory-free because it went through one of these scripts, not
 because it ran on this Mac.
 
-Exit codes: 0 the review ran and wrote the report -- WHICH SAYS NOTHING
-ABOUT THE VERDICT: codex exits 0 while reporting defects, so a gate must
-read the report, never this exit code (measured 2026-08-19, PR #102's
-review). 2 bad invocation. Anything else is codex exec's own failure,
-passed through -- and a failed run writes no report, so absence of the
-report file is detectable and must never be read as a clean review.
+EXIT CODES -- two layers produce them, and telling them apart is the point.
+This wrapper must never spend, on its own refusals, a code that `codex exec`
+also produces: otherwise "you invoked this wrapper wrongly" and "this
+wrapper invoked codex wrongly" arrive as the same number, and the second is
+a defect in this repository's code.
+
+  0      codex ran and a report was written -- and NOTHING MORE. See WHAT
+         EXIT 0 DOES NOT PROMISE below before gating on it.
+  64     this wrapper refused the invocation and never launched codex: a
+         --repo that is not a checkout, a --base/--commit that does not
+         resolve, an --output that is not a regular file, or a command-line
+         error argparse caught (missing or unknown option). 64 is
+         sysexits.h's EX_USAGE, "command line usage error", and it is used
+         here rather than the conventional 2 because it sits outside every
+         band codex plausibly returns: clap pins its own usage errors at 2,
+         codex's runtime failures at 1, a Rust panic is 101, a signal is
+         128+N.
+  1      the review failed and no report survives -- codex could not be
+         launched or timed out, or codex exited 0 having written nothing.
+         Either layer can produce it; the stderr line says which.
+  other  codex exec's own exit code, passed through unchanged. A passed-
+         through 2 specifically means CODEX REJECTED THE COMMAND THIS
+         SCRIPT COMPOSED, which is a defect here rather than a caller's
+         typo (measured on codex-cli 0.147.0, 2026-08-23: `codex exec
+         --no-such-flag review` and `codex exec review --no-such-flag` both
+         exit 2, while every non-parsing failure probed the same day --
+         unknown feature name, missing working directory, `review` outside
+         a git repository, an unusable model id, a rejected config
+         override -- exits 1).
+
+Once codex has been launched, every failure path deletes any report it may
+have left behind, so from there a report file exists if and only if the run
+succeeded: its absence is detectable, and must never be read as a clean
+review. A 64 refusal is the one gap in that, and by construction: it happens
+before the pre-run delete, so a stale report from an EARLIER run survives it
+untouched. A caller reusing one --output path across runs therefore has to
+read the exit code, not merely look for the file.
+
+WHAT EXIT 0 DOES NOT PROMISE -- why a gate must read the report and never
+this exit code. Two things, both measured rather than assumed:
+
+  - Not the verdict. codex exits 0 while reporting defects (measured
+    2026-08-19 on pull request #102's review), so a gate reading the exit
+    code alone passes every change that was reviewed at all.
+  - Not that a review happened. `codex exec review` exits 0 when it
+    reviewed NOTHING, and says so only in the report body. Measured
+    2026-08-23 on codex-cli 0.147.0, through this script:
+
+        scripts/code-review-codex-cell.py --base HEAD --output R.md --repo .
+
+    ran 20 seconds, exited 0, and wrote R.md -- provenance header and all
+    -- holding one sentence: "HEAD equals the specified merge-base commit,
+    and `git diff <sha>` is empty, so there are no changes to review."
+    Every check this script makes passed: codex exited 0, a non-empty
+    report exists. A caller whose base is wrong gets a stamped report of a
+    review that never ran.
+
+    Probed directly against codex the same day with a base that does not
+    exist at all (`codex exec --sandbox read-only --disable memories review
+    --base no-such-ref-xyz-123 -m gpt-5.6-sol ...`): 25 seconds, a real
+    model call, a correct diagnosis -- "no merge base or diff could be
+    produced" -- and exit 0. That route cannot arrive through this script,
+    whose `git rev-parse --verify` refuses an unresolvable base before
+    codex is launched; it is recorded because it shows the behavior belongs
+    to codex and is not an artifact of the empty diff.
 
 Usage:
   scripts/code-review-codex-cell.py --base <SHA> --output <FILE> [--repo DIR]
@@ -133,9 +192,29 @@ CODEX_MODEL = "gpt-5.6-sol"
 REASONING_EFFORT = "xhigh"
 REVIEW_TIMEOUT_SECONDS = 1800
 
+# This script's own refusals, kept off every code `codex exec` produces so a
+# passed-through code stays readable as codex's. sysexits.h's EX_USAGE; the
+# reasoning is in EXIT CODES above.
+EXIT_BAD_INVOCATION = 64
+
+
+class BadInvocationArgumentParser(argparse.ArgumentParser):
+    """argparse's own command-line errors join EXIT_BAD_INVOCATION.
+
+    argparse exits 2 on a missing or unknown option, and 2 is also what
+    `codex exec` returns when IT rejects a command line -- so leaving the
+    default in place would keep the two layers indistinguishable for the
+    commonest bad invocation there is, a mistyped flag. Usage text and
+    message are argparse's, unchanged; only the exit code moves.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_BAD_INVOCATION, f"{self.prog}: error: {message}\n")
+
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(
+    parser = BadInvocationArgumentParser(
         description="Codex built-in code review over a git range, pinned and captured.",
         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -150,7 +229,7 @@ def main(argv=None) -> int:
     repo = pathlib.Path(arguments.repo).resolve()
     if not (repo / ".git").exists():
         print(f"code-review-codex-cell: {repo} is not a checkout", file=sys.stderr)
-        return 2
+        return EXIT_BAD_INVOCATION
 
     # The subject must be a resolved SHA, not a moving ref: record exactly
     # what was reviewed, so the report can be tied to it later.
@@ -162,7 +241,7 @@ def main(argv=None) -> int:
     if resolved.returncode != 0:
         print(f"code-review-codex-cell: {subject} does not resolve to a commit in {repo}",
               file=sys.stderr)
-        return 2
+        return EXIT_BAD_INVOCATION
     subject_sha = resolved.stdout.strip()
 
     # Resolved, because codex runs with cwd=repo: a relative path would name
@@ -177,7 +256,7 @@ def main(argv=None) -> int:
     if output_path.exists() and not output_path.is_file():
         print(f"code-review-codex-cell: {output_path} exists and is not a regular file; "
               "--output names the file the report is written to", file=sys.stderr)
-        return 2
+        return EXIT_BAD_INVOCATION
     # A pre-existing file at the output path must not survive into the
     # post-run checks: after this, a file that exists is provably this run's.
     output_path.unlink(missing_ok=True)
