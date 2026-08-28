@@ -77,13 +77,23 @@ never below the threshold, and never once the fired marker is written. A
 silent deferred boundary still pays it, because whether the wait is over is
 exactly what it is asking.
 
-TWO WAYS THE SCAN CAN BE WRONG, both bounded by the ceiling. An agent
-resumed by SendMessage runs again with no new spawn record, so its earlier
-completion still stands and the handoff fires while it works — the behaviour
-this project had before this change. A completion the scan misses defers the
-handoff no further than the ceiling. A subagent stopped by TaskStop takes
-the same path as any other finish and is untested, because no specimen
-exists.
+WHAT THE SCAN DOES WHEN IT CANNOT TELL: it says so, and the handoff waits.
+A candidate spawn record that does not parse, or a read error, raises
+TranscriptCouldNotBeFullyRead, and below the ceiling that defers exactly as a
+running subagent does, with a notice that says the count is unknown. An empty
+list therefore means "nothing is running" and nothing else. It used to mean
+both that and "I could not look", which is what fired the handoff on a
+half-written spawn line — the ordinary state of a transcript the session is
+still appending to (merge-lane review of PR #180, 2026-08-28).
+
+TWO WAYS THE SCAN CAN STILL BE WRONG, both of them in the fire-too-early
+direction and neither bounded by the ceiling, because both look like a clean
+answer rather than a failure. An agent resumed by SendMessage runs again with
+no new spawn record, so its earlier completion still stands and the handoff
+fires while it works — the behaviour this project had before this change. A
+subagent stopped by TaskStop takes the same path as any other finish and is
+untested, because no specimen exists. A completion the scan misses errs the
+other way and defers the handoff no further than the ceiling.
 
 Threshold: --threshold-used-percentage, default 50.
 Ceiling: --ceiling-used-percentage, default 65.
@@ -131,8 +141,28 @@ HANDOFF_INSTRUCTION = "Run the handoff skill now."
 HANDOFF_DEFERRED_NOTICE = (
     "Context at {used_percentage:.0f}% — handoff deferred while "
     "{subagent_count} subagent(s) run. Spawn no new subagents; the handoff "
-    "fires when they finish."
+    "fires when they finish, or when context reaches the ceiling."
 )
+
+# Said instead of the notice above when the scan could not finish. It reports
+# the wait without a count, because the count is exactly what is not known.
+HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
+    "Context at {used_percentage:.0f}% — handoff deferred: the transcript "
+    "could not be fully read, so how many subagents are running is unknown. "
+    "Spawn no new subagents; the handoff fires when they finish, or when "
+    "context reaches the ceiling."
+)
+
+class TranscriptCouldNotBeFullyRead(Exception):
+    """The in-flight scan could not read the whole transcript, so what it
+    found is not an answer about what is running.
+
+    Raised rather than returned so no caller can mistake it for "nothing in
+    flight". That mistake is the defect this class exists to prevent: an empty
+    list is falsy, `if subagents_in_flight:` reads it as an all-clear, and the
+    handoff fires and kills the subagent the deferral is for.
+    """
+
 
 # What a spawned subagent's tool result carries and a Monitor's does not.
 SPAWNED_SUBAGENT_STATUS = "async_launched"
@@ -248,6 +278,34 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
 
     Order is spawn order, so a caller reporting the ids reports them in the
     order the agent created them.
+
+    THE SCAN FAILS CLOSED (merge-lane review of PR #180, 2026-08-28). It
+    raises TranscriptCouldNotBeFullyRead rather than returning what it had,
+    in two cases: a line that looks like a spawn record but does not parse,
+    and a read error. Both mean the same thing — the scan could not tell —
+    and the previous version returned [] for both, which main() read as
+    "nothing is running" and fired on, killing the subagent this exists to
+    protect.
+
+    The unparsed-line case is the ordinary one, not corruption: this hook
+    reads the transcript of a session that is still appending to it, so the
+    final line is often half-written. The usage reader may skip such a line
+    safely, because skipping it costs one turn's worth of freshness. Skipping
+    it here would convert "I could not tell" into "nothing is running", and
+    only one of those two answers kills work. Failing closed costs at most a
+    deferral to the ceiling.
+
+    Only a line carrying the spawn marker is parsed at all, so an ordinary
+    half-written line — the common case — is not a candidate and raises
+    nothing. Completion tags are matched as text, so a truncated notification
+    loses a completion instead of gaining one, which also fails closed: the
+    subagent stays in flight and the handoff waits.
+
+    A transcript that is absent altogether still reports [], not unknown. It
+    is not a failure to read: a session with no transcript spawned nothing,
+    and main() cannot reach this scan on a transcript it could not read,
+    because the used-share read runs first on the same file and exits the
+    hook when it returns None.
     """
     path = Path(transcript_path).expanduser() if transcript_path else None
     if path is None or not path.is_file():
@@ -261,8 +319,13 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
                 if SPAWNED_SUBAGENT_STATUS in line:
                     try:
                         record = json.loads(line)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        record = None
+                    except (json.JSONDecodeError, UnicodeDecodeError) as problem:
+                        # A candidate spawn record that will not parse: this
+                        # line may be the spawn of a subagent running right
+                        # now, half-written as the session appends it.
+                        raise TranscriptCouldNotBeFullyRead(
+                            f"{path}: a spawn record did not parse"
+                        ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
                     if isinstance(tool_result, dict) and \
                             tool_result.get("status") == SPAWNED_SUBAGENT_STATUS:
@@ -271,8 +334,8 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
                             spawned_ids.append(agent_id)
                 if "<task-id>" in line:
                     finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
-    except OSError:
-        return []  # unreadable transcript: nothing known to be running
+    except OSError as problem:
+        raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
 
     return [agent_id for agent_id in spawned_ids if agent_id not in finished_ids]
 
@@ -306,8 +369,20 @@ def main(argv=None) -> int:
     # Below the ceiling, a running subagent postpones the handoff rather than
     # dying with the session (user-ruled 2026-08-27; module docstring).
     if used < arguments.ceiling_used_percentage:
-        subagents_in_flight = spawned_subagent_ids_in_flight(transcript_path)
-        if subagents_in_flight:
+        # A scan that could not finish is treated as work in flight, not as an
+        # all-clear: "could not tell" and "nothing running" are different
+        # answers and only one of them is safe to fire on (merge-lane review
+        # of PR #180, 2026-08-28). Above the ceiling this block is skipped
+        # entirely, so an unknown postpones the handoff no further than a
+        # known subagent does.
+        try:
+            subagents_in_flight = spawned_subagent_ids_in_flight(transcript_path)
+            count_is_known = True
+        except TranscriptCouldNotBeFullyRead:
+            subagents_in_flight = None
+            count_is_known = False
+
+        if not count_is_known or subagents_in_flight:
             deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
             if deferred_marker.exists():
                 return 0  # said once already; let the session go idle and wait
@@ -318,12 +393,14 @@ def main(argv=None) -> int:
             except OSError:
                 pass  # as with the fired marker: speak now, repeat next turn
 
-            print(
+            notice = (
                 HANDOFF_DEFERRED_NOTICE.format(
                     used_percentage=used, subagent_count=len(subagents_in_flight)
-                ),
-                file=sys.stderr,
+                )
+                if count_is_known
+                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(used_percentage=used)
             )
+            print(notice, file=sys.stderr)
             return 2  # exit 2 surfaces stderr to the agent as a system message
 
     try:
