@@ -113,9 +113,12 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # argument, so the stub reads both and looks for a path under the records
 # tree. COLD_READ_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
 # — a reviewer editing the document instead of reviewing it.
-# COLD_READ_GRID_TEST_STUB_FAILING_MODEL, when set, is a model id the stub
-# refuses to be: launched as that model it writes nothing and exits 1, which
-# is what sends a cell down its chain to the next model.
+# COLD_READ_GRID_TEST_STUB_FAILING_MODEL, when set, is a comma-separated list
+# of model ids the stub refuses to be: launched as one of them it writes
+# nothing and exits 1, which is what sends a cell down its chain to the next
+# model. Naming one model makes a cell fall back; naming a cell's whole chain
+# makes the cell fail outright, which is the only way this suite can produce a
+# failed cell.
 # COLD_READ_GRID_TEST_STUB_NEAR_MISS_CHARACTER, when set, is the character the
 # stub puts in place of the last one of the record directory's name before
 # writing its report there — the 2026-08-25 accident, in which a model created
@@ -130,8 +133,8 @@ try:
 except OSError:
     pass
 prompt += " " + " ".join(sys.argv)
-failing_model = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_MODEL")
-if failing_model and failing_model in sys.argv:
+failing_models = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_MODEL", "")
+if any(model in sys.argv for model in failing_models.split(",") if model):
     sys.stderr.write("stub runtime: this model is unavailable today\n")
     sys.exit(1)
 match = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
@@ -385,6 +388,41 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a settled target still gets the closing instructions to triage",
           "All eight reviews are complete" in result.stdout
           and "Stop editing the document" not in result.stdout, repr(result.stdout))
+
+    # --- A target that moved while a cell also failed -----------------------
+    # The two conditions are independent and land together often enough to
+    # write down: the closing text follows the target change (do not triage,
+    # run the grid again), so the note naming the failed cells must not send
+    # the reader back to a triage that is not happening. Both good-tier Claude
+    # cells fail outright here — the stub refuses every model in their chain —
+    # while the floor and Codex cells save their reports and edit the document
+    # under review on the way out.
+    repository = build_scratch_repository(scratch, "checkout-changed-and-failed")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
+         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5,claude-fable-5"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    check("a run can lose two cells and its target at once: six saved, exit 3",
+          result.returncode == 3 and len(saved_lines) == 6,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    # Read the NOTE line itself rather than the whole output: the per-cell
+    # STRAY WRITE line also says "before triage", and it is emitted while the
+    # cells run, before the grid can know the target moved.
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("the failed cells are still named on the moved-target path",
+          note_lines != [] and "2 review(s) failed" in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("that note does not send the reader back to triage a short set",
+          note_lines != [] and "before triage" not in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("that note says why rerunning the failed cells singly would not help",
+          note_lines != []
+          and "being replaced by a run against the settled document" in note_lines[0],
+          f"note lines were {note_lines!r}")
 
     # --- A cell that fell back says so ------------------------------------
     # The stub refuses to be claude-opus-5, which leads the Claude good tier.

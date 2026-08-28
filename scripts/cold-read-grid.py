@@ -383,9 +383,21 @@ def main() -> int:
     else:
         print(COMPLETION_INSTRUCTIONS.format(record_dir=record_dir))
     if failures:
+        # A moved target changes what an absent review means, so the note that
+        # names them changes with it: on the settled path the set is merely
+        # short and the missing cells are worth rerunning singly before triage;
+        # on the changed path there is no triage for them to be short for,
+        # because the whole set is being replaced. The two conditions are
+        # independent and do land together.
+        what_to_do = (
+            "Rerunning them singly would not help: the set they belong to is "
+            "being replaced by a run against the settled document."
+            if target_changed else
+            "Rerun them singly with the cell launchers before triage, or note "
+            "their absence in dispositions.md."
+        )
         print(f"\nNOTE: {len(failures)} review(s) failed and are absent from the "
-              f"record: {', '.join(failures)}. Rerun them singly with the cell "
-              f"launchers before triage, or note their absence in dispositions.md.")
+              f"record: {', '.join(failures)}. {what_to_do}")
     # A moved target outranks a failed cell in the exit code: failed cells
     # leave a smaller review, while a moved target leaves one that describes
     # the wrong document, and the second is the condition a caller most needs
