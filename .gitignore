@@ -45,6 +45,10 @@ __pycache__/
 # that produced them are working material, deleted when the work they served
 # lands. Everything deleted stays retrievable: git show db917b5:<path>
 cold-read-records/
+# The pre-rename name stays ignored beside it: renaming source does not move a
+# machine's existing md-review-records/, whose reports are the same never-
+# committed class (nedschorus#178).
+md-review-records/
 
 # sanity-check records: the second review instrument's output
 # (scripts/sanity-check-attacks.py) — same class and disposal as
