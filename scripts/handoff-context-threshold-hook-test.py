@@ -38,18 +38,82 @@ def run_hook(stdin_payload, extra_arguments=()):
     )
 
 
+def usage_record(input_tokens, cache_read=0, cache_creation=0, model="claude-fable-5"):
+    return {"type": "assistant", "message": {
+        "model": model,
+        "usage": {"input_tokens": input_tokens, "cache_read_input_tokens": cache_read,
+                  "cache_creation_input_tokens": cache_creation},
+    }}
+
+
 def transcript_with_usage(directory, name, input_tokens, cache_read=0, cache_creation=0,
                           model="claude-fable-5"):
     path = Path(directory) / name
     path.write_text(
-        json.dumps({"type": "assistant", "message": {
-            "model": model,
-            "usage": {"input_tokens": input_tokens, "cache_read_input_tokens": cache_read,
-                      "cache_creation_input_tokens": cache_creation},
-        }}) + "\n",
+        json.dumps(usage_record(input_tokens, cache_read, cache_creation, model)) + "\n",
         encoding="utf-8",
     )
     return path
+
+
+def transcript_of(directory, name, records):
+    path = Path(directory) / name
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n",
+                    encoding="utf-8")
+    return path
+
+
+# The three record shapes below were read off real transcripts under
+# ~/.claude/projects/ on 2026-08-27 and trimmed to the fields the hook reads.
+# Nothing there was modified.
+
+
+def subagent_spawn_record(agent_id, description="a builder subagent"):
+    """The Agent tool's async tool_result: the launch of one subagent."""
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": f"toolu_{agent_id}", "type": "tool_result",
+            "content": [{"type": "text", "text": (
+                "Async agent launched successfully.\n"
+                f"agentId: {agent_id} (internal ID - do not mention to user.)")}],
+        }]},
+        "toolUseResult": {"isAsync": True, "status": "async_launched",
+                          "agentId": agent_id, "description": description},
+    }
+
+
+def subagent_completion_record(agent_id, record_type="attachment"):
+    """A completion notification, in either shape the harness delivers.
+
+    `attachment` is what a busy session gets — six of the fourteen subagents
+    that finished in the 2026-08-27 transcript produced only this shape —
+    and `user` is what an idle one gets. The hook must read both.
+    """
+    notification = (
+        "<task-notification>\n"
+        f"<task-id>{agent_id}</task-id>\n"
+        "<status>completed</status>\n"
+        f'<summary>Agent "{agent_id}" finished</summary>\n'
+        "</task-notification>"
+    )
+    if record_type == "attachment":
+        return {"type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": notification}}
+    return {"type": "user", "origin": {"kind": "task-notification"},
+            "message": {"role": "user", "content": notification}}
+
+
+def monitor_start_record(task_id="b45e25tz2"):
+    """A Monitor tool result: a taskId, and no agentId — not a subagent."""
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": f"toolu_{task_id}", "type": "tool_result",
+            "content": f"Monitor started (task {task_id}, persistent).",
+        }]},
+        "toolUseResult": {"taskId": task_id, "timeoutMs": 0, "persistent": True},
+    }
 
 
 with tempfile.TemporaryDirectory() as workspace:
@@ -126,11 +190,73 @@ with tempfile.TemporaryDirectory() as workspace:
     check("tail read skips a partially-written final record",
           abs(hook.context_used_percentage_from_transcript(str(partial)) - 40.0) < 0.01)
 
+    # --- Which subagents are still in flight -------------------------------
+    # A recycle kills the session's in-process subagents with it (2026-08-27),
+    # so the hook has to know which of them are running before it fires.
+    one_running = transcript_of(workspace, "one-subagent-running.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+    ])
+    check("a spawned subagent with no completion is in flight",
+          hook.spawned_subagent_ids_in_flight(str(one_running)) == ["a2573a7737ae643dc"],
+          str(hook.spawned_subagent_ids_in_flight(str(one_running))))
+
+    one_finished = transcript_of(workspace, "one-subagent-finished.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a2573a7737ae643dc"),
+        subagent_completion_record("a2573a7737ae643dc"),
+    ])
+    check("a completion notification takes its subagent out of flight",
+          hook.spawned_subagent_ids_in_flight(str(one_finished)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(one_finished))))
+
+    user_shape_finish = transcript_of(workspace, "finish-as-user-record.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("adbfe6c3d2693dd51"),
+        subagent_completion_record("adbfe6c3d2693dd51", record_type="user"),
+    ])
+    check("a completion delivered as a user record counts too",
+          hook.spawned_subagent_ids_in_flight(str(user_shape_finish)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(user_shape_finish))))
+
+    mixed = transcript_of(workspace, "mixed-subagents.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("aea1c60434f2b380d", "Zero-context review"),
+        subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+        subagent_completion_record("aea1c60434f2b380d"),
+        monitor_start_record(),
+    ])
+    check("only the unfinished subagent is in flight, in spawn order",
+          hook.spawned_subagent_ids_in_flight(str(mixed)) == ["a2573a7737ae643dc"],
+          str(hook.spawned_subagent_ids_in_flight(str(mixed))))
+
+    monitor_only = transcript_of(workspace, "monitor-only.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        monitor_start_record("b45e25tz2"),
+        subagent_completion_record("b45e25tz2"),
+    ])
+    check("a monitor is not a subagent — its result carries no agentId",
+          hook.spawned_subagent_ids_in_flight(str(monitor_only)) == [],
+          str(hook.spawned_subagent_ids_in_flight(str(monitor_only))))
+
+    check("an absent transcript reports nothing in flight",
+          hook.spawned_subagent_ids_in_flight(str(Path(workspace) / "nope.jsonl")) == [])
+
     # --- The hook, as the harness runs it: a subprocess reading stdin -----
     # Probe session ids are namespaced to this test; their fired markers land
     # in the real handoff directory and are removed on the way out.
     PROBE_SESSION_ID = "handoff-threshold-hook-test-session"
     marker_file = hook.HANDOFF_DIRECTORY / f"{PROBE_SESSION_ID}-handoff-asked"
+    # The deferral cases get session ids of their own: one case asserts that no
+    # marker exists, and a marker another case wrote would hide that failure.
+    DEFERRAL_PROBE_SESSION_ID = "handoff-threshold-hook-test-deferral-session"
+    CEILING_PROBE_SESSION_ID = "handoff-threshold-hook-test-ceiling-session"
+    deferral_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{DEFERRAL_PROBE_SESSION_ID}-handoff-asked")
+    ceiling_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{CEILING_PROBE_SESSION_ID}-handoff-asked")
+    deferral_marker_file.unlink(missing_ok=True)
+    ceiling_marker_file.unlink(missing_ok=True)
     # On a fresh machine nothing has created the handoff directory yet.
     hook.HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
@@ -160,6 +286,82 @@ with tempfile.TemporaryDirectory() as workspace:
                           ("--threshold-used-percentage", "75"))
         check("threshold is configurable", result.returncode == 0, f"code {result.returncode}")
 
+        # --- The deferral while subagents run (user-ruled 2026-08-27) -----
+        # The transcripts below are the same session at three moments: one
+        # subagent running, that subagent finished, and the context past the
+        # ceiling. A monitor sits beside the subagent throughout, because the
+        # count in the message must not include it.
+        running = transcript_of(workspace, "deferral-running.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55% — over 50, under 65
+            monitor_start_record(),
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+        ])
+        finished = transcript_of(workspace, "deferral-finished.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            monitor_start_record(),
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+            subagent_completion_record("a2573a7737ae643dc"),
+        ])
+        past_ceiling = transcript_of(workspace, "deferral-past-ceiling.jsonl", [
+            usage_record(100_000, cache_read=600_000),  # 70% — over the ceiling
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+        ])
+
+        result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
+                           "transcript_path": str(running)})
+        check("hook defers instead of firing while a subagent runs",
+              result.returncode == 2 and "handoff deferred" in result.stderr,
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("the deferral does not tell the agent to run the skill",
+              "Run the handoff skill now." not in result.stderr, result.stderr[:200])
+        check("the deferral counts subagents and not monitors",
+              "1 subagent(s) run" in result.stderr, result.stderr[:200])
+        check("the deferral says how full the context is",
+              "Context at 55%" in result.stderr, result.stderr[:200])
+        check("the deferral tells the agent to spawn no more subagents",
+              "Spawn no new subagents" in result.stderr, result.stderr[:200])
+        # No marker is the mechanism, not an oversight: the check has to run
+        # again at the next turn boundary, and the completion notification
+        # that ends the wait is itself a turn.
+        check("a deferral writes no fired marker, so the next turn asks again",
+              not deferral_marker_file.exists(), str(deferral_marker_file))
+
+        result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
+                           "transcript_path": str(finished)})
+        check("the same session fires once its subagent has finished",
+              result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("firing after a deferral writes the fired marker",
+              deferral_marker_file.exists(), str(deferral_marker_file))
+        deferral_marker_file.unlink(missing_ok=True)
+
+        result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
+                           "transcript_path": str(past_ceiling)})
+        check("above the ceiling the handoff fires with a subagent still running",
+              result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        check("firing above the ceiling writes the fired marker",
+              ceiling_marker_file.exists(), str(ceiling_marker_file))
+        ceiling_marker_file.unlink(missing_ok=True)
+
+        result = run_hook({"session_id": CEILING_PROBE_SESSION_ID,
+                           "transcript_path": str(running)},
+                          ("--ceiling-used-percentage", "50"))
+        check("a lowered ceiling fires at a share that would otherwise defer",
+              result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+        ceiling_marker_file.unlink(missing_ok=True)
+
+        below_threshold = transcript_of(workspace, "deferral-below-threshold.jsonl", [
+            usage_record(100_000, cache_read=300_000),  # 40% — nothing to say yet
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+        ])
+        result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
+                           "transcript_path": str(below_threshold)})
+        check("below the threshold a running subagent draws no message at all",
+              result.returncode == 0 and not result.stderr.strip(),
+              f"code {result.returncode}, stderr {result.stderr[:200]}")
+
         result = run_hook({})
         check("hook stays silent with no session id", result.returncode == 0)
 
@@ -171,6 +373,8 @@ with tempfile.TemporaryDirectory() as workspace:
         check("hook stays silent before the first turn completes", result.returncode == 0)
     finally:
         marker_file.unlink(missing_ok=True)
+        deferral_marker_file.unlink(missing_ok=True)
+        ceiling_marker_file.unlink(missing_ok=True)
 
 print()
 if failures:

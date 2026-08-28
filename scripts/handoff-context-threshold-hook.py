@@ -24,11 +24,55 @@ It fires ONCE per session: after firing it records the fact in the handoff
 directory, so the reminder does not repeat at every subsequent turn while
 the agent is composing the handoff.
 
+WHILE A SUBAGENT IS RUNNING THE HANDOFF WAITS (user-ruled 2026-08-27). A
+recycle kills the session, and the session's in-process subagents die with
+it: on 2026-08-27 a seat dispatched a builder subagent at 20:38, the hook
+fired at 50% at 20:43, and the subagent died four minutes into its job. So
+at the threshold the hook first asks whether any Agent-tool subagent is
+still in flight. While one is, it says so and does NOT fire — and writes no
+marker, so the same question is asked again at the next turn boundary. That
+is what detects the finish: a subagent's completion notification is itself
+a turn, so the first boundary after the last subagent finishes is the one
+that fires. The standing ruling that a recycle records its subagents rather
+than waiting for them (2026-08-23, [nedschorus#153]) still governs
+everything else; this deferral is its one bounded exception, and
+--ceiling-used-percentage is the bound. Above the ceiling the handoff fires
+whatever is running, because a session deferring to a subagent that never
+finishes would run out of context instead of recycling — which is a worse
+loss than the one this defers.
+
+IN FLIGHT means spawned and not yet finished, both read from the transcript.
+A spawn is a tool result carrying `status: async_launched` and an `agentId`;
+a Monitor's tool result carries neither, so monitors are excluded by their
+shape rather than by a guess about their ids. A finish is that agent's id
+inside the `<task-id>` tag of a task-notification. The notification arrives
+in more than one record shape — as a `user` record when the session is idle
+enough to be interrupted, as an `attachment` plus `queue-operation` pair
+when it is busy — and in the 2026-08-27 transcript six of the fourteen
+finished subagents produced no `user` record at all, so the scan matches the
+tag wherever in a record it appears rather than keying on one shape.
+
+WHAT THE SCAN COSTS: the whole transcript, read once. The used share comes
+from the tail, but a spawn can be hours back, so this read cannot be a tail
+read. Measured at roughly 2.5 ms per megabyte — 7 ms on a 3.5 MB transcript,
+the largest in this fleet — and it is paid only between the threshold and
+the fire: never below the threshold, and never once the marker is written.
+
+TWO WAYS THE SCAN CAN BE WRONG, both bounded by the ceiling. An agent
+resumed by SendMessage runs again with no new spawn record, so its earlier
+completion still stands and the handoff fires while it works — the behaviour
+this project had before this change. A completion the scan misses defers the
+handoff no further than the ceiling. A subagent stopped by TaskStop takes
+the same path as any other finish and is untested, because no specimen
+exists.
+
 Threshold: --threshold-used-percentage, default 50.
+Ceiling: --ceiling-used-percentage, default 65.
 """
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -61,6 +105,22 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 # twice in a day: once when boundary judgment was removed, once when the writer
 # took over the fields.
 HANDOFF_INSTRUCTION = "Run the handoff skill now."
+
+# The deferral says the opposite of the instruction above, so it must not read
+# like it: the agent is being told to keep working, and told the one thing that
+# would extend the wait indefinitely.
+HANDOFF_DEFERRED_NOTICE = (
+    "Context at {used_percentage:.0f}% — handoff deferred while "
+    "{subagent_count} subagent(s) run. Spawn no new subagents; the handoff "
+    "fires when they finish."
+)
+
+# What a spawned subagent's tool result carries and a Monitor's does not.
+SPAWNED_SUBAGENT_STATUS = "async_launched"
+
+# A completion notification names the agent that finished in this tag, in every
+# record shape that carries the notification.
+TASK_NOTIFICATION_TASK_ID_PATTERN = re.compile(r"<task-id>([^<]+)</task-id>")
 
 
 def hook_payload_from_stdin() -> dict:
@@ -148,9 +208,63 @@ def context_used_percentage_from_transcript(transcript_path: str):
     return 100.0 * used_tokens / context_window_for(message.get("model", ""))
 
 
+def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
+    """Return the ids of the session's Agent-tool subagents still running.
+
+    A subagent is in flight when the transcript holds its spawn and no
+    completion notification naming it. Both halves are read from the whole
+    file, not the tail: a spawn can be hours behind the newest record, and a
+    session that missed one would kill a subagent it did not know about,
+    which is the failure this exists to prevent (2026-08-27).
+
+    The cheap substring test on each line is what keeps the whole-file read
+    affordable — a transcript is mostly large tool results, and only the few
+    lines that could matter are parsed. Cost and limits are in the module
+    docstring.
+
+    A spawn is identified structurally, by `status: async_launched` plus an
+    `agentId` in the tool result. Monitors and background shell commands also
+    produce task notifications, but their tool results carry no agentId, so
+    they never enter the spawned set and their notifications match nothing.
+
+    Order is spawn order, so a caller reporting the ids reports them in the
+    order the agent created them.
+    """
+    path = Path(transcript_path).expanduser() if transcript_path else None
+    if path is None or not path.is_file():
+        return []
+
+    spawned_ids = []
+    finished_ids = set()
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if SPAWNED_SUBAGENT_STATUS in line:
+                    try:
+                        record = json.loads(line)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        record = None
+                    tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
+                    if isinstance(tool_result, dict) and \
+                            tool_result.get("status") == SPAWNED_SUBAGENT_STATUS:
+                        agent_id = tool_result.get("agentId")
+                        if agent_id and agent_id not in spawned_ids:
+                            spawned_ids.append(agent_id)
+                if "<task-id>" in line:
+                    finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
+    except OSError:
+        return []  # unreadable transcript: nothing known to be running
+
+    return [agent_id for agent_id in spawned_ids if agent_id not in finished_ids]
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
     parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
+    parser.add_argument(
+        "--ceiling-used-percentage", type=float, default=65.0,
+        help="above this used share the handoff fires even with subagents in flight",
+    )
     arguments = parser.parse_args(argv)
 
     payload = hook_payload_from_stdin()
@@ -158,16 +272,33 @@ def main(argv=None) -> int:
     if not session_id:
         return 0  # no session to reason about; stay silent
 
+    transcript_path = payload.get("transcript_path", "")
     # Every session has a transcript, headless included; before the first
     # assistant turn completes there is nothing to measure and nothing near
     # the threshold either, so None simply stays silent.
-    used = context_used_percentage_from_transcript(payload.get("transcript_path", ""))
+    used = context_used_percentage_from_transcript(transcript_path)
     if used is None or used < arguments.threshold_used_percentage:
         return 0  # nothing measurable yet, or still plenty of room
 
     fired_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-asked"
     if fired_marker.exists():
         return 0  # already asked this session; do not nag every turn
+
+    # Below the ceiling, a running subagent postpones the handoff rather than
+    # dying with the session (user-ruled 2026-08-27; module docstring).
+    if used < arguments.ceiling_used_percentage:
+        subagents_in_flight = spawned_subagent_ids_in_flight(transcript_path)
+        if subagents_in_flight:
+            # Deliberately no marker. The deferral has to be re-decided at
+            # every turn boundary, because the boundary that follows the last
+            # completion notification is the one that fires.
+            print(
+                HANDOFF_DEFERRED_NOTICE.format(
+                    used_percentage=used, subagent_count=len(subagents_in_flight)
+                ),
+                file=sys.stderr,
+            )
+            return 2  # exit 2 surfaces stderr to the agent as a system message
 
     try:
         # Nothing guarantees the directory exists this early in a session, and a
