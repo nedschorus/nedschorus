@@ -27,6 +27,16 @@ WHAT IS PINNED HERE.
     GIT_DIR at a directory that does not exist: eight `saved:` lines, and not
     one word saying nothing had been checked.
 
+  - A cell that fell back to a later model in its chain says so on the
+    grid's output. Until 2026-08-25 a fallback was recorded only in the
+    report's own `fallback_from=` provenance stamp, which nobody sees unless
+    they open that file — and the grid deleted the cell's log, so a report
+    written by the chain's second model was indistinguishable here from one
+    written by the model asked for (user-ruled that day: "I'm ok with the
+    fable falling back to opus too. I just don't want it to fail silently").
+    The rename commit that added the lift verified it by a hand-run probe;
+    this case is that probe, kept.
+
   - The line that names changed files still reaches the grid's output, and
     the log is still deleted on success. Those are the two halves the fix
     must not trade against each other: lifting more lines is worthless if the
@@ -62,6 +72,9 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # argument, so the stub reads both and looks for a path under the records
 # tree. COLD_READ_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
 # — a reviewer editing the document instead of reviewing it.
+# COLD_READ_GRID_TEST_STUB_FAILING_MODEL, when set, is a model id the stub
+# refuses to be: launched as that model it writes nothing and exits 1, which
+# is what sends a cell down its chain to the next model.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import os, re, sys
 
@@ -71,6 +84,10 @@ try:
 except OSError:
     pass
 prompt += " " + " ".join(sys.argv)
+failing_model = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_MODEL")
+if failing_model and failing_model in sys.argv:
+    sys.stderr.write("stub runtime: this model is unavailable today\n")
+    sys.exit(1)
 match = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
 if match is None:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
@@ -207,6 +224,38 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the stderr logs are deleted on this path too",
+          record_directory is not None
+          and list(record_directory.glob("*.stderr.log")) == [],
+          f"logs left in {record_directory}")
+
+    # --- A cell that fell back says so ------------------------------------
+    # The stub refuses to be claude-opus-5, which leads the Claude good tier.
+    # Both good-tier Claude cells therefore fall back to claude-fable-5 and
+    # produce their reports under it; the two floor cells and the four Codex
+    # cells are untouched, so eight reviews still land.
+    repository = build_scratch_repository(scratch, "checkout-fell-back")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    fell_back_lines = [line for line in result.stdout.splitlines()
+                       if line.startswith("FELL BACK:")]
+    check("a cell whose first-choice model failed says so on the grid's output",
+          fell_back_lines != [], f"stdout was {result.stdout!r}")
+    check("both cells of the tier that fell back are named",
+          len(fell_back_lines) == 2 and all("claude" in line and "good" in line
+                                            for line in fell_back_lines),
+          f"lifted lines were {fell_back_lines!r}")
+    check("the line names the model that actually wrote the report",
+          all("claude-fable-5" in line for line in fell_back_lines),
+          f"lifted lines were {fell_back_lines!r}")
+    check("a fallback is not a failure: eight reviews still land, grid exits 0",
+          result.returncode == 0 and len(saved_lines) == 8,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the stderr logs are deleted once the fallback line has been lifted",
           record_directory is not None
           and list(record_directory.glob("*.stderr.log")) == [],
           f"logs left in {record_directory}")
