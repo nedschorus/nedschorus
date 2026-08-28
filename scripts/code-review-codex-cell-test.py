@@ -309,6 +309,36 @@ with tempfile.TemporaryDirectory() as scratch:
               not passthrough_report.exists(),
               "a partial report outlived a failed run and can be read as a review")
 
+    # --- A codex killed by a signal, which is NOT passed through unchanged --
+    # Python reports a signal death as a negative returncode, and this cell
+    # hands that to sys.exit, which takes it modulo 256. So the number a
+    # caller sees for SIGKILL is 247, not the 137 a shell would report for the
+    # same death. The cell's docstring said "passed through unchanged" without
+    # qualification until 2026-08-28, which read as a promise that the number
+    # a caller sees is the number a shell would show.
+    #
+    # Nothing depends on the distinction today, and these cases exist to keep
+    # it that way: what MUST hold is that these codes stay clear of the ones
+    # this cell spends on its own meanings (64 refused, 1 no report, 2 codex
+    # rejected the composed command). If a future edit normalises signal
+    # deaths onto one of those, the second check here fails.
+    for signal_number, expected_exit in ((9, 247), (15, 241)):
+        signal_report = scratch / f"signal-{signal_number}.md"
+        result = run_cell(stubs, f"#!/bin/sh\nkill -{signal_number} $$\n",
+                          "--commit", head_sha, "--repo", str(checkout),
+                          "--output", str(signal_report))
+        check(f"a codex killed by signal {signal_number} exits {expected_exit}, "
+              "not the shell's 128+N",
+              result.returncode == expected_exit,
+              f"exit {result.returncode}; stderr={result.stderr!r}")
+        check(f"signal {signal_number}'s code cannot be mistaken for one this "
+              "cell spends itself",
+              result.returncode not in (0, 1, 2, 64),
+              f"exit {result.returncode} collides with a code this cell means something by")
+        check(f"no report survives a codex killed by signal {signal_number}",
+              not signal_report.exists(),
+              "a partial report outlived a killed run and can be read as a review")
+
     # --- The memory store is off for the launch ----------------------------
     # Why this matters and what it does not cover: the cell's own docstring,
     # under WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS. What is

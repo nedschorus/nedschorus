@@ -125,20 +125,33 @@ a defect in this repository's code.
          sysexits.h's EX_USAGE, "command line usage error", and it is used
          here rather than the conventional 2 because it sits outside every
          band codex plausibly returns: clap pins its own usage errors at 2,
-         codex's runtime failures at 1, a Rust panic is 101, a signal is
-         128+N.
+         codex's runtime failures at 1, a Rust panic is 101, and a codex
+         killed by a signal surfaces from this program in the 192-255 band
+         (see the row below). 64 is outside all four.
   1      the review failed and no report survives -- codex could not be
          launched or timed out, or codex exited 0 having written nothing.
          Either layer can produce it; the stderr line says which.
-  other  codex exec's own exit code, passed through unchanged. A passed-
-         through 2 specifically means CODEX REJECTED THE COMMAND THIS
-         SCRIPT COMPOSED, which is a defect here rather than a caller's
-         typo (measured on codex-cli 0.147.0, 2026-08-23: `codex exec
-         --no-such-flag review` and `codex exec review --no-such-flag` both
-         exit 2, while every non-parsing failure probed the same day --
-         unknown feature name, missing working directory, `review` outside
-         a git repository, an unusable model id, a rejected config
-         override -- exits 1).
+  other  codex exec's own exit code. A passed-through 2 specifically means
+         CODEX REJECTED THE COMMAND THIS SCRIPT COMPOSED, which is a defect
+         here rather than a caller's typo (measured on codex-cli 0.147.0,
+         2026-08-23: `codex exec --no-such-flag review` and `codex exec
+         review --no-such-flag` both exit 2, while every non-parsing failure
+         probed the same day -- unknown feature name, missing working
+         directory, `review` outside a git repository, an unusable model id,
+         a rejected config override -- exits 1).
+
+         UNCHANGED FOR AN ORDINARY EXIT, TRANSFORMED FOR A SIGNAL, and the
+         difference is worth knowing before you match on a number. Python
+         reports a signal death as a NEGATIVE returncode (-9 for SIGKILL),
+         and this program hands that straight to sys.exit, which takes it
+         modulo 256. So a codex killed by SIGKILL leaves this program with
+         247, and SIGTERM with 241 -- not the 137/143 a shell would report
+         for the same deaths. Measured, not derived. Nothing here needs the
+         distinction today: both land in 192-255, well clear of 64, 1 and 2,
+         so every code this program spends stays unambiguous. It is written
+         down because "passed through unchanged" read as a promise that the
+         number a caller sees is the number a shell would show, and for a
+         signal it is not.
 
 Once codex has been launched, every failure path deletes any report it may
 have left behind, so from there a report file exists if and only if the run
