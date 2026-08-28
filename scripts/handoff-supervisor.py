@@ -305,11 +305,32 @@ def next_step_from(handoff_fields: dict) -> str:
 
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
-                          queue_status: str = "") -> str:
+                          queue_status: str = "", launch_time: Optional[datetime] = None) -> str:
+    """Compose the successor's first prompt.
+
+    launch_time is the wall clock at launch, taken here when the caller does
+    not supply one; tests supply a fixed moment. It is read inside the call
+    rather than defaulted in the signature, because a signature default is
+    evaluated once at import and this supervisor runs for days — the stamp
+    would name the moment the process started, not the moment the successor
+    did.
+
+    The successor is told the time because it cannot otherwise know it: it
+    wakes with a dialog whose events are hours old and no sense of now. Left
+    to estimate, one session's handoff stamps drifted by as much as an hour
+    and forty-five minutes, twice. The stamp is local time with its zone, the
+    form `date` prints, so the successor can see at a glance whether the clock
+    it reads matches the one it was given.
+    """
     next_step = next_step_from(handoff_fields)
     elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
+    launch_moment = launch_time if launch_time is not None else datetime.now()
+    if launch_moment.tzinfo is None:
+        launch_moment = launch_moment.astimezone()  # name the zone, as `date` does
     lines = [
         f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
+        f"The clock read {launch_moment.strftime('%Y-%m-%d %H:%M %Z')} at launch; "
+        "take every time stamp from `date`, never from estimate.",
         f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
     ]
     if queue_status:

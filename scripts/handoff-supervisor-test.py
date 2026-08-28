@@ -445,6 +445,35 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("ignition survives a missing next-step", "continue from where that dialog ends" in prompt_without_step)
     check("ignition omits an empty queue status", "Queue status" not in prompt_without_step)
 
+    # --- The launch clock -------------------------------------------------
+    # The successor wakes with a dialog whose events are hours old and no
+    # sense of now; estimating cost one session's handoff stamps up to 1h45.
+    stamped = supervisor.build_ignition_prompt(
+        Path("/tmp/d.md"), {"written-at": recent, "next-step": "keep going"}, 0,
+        launch_time=datetime(2026, 8, 27, 20, 44,
+                             tzinfo=timezone(timedelta(hours=-7), "PDT")),
+    )
+    check("ignition stamps the wall clock at launch, with its zone",
+          "The clock read 2026-08-27 20:44 PDT at launch" in stamped, stamped[:300])
+    check("ignition says where the successor's time stamps come from",
+          "take every time stamp from `date`, never from estimate" in stamped, stamped[:300])
+    # A naive moment is read as local time and printed with the zone's name,
+    # which is what `date` prints and what the successor is told to compare.
+    naive_stamped = supervisor.build_ignition_prompt(
+        Path("/tmp/d.md"), {"written-at": recent}, 0,
+        launch_time=datetime(2026, 8, 27, 20, 44),
+    )
+    check("a naive launch moment still names a zone",
+          "The clock read 2026-08-27 20:44 " in naive_stamped
+          and " at launch" in naive_stamped, naive_stamped[:300])
+    # Read at the call, not defaulted in the signature: a supervisor runs for
+    # days, and an import-time default would stamp every successor with the
+    # moment the supervisor started.
+    unstamped = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
+    check("an unsupplied launch clock is read when the prompt is built",
+          f"The clock read {datetime.now().astimezone().strftime('%Y-%m-%d')}" in unstamped,
+          unstamped[:300])
+
     # --- Retention --------------------------------------------------------
     for generation in range(1, 6):
         (workspace / f"agent-dialog-{generation:04d}.md").write_text("x", encoding="utf-8")
