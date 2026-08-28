@@ -303,10 +303,14 @@ with tempfile.TemporaryDirectory() as workspace:
           hook.spawned_subagent_ids_in_flight(str(Path(workspace) / "nope.jsonl")) == [])
 
     # --- "Could not tell" is not "nothing is running" ----------------------
-    # The hook reads a transcript its session is still appending to, so the
-    # last line is often half-written. Skipping such a line here would report
-    # an empty list, which main() would fire on — killing the subagent whose
-    # spawn record was the half-written line (merge-lane review of #180).
+    # A spawn record caught mid-append is not observed in practice — 841
+    # transcripts, none ending mid-line, and 3,800 concurrent-append probes
+    # showing no partial record (merge-lane review of #180). It is guarded
+    # anyway because the costs are not symmetric: skipping such a line reports
+    # an empty list, which main() fires on, killing the subagent whose spawn
+    # record was the half-written line. These cases pin the refusal, and the
+    # case below pins its scope — a record cut before its marker is not a
+    # candidate, so this guard never sees it.
     truncated_spawn = Path(workspace) / "truncated-spawn.jsonl"
     truncated_spawn.write_text(
         json.dumps(usage_record(100_000, cache_read=450_000)) + "\n"

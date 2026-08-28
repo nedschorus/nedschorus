@@ -78,13 +78,37 @@ silent deferred boundary still pays it, because whether the wait is over is
 exactly what it is asking.
 
 WHAT THE SCAN DOES WHEN IT CANNOT TELL: it says so, and the handoff waits.
-A candidate spawn record that does not parse, or a read error, raises
-TranscriptCouldNotBeFullyRead, and below the ceiling that defers exactly as a
-running subagent does, with a notice that says the count is unknown. An empty
-list therefore means "nothing is running" and nothing else. It used to mean
-both that and "I could not look", which is what fired the handoff on a
-half-written spawn line — the ordinary state of a transcript the session is
-still appending to (merge-lane review of PR #180, 2026-08-28).
+A line that carries the spawn marker and does not parse, or a read error,
+raises TranscriptCouldNotBeFullyRead, and below the ceiling that defers
+exactly as a running subagent does, with a notice that says the count is
+unknown. Before that the two answers were one: an empty list meant both
+"nothing is running" and "I could not look", and main() fired on either.
+
+WHAT AN EMPTY LIST MEANS, EXACTLY: no parseable spawn record is without a
+completion. That is narrower than "nothing is running", and the difference is
+not academic. Only a line carrying the spawn marker is parsed at all, and
+across 550 real spawn records the marker sits a median 31.5% of the way into
+its line, so a record cut off before its marker is not a candidate — it is
+passed over in silence and still yields an empty list. Failing closed narrows
+this gap; it does not close it.
+
+HOW LIKELY A TRUNCATED RECORD IS, MEASURED (merge-lane review of PR #180,
+2026-08-28). An earlier version of this paragraph called a half-written final
+line "the ordinary state" of a transcript being appended to. That was asserted,
+not measured, and the measurements do not support it: of 841 transcripts on
+this machine, none ends mid-line; appending a median-sized spawn record
+(5.1 KB) 3,000 times while polling concurrently exposed no partial record, and
+800 appends of the largest observed record (86 KB) exposed none either. A
+realistically sized append reads atomically on this filesystem. What is NOT
+established is whether the harness writes each record in one write() call,
+which is why the case is guarded rather than dismissed: failing closed costs
+at most a deferral to the ceiling, and firing wrongly costs a subagent.
+
+THE READ-ERROR HALF IS NOT REACHABLE THROUGH main(). The used-share read runs
+first on the same file and exits the hook when it returns None, so a
+transcript this process cannot open never reaches the scan. The raise is kept
+for any other caller, and for a file that stops being readable between the two
+reads.
 
 TWO WAYS THE SCAN CAN STILL BE WRONG, both of them in the fire-too-early
 direction and neither bounded by the ceiling, because both look like a clean
@@ -287,19 +311,20 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
     "nothing is running" and fired on, killing the subagent this exists to
     protect.
 
-    The unparsed-line case is the ordinary one, not corruption: this hook
-    reads the transcript of a session that is still appending to it, so the
-    final line is often half-written. The usage reader may skip such a line
-    safely, because skipping it costs one turn's worth of freshness. Skipping
-    it here would convert "I could not tell" into "nothing is running", and
-    only one of those two answers kills work. Failing closed costs at most a
+    Not because a truncated record is common — it is not observed in
+    practice, and the module docstring gives the measurements — but because
+    the two answers cost differently. The usage reader may skip an unparsed
+    line safely: skipping it costs one turn's worth of freshness. Skipping it
+    here would convert "I could not tell" into "nothing is running", and only
+    one of those two answers kills work. Failing closed costs at most a
     deferral to the ceiling.
 
     Only a line carrying the spawn marker is parsed at all, so an ordinary
-    half-written line — the common case — is not a candidate and raises
-    nothing. Completion tags are matched as text, so a truncated notification
-    loses a completion instead of gaining one, which also fails closed: the
-    subagent stays in flight and the handoff waits.
+    unparsed line is not a candidate and raises nothing. That also bounds what
+    this guard can catch: a spawn record truncated before its marker is
+    invisible to it. Completion tags are matched as text, so a truncated
+    notification loses a completion instead of gaining one, which fails closed
+    the same way: the subagent stays in flight and the handoff waits.
 
     A transcript that is absent altogether still reports [], not unknown. It
     is not a failure to read: a session with no transcript spawned nothing,
