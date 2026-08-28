@@ -1,6 +1,6 @@
 # draft-md prompt research report: the defect catalog and the evidence behind each rule ([nedschorus#142](https://github.com/nedschorus/nedschorus/issues/142))
 
-Research record for the prompts specified in `docs/issues/142-draft-md-passes-and-review-cells.md` — the write pass, the warm conflation cell, and the reconciliation pass of the `draft-md` skill. A report, not an instruction: it records which defect each rule targets, what covers each defect after the user's rulings of 2026-08-26 and 2026-08-27, and the published evidence each rule rests on, for whoever revises a rule later. Four research runs (two Codex, two Opus, 2026-08-26) produced the findings distilled here; their full reports were session working material and are not kept.
+Research record for the prompts specified in `docs/issues/142-draft-md-skill-design.md` (then named `142-draft-md-passes-and-review-cells.md`) — the write pass, the warm conflation cell, and the reconciliation pass of the `draft-md` skill. A report, not an instruction: it records which defect each rule targets, what covers each defect after the user's rulings of 2026-08-26 and 2026-08-27, and the published evidence each rule rests on, for whoever revises a rule later. Four research runs (two Codex, two Opus, 2026-08-26) produced the findings distilled here; their full reports were session working material and are not kept.
 
 ## The defect catalog: one list, two prompt families
 
