@@ -50,6 +50,13 @@ WHAT IS PINNED HERE.
     later model that exits 0 having written nothing is credited with its
     predecessor's findings, under a provenance stamp naming the wrong model.
 
+  - And when the model that wrote and then failed is the LAST in the chain,
+    its file does not survive the run either. There is no next attempt to
+    clear the path, so the cell used to say no report was produced while an
+    unstamped one sat in the record directory — where the grid tells the
+    reviewing agent failed reviews are absent, and the skill sends it to read
+    every report present. A report exists if and only if the run succeeded.
+
 Run: python3 scripts/md-review-cell-common-test.py
 """
 
@@ -314,6 +321,29 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the failed chain names both attempts",
           "claude-fable-5" in result.stderr and "claude-opus-5" in result.stderr,
           repr(result.stderr))
+
+    # --- The last model's report does not outlive its failure -------------
+    # The credit exhaustion of 2026-08-23 in one case: a model writes its
+    # findings and then exits non-zero. It is the last model in the chain, so
+    # nothing clears the path after it, and the cell announces a failure over
+    # a file that is still there and carries no provenance stamp.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "md-review-records" / "run-e" / "claude-restate-floor.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "FINDINGS: 1. something real\nclean sections: none\n",
+               "exit": 1}},
+        report, "--model", "stub-model-that-writes-then-fails",
+    )
+    check("a cell whose only model wrote a report and then failed exits 1",
+          result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the cell says no report was produced",
+          "No report was produced" in result.stderr, repr(result.stderr))
+    check("no report is left behind for a reader to mistake for a review",
+          not report.exists(),
+          "an unstamped report survived a run the cell called failed")
+
 
 # --- What the cell docstrings promise about the detector -------------------
 # Prose, checked because prose is what the next reader believes. The Codex

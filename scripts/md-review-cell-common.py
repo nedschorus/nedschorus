@@ -386,6 +386,21 @@ def run_model_chain(
         break
 
     if not produced_by:
+        # THE LAST ATTEMPT'S REPORT, cleared here because there is no next
+        # attempt to clear it. The unlink at the top of the loop empties the
+        # path for the attempt about to run; a model that writes its report
+        # and then exits non-zero -- the credit exhaustion this fleet hit
+        # 2026-08-23, a rate limit surfacing after the tool call, an operator
+        # Ctrl-C -- therefore leaves its file behind when it is the last model
+        # in the chain. This program then says no report was produced while an
+        # unstamped one sits in the record directory, the grid tells the
+        # reviewing agent that failed reviews are absent from the record, and
+        # the skill sends that agent to read every report there. The orphan is
+        # read as a review, and it is the one file in the directory carrying no
+        # stamp naming the model that wrote it (nedschorus#167). A report
+        # exists if and only if the run succeeded: this line is where that
+        # invariant is kept on the failing path.
+        report.unlink(missing_ok=True)
         print(
             f"{program}: every model for this cell failed — "
             + ", ".join(failed_attempts)
