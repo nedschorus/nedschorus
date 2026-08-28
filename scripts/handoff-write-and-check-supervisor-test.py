@@ -31,13 +31,18 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_writer(workspace: Path, next_step_text: str, *extra_arguments):
+def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environment_overrides=None):
     """Invoke the script as the agent would, returning its completed process.
 
     The session identity is scrubbed from the environment deliberately. These
     tests run inside a live Claude session, and leaving CLAUDE_PID set would
     have the writer start a real supervisor that kills the very session
     running the tests.
+
+    environment_overrides is how the roster cases point the writer at a fake
+    HOME and a fake session id: the roster is derived from the running
+    session's transcript, so exercising it end to end means giving the writer
+    a session whose transcript is a fixture rather than this test run's own.
     """
     next_step_path = workspace / "next-step.txt"
     next_step_path.write_text(next_step_text, encoding="utf-8")
@@ -46,6 +51,7 @@ def run_writer(workspace: Path, next_step_text: str, *extra_arguments):
         if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
     }
     scrubbed_environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"  # offline tests never call GitHub
+    scrubbed_environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "tester",
          "--next-step-file", str(next_step_path), "--handoff-dir", str(workspace),
@@ -354,6 +360,391 @@ def run_agent_name_and_claim_cases(workspace: Path):
           "taking the name" in (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8"))
 
 
+
+# ---------------------------------------------------------------------------
+# The roster of subagents the retiring session spawned.
+#
+# The records below are trimmed copies of real ones, taken from the merge-lane
+# session transcripts of 2026-08-23 (the session that died owning pull request
+# #150's fixer, and its successor). Their SHAPE is the thing under test — the
+# derivation reads a harness format nothing else in this repository defines —
+# so they are reproduced field for field rather than idealised.
+
+SPAWN_NOTICE_TEXT = (
+    "Async agent launched successfully. (This tool result is internal metadata — never quote or "
+    "paste any part of it, including the agentId below, into a user-facing reply.)\n"
+    "agentId: {agent_id} (internal ID - do not mention to user. Use SendMessage with "
+    "to: '{agent_id}', summary: '<5-10 word recap>' to continue this agent.)\n"
+    "The agent is working in the background. You will be notified automatically when it completes."
+)
+
+
+def spawn_record(agent_id: str, description: str, timestamp: str) -> dict:
+    """A subagent spawn, as the harness writes it.
+
+    The tool_result is present and matched — it arrives at SPAWN time, saying
+    the agent was launched — which is exactly why the derivation must not read
+    an unmatched tool_use as a running subagent.
+    """
+    tool_use_id = f"toolu_{agent_id}"
+    return {
+        "parentUuid": "4fcc9127-dd74-41e8-9bd2-995b89006d15", "isSidechain": False, "type": "user",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": tool_use_id, "type": "tool_result",
+            "content": [{"type": "text", "text": SPAWN_NOTICE_TEXT.format(agent_id=agent_id)}],
+        }]},
+        "uuid": f"uuid-{agent_id}", "timestamp": timestamp,
+        "toolUseResult": {
+            "isAsync": True, "status": "async_launched", "agentId": agent_id,
+            "description": description, "resolvedModel": "claude-opus-5[1m]",
+            "prompt": "the commissioning prompt, which can run to thousands of words",
+            "outputFile": f"/private/tmp/tasks/{agent_id}.output", "canReadOutputFile": False,
+        },
+        "sessionId": FIXTURE_SESSION_ID,
+    }
+
+
+def resume_record(agent_id: str, timestamp: str) -> dict:
+    """A SendMessage that resumed a subagent. Not every SendMessage does:
+    the same tool addresses other seats by name, and only a result carrying
+    resumedAgentId says a subagent was reached."""
+    return {
+        "type": "user", "timestamp": timestamp, "uuid": f"uuid-resume-{agent_id}",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": f"toolu_resume_{agent_id}", "type": "tool_result",
+            "content": [{"type": "text", "text": "{\"success\":true}"}],
+        }]},
+        "toolUseResult": {
+            "success": True, "message": f"Resuming agent {agent_id[:7]}",
+            "resumedAgentId": agent_id,
+            "pin": {"id": agent_id, "name": agent_id, "ref": "330caf"},
+        },
+        "sessionId": FIXTURE_SESSION_ID,
+    }
+
+
+def notification_body(task_id: str, status: str, summary: str) -> str:
+    return (
+        "<task-notification>\n"
+        f"<task-id>{task_id}</task-id>\n"
+        f"<tool-use-id>toolu_{task_id}</tool-use-id>\n"
+        f"<output-file>/private/tmp/tasks/{task_id}.output</output-file>\n"
+        f"<status>{status}</status>\n"
+        f"<summary>{summary}</summary>\n"
+        "<result>what the agent reported back</result>\n"
+        "</task-notification>"
+    )
+
+
+def notification_records(task_id: str, status: str, summary: str, enqueued_at: str,
+                         delivered_at: str = "", removed_at: str = "") -> list:
+    """One notification as the transcript carries it: one to three records.
+
+    Enqueued, optionally delivered as a user turn and copied as an attachment,
+    optionally removed from the queue. Measured across three real session
+    transcripts, no notification body ever appears more than three times, and
+    four combinations occur — see `task_notification_text` in the writer for
+    the counts. The enqueue-only combination is a notification nothing ever
+    delivered, which is invisible to a reader that takes only the delivered
+    turn; that is why the derivation reads every combination, and why it must
+    not count the echoes as separate events.
+
+    This helper can emit all four records at once, which the real transcripts
+    never do. That is deliberate: a fixture that emits the maximum exercises
+    the de-duplication harder than a replay would.
+    """
+    body = notification_body(task_id, status, summary)
+    records = [{"type": "queue-operation", "operation": "enqueue", "timestamp": enqueued_at,
+                "sessionId": FIXTURE_SESSION_ID, "content": body}]
+    if delivered_at:
+        records.append({"type": "user", "timestamp": delivered_at, "uuid": f"uuid-notify-{task_id}",
+                        "message": {"role": "user", "content": body},
+                        "sessionId": FIXTURE_SESSION_ID})
+        records.append({"type": "attachment", "timestamp": delivered_at,
+                        "uuid": f"uuid-attach-{task_id}",
+                        "attachment": {"type": "queued_command", "prompt": body},
+                        "sessionId": FIXTURE_SESSION_ID})
+    if removed_at:
+        records.append({"type": "queue-operation", "operation": "remove", "timestamp": removed_at,
+                        "sessionId": FIXTURE_SESSION_ID, "content": body})
+    return records
+
+
+def multi_id_notification_records(task_ids: list, status: str, summary: str,
+                                  enqueued_at: str) -> list:
+    """One notification naming SEVERAL agents under a single <status>.
+
+    Shape taken from a real specimen rather than invented: session `3f4965a7`,
+    2026-08-21T19:31:05Z, names two subagents that session spawned —
+    a3fe2b9aecae01f3b and a677554663305e800 — under <status>stopped</status>,
+    the summary beginning "No completion record was found for 2 background
+    agents from the previous session". Five such multi-id bodies exist across
+    the transcripts under ~/.claude/projects.
+
+    This is the harness's way of reporting agents from a previous session with
+    no completion record, which is the single highest-value event this roster
+    carries. A derivation reading only the first <task-id> leaves every later
+    agent holding whatever it had before: truncate that real transcript at the
+    notification and the second agent reads "killed at 18:38:09Z", 53 minutes
+    early and under the wrong event name.
+    """
+    ids = "".join(f"<task-id>{task_id}</task-id>\n" for task_id in task_ids)
+    body = ("<task-notification>\n"
+            + ids
+            + f"<status>{status}</status>\n"
+            + f"<summary>{summary}</summary>\n"
+            "</task-notification>")
+    return [{"type": "queue-operation", "operation": "enqueue",
+             "timestamp": enqueued_at, "sessionId": FIXTURE_SESSION_ID,
+             "content": body}]
+
+
+def monitor_records(task_id: str, timestamp: str, killed_at: str) -> list:
+    """A background monitor: launched by the Monitor tool, and killed later.
+
+    It notifies through the very same channel as a subagent, so nothing but
+    the launch record's shape tells the two apart — a monitor's result carries
+    taskId and persistent, never agentId.
+    """
+    return [
+        {"type": "user", "timestamp": timestamp, "uuid": f"uuid-monitor-{task_id}",
+         "toolUseResult": {"taskId": task_id, "timeoutMs": 0, "persistent": True},
+         "sessionId": FIXTURE_SESSION_ID},
+        *notification_records(task_id, "killed", f'Monitor "{task_id}" stopped',
+                              killed_at, delivered_at=killed_at),
+    ]
+
+
+# THIS TRANSCRIPT IS CONSTRUCTED, and its ids are synthetic on purpose.
+#
+# An earlier revision used the real agent ids from session
+# 40a16b9c of 2026-08-23 and annotated them with events that did not happen to
+# those agents — one was labelled as owning pull request #150's fix when it in
+# fact produced #147, and two were labelled "never notified" and "finished as
+# the session died" when both had completed, an hour apart, well before that
+# session ended. A reader checking the fixture against the transcript would
+# have found the labels false. Synthetic ids cannot make a false claim about a
+# real agent, so the fixture says what it is instead of borrowing authority it
+# does not have.
+#
+# One case here has NO real specimen anywhere in that session: every one of
+# its nine subagents completed, so "spawned, never notified" has never been
+# observed. It is exercised because the derivation must handle it — a subagent
+# whose session dies before its notification is delivered — not because it was
+# seen. That is precisely why the fixture is constructed rather than replayed.
+FIXTURE_SESSION_ID = "00000000-0000-4000-8000-00000000f153"
+FIXTURE_IDLE_AGENT = "afixture0idle0001"      # completed a round, then sat idle
+FIXTURE_SILENT_AGENT = "afixture0silent01"    # spawned, never notified (no real specimen)
+FIXTURE_UNDELIVERED_AGENT = "afixture0undeliv1"  # completion enqueued, never delivered
+FIXTURE_MONITOR_TASK = "b41fasmax"            # a background monitor, not a subagent
+# Two subagents reported together in ONE notification, the shape a real
+# specimen has (see multi_id_notification_records).
+FIXTURE_ORPHAN_FIRST = "afixture0orphan01"
+FIXTURE_ORPHAN_SECOND = "afixture0orphan02"
+
+
+def write_fixture_transcript(path: Path) -> None:
+    records = [
+        spawn_record(FIXTURE_IDLE_AGENT, "Fix ignored-path write blind spot",
+                     "2026-08-23T19:55:24.756Z"),
+        *monitor_records(FIXTURE_MONITOR_TASK, "2026-08-23T20:01:00.000Z",
+                         "2026-08-23T22:08:12.478Z"),
+        spawn_record(FIXTURE_UNDELIVERED_AGENT, "Fix output-path\ndirectory traceback",
+                     "2026-08-23T20:12:30.967Z"),
+        resume_record(FIXTURE_IDLE_AGENT, "2026-08-23T20:33:42.513Z"),
+        *notification_records(FIXTURE_IDLE_AGENT, "completed", 'Agent "Fix ignored-path" finished',
+                              "2026-08-23T20:52:59.408Z", delivered_at="2026-08-23T20:52:59.408Z",
+                              removed_at="2026-08-23T20:53:10.725Z"),
+        spawn_record(FIXTURE_SILENT_AGENT, "Review PR 150 independently",
+                     "2026-08-23T21:32:36.303Z"),
+        # Enqueued only: the session was killed before this one was delivered.
+        *notification_records(FIXTURE_UNDELIVERED_AGENT, "completed",
+                              'Agent "Fix output-path" finished', "2026-08-23T21:40:02.000Z"),
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+
+def write_multi_id_fixture_transcript(path: Path) -> None:
+    """Two subagents, each given its own event, then BOTH named in one
+    notification — the orphan-report shape.
+
+    The second agent's single-id `killed` comes first so that a derivation
+    reading only the first id of the multi-id notification leaves it holding
+    that earlier, wrong event. That is the real specimen's shape: the agent
+    dropped by such a reader is not left blank, it is left confidently wrong.
+    """
+    records = [
+        spawn_record(FIXTURE_ORPHAN_FIRST, "Phase 0 inventory",
+                     "2026-08-21T17:26:13.019Z"),
+        spawn_record(FIXTURE_ORPHAN_SECOND, "Phase 1 inventory",
+                     "2026-08-21T17:26:21.400Z"),
+        *notification_records(FIXTURE_ORPHAN_SECOND, "killed",
+                              'Agent "Phase 1 inventory" was killed',
+                              "2026-08-21T18:38:09.932Z",
+                              delivered_at="2026-08-21T18:38:09.932Z"),
+        *multi_id_notification_records(
+            [FIXTURE_ORPHAN_FIRST, FIXTURE_ORPHAN_SECOND], "stopped",
+            "No completion record was found for 2 background agents from the "
+            "previous session",
+            "2026-08-21T19:31:05.013Z"),
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n",
+                    encoding="utf-8")
+
+
+def run_spawned_subagent_roster_cases(workspace: Path):
+    """The roster of subagents the retiring session spawned (ruled 2026-08-23).
+
+    The motivating loss: a fixer subagent owning pull request #150 died with
+    its session, and nothing in the handoff said it had ever existed.
+    """
+    transcript_path = workspace / "roster-fixture.jsonl"
+    write_fixture_transcript(transcript_path)
+    roster = writer.spawned_subagent_roster(transcript_path)
+    by_id = {entry["agent_id"]: entry for entry in roster}
+
+    check("the roster holds every subagent spawned and nothing else",
+          [entry["agent_id"] for entry in roster]
+          == [FIXTURE_IDLE_AGENT, FIXTURE_UNDELIVERED_AGENT, FIXTURE_SILENT_AGENT],
+          str([entry["agent_id"] for entry in roster]))
+    check("a background monitor is not a subagent",
+          FIXTURE_MONITOR_TASK not in by_id and not any(
+              FIXTURE_MONITOR_TASK in entry["agent_id"] for entry in roster),
+          str(list(by_id)))
+
+    # The orphan the field exists for: it had STOPPED, and still owned the
+    # unfinished fix. A roster of running subagents would have dropped it.
+    check("a subagent that spawned, was resumed and completed reports its completion",
+          by_id[FIXTURE_IDLE_AGENT]["last_event"] == "completed",
+          str(by_id[FIXTURE_IDLE_AGENT]))
+    check("the completion is dated when it arrived, not when its last echo was filed",
+          by_id[FIXTURE_IDLE_AGENT]["last_event_at"] == "2026-08-23T20:52:59Z",
+          str(by_id[FIXTURE_IDLE_AGENT]))
+    check("the spawn time survives the later events",
+          by_id[FIXTURE_IDLE_AGENT]["spawned_at"] == "2026-08-23T19:55:24Z",
+          str(by_id[FIXTURE_IDLE_AGENT]))
+
+    # The trap Constraint B names: the spawn's tool_result arrives immediately,
+    # so a matched pair proves nothing. Only a notification says it finished.
+    check("a subagent that never notified reports its spawn as its last event",
+          by_id[FIXTURE_SILENT_AGENT]["last_event"] == "spawned"
+          and by_id[FIXTURE_SILENT_AGENT]["last_event_at"] == "2026-08-23T21:32:36Z",
+          str(by_id[FIXTURE_SILENT_AGENT]))
+    check("a completion enqueued but never delivered still counts as an event",
+          by_id[FIXTURE_UNDELIVERED_AGENT]["last_event"] == "completed",
+          str(by_id[FIXTURE_UNDELIVERED_AGENT]))
+    check("a newline in a description cannot split the roster's line",
+          "\n" not in by_id[FIXTURE_UNDELIVERED_AGENT]["description"]
+          and by_id[FIXTURE_UNDELIVERED_AGENT]["description"]
+          == "Fix output-path directory traceback",
+          repr(by_id[FIXTURE_UNDELIVERED_AGENT]["description"]))
+
+    field_lines = writer.spawned_subagent_field_lines(roster)
+    check("each subagent gets its own numbered field",
+          [line.split(":")[0] for line in field_lines]
+          == ["spawned-subagent-1", "spawned-subagent-2", "spawned-subagent-3"],
+          str(field_lines))
+    check("a field line names the agent, its task, its spawn and its last event",
+          field_lines[0] == (f'spawned-subagent-1: {FIXTURE_IDLE_AGENT} '
+                             '"Fix ignored-path write blind spot" '
+                             'spawned at 2026-08-23T19:55:24Z, '
+                             'last event completed at 2026-08-23T20:52:59Z'),
+          field_lines[0])
+
+    # One notification, several agents. The harness reports agents from a
+    # previous session with no completion record this way, so this is the
+    # orphan report the roster exists to carry — and reading only the first
+    # <task-id> silently leaves the others on a stale event.
+    multi_path = workspace / "roster-multi-id.jsonl"
+    write_multi_id_fixture_transcript(multi_path)
+    multi = {entry["agent_id"]: entry
+             for entry in writer.spawned_subagent_roster(multi_path)}
+    check("every agent named in one notification gets the event, not just the first",
+          multi[FIXTURE_ORPHAN_FIRST]["last_event"] == "stopped"
+          and multi[FIXTURE_ORPHAN_SECOND]["last_event"] == "stopped",
+          str(multi))
+    check("and every one of them is dated when that notification arrived",
+          multi[FIXTURE_ORPHAN_FIRST]["last_event_at"] == "2026-08-21T19:31:05Z"
+          and multi[FIXTURE_ORPHAN_SECOND]["last_event_at"] == "2026-08-21T19:31:05Z",
+          str(multi))
+    check("a later-named agent is not left holding its earlier event",
+          multi[FIXTURE_ORPHAN_SECOND]["last_event_at"] != "2026-08-21T18:38:09Z",
+          str(multi[FIXTURE_ORPHAN_SECOND]))
+
+    # An empty transcript is not an error: a session may spawn nothing.
+    empty_path = workspace / "roster-empty.jsonl"
+    empty_path.write_text("", encoding="utf-8")
+    check("a session that spawned nothing has an empty roster",
+          writer.spawned_subagent_roster(empty_path) == [])
+    check("an empty roster writes no fields",
+          writer.spawned_subagent_field_lines([]) == [])
+
+
+def run_roster_never_blocks_a_handoff_cases(workspace: Path):
+    """A roster that cannot be derived must not cost the seat its handoff.
+
+    Same principle as the branch-protection audit: the failure is reported on
+    the console, where the retiring agent can act on it by naming its
+    subagents in the next step by hand.
+    """
+    home = workspace / "fake-home"
+    projects = home / ".claude" / "projects" / "-fixture-project"
+    write_fixture_transcript(projects / f"{FIXTURE_SESSION_ID}.jsonl")
+    handoffs = workspace / "roster-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+
+    written = run_writer(
+        handoffs, "carry on\n", "--agent", "rostercase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": FIXTURE_SESSION_ID},
+    )
+    body = handoff_text(handoffs, "rostercase")
+    check("the handoff carries one field per subagent the session spawned",
+          body.count("spawned-subagent-") == 3, body)
+    check("the writer reports the roster it recorded",
+          "3 subagent(s) recorded" in written.stdout, written.stdout)
+
+    # The roster is an ordinary field, so it must precede the verbatim block —
+    # the block is last precisely so its content cannot shadow a real field.
+    with_block = run_writer(
+        handoffs, "first line\nsecond line\n", "--agent", "rosterblockcase",
+        environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": FIXTURE_SESSION_ID},
+    )
+    block_body = handoff_text(handoffs, "rosterblockcase")
+    block_lines = block_body.splitlines()
+    check("the roster is written before the verbatim block",
+          max(index for index, line in enumerate(block_lines)
+              if line.startswith("spawned-subagent-"))
+          < block_lines.index("next-step-verbatim: <<END-OF-NEXT-STEP"),
+          block_body)
+    check("the roster fields read back as fields",
+          writer.supervisor.parse_handoff_file(handoffs / "rosterblockcase-handoff.md")
+          .get("spawned-subagent-3", "").startswith(FIXTURE_SILENT_AGENT),
+          str(with_block.returncode))
+
+    # No transcript for the named session: the handoff is still written.
+    missing = run_writer(
+        handoffs, "carry on\n", "--agent", "rostermissingcase",
+        environment_overrides={"HOME": str(home),
+                               "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-000000000000"},
+    )
+    missing_body = handoff_text(handoffs, "rostermissingcase")
+    check("a missing transcript still writes the handoff",
+          "next-step: carry on" in missing_body, missing_body)
+    check("a missing transcript writes no roster field",
+          "spawned-subagent-" not in missing_body, missing_body)
+    check("a missing transcript tells the agent to name its subagents by hand",
+          "not derived" in missing.stdout and "by hand" in missing.stdout, missing.stdout)
+
+    # No session id at all — the case every existing test already runs under.
+    unidentified = run_writer(handoffs, "carry on\n", "--agent", "rosterunidentifiedcase")
+    check("a session with no id still writes the handoff",
+          (handoffs / "rosterunidentifiedcase-handoff.md").is_file(), unidentified.stderr)
+    check("a session with no id says why the roster is missing",
+          "CLAUDE_CODE_SESSION_ID is unset" in unidentified.stdout, unidentified.stdout)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
     run_multi_line_next_step_cases(Path(temporary_directory))
@@ -362,6 +753,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_liveness_report_cases(Path(temporary_directory))
     run_console_identity_case(Path(temporary_directory))
     run_agent_name_and_claim_cases(Path(temporary_directory))
+    run_spawned_subagent_roster_cases(Path(temporary_directory))
+    run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
 
 print()
 if failures:

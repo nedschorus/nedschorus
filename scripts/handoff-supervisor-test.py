@@ -843,6 +843,87 @@ def run_boot_ignition_case(workspace: Path):
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
 
 
+
+def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
+    """The successor is told which subagents died with the session it replaces.
+
+    Ruled 2026-08-23, after a fixer subagent owning pull request #150 died in
+    a recycle with nothing in the handoff recording that it had ever run. The
+    remedy is to record and restart, not to wait: killing subagents at a
+    recycle stays the standing policy.
+    """
+    roster_fields = {
+        "written-at": recent,
+        "next-step": "merge the queue",
+        # Synthetic ids. These lines used to carry the real agent ids from
+        # session 40a16b9c with a `last event` that did not happen to them —
+        # the second agent completed at 21:54:40Z, and 21:32:36Z was only its
+        # spawn. The ignition prompt does not care whose ids these are, and a
+        # fixture should not assert an event for an agent a reader can look up.
+        "spawned-subagent-1": ('afixture0idle0001 "Fix ignored-path write blind spot" '
+                               'spawned at 2026-08-23T19:55:24Z, '
+                               'last event completed at 2026-08-23T20:52:59Z'),
+        "spawned-subagent-2": ('afixture0silent01 "Review PR 150 independently" '
+                               'spawned at 2026-08-23T21:32:36Z, '
+                               'last event spawned at 2026-08-23T21:32:36Z'),
+    }
+    prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), roster_fields, 0)
+    check("ignition states how many subagents died with the session",
+          "spawned 2 subagent(s), which died with it" in prompt, prompt)
+    check("ignition names each subagent and what it was doing",
+          "afixture0idle0001" in prompt and "Fix ignored-path write blind spot" in prompt
+          and "afixture0silent01" in prompt and "Review PR 150 independently" in prompt, prompt)
+    check("ignition carries each subagent's last recorded event",
+          "last event completed at 2026-08-23T20:52:59Z" in prompt
+          and "last event spawned at 2026-08-23T21:32:36Z" in prompt, prompt)
+    # The whole point of Constraint A: a stopped subagent can still own work.
+    check("ignition warns that a completed subagent may still own work",
+          "does not mean its work is finished" in prompt
+          or "not that its work is finished" in prompt, prompt)
+
+    # The roster is optional, and its absence must read as silence rather than
+    # as an empty list. A handoff written before this field existed has none.
+    older_prompt = supervisor.build_ignition_prompt(
+        Path("/tmp/d.md"), {"written-at": recent, "next-step": "merge the queue"}, 0)
+    check("ignition says nothing about subagents when the handoff has no roster",
+          "subagent" not in older_prompt, older_prompt)
+
+    # Order is the writer's, not the dict's or a string sort's: field 10 comes
+    # after field 9, and the successor reads them in the order they were spawned.
+    many = {"written-at": recent, "next-step": "carry on"}
+    for ordinal in range(1, 12):
+        many[f"spawned-subagent-{ordinal}"] = (
+            f"agent-{ordinal:02d} spawned at 2026-08-23T20:00:00Z, "
+            "last event spawned at 2026-08-23T20:00:00Z")
+    ordered_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), many, 0)
+    check("the roster keeps the writer's order past nine subagents",
+          ordered_prompt.index("agent-09") < ordered_prompt.index("agent-10")
+          < ordered_prompt.index("agent-11"), ordered_prompt)
+
+    # A handoff file written by the writer must read back as a roster, so the
+    # two ends cannot drift apart on the field name.
+    handoff_path = workspace / "roster-handoff.md"
+    handoff_path.write_text(
+        "written-at: 2026-08-23T22:00:00Z\n"
+        "next-step: merge the queue\n"
+        "restart-counter: 3\n"
+        "spawned-subagent-1: afixture0idle0001 \"Fix ignored-path\" spawned at "
+        "2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z\n"
+        "next-step-verbatim: <<END-OF-NEXT-STEP\n"
+        "merge the queue\n"
+        "and then rest\n"
+        "END-OF-NEXT-STEP\n",
+        encoding="utf-8",
+    )
+    parsed = supervisor.parse_handoff_file(handoff_path)
+    check("a roster field survives the handoff-file parser",
+          supervisor.spawned_subagent_roster_from(parsed)
+          == [parsed["spawned-subagent-1"]], str(parsed))
+    check("the roster does not disturb the verbatim block beneath it",
+          supervisor.next_step_from(parsed) == "merge the queue\nand then rest",
+          repr(supervisor.next_step_from(parsed)))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
@@ -855,6 +936,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_lock_cases(Path(temporary_directory))
     run_multi_line_next_step_cases(Path(temporary_directory), recent_timestamp)
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
+    run_spawned_subagent_roster_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:
     print("\n-- live pre-seed canaries (launching real sessions) --")
