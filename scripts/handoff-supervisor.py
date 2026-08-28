@@ -454,7 +454,15 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     seat answered from three different titles inside twenty minutes. Passing
     the seat's own name pins it: this seat is `prof` on every machine, for the
     life of the session. An empty value launches without the flag, leaving the
-    CLI's own defaults in charge."""
+    CLI's own defaults in charge.
+
+    This widens what a seat's name means. It named local files; now it is also
+    the address agents on other machines use, so two seats sharing a name are
+    no longer merely confusing — they are ambiguous to a sender. The derived
+    titles this replaces could not collide, because the CLI qualified them with
+    the hostname. The fleet already keeps its names distinct by habit (the Mac
+    runs `mac-prof` where this box runs `prof`); this makes the habit load-
+    bearing, which is why --agent's own help text now says so."""
     flag = "--resume" if resume else "--session-id"
     command = [agent_command, flag, session_id]
     if remote_control_name:
@@ -844,7 +852,11 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--agent", required=True, help="agent name; names the handoff and state files")
+    parser.add_argument("--agent", required=True,
+                        help="agent name; names the handoff and state files, and the Remote "
+                             "Control name the session answers to. That name is how agents on "
+                             "OTHER machines address this seat, so it has to be unique across "
+                             "the whole fleet, not just this machine")
     parser.add_argument("--cd", default=".", help="the agent's worktree")
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="machine-local handoff directory")
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
