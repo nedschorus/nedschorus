@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for md-review-grid.py — what a grid run tells the agent reading it.
+"""Tests for cold-read-grid.py — what a grid run tells the agent reading it.
 
 HOW A CASE RUNS. Each case builds a throwaway git repository holding a copy
 of the grid, the two cell launchers, the module they share and the prompt
@@ -27,13 +27,23 @@ WHAT IS PINNED HERE.
     GIT_DIR at a directory that does not exist: eight `saved:` lines, and not
     one word saying nothing had been checked.
 
+  - A cell that fell back to a later model in its chain says so on the
+    grid's output. Until 2026-08-25 a fallback was recorded only in the
+    report's own `fallback_from=` provenance stamp, which nobody sees unless
+    they open that file — and the grid deleted the cell's log, so a report
+    written by the chain's second model was indistinguishable here from one
+    written by the model asked for (user-ruled that day: "I'm ok with the
+    fable falling back to opus too. I just don't want it to fail silently").
+    The rename commit that added the lift verified it by a hand-run probe;
+    this case is that probe, kept.
+
   - The line that names changed files still reaches the grid's output, and
     the log is still deleted on success. Those are the two halves the fix
     must not trade against each other: lifting more lines is worthless if the
     lift stops happening, and keeping the log would leave eight files in
     every record set for the reviewing agent to sort through.
 
-Run: python3 scripts/md-review-grid-test.py
+Run: python3 scripts/cold-read-grid-test.py
 """
 
 import os
@@ -45,23 +55,26 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
-PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "md-review" / "prompts"
+PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 GRID_SCRIPT_NAMES = (
-    "md-review-grid.py",
-    "md-review-cell-common.py",
-    "md-review-claude-cell.py",
-    "md-review-codex-cell.py",
+    "cold-read-grid.py",
+    "cold-read-cell-common.py",
+    "cold-read-claude-cell.py",
+    "cold-read-codex-cell.py",
 )
 
-TARGET_RELATIVE_PATH = "docs/drafts/md-review-grid-test-target.md"
+TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 
 # A stand-in for both runtimes. It takes the report path from the prompt it
 # was given rather than from the environment, because the grid gives each of
 # its eight cells a different one and only the prompt carries which: the
 # Claude leg feeds the prompt on stdin, the Codex leg passes it as an
 # argument, so the stub reads both and looks for a path under the records
-# tree. MD_REVIEW_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
+# tree. COLD_READ_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
 # — a reviewer editing the document instead of reviewing it.
+# COLD_READ_GRID_TEST_STUB_FAILING_MODEL, when set, is a model id the stub
+# refuses to be: launched as that model it writes nothing and exits 1, which
+# is what sends a cell down its chain to the next model.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import os, re, sys
 
@@ -71,13 +84,17 @@ try:
 except OSError:
     pass
 prompt += " " + " ".join(sys.argv)
-match = re.search(r"[^\s\"']+md-review-records/[^\s\"']+\.md", prompt)
+failing_model = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_MODEL")
+if failing_model and failing_model in sys.argv:
+    sys.stderr.write("stub runtime: this model is unavailable today\n")
+    sys.exit(1)
+match = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
 if match is None:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
     sys.exit(3)
 with open(match.group(0), "w", encoding="utf-8") as handle:
     handle.write("STUB REVIEW: one restatement\n")
-edited_path = os.environ.get("MD_REVIEW_GRID_TEST_STUB_EDIT_PATH")
+edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write("The reviewer's own edit, which it should not have made.\n")
@@ -111,17 +128,17 @@ def build_scratch_repository(scratch, name):
     for script_name in GRID_SCRIPT_NAMES:
         shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
         (repository / "scripts" / script_name).chmod(0o755)
-    scratch_prompts = repository / ".claude" / "skills" / "md-review" / "prompts"
+    scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
-    (repository / ".gitignore").write_text("md-review-records/\n", encoding="utf-8")
+    (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
     git(repository, "config", "user.email", "test@test.invalid")
-    git(repository, "config", "user.name", "md-review-grid test")
+    git(repository, "config", "user.name", "cold-read-grid test")
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "seed")
     return repository
@@ -137,7 +154,7 @@ def run_grid(repository, stub_directory, environment_overrides=None):
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment.update(environment_overrides or {})
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "md-review-grid.py"),
+        [sys.executable, str(repository / "scripts" / "cold-read-grid.py"),
          "--target", TARGET_RELATIVE_PATH],
         capture_output=True, text=True, check=False, env=environment,
     )
@@ -145,7 +162,7 @@ def run_grid(repository, stub_directory, environment_overrides=None):
 
 def record_directory_of(repository):
     """The record directory the run just made. One per case, by construction."""
-    directories = sorted((repository / "md-review-records").glob("*"))
+    directories = sorted((repository / "cold-read-records").glob("*"))
     return directories[-1] if directories else None
 
 
@@ -189,7 +206,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-stray-write")
     result = run_grid(
         repository, stubs,
-        {"MD_REVIEW_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)},
+        {"COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
@@ -207,6 +224,38 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the stderr logs are deleted on this path too",
+          record_directory is not None
+          and list(record_directory.glob("*.stderr.log")) == [],
+          f"logs left in {record_directory}")
+
+    # --- A cell that fell back says so ------------------------------------
+    # The stub refuses to be claude-opus-5, which leads the Claude good tier.
+    # Both good-tier Claude cells therefore fall back to claude-fable-5 and
+    # produce their reports under it; the two floor cells and the four Codex
+    # cells are untouched, so eight reviews still land.
+    repository = build_scratch_repository(scratch, "checkout-fell-back")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    fell_back_lines = [line for line in result.stdout.splitlines()
+                       if line.startswith("FELL BACK:")]
+    check("a cell whose first-choice model failed says so on the grid's output",
+          fell_back_lines != [], f"stdout was {result.stdout!r}")
+    check("both cells of the tier that fell back are named",
+          len(fell_back_lines) == 2 and all("claude" in line and "good" in line
+                                            for line in fell_back_lines),
+          f"lifted lines were {fell_back_lines!r}")
+    check("the line names the model that actually wrote the report",
+          all("claude-fable-5" in line for line in fell_back_lines),
+          f"lifted lines were {fell_back_lines!r}")
+    check("a fallback is not a failure: eight reviews still land, grid exits 0",
+          result.returncode == 0 and len(saved_lines) == 8,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the stderr logs are deleted once the fallback line has been lifted",
           record_directory is not None
           and list(record_directory.glob("*.stderr.log")) == [],
           f"logs left in {record_directory}")

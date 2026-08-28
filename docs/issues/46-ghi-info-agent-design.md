@@ -99,7 +99,7 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 ## Prompts
 
-Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own md-review before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
+Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own cold read before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
 
 ### Fixer brief — pair document behind its issue

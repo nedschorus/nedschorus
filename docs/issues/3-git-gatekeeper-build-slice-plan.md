@@ -187,11 +187,11 @@ consider-feature entries, so nothing goes to `legacy-feature-queue/`.
 ## Program follow-ups from the user's reviews
 
 Two batches, each from a review of a different subject: the 2026-08-09
-md-review of the revised specification, and the 2026-08-12 code review of
+cold read of the revised specification, and the 2026-08-12 code review of
 [nedschorus#49](https://github.com/nedschorus/nedschorus/pull/49). Program
 work in both cases, not spec text.
 
-### From the 2026-08-09 md-review of the specification
+### From the 2026-08-09 cold read of the specification
 
 Rulings from the user's review of the revised spec (records:
 `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`); program work, not
@@ -258,7 +258,7 @@ scope by design: the expiry sweep and the liveness check.
   process-group kill, wait for exit, then the history query. Lands with
   the cancel machinery it corrects.
 - APPLIED 2026-08-12 with slice 4 — **Liveness check before the resubmit
-  sweep** (md-review finding HG31, noted 2026-08-11). Concurrent identical submissions share one digest and
+  sweep** (cold-read finding HG31, noted 2026-08-11). Concurrent identical submissions share one digest and
   therefore one workspace; before sweeping a leftover workspace, test
   whether its recorded worker is alive — alive answers `in-progress`
   instead of sweeping the ground from under a running twin. Slice 4 work:

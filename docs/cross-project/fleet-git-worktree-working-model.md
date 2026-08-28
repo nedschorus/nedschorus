@@ -73,7 +73,7 @@ passing review.
 
 Rules about git, worktrees, sessions, seats, and machines, plus the
 enforcement programs that implement them. Deliberately excluded: workflow
-governance content (md-review's cells, ghi-write's routing, walk conduct),
+governance content (the cold read's cells, ghi-write's routing, walk conduct),
 prose-quality rules, and communication conventions. Coverage is bounded by
 the sweep that built the inventory — the per-seat briefs
 (`docs/agents/*-instructions.md`), `docs/cross-project/fast-handoff-design.md`,
@@ -232,7 +232,7 @@ seated elsewhere is refused, same marker lane. Scoped to the demonstrated
 class — all four recorded cross-checkout incidents targeted the reference.
 The four, so the evidence outlives the walk papers: on 2026-08-14 a
 session seated in its own worktree edited twelve documents and staged 235
-deletions in the reference checkout; md-review records were later written
+deletions in the reference checkout; cold-read records were later written
 into it; a git branch was created in it, twice; and on 2026-08-15 a walk's
 working ledger was written into it. Zero incidents targeted another seat's
 home or a scratch worktree. Writes into
@@ -404,7 +404,7 @@ delimited multi-line block and the reader
 (`scripts/handoff-supervisor.py`) parses it — a reader-only fix could not
 have restored newlines already destroyed. The format specification, and
 the exact-terminator trade it records, live in
-`docs/cross-project/fast-handoff-design.md`, md-reviewed before the build
+`docs/cross-project/fast-handoff-design.md`, given a cold read before the build
 per design-first.
 
 ### Q5 — What piles up, and who sweeps it?
@@ -504,7 +504,7 @@ Depth convention (2026-08-19, set with the merge seat): each queued item
 is a *work order* — what is wrong plus what correct behavior looks like,
 built and reviewed directly against that statement — or *design-first*,
 for changes that are coupled or fleet-critical: the design lands in the
-document that owns the area and is md-reviewed before code. Every queued
+document that owns the area and gets a cold read before code. Every queued
 PR's body states the intended behavior it should be reviewed against; the
 merge seat reviews against that statement and posts its review on the
 pull request.
@@ -516,7 +516,7 @@ pull request.
    attempted forms recorded in that PR, and closed won't-fix 2026-08-22
    (ruling and reopen trigger at R1).
 2. **R20** — the handoff both-ends structure fix — LANDED (PR #108,
-   merged 2026-08-20; design section md-reviewed in
+   merged 2026-08-20; design section given a cold read in
    `fast-handoff-design.md` first, per design-first).
 3. **R25** — the dead-registration report line in `clean-worktrees.py` —
    LANDED (PR #112, merged 2026-08-20), with the review discussion

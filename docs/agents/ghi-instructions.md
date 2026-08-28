@@ -16,7 +16,7 @@ If you have put the build-order question below to the user and he has not ruled,
 
 ## The main build: ghi-info
 
-[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46). The design landed 2026-08-11 after an md-review; it was extracted from a walk and rewritten to stand on its own, so it reads without the walk that produced it. **Nothing in it is built yet** — treat every description below as design intent the build must honour, not as behaviour you can invoke today.
+[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46). The design landed 2026-08-11 after a cold read; it was extracted from a walk and rewritten to stand on its own, so it reads without the walk that produced it. **Nothing in it is built yet** — treat every description below as design intent the build must honour, not as behaviour you can invoke today.
 
 What it is, as designed: a dedicated agent that answers, for an issue write about to happen, which existing issues the author should have read. Its corpus is the issues and nothing else — asked about the wiki or the code it returns a fixed `out-of-scope` reply, and asked whether an old ruling still binds it returns `escalate:` rather than deciding. Both replies pass through to the caller verbatim, and the caller must not swallow them. It is to live on the box at `~/agents/ghi-info`, be resumed headlessly for each question, and answer on exit; Mac-side callers reach it over SSH.
 

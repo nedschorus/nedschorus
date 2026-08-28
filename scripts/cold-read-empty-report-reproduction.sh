@@ -1,8 +1,8 @@
 #!/bin/sh
-# Reproduce: an md-review grid can report eight saved reviews having
+# Reproduce: a cold-read grid can report eight saved reviews having
 # reviewed nothing.
 #
-# WHY THIS EXISTS. `md-review-grid.py` decides a cell succeeded from its
+# WHY THIS EXISTS. `cold-read-grid.py` decides a cell succeeded from its
 # exit code alone -- `wait_for_cells` prints "saved: <path>" for any cell
 # that exits 0 and never checks the report has content. A review cell
 # whose model run exits 0 with empty stdout writes only its provenance
@@ -23,13 +23,13 @@
 # against a throwaway target, and reports the grid's exit code alongside
 # the content length of every report it saved. No network calls, no model
 # calls, nothing outside a temporary directory and the gitignored
-# md-review-records/ tree.
+# cold-read-records/ tree.
 #
 # EXPECTED TODAY (the defect): grid exit 0, and every report body empty.
 # EXPECTED AFTER A FIX: the grid reports those cells as failures, and its
 # closing instructions do not invite triage of reports that do not exist.
 #
-# Usage: sh scripts/md-review-empty-report-reproduction.sh
+# Usage: sh scripts/cold-read-empty-report-reproduction.sh
 
 set -eu
 
@@ -48,14 +48,14 @@ STUB
     chmod +x "$WORK/stub-bin/$tool"
 done
 
-TARGET_NAME="md-review-empty-report-reproduction-target.md"
+TARGET_NAME="cold-read-empty-report-reproduction-target.md"
 TARGET="$REPO_ROOT/$TARGET_NAME"
 printf '# Reproduction target\n\nOne real line, so the cells have something to point at.\n' > "$TARGET"
 trap 'rm -rf "$WORK"; rm -f "$TARGET"' EXIT
 
 echo "running the grid with stub runtimes that exit 0 and print nothing"
 set +e
-PATH="$WORK/stub-bin:$PATH" python3 "$REPO_ROOT/scripts/md-review-grid.py" \
+PATH="$WORK/stub-bin:$PATH" python3 "$REPO_ROOT/scripts/cold-read-grid.py" \
     --target "$TARGET_NAME" > "$WORK/grid.out" 2>&1
 GRID_EXIT=$?
 set -e
@@ -66,7 +66,7 @@ echo "cells the grid called saved: $(grep -c '^saved:' "$WORK/grid.out" || true)
 echo "cells the grid called FAILED: $(grep -c '^FAILED' "$WORK/grid.out" || true)"
 echo
 echo "content of each report, provenance stamp excluded:"
-RECORD_DIR=$(grep -o '/[^ ]*md-review-records/[^ ]*' "$WORK/grid.out" | head -1)
+RECORD_DIR=$(grep -o '/[^ ]*cold-read-records/[^ ]*' "$WORK/grid.out" | head -1)
 for report in "$RECORD_DIR"/*.md; do
     [ -f "$report" ] || continue
     body=$(grep -v '^<!-- provenance' "$report" | tr -d '[:space:]' | wc -c | tr -d ' ')

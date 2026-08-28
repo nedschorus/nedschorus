@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a full md-review grid against a document.
+"""Run a full cold-read grid against a document.
 
 One invocation = one review: eight cells ({restate, defect-hunt} x
 {good, floor} x {claude, codex}) launched in parallel, every report saved
@@ -7,7 +7,7 @@ into a dated record directory, progress and next-step instructions printed
 for the reviewing agent as reviews land.
 
 Usage:
-  scripts/md-review-grid.py --target docs/drafts/foo.md
+  scripts/cold-read-grid.py --target docs/drafts/foo.md
 
 Exit codes: 0 all cells ran, 1 one or more cells failed, 2 bad invocation.
 """
@@ -21,11 +21,11 @@ import sys
 import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-RECORDS_DIR = REPO_ROOT / "md-review-records"
+RECORDS_DIR = REPO_ROOT / "cold-read-records"
 # Cell launchers, one per runtime.
 CELL_LAUNCHERS = {
-    "claude": REPO_ROOT / "scripts" / "md-review-claude-cell.py",
-    "codex": REPO_ROOT / "scripts" / "md-review-codex-cell.py",
+    "claude": REPO_ROOT / "scripts" / "cold-read-claude-cell.py",
+    "codex": REPO_ROOT / "scripts" / "cold-read-codex-cell.py",
 }
 PASSES = ["restate", "defect-hunt"]
 TIERS = ["good", "floor"]
@@ -132,30 +132,43 @@ def wait_for_cells(running: dict) -> list:
                 and report_path.read_text(encoding="utf-8").strip() != ""
             )
             if code == 0 and has_report:
-                # The cell writes what its stray-write check found to this
-                # log and nowhere else, and this is the branch that deletes the
-                # log -- so without lifting those lines out first, the one path
-                # where the check runs is the path where its result is
-                # destroyed. Both outcomes are lifted, and the second is why
-                # this loop has two clauses rather than one. A cell whose
-                # `git status` could not answer -- an index.lock held by
-                # another agent in the same checkout is the ordinary way, and
-                # the cell says in as many words that this is a failure to
-                # look, not a clean result -- otherwise reported here exactly
-                # like a cell that looked and found nothing, and a whole grid
-                # run read as clean when nothing had been checked at all
-                # (nedschorus#167). The second clause matches the phrase the
-                # cell module pins for it as
-                # STRAY_WRITE_CHECK_SKIPPED_PHRASE; keep the two in step.
-                # Carried onto the grid's own output, addressed to the
-                # reviewing agent reading these lines: a stray edit is ordinary
-                # cleanup for that agent, not something to escalate.
+                # THREE THINGS EXIST ONLY IN THIS LOG, and this is the branch
+                # that deletes it -- so without lifting them out first, the one
+                # path where each is produced is the path where it is
+                # destroyed. All three are carried onto the grid's own output,
+                # which is what the reviewing agent actually reads.
+                #
+                # WHAT THE STRAY-WRITE CHECK FOUND, and whether it ran at all.
+                # A stray edit is ordinary cleanup for that agent, not something
+                # to escalate. A cell whose `git status` could not answer -- an
+                # index.lock held by another agent in the same checkout is the
+                # ordinary way, and the cell says in as many words that this is
+                # a failure to look, not a clean result -- otherwise reported
+                # here exactly like a cell that looked and found nothing, and a
+                # whole grid run read as clean when nothing had been checked at
+                # all (nedschorus#167). That second clause matches the phrase the
+                # cell module pins for it as STRAY_WRITE_CHECK_SKIPPED_PHRASE;
+                # keep the two in step.
+                #
+                # A FALLBACK IS NEVER SILENT (user-ruled 2026-08-25: "I'm ok
+                # with the fable falling back to opus too. I just don't want it
+                # to fail silently"). Before this, a fallback was recorded only
+                # in the report's own `fallback_from=` provenance stamp, which
+                # nobody sees unless they open that file -- so a cell reviewed by
+                # the chain's second model was indistinguishable, here, from one
+                # reviewed by the model asked for. The cell's own line already
+                # names the model that produced the report and every model that
+                # failed ahead of it with the reason each failed; the report
+                # name says which cell it was.
                 for line in stderr_path.read_text(encoding="utf-8").splitlines():
                     if "changed files outside its report" in line:
                         print(f"STRAY WRITE: {line.strip()}", flush=True)
                     if "stray writes were not checked for this run" in line:
                         print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
                               f"{line.strip()}", flush=True)
+                    if "fell back to" in line:
+                        print(f"FELL BACK: {report_path.name} — {line.strip()}",
+                              flush=True)
                 stderr_path.unlink(missing_ok=True)
                 print(f"saved: {report_path}", flush=True)
                 continue
@@ -188,11 +201,11 @@ def main() -> int:
     if not target.is_absolute():
         target = REPO_ROOT / target
     if not target.is_file():
-        print(f"md-review-grid: target not found: {target}", file=sys.stderr)
+        print(f"cold-read-grid: target not found: {target}", file=sys.stderr)
         return 2
     for runtime, launcher in CELL_LAUNCHERS.items():
         if not launcher.is_file():
-            print(f"md-review-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
+            print(f"cold-read-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
             return 2
 
     record_dir = make_record_dir(target)

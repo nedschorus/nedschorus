@@ -17,7 +17,7 @@ Accurate as of 2026-08-13. Where something is described as pending, check before
 - **The recycle trigger** — `scripts/handoff-context-threshold-hook.py`, a `Stop` hook that asks the agent to hand off once context passes 50%.
 - **The instruction-file guard** — `.claude/hooks/instruction-file-guard.py`, a `PreToolUse` hook on Edit, Write and NotebookEdit. It blocks changes to `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and `.claude/` unless the user's approval is quoted into `.walk-approved`, which it then consumes. It cannot see writes made through shell commands, so the rule binds regardless of the hook.
 
-**Pending in [PR #58](https://github.com/nedschorus/nedschorus/pull/58):** the seat briefs' md-review corrections, `docs/agents/seat-first-prompt.md`, and the launcher change that creates the home as a checkout. Until it merges, a seat launched from main gets the pre-review versions.
+**Pending in [PR #58](https://github.com/nedschorus/nedschorus/pull/58):** the seat briefs' cold-read corrections, `docs/agents/seat-first-prompt.md`, and the launcher change that creates the home as a checkout. Until it merges, a seat launched from main gets the pre-review versions.
 
 PR states go stale within hours — three of this pile's were closed the same day they were listed — so check rather than trust any list of them here: `gh pr list --repo nedschorus/nedschorus --state open`. As of 2026-08-13 there is also [#59](https://github.com/nedschorus/nedschorus/pull/59) (status-line compatibility with an older python3), opened by another stream and touching your machinery.
 

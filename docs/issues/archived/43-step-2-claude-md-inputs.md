@@ -48,7 +48,7 @@ Disposition (boss-ruled 2026-08-06): REJECTED as a candidate CLAUDE.md line, on 
 CLAUDE.md defines once the shared project concepts every atomic skill assumes — "the boss" first among them. Skills stay atomic and reference other MD files by explicit path, never by assumed knowledge.
 Provenance: session 4cf7d488; recorded as the sixth input in the outstanding-items walk ledger.
 
-**7. The skills-are-instructions-only duty** (boss-ruled 2026-08-05 at the md-review self-review walk, session 4cf7d488, both faces).
+**7. The skills-are-instructions-only duty** (boss-ruled 2026-08-05 at the cold-read self-review walk, session 4cf7d488, both faces).
 POSITIVE: a skill answers three questions, worded as simply and plainly as reasonable — when to use it, what to do, how to do it.
 NEGATIVE: it contains clear instructions, never information whose point in the file is unclear (the governing test). Common failing cases: statistics, measured anecdotes, incident specimens, out-of-context examples. If removing such content leaves a rule unclear, the rule itself is rewritten to carry the clarity; justifying data lives in the records stores and git history, never in skill text.
 Step-2 relevance: CLAUDE.md is the floor that holds this duty for every skill, and the duty's writing standard applies to CLAUDE.md's own text.
