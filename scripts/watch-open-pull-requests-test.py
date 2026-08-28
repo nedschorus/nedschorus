@@ -543,6 +543,41 @@ def run_subprocess_cases():
               "\n".join(lines))
 
         # ------------------------------------------------------------------
+        # The same blind-before-baseline episode under --from-start, where the
+        # absorption does not happen: the baseline is seeded empty, so every
+        # open pull request IS emitted as OPENED. Announcing a loss here would
+        # be the block above's defect pointing the other way — an agent
+        # reading the stream by its stated contract would believe it had
+        # missed openings it actually received, and the remedy the line offers
+        # is the flag it is already running under.
+        # ------------------------------------------------------------------
+        fake_gh = FakeGitHubCommand(scratch / "blind-before-baseline-from-start")
+        fake_gh.answer(stdout="", exit_code=1,
+                       stderr="gh: HTTP 503 Service Unavailable")
+        watcher = WatcherProcess("--from-start",
+                                 environment=fake_gh.environment(),
+                                 token_file=token_file)
+        watcher.wait_for("WATCH: query failed")
+        fake_gh.answer(graphql_body([
+            pull_request_node(160, "e" * 40, "opened before any baseline"),
+            pull_request_node(161, "f" * 40, "also opened before any baseline")]))
+        watcher.wait_for("WATCH: query recovered after ")
+        watcher.wait_for("PR #161 OPENED")
+        lines = watcher.stop()
+        recovery = [line for line in lines if "query recovered" in line]
+        check("--from-start recovery does not claim the openings were absorbed",
+              bool(recovery) and "NO BASELINE" not in recovery[0],
+              "\n".join(lines))
+        check("--from-start recovery does not recommend the flag already in use",
+              bool(recovery) and "--from-start" not in recovery[0],
+              "\n".join(lines))
+        check("and both pull requests really were reported as OPENED, which is "
+              "what makes the absorption claim false here",
+              any("PR #160 OPENED" in line for line in lines)
+              and any("PR #161 OPENED" in line for line in lines),
+              "\n".join(lines))
+
+        # ------------------------------------------------------------------
         # The credential never reaches any output stream, including the
         # failure path that quotes gh's own stderr back.
         # ------------------------------------------------------------------
@@ -565,6 +600,41 @@ def run_subprocess_cases():
         check("the fake gh was nonetheless handed the real fixture token",
               fake_gh.token_seen() == FIXTURE_TOKEN,
               repr(fake_gh.token_seen()))
+
+        # ------------------------------------------------------------------
+        # The same guarantee when gh's stderr is long enough that the snippet's
+        # length cut falls INSIDE the token. Redaction replaces whole
+        # occurrences, so a cut taken before redaction leaves an unmatchable
+        # prefix on the line. The case above cannot catch that: its stderr is
+        # shorter than the cut, so the token is never bisected. Measured
+        # before the fix — 20 of the token's characters printed, no [REDACTED]
+        # in the line.
+        # ------------------------------------------------------------------
+        cut = watcher_module.FAILURE_REASON_SNIPPET_CHARS
+        surviving_characters = 20
+        opening = "gh: request failed: "
+        bisecting_stderr = (opening
+                            + "x" * (cut - surviving_characters - len(opening))
+                            + FIXTURE_TOKEN)
+        check("the fixture stderr really does straddle the cut, or this case "
+              "proves nothing",
+              bisecting_stderr.index(FIXTURE_TOKEN) < cut < len(bisecting_stderr),
+              f"token at {bisecting_stderr.index(FIXTURE_TOKEN)}, "
+              f"cut at {cut}, reason length {len(bisecting_stderr)}")
+        fake_gh = FakeGitHubCommand(scratch / "leak-across-the-cut")
+        fake_gh.answer(stdout="", exit_code=1, stderr=bisecting_stderr)
+        watcher = WatcherProcess(environment=fake_gh.environment(),
+                                 token_file=token_file)
+        watcher.wait_for("WATCH: query failed")
+        fake_gh.answer(graphql_body([]))
+        watcher.wait_for("WATCH: query recovered")
+        lines = watcher.stop()
+        everything = "\n".join(lines + watcher.error_lines)
+        check("a token bisected by the length cut leaves no surviving prefix",
+              FIXTURE_TOKEN[:surviving_characters] not in everything,
+              everything)
+        check("and the whole token is absent from a bisected line too",
+              FIXTURE_TOKEN not in everything, everything)
 
         # ------------------------------------------------------------------
         # Answers that are not a failed exit status: a GraphQL error beside

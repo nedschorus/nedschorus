@@ -115,8 +115,12 @@ The credential. The token is read from a file (--token-file, default
 environment, as GH_TOKEN. It is never in argv, so it cannot appear in a
 process listing, a traceback, or an error message that quotes the command;
 and every line this program prints, on stdout and stderr alike, goes
-through a redaction that replaces the token's text with [REDACTED], so a
-message quoted from gh's own stderr cannot carry it out either. The token
+through a redaction that replaces the token's text with [REDACTED]. That
+redaction runs before any quoted message is shortened, which is the part
+that has to be got right: it matches whole occurrences, so a token cut in
+half by a length limit would leave a prefix matching nothing and print.
+Redacting first means a message quoted from gh's own stderr cannot carry
+the credential out however long that message is. The token
 path being an option is what makes the tests possible: they run this
 program against a fixture token file and a fake `gh`, never the real
 credential and never GitHub.
@@ -161,13 +165,17 @@ credential unable to run this query, the first poll would fail loudly
 rather than quietly — see "Announcing blindness".
 
 Why faster detection would not help. The merge seat holds every pull
-request about three minutes from its most recent push, so an automated
-reviewer that publishes no status check has time to post its findings
-(the merge seat's CLAUDE.local.md, "Do not merge a pull request less than
-about three minutes old", written after two merges that beat the reviewer
-by 62 and 240 seconds — that file is machine-local to one seat and is not
-in this repository, so the rule is restated here rather than only cited).
-A 60-second poll therefore detects a pull request well
+request about five minutes from its most recent push, so an automated
+reviewer that publishes no status check has time to post its findings.
+The rule lives in the merge seat's CLAUDE.local.md, under a heading that
+still reads "Do not merge a pull request less than about three minutes
+old": three was the original figure, written after two merges that beat
+the reviewer by 62 and 240 seconds, and the same section now records that
+figure as measured insufficient — the slowest observed response was 243
+seconds, which a three-minute hold would have merged straight past. Five
+minutes is the current floor, and the number is restated here rather than
+only cited because that file is machine-local to one seat and a reader of
+this repository cannot open it. A 60-second poll therefore detects a pull request well
 inside a window that is already being waited out on purpose; spending
 requests to detect it in 5 seconds would move nothing that happens
 afterward. The interval is an option for the cases the default is wrong
@@ -261,9 +269,16 @@ def warn(line):
 
 
 def one_line_snippet(text, limit):
-    """Newlines folded to " ¶ " first, then the first `limit` characters —
-    fold-then-truncate, so the emitted length is bounded by `limit`."""
-    return " ¶ ".join(str(text).strip().splitlines())[:limit]
+    """Redacted first, then newlines folded to " ¶ ", then the first `limit`
+    characters — so the emitted length is bounded by `limit`.
+
+    Redaction has to precede the cut. `redact_secrets` replaces whole
+    occurrences, so truncating first can bisect the token and leave a prefix
+    that matches nothing and prints, even though `emit` redacts afterwards.
+    Measured on this function before this ordering: a 328-character `gh`
+    stderr with the token starting at index 280 printed 20 characters of it
+    with no [REDACTED] in the line."""
+    return " ¶ ".join(redact_secrets(str(text)).strip().splitlines())[:limit]
 
 
 def read_token(token_file: Path):
@@ -473,9 +488,8 @@ def main(argv=None):
             if blind_since is None:
                 blind_since = time.monotonic()
                 emit("WATCH: query failed, so this watch is BLIND until it "
-                     "recovers (nothing is being seen; once a baseline "
-                     "exists, what happens while blind is reported when it "
-                     "recovers): "
+                     "recovers (nothing is being seen; the recovery line "
+                     "below says what was and was not captured): "
                      + one_line_snippet(reason, FAILURE_REASON_SNIPPET_CHARS))
             time.sleep(arguments.poll_seconds)
             continue
@@ -490,13 +504,22 @@ def main(argv=None):
             # a recovery, saw no events, and concluded nothing had opened.
             # Seat boot is when a first poll is likeliest to fail, so this is
             # the common case rather than the exotic one.
+            #
+            # --from-start is the exception, and it has to be excluded here or
+            # the cure repeats the disease: it seeds the baseline empty, so
+            # every open pull request IS emitted as OPENED and nothing is
+            # absorbed. Claiming a loss that did not happen misleads an agent
+            # reading the stream exactly as badly as hiding one that did, and
+            # it would hand the reader a remedy it is already using.
+            lost_openings_silently = (known_head_shas is None
+                                      and not arguments.from_start)
             emit(f"WATCH: query recovered after {failed_polls} failed poll(s), "
                  f"about {time.monotonic() - blind_since:.0f}s blind"
-                 + ("" if known_head_shas is not None else
-                    " — and this watch had NO BASELINE yet, so anything that "
+                 + (" — and this watch had NO BASELINE yet, so anything that "
                     "opened during that blindness is absorbed into the "
-                    "baseline below and gets no OPENED line (--from-start "
-                    "reports the baseline as events)"))
+                    "baseline below and gets no OPENED line (re-run with "
+                    "--from-start to have the baseline reported as events)"
+                    if lost_openings_silently else ""))
             blind_since = None
             failed_polls = 0
 
