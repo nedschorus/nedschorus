@@ -204,14 +204,24 @@ def timestamp_to_whole_seconds(stamp: str) -> str:
 def task_notification_text(record: dict):
     """The `<task-notification>` body a transcript record carries, or None.
 
-    One notification reaches the transcript up to four times in three record
-    shapes — enqueued (`queue-operation`), delivered as a user turn (`user`),
-    copied as an `attachment`, then removed from the queue
-    (`queue-operation`). All the shapes are read rather than only the
-    delivered one,
-    because a subagent that finishes as its session is dying has its
-    notification enqueued and never delivered, and that is the moment this
-    roster exists for.
+    One notification reaches the transcript ONE TO THREE TIMES — never four —
+    in one of four observed combinations of record type. Measured by grouping
+    records on an identical notification body across three merge-lane session
+    transcripts spanning 2026-08-21 to 2026-08-24; the counts below are that
+    measurement, one per session, not an estimate:
+
+        enqueue only                          3 / 4 / 3
+        enqueue + remove                      1 / 33 / 0
+        enqueue + delivered user turn        17 / 158 / 17
+        enqueue + remove + attachment copy   13 / 69 / 23
+
+    Enqueue and remove are `queue-operation` records, the delivered turn is a
+    `user` record, and the copy is an `attachment` record.
+
+    Every combination is read rather than only the delivered one, because the
+    first of them is a notification nothing ever delivered — a subagent
+    finishing as its session dies, which is the moment this roster exists for.
+    That case has a real specimen in every session measured.
     """
     if record.get("type") == "user":
         message = record.get("message")
@@ -256,8 +266,22 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     **Background monitors are excluded structurally, not by their ids.** A
     monitor's tool result carries `taskId`/`persistent` and no `agentId`, so
     keying spawns on `status == "async_launched"` with an `agentId` selects
-    subagents only. Measured on the 2026-08-23 transcripts, where nine
-    subagents and seven monitors ran in one session.
+    subagents only. Measured on session `40a16b9c` of 2026-08-23, where nine
+    subagents and eight monitors ran. Eight by either of two independent
+    countings — `Monitor` tool-use blocks, and tool results carrying
+    `persistent: true`. Counting every distinct `taskId` without an `agentId`
+    instead gives fifteen, because backgrounded `Bash` tasks carry a `taskId`
+    too; `persistent` is what separates a monitor from one of those.
+
+    **One generation of memory, deliberately.** The roster a session writes
+    holds the subagents THAT session spawned. Nothing a predecessor recorded
+    is carried into it, so an entry a successor reads, judges can wait, and
+    defers is absent from the roster its own recycle writes — and the orphan
+    drops back to prose, which is the failure this field exists to remove.
+    Carrying unresolved entries across recycles is a larger change and is not
+    attempted here; the scope is stated so that a reader does not assume a
+    persistence the code does not provide. A deferred subagent that still
+    matters belongs in `next-step`, which does survive the next recycle.
     """
     roster = []
     by_agent_id = {}
@@ -306,7 +330,7 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
             if entry is None or status is None:
                 continue
             # Only a CHANGE of status is a new event. The same completion is
-            # announced up to four times, so taking every announcement would
+            # announced up to three times, so taking every announcement would
             # date the event at its last echo rather than at its arrival.
             if status.group(1) != entry["last_event"]:
                 entry["last_event"] = status.group(1)

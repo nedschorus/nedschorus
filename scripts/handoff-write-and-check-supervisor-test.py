@@ -438,12 +438,19 @@ def notification_body(task_id: str, status: str, summary: str) -> str:
 
 def notification_records(task_id: str, status: str, summary: str, enqueued_at: str,
                          delivered_at: str = "", removed_at: str = "") -> list:
-    """One notification as the transcript carries it: up to four records.
+    """One notification as the transcript carries it: one to three records.
 
-    Enqueued, delivered as a user turn, copied as an attachment, then removed
-    from the queue. A subagent that finishes as its session is dying gets only
-    the first of these, which is why the derivation reads them all — and why
-    it must not count the echoes as four separate events.
+    Enqueued, optionally delivered as a user turn and copied as an attachment,
+    optionally removed from the queue. Measured across three real session
+    transcripts, no notification body ever appears more than three times, and
+    four combinations occur — see `task_notification_text` in the writer for
+    the counts. A subagent that finishes as its session is dying gets only the
+    enqueue, which is why the derivation reads every combination — and why it
+    must not count the echoes as separate events.
+
+    This helper can emit all four records at once, which the real transcripts
+    never do. That is deliberate: a fixture that emits the maximum exercises
+    the de-duplication harder than a replay would.
     """
     body = notification_body(task_id, status, summary)
     records = [{"type": "queue-operation", "operation": "enqueue", "timestamp": enqueued_at,
@@ -478,10 +485,27 @@ def monitor_records(task_id: str, timestamp: str, killed_at: str) -> list:
     ]
 
 
-FIXTURE_SESSION_ID = "40a16b9c-fb87-422b-a543-af7ecbbabbe6"
-FIXTURE_IDLE_AGENT = "a309071aa3681d280"      # finished a round, still owned #150's fix
-FIXTURE_SILENT_AGENT = "a022a89c0b2ceeb88"    # spawned, never notified
-FIXTURE_UNDELIVERED_AGENT = "abb92c2626197a6f5"  # finished as the session died
+# THIS TRANSCRIPT IS CONSTRUCTED, and its ids are synthetic on purpose.
+#
+# An earlier revision used the real agent ids from session
+# 40a16b9c of 2026-08-23 and annotated them with events that did not happen to
+# those agents — one was labelled as owning pull request #150's fix when it in
+# fact produced #147, and two were labelled "never notified" and "finished as
+# the session died" when both had completed, an hour apart, well before that
+# session ended. A reader checking the fixture against the transcript would
+# have found the labels false. Synthetic ids cannot make a false claim about a
+# real agent, so the fixture says what it is instead of borrowing authority it
+# does not have.
+#
+# One case here has NO real specimen anywhere in that session: every one of
+# its nine subagents completed, so "spawned, never notified" has never been
+# observed. It is exercised because the derivation must handle it — a subagent
+# whose session dies before its notification is delivered — not because it was
+# seen. That is precisely why the fixture is constructed rather than replayed.
+FIXTURE_SESSION_ID = "00000000-0000-4000-8000-00000000f153"
+FIXTURE_IDLE_AGENT = "afixture0idle0001"      # completed a round, then sat idle
+FIXTURE_SILENT_AGENT = "afixture0silent01"    # spawned, never notified (no real specimen)
+FIXTURE_UNDELIVERED_AGENT = "afixture0undeliv1"  # completion enqueued, never delivered
 FIXTURE_MONITOR_TASK = "b41fasmax"            # a background monitor, not a subagent
 
 

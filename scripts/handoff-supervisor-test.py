@@ -791,10 +791,15 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     roster_fields = {
         "written-at": recent,
         "next-step": "merge the queue",
-        "spawned-subagent-1": ('a309071aa3681d280 "Fix ignored-path write blind spot" '
+        # Synthetic ids. These lines used to carry the real agent ids from
+        # session 40a16b9c with a `last event` that did not happen to them —
+        # the second agent completed at 21:54:40Z, and 21:32:36Z was only its
+        # spawn. The ignition prompt does not care whose ids these are, and a
+        # fixture should not assert an event for an agent a reader can look up.
+        "spawned-subagent-1": ('afixture0idle0001 "Fix ignored-path write blind spot" '
                                'spawned at 2026-08-23T19:55:24Z, '
                                'last event completed at 2026-08-23T20:52:59Z'),
-        "spawned-subagent-2": ('a022a89c0b2ceeb88 "Review PR 150 independently" '
+        "spawned-subagent-2": ('afixture0silent01 "Review PR 150 independently" '
                                'spawned at 2026-08-23T21:32:36Z, '
                                'last event spawned at 2026-08-23T21:32:36Z'),
     }
@@ -802,8 +807,8 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     check("ignition states how many subagents died with the session",
           "spawned 2 subagent(s), which died with it" in prompt, prompt)
     check("ignition names each subagent and what it was doing",
-          "a309071aa3681d280" in prompt and "Fix ignored-path write blind spot" in prompt
-          and "a022a89c0b2ceeb88" in prompt and "Review PR 150 independently" in prompt, prompt)
+          "afixture0idle0001" in prompt and "Fix ignored-path write blind spot" in prompt
+          and "afixture0silent01" in prompt and "Review PR 150 independently" in prompt, prompt)
     check("ignition carries each subagent's last recorded event",
           "last event completed at 2026-08-23T20:52:59Z" in prompt
           and "last event spawned at 2026-08-23T21:32:36Z" in prompt, prompt)
@@ -838,7 +843,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
         "written-at: 2026-08-23T22:00:00Z\n"
         "next-step: merge the queue\n"
         "restart-counter: 3\n"
-        "spawned-subagent-1: a309071aa3681d280 \"Fix ignored-path\" spawned at "
+        "spawned-subagent-1: afixture0idle0001 \"Fix ignored-path\" spawned at "
         "2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z\n"
         "next-step-verbatim: <<END-OF-NEXT-STEP\n"
         "merge the queue\n"
