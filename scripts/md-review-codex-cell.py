@@ -17,7 +17,15 @@ The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
 
 Exit codes: 0 a model produced a report; 1 every model in the tier's chain
-failed to produce one, which includes every way `codex exec` itself can fail;
+failed to produce one -- which covers every way `codex exec` itself can fail,
+AND the case where codex never started at all because the binary is not on
+PATH. That last one is worth naming rather than leaving implied: an
+unlaunchable codex raises OSError, and left uncaught that would be a
+traceback exiting 1 as well, so the same number would mean both "the chain
+was tried and nothing produced a review" and "this program crashed". The
+common module catches it, names the model and the error on stderr, and lets
+the chain advance, so a 1 from here always means the first thing and the
+stderr line says which models failed how;
 64 this program refused the invocation and never launched codex (a target
 that is not a file, a report path that is not a file, a missing prompt
 template, or a command-line error argparse caught). 64 rather than the
