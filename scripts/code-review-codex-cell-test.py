@@ -22,9 +22,14 @@ What is pinned here:
 
   - This cell's own refusals and codex's failures carry DIFFERENT exit
     codes, and the cases below hold that seam from both sides: every bad
-    invocation of the cell exits 64, while a codex that fails is passed
-    through with codex's exact code -- including 2, which is what codex
-    returns when IT rejects a command line. Until 2026-08-23 the cell used 2
+    invocation of the cell exits 64, while a codex that EXITS carries its
+    own code through unchanged -- including 2, which is what codex returns
+    when IT rejects a command line. A codex killed by a SIGNAL is the one
+    case that is not unchanged: Python reports the death as a negative
+    returncode and sys.exit takes it modulo 256, so SIGKILL surfaces as 247
+    and SIGTERM as 241, measured by the cases below. Both stay clear of
+    every code this cell spends on a meaning of its own, which is what the
+    seam actually requires. Until 2026-08-23 the cell used 2
     for its own refusals too, so two opposite meanings -- the caller invoked
     this cell wrongly, versus this cell invoked codex wrongly -- arrived as
     the same number, and only the second is a defect in this repository. The
