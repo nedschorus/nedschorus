@@ -14,7 +14,9 @@ The cycle, per recycle:
   4. Carry the tasks forward: nothing to do under a seat-pinned task list,
      where every generation shares one store; otherwise copy the retiring
      session's records into the successor's task directory.
-  5. Print one queue-status line.
+  5. Print one queue-status line — to the console only. It does not ride
+     the ignition prompt (user-ruled 2026-08-29: "Also useless is the
+     reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the ignition prompt.
   7. Keep the current and previous handoff and extract; delete older ones.
 
@@ -23,9 +25,11 @@ The handoff file the agent writes (simple `key: value` lines):
   next-step:            the first action the successor takes
   restart-counter:      predecessor's counter plus one
   dont-restart:         optional; any value makes the supervisor ask before relaunching
-  spawned-subagent-<n>: optional, one per subagent the retiring session
-                        spawned; they die with it, so the successor is told
-                        they existed and can restart the ones still owing work
+  spawned-subagent-<n>: optional, one per subagent still working when the
+                        handoff was written; the recycle kills them, so the
+                        successor is told to re-commission each. Subagents
+                        that completed, failed, or were stopped are not
+                        recorded at all (user-ruled 2026-08-29)
 
 How much dialog to carry is not among them: the extractor takes the tail that
 clears its word floor, so the retiring agent exercises no judgment over what
@@ -52,6 +56,7 @@ from pathlib import Path
 from typing import Optional
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
+PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
@@ -254,8 +259,33 @@ def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
     return copied
 
 
+def project_directory_for_working_directory(working_directory: Path) -> Path:
+    """Return the ~/.claude/projects directory holding a worktree's sessions.
+
+    The harness mangles the absolute path by replacing every character that is
+    not alphanumeric, a dash, or an underscore with a dash.
+
+    Lives here rather than in the writer (where it was born) because the
+    supervisor is the base module: the writer imports the supervisor, and both
+    need the mangling — the writer to find the retiring session's transcript,
+    the supervisor to name the predecessor's subagent-transcript directory in
+    the ignition prompt. The writer aliases this function, so there is one
+    copy of the rule.
+    """
+    mangled = "".join(
+        character if (character.isalnum() or character in "-_") else "-"
+        for character in str(working_directory)
+    )
+    return PROJECTS_ROOT / mangled
+
+
 def queue_status_line(working_directory: Path) -> str:
-    """Report each queue's depth and oldest item, so rot stays visible."""
+    """Report each queue's depth and oldest item, so rot stays visible.
+
+    Console-only since 2026-08-29: the user expired his 2026-08-12 #32 ruling
+    that this line rides the ignition prompt ("Also useless is the reminder
+    there are files in the queues. Thats what queues are for."). The
+    supervisor still prints it for a watched pane or the log."""
     reports = []
     for queue_directory in ("nc-queue", "docs/issues/queue", "docs/wiki/queue", "legacy-feature-queue"):
         directory = working_directory / queue_directory
@@ -317,6 +347,11 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
     the first occurrence of a key. Fields the writer never wrote simply are
     not there — an older handoff yields an empty roster and the ignition
     prompt says nothing about subagents.
+
+    Since 2026-08-29 the writer records only subagents still working when the
+    handoff is written, so every entry here is one the recycle killed mid-job
+    and the successor should re-commission. Subagents that completed, failed,
+    or were stopped are not in the handoff at all (user-ruled 2026-08-29).
     """
     numbered = []
     for key, value in handoff_fields.items():
@@ -358,8 +393,25 @@ def launch_clock_sentence(launch_time: Optional[datetime] = None) -> str:
 
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
-                          queue_status: str = "", launch_time: Optional[datetime] = None) -> str:
+                          predecessor_session_directory: Optional[Path] = None,
+                          launch_time: Optional[datetime] = None) -> str:
     """Compose the successor's first prompt.
+
+    The prompt is tuned like a CLAUDE.md file (user-ruled 2026-08-29: "we
+    should only put in the stuff that they need to know at their start. The
+    rest they can look up if they need to"). It carries five things: the
+    dialog line, the launch clock, the task-count check, the malformed-block
+    note when the verbatim block was damaged, and the next step — plus, only
+    when the handoff recorded subagents still working at the recycle, the
+    re-commission sentence below. Queue status does not ride it (the user
+    expired that 2026-08-12 ruling on 2026-08-29); the supervisor prints it
+    to its own console instead.
+
+    predecessor_session_directory is the retiring session's directory under
+    ~/.claude/projects — the place its subagents' transcripts survive
+    (`<dir>/subagents/agent-<id>.jsonl`). The supervisor composes it from the
+    retiring session id and the working directory; a caller without one gets
+    the literal `<predecessor-session-dir>` placeholder in the sentence.
 
     launch_time is the wall clock the prompt reports. The supervisor reads it
     immediately before launch_agent_session and passes it in — see
@@ -384,22 +436,27 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: 
         launch_clock_sentence(launch_time),
         f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
     ]
-    if queue_status:
-        # The rot-visibility duty (#32): the successor is the one reader every
-        # supervisor mode has — a detached supervisor's console is a log file.
-        lines.append(f"Queue status at this recycle: {queue_status} — surface anything rotting to the user.")
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
-        # The orphaned-subagent duty (ruled 2026-08-23): subagents die with the
-        # session that spawned them, and the successor is the only reader who
-        # can restart them. Their last recorded event is stated, not
-        # interpreted — a subagent that stopped can still own unfinished work,
-        # which is exactly how pull request #150's fixer was nearly lost.
+        # The orphaned-subagent duty, narrowed 2026-08-29: the writer records
+        # only subagents still working at the recycle, so every entry here is
+        # one the recycle killed mid-job. The successor re-commissions —
+        # spawns a fresh agent on the job — because a dead subagent cannot be
+        # resumed by id across a recycle: probed 2026-08-29, SendMessage to a
+        # predecessor's subagent id returns "No transcript found" (the
+        # resolver is session-scoped) even though the transcript survives on
+        # disk at <predecessor-session-dir>/subagents/agent-<id>.jsonl.
+        # `agent-<id>.jsonl` stays a literal pattern: each entry names its
+        # own id, so the successor substitutes per entry.
+        transcript_directory = (predecessor_session_directory
+                                if predecessor_session_directory
+                                else "<predecessor-session-dir>")
         lines.append(
-            f"The session you are replacing spawned {len(roster)} subagent(s), which died with it: "
+            f"The session you are replacing had {len(roster)} subagent(s) still working when it ended: "
             + "; ".join(roster)
-            + ". A last event of `completed` means that subagent stopped, not that its work is "
-            "finished — judge which of them still own unfinished work and restart those."
+            + ". Re-commission each — a fresh agent on the job; the dead one's full transcript is at "
+            f"{transcript_directory}/subagents/agent-<id>.jsonl if its state matters. "
+            "A dead subagent cannot be resumed by id."
         )
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
@@ -428,11 +485,15 @@ class DialogIgnitionPlan:
     extract_path: Path
     handoff_fields: dict
     task_count: int
-    queue_status: str = ""
+    # The retiring session's directory under ~/.claude/projects, where its
+    # subagents' transcripts survive the recycle. Optional so a direct caller
+    # without one still composes; the supervisor always passes it.
+    predecessor_session_directory: Optional[Path] = None
 
     def compose(self, launch_time: datetime) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
-                                     self.task_count, self.queue_status,
+                                     self.task_count,
+                                     self.predecessor_session_directory,
                                      launch_time=launch_time)
 
 
@@ -780,8 +841,9 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
 
-    queue_status = queue_status_line(settings.working_directory)
-    print(f"handoff-supervisor: {queue_status}")
+    # Console only: the queue-status line does not ride the ignition prompt
+    # (user-ruled 2026-08-29, expiring the 2026-08-12 #32 ruling).
+    print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
 
     successor_session_id = str(uuid.uuid4())
     # Two stories, and the console must not tell the wrong one: under a
@@ -796,7 +858,8 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
         print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
 
     plan = DialogIgnitionPlan(
-        extract_path, handoff_fields, task_count_for(successor_session_id), queue_status
+        extract_path, handoff_fields, task_count_for(successor_session_id),
+        project_directory_for_working_directory(settings.working_directory) / retiring_session_id,
     )
     return successor_session_id, plan
 
