@@ -98,6 +98,10 @@ DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT = 4
 SHORT_TIMEOUT_SECONDS = 20
 LONG_TIMEOUT_SECONDS = 120
 
+# The box transcript grep's own exit status comes back through ssh: 0 hits,
+# 1 no hits, 2 grep failed. This one is ours: ~/.claude/projects is not there.
+BOX_TRANSCRIPTS_DIR_MISSING = 3
+
 
 class SurfaceReport:
     """One surface's answer, in the three-outcome vocabulary above."""
@@ -296,24 +300,33 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             statuses.append(UNAVAILABLE)
 
     if box_ssh_host:
-        remote = "grep -rl --include='*.jsonl' -F %s ~/.claude/projects 2>/dev/null | head -20" % shlex.quote(wanted)
         code, out, stderr = runner(
-            ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, remote],
+            ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, _box_transcript_grep_script(wanted)],
             timeout=LONG_TIMEOUT_SECONDS,
         )
         hits = [h for h in out.splitlines() if h.strip()]
-        if code == 255 or (code not in (0, 1) and not hits):
-            lines.append("the box (%s): unreachable — %s" % (box_ssh_host, stderr.strip().splitlines()[0] if stderr.strip() else "ssh failed"))
+        first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
+        if code == 255:
+            lines.append("the box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
+            statuses.append(UNAVAILABLE)
+        elif code == BOX_TRANSCRIPTS_DIR_MISSING:
+            lines.append("the box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
             statuses.append(UNAVAILABLE)
         elif hits:
             lines.append("the box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
             for hit in hits[:5]:
                 lines.append("    " + hit)
+            if len(hits) > 5:
+                lines.append("    ... and %d more" % (len(hits) - 5))
             recovery.append("ssh %s \"grep -o '.\\{0,400\\}%s.\\{0,2000\\}' %s\" | head" % (box_ssh_host, wanted, shlex.quote(hits[0])))
             statuses.append(FOUND)
-        else:
+        elif code == 1:
             lines.append("the box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
             statuses.append(NOT_FOUND)
+        else:
+            lines.append("the box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
+                         % (box_ssh_host, code, first_error or "no error text"))
+            statuses.append(UNAVAILABLE)
 
     if FOUND in statuses:
         # The searching agent's own transcript matches as soon as it types the
@@ -322,6 +335,23 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         lines.append("(a session's own transcript matches merely because the path was typed in it —")
         lines.append(" check that a hit actually contains the CONTENT before calling it recovered)")
     return SurfaceReport("transcripts", _combine(statuses), lines, recovery)
+
+
+def _box_transcript_grep_script(wanted):
+    """The shell that runs on the box; its exit status is the grep's own.
+
+    The first version was `grep ... 2>/dev/null | head -20`, and a pipeline's
+    status is its LAST command's: `head` succeeding replaced `grep` failing, so
+    a missing or unreadable ~/.claude/projects came back as exit 0 with empty
+    output and the caller said it had searched it. Never pipe a command whose
+    failure is supposed to be detected. The directory is tested explicitly,
+    grep's stderr is kept, and the hit list is capped by the caller instead.
+    """
+    return "\n".join([
+        'd="$HOME/.claude/projects"',
+        'if [ ! -d "$d" ]; then echo "$d does not exist" >&2; exit %d; fi' % BOX_TRANSCRIPTS_DIR_MISSING,
+        "exec grep -rl --include='*.jsonl' -F %s \"$d\"" % shlex.quote(wanted),
+    ])
 
 
 # --------------------------------------------------------------------------

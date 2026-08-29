@@ -15,7 +15,10 @@ AND that the output says what to do about it.
 """
 
 import importlib.util
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
@@ -53,6 +56,36 @@ class FakeRunner:
             if needle in joined:
                 return answer
         return self.default
+
+
+class LocalShellRunner(FakeRunner):
+    """Answers `ssh <host> <script>` by running <script> through a local bash.
+
+    The two box surfaces are shell scripts this tool generates and ships over
+    ssh; a table can only check their text. Running them for real against a
+    fake tree under `home` is what catches a script that reports "searched"
+    while it looked nowhere. HOME is pointed at the fake tree so `~` and
+    `$HOME` land there; cwd is the tree too, so a stray unquoted glob cannot
+    match files in this repository and hide a quoting bug. Every other command
+    still answers from the table.
+    """
+
+    def __init__(self, table, home):
+        FakeRunner.__init__(self, table)
+        self.home = str(home)
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv[0] != "ssh":
+            return FakeRunner.__call__(self, argv, timeout, cwd)
+        self.calls.append(" ".join(argv))
+        completed = subprocess.run(
+            ["bash", "-c", argv[-1]],
+            cwd=self.home,
+            env=dict(os.environ, HOME=self.home),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return completed.returncode, completed.stdout.decode(), completed.stderr.decode()
 
 
 # --------------------------------------------------------------------------
@@ -153,6 +186,49 @@ check("an absent local transcripts dir is named, not silently skipped",
 transcripts_box_down = FakeRunner([("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n"))])
 report = finder.search_transcripts("x.md", "/nonexistent-dir", "nedlern@ned-box", transcripts_box_down)
 check("an unreachable box is UNAVAILABLE, not NOT FOUND", report.status == UNAVAILABLE)
+
+# The box grep runs for real, through a local bash, against a fake HOME. The
+# first version was `grep ... 2>/dev/null | head -20`: a pipeline's status is
+# its LAST command's, so a missing ~/.claude/projects came back as exit 0 and
+# the report said it had searched it.
+with tempfile.TemporaryDirectory() as tmp:
+    mac_dir = Path(tmp, "mac-transcripts")
+    mac_dir.mkdir()
+    box_home = Path(tmp, "box-home")
+    box_home.mkdir()
+
+    box_no_dir = LocalShellRunner([], box_home)
+    report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_no_dir)
+    box_lines = [l for l in report.lines if l.startswith("the box")]
+    check("a box with no ~/.claude/projects says so, never 'searched ..., no transcript mentions it'",
+          box_lines == ["the box (nedlern@ned-box): ~/.claude/projects does not exist there"],
+          str(box_lines))
+    box_script = [c for c in box_no_dir.calls if c.startswith("ssh")][0]
+    check("the box grep is not piped, so its own exit status reaches the caller",
+          "|" not in box_script, box_script)
+
+    box_projects = Path(box_home, ".claude", "projects", "p")
+    box_projects.mkdir(parents=True)
+    Path(box_projects, "quiet.jsonl").write_text('{"text": "nothing relevant"}\n')
+    box_empty = LocalShellRunner([], box_home)
+    report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_empty)
+    check("a box whose transcripts do not mention the path is searched and says so",
+          any(l.startswith("the box") and "no transcript mentions it" in l for l in report.lines),
+          str(report.lines))
+
+    Path(box_projects, "session.jsonl").write_text('{"text": "read a/b.md today"}\n')
+    box_hit = LocalShellRunner([], box_home)
+    report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_hit)
+    check("a box transcript that mentions the path is FOUND with the file named",
+          report.status == FOUND and any("session.jsonl" in l for l in report.lines),
+          str(report.lines))
+
+transcripts_box_grep_fails = FakeRunner([("ssh", (2, "", "grep: /home/nedlern/.claude/projects/p: Permission denied\n"))])
+report = finder.search_transcripts("a/b.md", "/nonexistent-dir", "nedlern@ned-box", transcripts_box_grep_fails)
+check("a box grep that fails is UNAVAILABLE and quotes grep",
+      report.status == UNAVAILABLE and any("grep over ~/.claude/projects failed" in l and "Permission denied" in l
+                                           for l in report.lines),
+      str(report.lines))
 
 # --------------------------------------------------------------------------
 # timeshift on the box
