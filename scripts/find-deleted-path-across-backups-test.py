@@ -620,6 +620,79 @@ check("a disk that refuses to mount reports diskutil's own words",
       report.status == UNAVAILABLE and any("failed to mount" in l for l in report.lines),
       str(report.lines))
 
+# Warm sudo: the branch that actually opens snapshots. The first version's
+# probe returned None for a mount that failed AND for a file that was absent,
+# so a mount_apfs refusal rendered as "searched ... and did not find it".
+WARM = [
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
+    ("sudo -n true", (0, "", "")),
+    ("sudo -n umount", (0, "", "")),
+]
+tm_mount_refused = FakeRunner(WARM + [
+    ("sudo -n mount_apfs", (1, "", "mount_apfs: volume could not be mounted: Resource busy\n")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_mount_refused)
+check("a snapshot that will not mount is UNAVAILABLE, never 'searched ... and did not find it'",
+      report.status == UNAVAILABLE and not any("did not find it" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... naming the snapshot and quoting mount_apfs",
+      any(l.startswith("could not search com.apple.TimeMachine.2026-08-13-183101.backup") and "Resource busy" in l
+          for l in report.lines),
+      str(report.lines))
+check("... and handing over the manual mount command for it",
+      any("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup" in c for c in report.recovery),
+      str(report.recovery))
+check("a refused mount is not followed by an umount of it",
+      not any("umount" in c for c in tm_mount_refused.calls), str(tm_mount_refused.calls))
+
+tm_warm_miss = FakeRunner(WARM + [
+    ("sudo -n mount_apfs", (0, "", "")),
+    ("find /tmp/find-deleted-path-across-backups-ro/Users", (0, "", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_warm_miss)
+check("with warm sudo, a snapshot that mounts and lacks the file is NOT FOUND, naming what was searched",
+      report.status == NOT_FOUND and any(l.startswith("searched com.apple.TimeMachine.2026-08-13-183101.backup, "
+                                                       "com.apple.TimeMachine.2026-08-12-202035.backup and did not find it")
+                                         for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("every mounted snapshot is unmounted afterwards",
+      sum(1 for c in tm_warm_miss.calls if "umount" in c) == 2, str(tm_warm_miss.calls))
+
+tm_warm_hit = FakeRunner(WARM + [
+    ("sudo -n mount_apfs", (0, "", "")),
+    ("find /tmp/find-deleted-path-across-backups-ro/Users",
+     (0, "/tmp/find-deleted-path-across-backups-ro/Users/el/Projects/nedschorus/a/b.md\n", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_warm_hit)
+check("with warm sudo, a hit is FOUND with the path inside the snapshot and a cp command",
+      report.status == FOUND and any("holds /Users/el/Projects/nedschorus/a/b.md" in l for l in report.lines)
+      and any(c.startswith("cp /tmp/tm-ro/Users/el/Projects/nedschorus/a/b.md") for c in report.recovery),
+      "%s %s %s" % (report.status, report.lines, report.recovery))
+
+tm_find_fails = FakeRunner(WARM + [
+    ("sudo -n mount_apfs", (0, "", "")),
+    ("find /tmp/find-deleted-path-across-backups-ro/Users",
+     (1, "", "find: /tmp/find-deleted-path-across-backups-ro/Users: No such file or directory\n")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_find_fails)
+check("a mounted snapshot whose find fails is UNAVAILABLE quoting find (the /Users layout is unverified)",
+      report.status == UNAVAILABLE and any("find said" in l and "No such file" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+tm_one_refused = FakeRunner(WARM + [
+    ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
+    ("sudo -n mount_apfs", (0, "", "")),
+    ("find /tmp/find-deleted-path-across-backups-ro/Users", (0, "", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_one_refused)
+check("one refused mount among searched-and-empty snapshots is UNAVAILABLE, listing both",
+      report.status == UNAVAILABLE
+      and any(l.startswith("could not search com.apple.TimeMachine.2026-08-13") for l in report.lines)
+      and any(l == "searched com.apple.TimeMachine.2026-08-12-202035.backup and did not find it" for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
 tm_none = FakeRunner([("tmutil destinationinfo", (1, "", "tmutil: no destination configured"))])
 report = finder.search_time_machine("a/b.md", runner=tm_none)
 check("no configured destination is UNAVAILABLE", report.status == UNAVAILABLE)

@@ -609,22 +609,44 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
              "# then look for the path under /tmp/tm-ro, and: sudo umount /tmp/tm-ro"],
         )
 
-    lines = ["%d snapshots present; opened %d with an already-warm sudo" % (len(snapshots), len(candidates))]
     hits = []
+    searched = []
+    unsearched = []
     for snapshot in candidates:
-        hit = _time_machine_probe(snapshot, device, wanted, runner)
-        if hit:
-            hits.append((snapshot, hit))
-    if not hits:
-        lines.append("searched %s and did not find it" % ", ".join(candidates))
-        return SurfaceReport("time machine", NOT_FOUND, lines)
-    for snapshot, hit in hits:
-        lines.append("%s holds %s" % (snapshot, hit))
-    recovery = [
-        "mkdir -p /tmp/tm-ro && sudo mount_apfs -o ro -s %s %s /tmp/tm-ro" % (hits[0][0], device),
-        "cp /tmp/tm-ro%s . && sudo umount /tmp/tm-ro" % hits[0][1],
-    ]
-    return SurfaceReport("time machine", FOUND, lines, recovery)
+        outcome, detail = _time_machine_probe(snapshot, device, wanted, runner)
+        if outcome == "hit":
+            hits.append((snapshot, detail))
+            searched.append(snapshot)
+        elif outcome == "miss":
+            searched.append(snapshot)
+        else:
+            unsearched.append((snapshot, detail))
+    lines = ["%d snapshots present; %d of %d candidates searched with an already-warm sudo"
+             % (len(snapshots), len(searched), len(candidates))]
+    for snapshot, reason in unsearched:
+        lines.append("could not search %s — %s" % (snapshot, reason))
+    if hits:
+        for snapshot, hit in hits:
+            lines.append("%s holds %s" % (snapshot, hit))
+        recovery = [
+            "mkdir -p /tmp/tm-ro && sudo mount_apfs -o ro -s %s %s /tmp/tm-ro" % (hits[0][0], device),
+            "cp /tmp/tm-ro%s . && sudo umount /tmp/tm-ro" % hits[0][1],
+        ]
+        return SurfaceReport("time machine", FOUND, lines, recovery)
+    if searched:
+        lines.append("searched %s and did not find it" % ", ".join(searched))
+    if unsearched:
+        # A snapshot that would not open was not searched; saying "did not
+        # find it" about it is the conflation this file's contract forbids.
+        return SurfaceReport(
+            "time machine",
+            UNAVAILABLE,
+            lines,
+            ["mkdir -p /tmp/tm-ro && sudo mount_apfs -o ro -s %s %s /tmp/tm-ro && ls /tmp/tm-ro"
+             % (unsearched[0][0], device),
+             "# then look for the path under /tmp/tm-ro, and: sudo umount /tmp/tm-ro"],
+        )
+    return SurfaceReport("time machine", NOT_FOUND, lines)
 
 
 def _time_machine_destination(runner):
@@ -740,27 +762,43 @@ def _snapshot_datestamp(snapshot_name):
 
 
 def _time_machine_probe(snapshot, device, wanted, runner):
+    """Open one snapshot read-only and look for `wanted` in it.
+
+    Returns (outcome, detail):
+      ("hit", path inside the snapshot)   — the file is there
+      ("miss", None)                      — mounted and searched, not there
+      ("unmounted", reason)               — mount_apfs refused; NOT searched
+      ("unreadable", reason)              — mounted, but find failed; NOT searched
+
+    The first version returned a bare None for both a mount failure and an
+    absent file, and the caller rendered both as "searched ... and did not
+    find it". A snapshot that never opened was not searched.
+    """
     mount_point = "/tmp/find-deleted-path-across-backups-ro"
     runner(["mkdir", "-p", mount_point])
-    code, _, _ = runner(["sudo", "-n", "mount_apfs", "-o", "ro", "-s", snapshot, device, mount_point], timeout=LONG_TIMEOUT_SECONDS)
+    code, _, stderr = runner(["sudo", "-n", "mount_apfs", "-o", "ro", "-s", snapshot, device, mount_point], timeout=LONG_TIMEOUT_SECONDS)
     if code != 0:
-        return None
+        first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
+        return "unmounted", "mount_apfs said: %s" % first
     try:
         if wanted.startswith("/"):
             probe = mount_point + wanted
             exists, _, _ = runner(["test", "-e", probe])
-            return wanted if exists == 0 else None
+            return ("hit", wanted) if exists == 0 else ("miss", None)
         # Assumes a mounted Time Machine snapshot exposes /Users at its root.
         # That is the documented layout, but it is UNVERIFIED here: confirming it
         # needs the password this whole branch exists because we do not have.
-        found, out, _ = runner(
+        code, out, stderr = runner(
             ["find", mount_point + "/Users", "-path", "*/" + wanted, "-maxdepth", "12"],
             timeout=LONG_TIMEOUT_SECONDS,
         )
         for line in out.splitlines():
             if line.strip():
-                return line.strip()[len(mount_point):]
-        return None
+                return "hit", line.strip()[len(mount_point):]
+        if code != 0:
+            first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
+            return "unreadable", "find said: %s" % first
+        return "miss", None
     finally:
         runner(["sudo", "-n", "umount", mount_point], timeout=LONG_TIMEOUT_SECONDS)
 
