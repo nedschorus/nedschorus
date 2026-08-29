@@ -155,6 +155,103 @@ with tempfile.TemporaryDirectory() as workspace:
     kept = [turn["text"] for turn in turns]
     check("keeps both voices, drops all noise", kept == ["kept prompt", "kept answer"], str(kept))
 
+    # --- Messages typed while the agent was mid-turn -----------------------
+    # These are NOT user records. The harness queues them and persists an
+    # attachment of type queued_command, which the type filter dropped — so
+    # every message the user typed during a running turn was invisible to the
+    # handoff. Shapes below are copied from the field (2026-08-23 census of 530
+    # transcripts: 294 human-origin records, 283 appearing nowhere else in
+    # their own transcript), not from the design.
+    def queued(prompt, kind="human"):
+        origin = {"kind": kind} if kind is not None else None
+        return {"type": "attachment",
+                "attachment": {"type": "queued_command", "prompt": prompt, "origin": origin}}
+
+    mid_turn = [
+        user_record("first prompt"),
+        assistant_record("working on it"),
+        queued("the post tool hook is the magic"),
+        assistant_record("answer after the interruption"),
+    ]
+    path = write_transcript(workspace, "mid-turn.jsonl", mid_turn)
+    turns, _ = extractor.read_dialog_turns(path)
+    kept = [(turn["voice"], turn["text"]) for turn in turns]
+    check(
+        "a message typed mid-turn is carried, in the position it was delivered",
+        kept == [("user", "first prompt"), ("assistant", "working on it"),
+                 ("user", "the post tool hook is the magic"),
+                 ("assistant", "answer after the interruption")],
+        str(kept),
+    )
+
+    other_origins = [
+        user_record("real prompt"),
+        queued("<cross-session-message from-name=\"merge-lane\">merge #143</cross-session-message>", kind="peer"),
+        queued("<task-notification><task-id>b1</task-id></task-notification>", kind=None),
+        queued("", kind="human"),
+        {"type": "attachment", "attachment": {"type": "total_tokens_reminder", "text": "<total_tokens>1</total_tokens>"}},
+        assistant_record("real answer"),
+    ]
+    path = write_transcript(workspace, "other-origins.jsonl", other_origins)
+    turns, _ = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    check(
+        "another agent's message, a task notification, an empty one and a "
+        "non-command attachment all stay out",
+        kept == ["real prompt", "real answer"],
+        str(kept),
+    )
+
+    # A message typed mid-turn and then interrupted is persisted twice: the
+    # queued_command attachment, and a plain user record when the harness
+    # re-sends it after the interrupt (field specimen 2026-08-12: four records
+    # and 5.7 seconds apart). The extract carries it once, and the short
+    # answer that follows is the reply to it, not an acknowledgement of the
+    # interrupt.
+    resent_after_interrupt = [
+        user_record("first prompt"),
+        assistant_record("working on it"),
+        queued("stop. I think another session is duplicating your work."),
+        {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
+        {"type": "queue-operation", "operation": "dequeue"},
+        user_record("stop. I think another session is duplicating your work."),
+        assistant_record("Stopping."),
+    ]
+    path = write_transcript(workspace, "resent-after-interrupt.jsonl", resent_after_interrupt)
+    turns, skips = extractor.read_dialog_turns(path)
+    kept = [(turn["voice"], turn["text"]) for turn in turns]
+    check(
+        "a mid-turn message the harness re-sends after an interrupt is carried "
+        "once, and the short answer after it survives",
+        kept == [("user", "first prompt"), ("assistant", "working on it"),
+                 ("user", "stop. I think another session is duplicating your work."),
+                 ("assistant", "Stopping.")]
+        and skips["resent_after_interrupt"] == 1,
+        f"{kept} skips={skips}",
+    )
+
+    # Scope guard (passes with or without the de-duplication): the same short
+    # answer twice with NO interrupt between is two replies — field shape
+    # 2026-08-24, "y" approving item 1 of a walk, then "y" approving item 2,
+    # 25 records and 121 seconds apart.
+    two_approvals = [
+        user_record("walk me through the items"),
+        assistant_record("Item 1: rename the flag. Approve?"),
+        queued("y"),
+        assistant_record("Item 1 is in and pushed. Item 2: drop the alias. Approve?"),
+        user_record("y"),
+        assistant_record("Item 2 is in."),
+    ]
+    path = write_transcript(workspace, "two-approvals.jsonl", two_approvals)
+    turns, _ = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    check(
+        "the same short answer twice with no interrupt between is two replies, both carried",
+        kept == ["walk me through the items", "Item 1: rename the flag. Approve?", "y",
+                 "Item 1 is in and pushed. Item 2: drop the alias. Approve?", "y", "Item 2 is in."],
+        str(kept),
+    )
+
     # --- Harness-injected pseudo-prompts and their acknowledgements --------
     # Fixture shapes are copied from the field, not the design: a delivered
     # monitor notification persists as a PLAIN user record — no isMeta, string

@@ -140,11 +140,21 @@ def read_dialog_turns(transcript_path: Path):
     turns = []
     skip_counts = {
         "malformed": 0, "oversized": 0, "partial_final_record": 0,
-        "injected": 0, "acknowledgement": 0,
+        "injected": 0, "acknowledgement": 0, "resent_after_interrupt": 0,
     }
     # True while the latest dropped record was harness-injected: the very next
     # assistant turn, if short, is its acknowledgement and falls with it.
     following_injected_record = False
+    # A message typed mid-turn and then interrupted is persisted twice: as the
+    # queued_command attachment at its delivery point, and again as a plain
+    # user record when the harness re-sends it after the interrupt (field
+    # specimen, 2026-08-12: 4 records and 5.7 seconds apart). The text of a
+    # just-carried queued message is held here until another turn is
+    # appended; a plain user record with the same text, arriving across an
+    # interrupt and nothing else, is that re-send and is counted, not carried
+    # a second time. The same text with no interrupt between is two replies.
+    carried_queued_text = None
+    interrupted_since_queued = False
 
     with transcript_path.open("rb") as handle:
         raw_lines = handle.readlines()
@@ -187,9 +197,20 @@ def read_dialog_turns(transcript_path: Path):
             if turn["text"].startswith(INJECTED_TEXT_PREFIXES):
                 skip_counts["injected"] += 1
                 following_injected_record = True
+                if turn["text"].startswith("[Request interrupted"):
+                    interrupted_since_queued = True
+            elif interrupted_since_queued and turn["text"] == carried_queued_text:
+                skip_counts["resent_after_interrupt"] += 1
+                carried_queued_text = None
+                # The re-send closes the acknowledgement window exactly as
+                # carrying it would: the next short assistant text answers the
+                # user, it is not an acknowledgement of the interrupt.
+                following_injected_record = False
             else:
                 turns.append(turn)
                 following_injected_record = False
+                carried_queued_text = turn["text"] if record.get("type") == "attachment" else None
+                interrupted_since_queued = False
             continue
 
         if (following_injected_record
@@ -197,6 +218,7 @@ def read_dialog_turns(transcript_path: Path):
             skip_counts["acknowledgement"] += 1
         else:
             turns.append(turn)
+            carried_queued_text = None
         following_injected_record = False
 
     return turns, skip_counts
@@ -240,8 +262,47 @@ def dialog_turn_from_record(record):
         return None  # harness-injected, not typed by the user
 
     record_type = record.get("type")
+
+    # A message the user types WHILE the agent is mid-turn is not stored as a
+    # user record at all. The harness queues it and persists an `attachment`
+    # record of type queued_command, so the type check below dropped it and
+    # every such message was invisible to the handoff — the successor read a
+    # dialog its predecessor's own transcript said nothing about.
+    #
+    # Observed 2026-08-23: a ruling the user typed at 19:37:20, one second
+    # before his session was recycled, reached neither the retiring agent nor
+    # its successor and had to be dug out of the JSONL by hand. A census of 530
+    # transcripts found 294 human-origin records of this shape, 283 of which
+    # appear nowhere else in their transcript.
+    #
+    # Only human origin is carried. The same shape also holds cross-session
+    # messages from other agents (origin.kind "peer") and task-notifications
+    # (no origin) — the injected traffic INJECTED_TEXT_PREFIXES already keeps
+    # out of the dialog.
+    #
+    # An identical plain user record can follow one of these. Measured on this
+    # Mac 2026-08-28 (534 transcripts, 302 human-origin records with text): 5
+    # have one. Four sit 25 to 380 records and 2 minutes to 18 hours apart with
+    # no interrupt between, and each is a separate reply — in one, "y" approves
+    # item 1 of a walk, the agent lands it, and the next "y" approves item 2.
+    # The fifth is the harness re-sending a message that was queued and then
+    # interrupted, 4 records and 5.7 seconds later. read_dialog_turns drops
+    # that re-send and only that: a match across an interrupt with nothing
+    # else carried between. (An earlier version of this comment generalized
+    # from one checked far-apart case to the whole set — review of PR #145.)
+    if record_type == "attachment":
+        attachment = record.get("attachment")
+        if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
+            return None
+        origin = attachment.get("origin")
+        if not isinstance(origin, dict) or origin.get("kind") != "human":
+            return None
+        prompt = attachment.get("prompt")
+        text = prompt.strip() if isinstance(prompt, str) else ""
+        return {"voice": "user", "text": text} if text else None
+
     if record_type not in ("user", "assistant"):
-        return None  # system, attachment, queue-operation, harness state
+        return None  # system, queue-operation, other harness state
 
     content = (record.get("message") or {}).get("content")
     if record_type == "user" and isinstance(content, str):
