@@ -55,11 +55,14 @@ passing review.
   the credential able to push main belongs to a dedicated system user,
   reached only through a controlled, logged door). Dormant until its
   credential work lands.
-- **The interim lane** — until the gate activates: seats commit on their
-  own branch, ship each topic as a small atomic PR cherry-picked onto a
-  fresh branch from main, and the merge-lane seat reviews and merges every
-  PR (deputization, recorded at R13, is the ruled exception). Recorded in
-  CLAUDE.md's lane paragraph.
+- **The interim lane** — until the gate activates: a topic starts on a
+  branch cut from current main and is PR'd as soon as its tests pass, and
+  the merge-lane seat reviews and merges every PR (deputization, recorded
+  at R13, is the ruled exception). Recorded in CLAUDE.md's lane paragraph.
+  The earlier form — commits accumulating on a seat branch, cherry-picked
+  onto a fresh branch later — was retired 2026-08-28 after a three-commit
+  topic written on a Tuesday took until Friday to reach main, every
+  cherry-pick re-resolving conflicts against a head that had moved.
 - **The override markers** — `.walk-approved` (instruction-file guard) and
   `.location-write-approved` (session-location guard), both gitignored,
   each by convention holding the user's quoted approval words, consumed by
