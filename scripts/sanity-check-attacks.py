@@ -132,6 +132,7 @@ Running a sanity-check, and reading its output:
   tell your edits from a review agent's; work elsewhere until the run
   completes.
 - Each saved report opens with a provenance line: runtime, model, effort,
+  the reviewing CLI's version (measured by this runner, not self-reported),
   audit, target, and the commit and worktree state at review time, so quotes
   can be checked against the commit the agent read — exact when the worktree
   was clean; `dirty(N)` warns that N files differed from it.
@@ -528,6 +529,50 @@ def quote_scan(corpus: tuple, report: str, cell: str) -> None:
                       f'"{fragment[:60]}"', flush=True)
 
 
+CLI_VERSION_CACHE = {}
+
+
+def runtime_cli_version(runtime: str) -> str:
+    """The reviewing CLI's version, measured by this runner, once per runtime.
+
+    In each report's provenance line because nedschorus#161's second instance
+    leaned on the cells' self-reported CLI versions for a cross-version fact;
+    the runner measures it instead. Spaces become hyphens so the value stays
+    one token in the space-separated provenance line. "unknown" on any probe
+    failure: a version probe must never fail a review cell, and "unknown" is
+    a visible answer, not a silent one.
+    """
+    if runtime not in CLI_VERSION_CACHE:
+        binary = "claude" if runtime == "claude" else "codex"
+        try:
+            completed = subprocess.run(
+                [binary, "--version"], stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, check=False, timeout=60,
+            )
+            lines = (completed.stdout or "").strip().splitlines()
+            CLI_VERSION_CACHE[runtime] = (
+                lines[0].strip().replace(" ", "-")
+                if completed.returncode == 0 and lines and lines[0].strip()
+                else "unknown"
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            CLI_VERSION_CACHE[runtime] = "unknown"
+    return CLI_VERSION_CACHE[runtime]
+
+
+def provenance_line(runtime: str, model: str, attack: str, target: str,
+                    fresh_eyes: bool, revision: str) -> str:
+    """The provenance comment a saved report opens with — one line, one token
+    per fact, so a later reader can check quotes against exactly what ran."""
+    return (
+        f"<!-- provenance: runtime={runtime} model={model} effort={REASONING_EFFORT} "
+        f"cli={runtime_cli_version(runtime)} "
+        f"attack={attack} target={target} "
+        f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
+        f"{revision} -->"
+    )
+
+
 def reviewed_revision(baseline: dict) -> str:
     """The revision each report describes, for its provenance line.
 
@@ -727,11 +772,8 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     # a cell's.
     overwrote_stray_write = report_ledger.write_report(
         out_path,
-        f"<!-- provenance: runtime={runtime} model={model} effort={REASONING_EFFORT} "
-        f"attack={attack} target={target} "
-        f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
-        f"{revision} -->\n\n"
-        + output,
+        provenance_line(runtime, model, attack, target, fresh_eyes, revision)
+        + "\n\n" + output,
     )
     if overwrote_stray_write:
         print(f"WARNING: {cell} found a stray write at its own report path and "
