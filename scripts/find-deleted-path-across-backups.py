@@ -194,30 +194,33 @@ def search_git(wanted, repo, runner=run_command):
              "re-run with the path relative to the repository, or a trailing fragment of it"],
         )
 
-    paths = _git_candidate_paths(wanted, repo, runner)
-    if not paths:
-        return SurfaceReport("git", NOT_FOUND, ["no ref in %s has ever contained a path matching %r" % (repo, wanted)])
-
     lines = []
     recovery = []
-    deletion_dates = []
-    for path in paths:
-        commit = _git_newest_commit_holding(path, repo, runner)
-        if commit is None:
-            continue
-        sha, date, subject = commit
-        lines.append("%s" % path)
-        lines.append("    last held by %s (%s) %s" % (sha[:9], date, subject[:70]))
-        recovery.append("git -C %s show %s:%s" % (shlex.quote(repo), sha[:9], shlex.quote(path)))
-        deletion_dates.append(date)
+    dates_held = []
+    try:
+        paths = _git_candidate_paths(wanted, repo, runner)
+        if not paths:
+            return SurfaceReport("git", NOT_FOUND, ["no ref in %s has ever contained a path matching %r" % (repo, wanted)])
+        for path in paths:
+            commit = _git_newest_commit_holding(path, repo, runner)
+            if commit is None:
+                continue
+            sha, date, subject = commit
+            lines.append("%s" % path)
+            lines.append("    last held by %s (%s) %s" % (sha[:9], date, subject[:70]))
+            recovery.append("git -C %s show %s:%s" % (shlex.quote(repo), sha[:9], shlex.quote(path)))
+            dates_held.append(date)
+    except _GitCommandFailed as failure:
+        return SurfaceReport("git", UNAVAILABLE, ["git failed while searching %s — %s" % (repo, failure)])
 
     if not lines:
-        return SurfaceReport("git", NOT_FOUND, ["matching paths appear in history but no commit still holds their content"])
+        return SurfaceReport("git", NOT_FOUND, ["matching paths appear in history, but neither the commits that "
+                                                "touched them nor those commits' parents hold the content"])
 
     report = SurfaceReport("git", FOUND, lines, recovery)
     # The newest date on which git still had the file bounds where to look in
     # the filesystem backups: any snapshot after it is unlikely to help.
-    report.newest_date_held = max(deletion_dates) if deletion_dates else None
+    report.newest_date_held = max(dates_held) if dates_held else None
     return report
 
 
@@ -251,12 +254,14 @@ def _git_candidate_paths(wanted, repo, runner):
     if code == 0 and out.strip():
         return [wanted]
 
-    code, out, _ = runner(
+    code, out, stderr = runner(
         ["git", "-C", repo, "log", "--all", "--full-history", "--name-only", "--format="],
         timeout=LONG_TIMEOUT_SECONDS,
     )
     if code != 0:
-        return []
+        # An empty list here would render as "no ref has ever contained a
+        # path matching", which is a NOT FOUND for a search that did not run.
+        raise _GitCommandFailed(stderr.strip() or "git log --name-only exited %s" % code)
     seen = []
     for line in out.splitlines():
         line = line.strip()
@@ -267,29 +272,68 @@ def _git_candidate_paths(wanted, repo, runner):
     return seen
 
 
-def _git_newest_commit_holding(path, repo, runner):
-    """The newest commit whose tree actually contains `path`.
+class _GitCommandFailed(Exception):
+    """A git call the surface depends on returned non-zero; the text is its stderr."""
 
-    Not simply "the newest commit touching it": that commit is usually the one
-    that DELETED it, whose tree no longer has the content. Walking back until a
-    tree really holds the blob also survives merges, where `<sha>^` picks only
-    the first parent and can pick the wrong side.
+
+def _git_newest_commit_holding(path, repo, runner):
+    """The newest commit whose tree actually contains `path`: (sha, date, subject), or None.
+
+    `git log -- <path>` lists the commits that TOUCHED the path, newest first,
+    and the newest of those is usually the one that deleted it. The first
+    version walked that list back to the first commit whose tree still had
+    the blob — which is the last MODIFICATION, not the last commit that held
+    the file. For the file this tool was built for that gave 2026-08-12; the
+    deletion was 2026-08-14 and the merge just before it still held the blob,
+    so the Time Machine candidate chosen from the date was one snapshot too
+    old, on the unprivileged path too, under a confident label.
+
+    A commit that deleted the path has a parent whose tree still holds it, on
+    the side the file came from — testing each parent rather than `<sha>^` is
+    what survives merges. The candidates are therefore every touching commit
+    that holds the blob and every holding parent of a touching commit that
+    does not; the newest by commit time wins. The list is newest-first and a
+    parent is never newer than its child, so the walk stops at the first line
+    older than the best candidate so far.
+
+    Raises _GitCommandFailed when git itself fails, so the caller reports
+    UNAVAILABLE rather than a NOT FOUND for a search that did not run.
     """
-    code, out, _ = runner(
-        ["git", "-C", repo, "log", "--all", "--full-history", "--format=%H|%ad|%s", "--date=short", "--", path],
+    code, out, stderr = runner(
+        ["git", "-C", repo, "log", "--all", "--full-history", "--format=%H|%P|%ct|%ad|%s", "--date=short", "--", path],
         timeout=LONG_TIMEOUT_SECONDS,
     )
     if code != 0:
-        return None
+        raise _GitCommandFailed(stderr.strip() or "git log exited %s" % code)
+    best = None  # (commit time, sha, date, subject)
     for line in out.splitlines():
-        parts = line.split("|", 2)
-        if len(parts) != 3:
+        parts = line.split("|", 4)
+        if len(parts) != 5:
             continue
-        sha, date, subject = parts
-        exists, _, _ = runner(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (sha, path)])
-        if exists == 0:
-            return sha, date, subject
-    return None
+        sha, parents, commit_time, date, subject = parts
+        commit_time = int(commit_time)
+        if best is not None and commit_time <= best[0]:
+            break
+        if _git_tree_holds(sha, path, repo, runner):
+            best = (commit_time, sha, date, subject)
+            continue
+        for parent in parents.split():
+            if not _git_tree_holds(parent, path, repo, runner):
+                continue
+            code, out, stderr = runner(["git", "-C", repo, "log", "-1", "--format=%ct|%ad|%s", "--date=short", parent])
+            if code != 0:
+                raise _GitCommandFailed(stderr.strip() or "git log exited %s" % code)
+            parent_time, parent_date, parent_subject = out.strip().split("|", 2)
+            if best is None or int(parent_time) > best[0]:
+                best = (int(parent_time), parent, parent_date, parent_subject)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def _git_tree_holds(sha, path, repo, runner):
+    code, _, _ = runner(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (sha, path)])
+    return code == 0
 
 
 # --------------------------------------------------------------------------

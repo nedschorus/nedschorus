@@ -115,6 +115,7 @@ git_dotfile = FakeRunner([
     # scripts/env is alive and well in history; the fixture must let the
     # wrong match go all the way to a FOUND, or the case proves nothing.
     ("log --all --full-history --format=%H|%ad|%s", (0, "ba432e8e5|2026-08-20|add env\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s", (0, "ba432e8e5|0a0a0a0a0|1787000000|2026-08-20|add env\n", "")),
     ("cat-file -e", (0, "", "")),
 ])
 report = finder.search_git(".env", "/repo", git_dotfile)
@@ -126,19 +127,47 @@ check("a request for '.env' is NOT FOUND when history only has 'scripts/env'",
 # git
 # --------------------------------------------------------------------------
 
+# The shape of the motivating deletion. The commits that TOUCHED the path:
+#   abc123def  2026-08-14  retire review records   (the deletion; tree lacks it)
+#   feedface   2026-08-12  write it                (the last modification)
+# The deletion's first parent, merge0123 (2026-08-14), touched nothing under
+# the path and still holds it. "Last held" is that merge, not the modification.
+# Both log formats are answered so an older walk gets real data too.
 git_found = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
-    ("log --all --full-history --format=%H|%ad|%s", (0, "abc123def|2026-08-14|retire review records\n", "")),
-    ("cat-file -e", (0, "", "")),
+    ("log --all --full-history --format=%H|%ad|%s",
+     (0, "abc123def|2026-08-14|retire review records\nfeedface|2026-08-12|write it\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
+     (0, "abc123def|merge0123|1786708800|2026-08-14|retire review records\n"
+         "feedface|00000000|1786536000|2026-08-12|write it\n", "")),
+    ("--date=short merge0123", (0, "1786701600|2026-08-14|merge seat branch\n", "")),
+    ("cat-file -e abc123def:", (128, "", "does not exist")),
+    ("cat-file -e merge0123:", (0, "", "")),
+    ("cat-file -e feedface:", (0, "", "")),
 ])
 report = finder.search_git("md-review-records/x/dispositions.md", "/repo", git_found)
 check("git reports FOUND for a deleted path still in history", report.status == FOUND)
 check("git hands back a runnable recovery command",
       any(c.startswith("git -C") and " show " in c for c in report.recovery),
       str(report.recovery))
-check("git records the last date it held the file (bounds the backup search)",
-      getattr(report, "newest_date_held", None) == "2026-08-14")
+check("git cites the deletion's parent, which held the file, not the last commit that modified it",
+      report.recovery == ["git -C /repo show merge0123:md-review-records/x/dispositions.md"],
+      str(report.recovery))
+check("git records the last date it HELD the file, not the last date it modified it",
+      getattr(report, "newest_date_held", None) == "2026-08-14",
+      "got %r; 2026-08-12 is the modification date, and a backup candidate chosen from it is one snapshot too old"
+      % getattr(report, "newest_date_held", None))
+
+git_log_fails = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
+    ("log --all --full-history --format=%H|", (128, "", "fatal: bad object HEAD")),
+])
+report = finder.search_git("a/b.md", "/repo", git_log_fails)
+check("a git log that fails mid-search is UNAVAILABLE with git's words, not NOT FOUND",
+      report.status == UNAVAILABLE and any("bad object" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
 
 git_absent = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
@@ -159,6 +188,9 @@ git_walks_back = FakeRunner([
     ("log --all --full-history -1 --format=%H", (0, "deadbeef\n", "")),
     ("log --all --full-history --format=%H|%ad|%s",
      (0, "deadbeef|2026-08-14|delete it\nfeedface|2026-08-13|write it\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
+     (0, "deadbeef|feedface|1786708800|2026-08-14|delete it\nfeedface|00000000|1786622400|2026-08-13|write it\n", "")),
+    ("--date=short feedface", (0, "1786622400|2026-08-13|write it\n", "")),
     ("cat-file -e deadbeef:", (128, "", "does not exist")),
     ("cat-file -e feedface:", (0, "", "")),
 ])
@@ -166,6 +198,9 @@ report = finder.search_git("a/b.md", "/repo", git_walks_back)
 check("git skips the deleting commit and cites one whose tree has the blob",
       report.status == FOUND and any("feedface" in c for c in report.recovery),
       str(report.recovery))
+check("... and the date it records is that commit's, not the deletion's",
+      getattr(report, "newest_date_held", None) == "2026-08-13",
+      repr(getattr(report, "newest_date_held", None)))
 
 # The documented absolute-path form. `git log` accepts an absolute pathspec,
 # so the fast path succeeded and returned the absolute string; `cat-file`
@@ -176,6 +211,7 @@ git_absolute = FakeRunner([
     ("rev-parse --show-toplevel", (0, "/repo\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|%ad|%s", (0, "abc123def|2026-08-14|retire review records\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s", (0, "abc123def|00000000|1786708800|2026-08-14|retire review records\n", "")),
     # Only the repo-relative form can be addressed in a tree.
     ("cat-file -e abc123def:md-review-records/x/dispositions.md", (0, "", "")),
 ])
@@ -238,6 +274,15 @@ def git_fixture_repo(tmp):
 
 with tempfile.TemporaryDirectory() as tmp:
     repo = git_fixture_repo(tmp)
+    merge_sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "main^"],
+                               check=True, stdout=subprocess.PIPE).stdout.decode().strip()
+    report = finder.search_git("a/b.md", str(repo))
+    check("real git: the commit cited is the merge whose tree last held the file",
+          report.status == FOUND and report.recovery == ["git -C %s show %s:a/b.md" % (repo, merge_sha[:9])],
+          "%s %s %s (merge is %s)" % (report.status, report.lines, report.recovery, merge_sha[:9]))
+    check("real git: the date recorded is the merge's, 2026-08-14, not the modification's 2026-08-12",
+          getattr(report, "newest_date_held", None) == "2026-08-14",
+          repr(getattr(report, "newest_date_held", None)))
     report = finder.search_git(str(Path(repo, "a", "b.md")), str(repo))
     check("real git: the absolute form of a deleted in-repo file is FOUND",
           report.status == FOUND and report.recovery and report.recovery[0].endswith(":a/b.md"),
