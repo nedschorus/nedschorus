@@ -223,6 +223,25 @@ with tempfile.TemporaryDirectory() as tmp:
           report.status == FOUND and any("session.jsonl" in l for l in report.lines),
           str(report.lines))
 
+    # One half searched and empty, the other half unsearchable. NOT FOUND means
+    # "genuinely searched and does not have it", which this surface cannot
+    # claim; the summary must list it under "Could NOT search".
+    box_quiet_mac_absent = LocalShellRunner([], box_home)
+    Path(box_projects, "session.jsonl").unlink()
+    report = finder.search_transcripts("a/b.md", "/nonexistent-transcripts", "nedlern@ned-box", box_quiet_mac_absent)
+    check("Mac dir absent + box searched and empty is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+    summary = finder.render("a/b.md", [report])
+    check("... and the summary lists transcripts under 'Could NOT search'",
+          "Could NOT search: transcripts" in summary, summary)
+
+check("_combine: a mix of NOT FOUND and UNAVAILABLE is UNAVAILABLE",
+      finder._combine([NOT_FOUND, UNAVAILABLE]) == UNAVAILABLE and finder._combine([UNAVAILABLE, NOT_FOUND]) == UNAVAILABLE)
+check("_combine: all parts searched and empty is NOT FOUND",
+      finder._combine([NOT_FOUND, NOT_FOUND]) == NOT_FOUND)
+check("_combine: FOUND wins over everything",
+      finder._combine([UNAVAILABLE, FOUND, NOT_FOUND]) == FOUND)
+
 transcripts_box_grep_fails = FakeRunner([("ssh", (2, "", "grep: /home/nedlern/.claude/projects/p: Permission denied\n"))])
 report = finder.search_transcripts("a/b.md", "/nonexistent-dir", "nedlern@ned-box", transcripts_box_grep_fails)
 check("a box grep that fails is UNAVAILABLE and quotes grep",

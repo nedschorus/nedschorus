@@ -652,11 +652,20 @@ def _time_machine_probe(snapshot, device, wanted, runner):
 # --------------------------------------------------------------------------
 
 def _combine(statuses):
+    """One status for a surface made of several parts, in the contract's terms.
+
+    FOUND anywhere is FOUND. Otherwise, one part that could not be searched
+    makes the whole surface UNAVAILABLE: NOT FOUND means "genuinely searched
+    and does not have it", and a surface half of which was never looked at
+    cannot claim that. The first version ranked NOT FOUND above UNAVAILABLE,
+    so a transcripts search with the Mac directory missing and the box grep
+    empty rendered NOT FOUND and dropped out of the "Could NOT search" line.
+    """
     if FOUND in statuses:
         return FOUND
-    if NOT_FOUND in statuses:
-        return NOT_FOUND
-    return UNAVAILABLE
+    if UNAVAILABLE in statuses or not statuses:
+        return UNAVAILABLE
+    return NOT_FOUND
 
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(), runner=run_command):
