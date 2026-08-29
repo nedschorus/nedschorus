@@ -147,6 +147,12 @@ with tempfile.TemporaryDirectory() as temporary:
     check("an unparseable stored cutoff is used as-is rather than failing",
           mirror.overlapped_cutoff("not-a-date") == "not-a-date",
           mirror.overlapped_cutoff("not-a-date"))
+    # Q9 of the merge-lane question transfer, user-ruled 2026-08-29: a naive
+    # stamp is anchored to UTC, not read as local time — unanchored, a
+    # UTC-behind machine moves the cutoff FORWARD and silently skips issues.
+    check("a naive stored cutoff is anchored to UTC, not read as local time",
+          mirror.overlapped_cutoff("2026-08-23T02:43:21") == "2026-08-23T02:41:21Z",
+          mirror.overlapped_cutoff("2026-08-23T02:43:21"))
     check("second run is a delta: searchQuery carries updated:> the prior cutoff",
           exit_code == 0
           and any("updated:>2026-08-09T23:58:00Z" in a for a in calls[0]),

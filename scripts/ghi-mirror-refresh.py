@@ -223,6 +223,8 @@ def overlapped_cutoff(last_refresh_at: str) -> str:
         parsed = datetime.fromisoformat(last_refresh_at.replace("Z", "+00:00"))
     except (AttributeError, ValueError):
         return last_refresh_at
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
     rewound = parsed - timedelta(seconds=DELTA_CUTOFF_OVERLAP_SECONDS)
     return rewound.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
