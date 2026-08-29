@@ -77,7 +77,7 @@ No longer a plan. Done and read back the same day:
 
 **Token mechanics that cost time:** a fine-grained token reaches only repositories owned by its resource owner — collaborator access does not come along; and an org-resource-owner token needs owner approval, which on this org's free plan is UI-only (the API endpoints 404). The merge seat's token (`ned-review-merge`, this repo only, expires 2027-08-20) verifies: reads protection (so `audit` works from it), reads and writes contents and PRs; refused on protection writes; carries no `workflow`, no `admin:*`.
 
-**Consequence — enforcement is switchable now, not after any worker migration.** Relay 8's claim that C3 must come first was too pessimistic: GitHub forbids only the PR's *author* account from approving, and the PR boundary already has two identities — Mac seats author as `nedlern`, the merge seat reviews and merges as `ned-review-merge`. Turning on `required_pull_request_reviews` is one call, reversible by one call. The trade, stated because it is real: with `enforce_admins` on there is no override, so a lapsed merge-seat token or an unposted review means *nothing* merges until the user approves from his own account. Not done as of this writing — and **done on 2026-08-20 at 00:54:38Z**, on the user's approval 124 seconds earlier and by his own credential. This paragraph's prediction held: the two-identity boundary is what carries it, drilled on PR #104 in a deliberately chosen order — approved at 00:54:09Z while the requirement was still off, requirement enabled 29 seconds later, merged at 00:54:55Z under it — and unbroken since — all 32 pull requests merged after that moment carry an approving review (measured 2026-08-23). Full provenance, the revert if it ever wedges the lane, and the consequence for the gate's own push step: the specification, § The credential and enforcement.
+**Consequence — enforcement is switchable now, not after any worker migration.** Relay 8's claim that C3 must come first was too pessimistic: GitHub forbids only the PR's *author* account from approving, and the PR boundary already has two identities — Mac seats author as `nedlern`, the merge seat reviews and merges as `ned-review-merge`. Turning on `required_pull_request_reviews` is one call, reversible by one call. The trade, stated because it is real: with `enforce_admins` on there is no override, so a lapsed merge-seat token or an unposted review means *nothing* merges until the user approves from his own account. Not done as of this writing — and **done on 2026-08-20 at 00:54:38Z**, on the user's approval 124 seconds earlier and by his own credential. This paragraph's prediction held: the two-identity boundary is what carries it, drilled on PR #104 in a deliberately chosen order — approved at 00:54:09Z while the requirement was still off, requirement enabled 29 seconds later, merged at 00:54:55Z under it — and unbroken since — all 32 pull requests merged after that moment carry an approving review (measured 2026-08-23). Full provenance — the enabling call, who executed it against whose credential, and the drill's ordering — is below, § The requirement enabled. The revert if it ever wedges the lane, and the consequence for the gate's own push step, are in the specification, § The credential and enforcement.
 
 **Resolved same day, demonstrated rather than assumed: per-seat identity needs no Unix-user split.** A push from the Mac, from the Unix user whose keyring holds `nedlern`, with `GH_TOKEN` set to the `ned-review-merge` token and nothing else changed, landed in the activity log as `actor: ned-review-merge`. Per-process, keyring untouched, the ordinary configured credential helper (`gh auth git-credential` honours `GH_TOKEN`; the per-host override in `~/.gitconfig` routes github.com to it) — so this is what a normally-launched seat gets. Cleanup verified, main untouched. **Correction this forces on an earlier relay's conclusion:** Mac attribution does *not* wait on the Unix-user work; identity follows the environment variable, not the Unix user. C2's Unix split remains wanted only for what it actually provides — filesystem isolation of the credential — and is off the critical path for attribution. What attribution now costs: one token per account, one `GH_TOKEN` line in each seat's launcher. **Not done:** no launcher exports `GH_TOKEN` yet — the merge seat uses its token by hand — and that wiring belongs to the `fleet` seat, which owns the launchers.
 
@@ -92,6 +92,37 @@ GitHub records reviews per pull request, and the API answers the slot — so the
 Meanwhile (user-ruled 2026-08-18, explicit stopgap): the merge-lane seat posts its review to the PR as a GitHub review before merging, stating whether an independent reviewer was used. A habit in that seat's machine-local instruction file, deleted when real enforcement lands.
 
 This measurement is the kind of evidence a revisit of the declined slice 6 would weigh; whether it returns is the user's ruling, and nothing here presumes it.
+
+## The requirement enabled (2026-08-20, merge-lane seat; recovered 2026-08-23 from that seat's session transcript)
+
+The lever described in the section above was pulled the day after it was described. Recovered by reading the merge-lane seat's session transcript directly rather than on report; that transcript is machine-local and will not survive this Mac, which is why this section exists.
+
+**The sequence, all 2026-08-20 UTC:**
+
+| time | event |
+|---|---|
+| 00:52:34Z | the user types "approved" — item 5 of a walk at the merge-lane seat |
+| 00:54:09Z | PR #104 approved by `ned-review-merge`, requirement still off |
+| 00:54:38Z | the enabling call runs |
+| 00:54:55Z | #104 merges, under the live requirement |
+
+**The call**, verbatim from the transcript:
+
+```
+unset GH_TOKEN
+gh api -X PATCH repos/nedschorus/nedschorus/branches/main/protection/required_pull_request_reviews \
+  -F required_approving_review_count=1 \
+  -F dismiss_stale_reviews=false \
+  -F require_code_owner_reviews=false
+```
+
+**Who ran it, in two halves that come apart.** The *credential* was the user's own default `gh` login; the *executor* was the merge-lane seat, as a Bash tool call in its own session — `unset GH_TOKEN` only parses as that seat dropping its `ned-review-merge` token, which cannot write protection. He was present and had approved 124 seconds earlier; he did not type the command. **The precedent that sets, and the queued `dismiss_stale_reviews` ask inherits it:** a seat runs the protection change on his credential with his approval in the moment.
+
+**The drill was deliberately ordered** — approve, enable, merge — so the first merge exercised the new rule rather than merely following it. A revert script and a saved `protection-pre-state.json` were written in the same tool call, before the change.
+
+**What is publicly checkable, and what rests on the transcript.** Public: PR #104's approving review body (`gh api repos/nedschorus/nedschorus/pulls/104/reviews`), a contemporaneous witness in its own words — "the rule is enabled between this approval and the merge, so this PR tests that `ned-review-merge`'s approval satisfies it" — both timestamps, and the exercise record, which is that all 32 pull requests merged since carry an approving review and none lack one (measured 2026-08-23). Transcript-only: the 00:52:34Z approval and its walk item, the command text, the 00:54:38Z execution time, and the revert-script and pre-state claims.
+
+**`dismiss_stale_reviews` is false, and unruled.** An approval therefore survives later pushes to the same branch. Turning it on is recorded as recommended in the merge-lane seat's in-progress `docs/drafts/pr-main-process-design.md` (§ 8 Open questions, row 13), queued as a one-flag ask needing the user's own credential — but that draft sits on the unmerged `merge-lane` branch, and the analysis behind it is machine-local and git-excluded, so neither is reachable from main. A search of the issue mirror and of main on 2026-08-23 found nothing, which is how it was nearly recorded as unrecorded.
 
 ## The guardian direction (user-set 2026-08-18; direction, not yet specification)
 
