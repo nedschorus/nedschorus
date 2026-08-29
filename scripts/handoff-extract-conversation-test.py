@@ -202,6 +202,56 @@ with tempfile.TemporaryDirectory() as workspace:
         str(kept),
     )
 
+    # A message typed mid-turn and then interrupted is persisted twice: the
+    # queued_command attachment, and a plain user record when the harness
+    # re-sends it after the interrupt (field specimen 2026-08-12: four records
+    # and 5.7 seconds apart). The extract carries it once, and the short
+    # answer that follows is the reply to it, not an acknowledgement of the
+    # interrupt.
+    resent_after_interrupt = [
+        user_record("first prompt"),
+        assistant_record("working on it"),
+        queued("stop. I think another session is duplicating your work."),
+        {"type": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
+        {"type": "queue-operation", "operation": "dequeue"},
+        user_record("stop. I think another session is duplicating your work."),
+        assistant_record("Stopping."),
+    ]
+    path = write_transcript(workspace, "resent-after-interrupt.jsonl", resent_after_interrupt)
+    turns, skips = extractor.read_dialog_turns(path)
+    kept = [(turn["voice"], turn["text"]) for turn in turns]
+    check(
+        "a mid-turn message the harness re-sends after an interrupt is carried "
+        "once, and the short answer after it survives",
+        kept == [("user", "first prompt"), ("assistant", "working on it"),
+                 ("user", "stop. I think another session is duplicating your work."),
+                 ("assistant", "Stopping.")]
+        and skips["resent_after_interrupt"] == 1,
+        f"{kept} skips={skips}",
+    )
+
+    # Scope guard (passes with or without the de-duplication): the same short
+    # answer twice with NO interrupt between is two replies — field shape
+    # 2026-08-24, "y" approving item 1 of a walk, then "y" approving item 2,
+    # 25 records and 121 seconds apart.
+    two_approvals = [
+        user_record("walk me through the items"),
+        assistant_record("Item 1: rename the flag. Approve?"),
+        queued("y"),
+        assistant_record("Item 1 is in and pushed. Item 2: drop the alias. Approve?"),
+        user_record("y"),
+        assistant_record("Item 2 is in."),
+    ]
+    path = write_transcript(workspace, "two-approvals.jsonl", two_approvals)
+    turns, _ = extractor.read_dialog_turns(path)
+    kept = [turn["text"] for turn in turns]
+    check(
+        "the same short answer twice with no interrupt between is two replies, both carried",
+        kept == ["walk me through the items", "Item 1: rename the flag. Approve?", "y",
+                 "Item 1 is in and pushed. Item 2: drop the alias. Approve?", "y", "Item 2 is in."],
+        str(kept),
+    )
+
     # --- Harness-injected pseudo-prompts and their acknowledgements --------
     # Fixture shapes are copied from the field, not the design: a delivered
     # monitor notification persists as a PLAIN user record — no isMeta, string
