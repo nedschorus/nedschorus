@@ -167,6 +167,85 @@ check("git skips the deleting commit and cites one whose tree has the blob",
       report.status == FOUND and any("feedface" in c for c in report.recovery),
       str(report.recovery))
 
+# The documented absolute-path form. `git log` accepts an absolute pathspec,
+# so the fast path succeeded and returned the absolute string; `cat-file`
+# cannot address a blob that way, so every commit failed the tree check and
+# git said NOT FOUND for a file it had the whole time.
+git_absolute = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", (0, "/repo\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
+    ("log --all --full-history --format=%H|%ad|%s", (0, "abc123def|2026-08-14|retire review records\n", "")),
+    # Only the repo-relative form can be addressed in a tree.
+    ("cat-file -e abc123def:md-review-records/x/dispositions.md", (0, "", "")),
+])
+report = finder.search_git("/repo/md-review-records/x/dispositions.md", "/repo", git_absolute)
+check("an absolute path inside the repository is searched by its repo-relative form",
+      report.status == FOUND and report.recovery == ["git -C /repo show abc123def:md-review-records/x/dispositions.md"],
+      "%s %s %s" % (report.status, report.lines, report.recovery))
+
+git_outside = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", (0, "/repo\n", "")),
+])
+report = finder.search_git("/elsewhere/a/b.md", "/repo", git_outside)
+check("an absolute path outside the repository is UNAVAILABLE with the re-run instruction, not NOT FOUND",
+      report.status == UNAVAILABLE and any("outside /repo" in l for l in report.lines)
+      and any("re-run with the path relative" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and git was not asked to search for it",
+      not any(" log " in c for c in git_outside.calls), str(git_outside.calls))
+
+
+def git_fixture_repo(tmp):
+    """A throwaway repository with a file that was modified, then merged past, then deleted.
+
+        2026-08-10  A  add a/b.md
+        2026-08-12  M  modify a/b.md            <- last commit that TOUCHED it
+        2026-08-13  S  (side branch) add other.md
+        2026-08-14  P  merge side into main     <- last commit whose TREE holds it
+        2026-08-14  D  delete a/b.md
+    """
+    repo = Path(tmp, "repo")
+    repo.mkdir()
+
+    def git(*args, date=None):
+        env = dict(os.environ)
+        env.pop("GIT_DIR", None)
+        if date:
+            env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+        subprocess.run(["git", "-C", str(repo), "-c", "commit.gpgsign=false", "-c", "user.name=fixture",
+                        "-c", "user.email=fixture@example.com"] + list(args),
+                       check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    git("init", "-q", "-b", "main")
+    Path(repo, "a").mkdir()
+    Path(repo, "a", "b.md").write_text("v1\n")
+    git("add", "a/b.md")
+    git("commit", "-q", "-m", "add a/b.md", date="2026-08-10T10:00:00")
+    Path(repo, "a", "b.md").write_text("v2\n")
+    git("commit", "-q", "-am", "modify a/b.md", date="2026-08-12T10:00:00")
+    git("checkout", "-q", "-b", "side")
+    Path(repo, "other.md").write_text("side\n")
+    git("add", "other.md")
+    git("commit", "-q", "-m", "add other.md", date="2026-08-13T10:00:00")
+    git("checkout", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "merge side", "side", date="2026-08-14T10:00:00")
+    git("rm", "-q", "a/b.md")
+    git("commit", "-q", "-m", "delete a/b.md", date="2026-08-14T12:00:00")
+    return repo
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    repo = git_fixture_repo(tmp)
+    report = finder.search_git(str(Path(repo, "a", "b.md")), str(repo))
+    check("real git: the absolute form of a deleted in-repo file is FOUND",
+          report.status == FOUND and report.recovery and report.recovery[0].endswith(":a/b.md"),
+          "%s %s %s" % (report.status, report.lines, report.recovery))
+    report = finder.search_git("/definitely/elsewhere/a/b.md", str(repo))
+    check("real git: an absolute path outside the repository is UNAVAILABLE",
+          report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+
 # --------------------------------------------------------------------------
 # transcripts
 # --------------------------------------------------------------------------

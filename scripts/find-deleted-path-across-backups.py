@@ -183,6 +183,17 @@ def search_git(wanted, repo, runner=run_command):
     if code != 0:
         return SurfaceReport("git", UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
 
+    wanted, toplevel = _repo_relative_form(wanted, repo, runner)
+    if wanted.startswith("/"):
+        # git can only be asked about paths inside its own work tree, and an
+        # absolute path that is not under it was not converted above.
+        return SurfaceReport(
+            "git",
+            UNAVAILABLE,
+            ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
+             "re-run with the path relative to the repository, or a trailing fragment of it"],
+        )
+
     paths = _git_candidate_paths(wanted, repo, runner)
     if not paths:
         return SurfaceReport("git", NOT_FOUND, ["no ref in %s has ever contained a path matching %r" % (repo, wanted)])
@@ -208,6 +219,30 @@ def search_git(wanted, repo, runner=run_command):
     # the filesystem backups: any snapshot after it is unlikely to help.
     report.newest_date_held = max(deletion_dates) if deletion_dates else None
     return report
+
+
+def _repo_relative_form(wanted, repo, runner=run_command):
+    """(path to search for, the repository's top level or None).
+
+    An absolute path inside `repo` comes back repo-relative. That is the only
+    form git can address a blob by — `git log -- /abs/path` succeeds, but
+    `cat-file -e <sha>:/abs/path` fails for every commit, so the first version
+    answered NOT FOUND, "no commit still holds their content", for a file git
+    had the whole time. It is also the form the other surfaces search most
+    widely: the box roots for Timeshift, a suffix match for Time Machine.
+    A relative path, an absolute path outside the repository, and any path
+    when `repo` is not a repository all come back as given.
+    """
+    if not wanted.startswith("/"):
+        return wanted, None
+    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
+    if code != 0 or not out.strip():
+        return wanted, None
+    toplevel = os.path.realpath(out.strip())
+    real = os.path.realpath(wanted)
+    if real.startswith(toplevel + "/"):
+        return real[len(toplevel) + 1:], toplevel
+    return wanted, toplevel
 
 
 def _git_candidate_paths(wanted, repo, runner):
@@ -726,8 +761,13 @@ def main(argv=None):
                              "its transcripts as well as Timeshift — so nothing is sent over ssh")
     args = parser.parse_args(argv)
 
+    # One form for every surface: an absolute path inside the repository is
+    # searched for by its repo-relative name, and the header says so.
+    wanted, _ = _repo_relative_form(args.path, args.repo)
+    shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
+
     reports = build_report(
-        args.path,
+        wanted,
         args.repo,
         args.transcripts_dir,
         args.box_ssh_host,
@@ -735,7 +775,7 @@ def main(argv=None):
         DEFAULT_BOX_SEARCH_ROOTS,
         skip=set(args.skip),
     )
-    print(render(args.path, reports))
+    print(render(shown, reports))
     return 0 if any(r.status == FOUND for r in reports) else 1
 
 
