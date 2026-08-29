@@ -5,9 +5,10 @@ The handoff system's writer (specification:
 docs/cross-project/fast-handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
-restart counter, derives the roster of subagents this session spawned,
-formats and writes the file, then checks whether a supervisor is actually
-watching and tells the agent what that means for it.
+restart counter, derives the roster of subagents still working — the ones the
+recycle is about to kill mid-job — formats and writes the file, then checks
+whether a supervisor is actually watching and tells the agent what that means
+for it.
 
 Usage:
   handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
@@ -74,12 +75,26 @@ NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 
-PROJECTS_ROOT = Path.home() / ".claude" / "projects"
+# One copy of the projects-directory rule, in the base module: the supervisor
+# composes the predecessor's subagent-transcript directory from it too.
+PROJECTS_ROOT = supervisor.PROJECTS_ROOT
+project_directory_for_working_directory = supervisor.project_directory_for_working_directory
 
 # One numbered field per subagent: `spawned-subagent-1`, `spawned-subagent-2`.
 # A repeated key would not work — the reader takes the first occurrence of a
 # key, so every subagent but the first would be dropped.
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+
+# The last events that mean a subagent was still working when the handoff was
+# written: its spawn or a resume, with no terminal notification after them.
+# The polarity is deliberate — a whitelist, so any status a notification
+# carries that this code has never seen (`completed`, `failed`, `killed`,
+# `stopped` are the measured ones, and the harness may add more) reads as
+# ended and is CUT from the handoff rather than carried as junk. That is the
+# direction of the 2026-08-29 ruling: completed entries are junk, failed ones
+# had their chance ("presumably the prior agent had a chance to restart"),
+# and a successor that needs more can look the transcript up.
+STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed")
 
 # No transcript record can describe a subagent event without carrying one of
 # these strings, so a line carrying none of them is never parsed. A session
@@ -166,19 +181,6 @@ def claiming_directory(handoff_path: Path) -> str:
     return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
 
 
-def project_directory_for_working_directory(working_directory: Path) -> Path:
-    """Return the ~/.claude/projects directory holding a worktree's sessions.
-
-    The harness mangles the absolute path by replacing every character that is
-    not alphanumeric, a dash, or an underscore with a dash.
-    """
-    mangled = "".join(
-        character if (character.isalnum() or character in "-_") else "-"
-        for character in str(working_directory)
-    )
-    return PROJECTS_ROOT / mangled
-
-
 def find_session_transcript(session_id: str, working_directory: Path):
     """Locate a session's JSONL by id: keyed lookup first, then a search.
 
@@ -252,17 +254,21 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     Each entry is a dict: agent_id, description, spawned_at, last_event,
     last_event_at. Ordinary reading of one session's own transcript.
 
-    **Spawned, not running.** The roster deliberately does not try to say
-    which subagents are alive. On 2026-08-23 the merge-lane seat's fixer for
-    pull request #150 was NOT running when its session was recycled: it had
-    finished a round and was sitting idle, resumable, still owning the
-    unfinished fix. Its branch and worktree survived on disk; only the
-    knowledge that it existed was lost. A roster filtered to running
-    subagents would have excluded the one orphan it was built to catch, so
-    the writer records what a machine can know and the successor judges which
-    entries still own work. The user ruled on 2026-08-23 that killing and
-    restarting subagents is the standing policy and that the fix is to record
-    them, not to wait for them.
+    **The derivation records every spawn; the handoff carries only the
+    still-working ones.** This function tracks each subagent's last event
+    because that is how the writer knows which subagents were still working
+    at write time — the only ones the handoff records since the user's
+    2026-08-29 ruling ("Completed is junk... Neither I or the next agent
+    cares what is completed"; failed entries cut too: "presumably the prior
+    agent had a chance to restart, and if that worked it would have
+    restarted"). That narrows his 2026-08-23 record-everything ruling by his
+    own word: the risk it hedged — a subagent that stopped without finishing
+    and without a task, the #150 shape — is now covered by seat-pinned task
+    lists (#141) and the questions-become-tasks rule, and a successor that
+    needs a dead subagent's state reads its transcript at
+    <session-dir>/subagents/agent-<id>.jsonl. The filter is
+    `still_working_subagent_entries` below; the split keeps this function a
+    plain reading of what happened.
 
     **Liveness is not inferred from unmatched tool_use/tool_result pairs**,
     and that is worth stating because it is the obvious wrong answer: the
@@ -364,15 +370,32 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     return roster
 
 
+def still_working_subagent_entries(roster) -> list:
+    """The roster entries whose subagent was still working at write time.
+
+    Still working means the last event is a spawn or a resume — no terminal
+    notification arrived after it. These are the subagents the recycle
+    itself kills, the only ones the handoff records (user-ruled 2026-08-29);
+    see STILL_WORKING_SUBAGENT_LAST_EVENTS for the whitelist's polarity.
+    """
+    return [entry for entry in roster
+            if entry["last_event"] in STILL_WORKING_SUBAGENT_LAST_EVENTS]
+
+
 def spawned_subagent_field_lines(roster) -> list:
-    """Render a roster as the handoff file's numbered `key: value` lines."""
+    """Render roster entries as the handoff file's numbered `key: value` lines.
+
+    Each line carries the agent id and the job description, nothing else:
+    every recorded entry is still working by construction, so a last-event
+    field would say nothing, and spawn time is a transcript look-up (the
+    ignition prompt is tuned like a CLAUDE.md file — only what the successor
+    needs at its start, user-ruled 2026-08-29).
+    """
     lines = []
     for ordinal, entry in enumerate(roster, start=1):
         described = f' "{entry["description"]}"' if entry["description"] else ""
         lines.append(
             f"{SPAWNED_SUBAGENT_FIELD_PREFIX}{ordinal}: {entry['agent_id']}{described}"
-            f" spawned at {entry['spawned_at']},"
-            f" last event {entry['last_event']} at {entry['last_event_at']}"
         )
     return lines
 
@@ -402,8 +425,17 @@ def spawned_subagent_roster_for_this_session(working_directory: Path):
                     "Name any subagents in the next step by hand.")
     if not roster:
         return [], "spawned-subagent roster: this session spawned no subagents"
-    return (spawned_subagent_field_lines(roster),
-            f"spawned-subagent roster: {len(roster)} subagent(s) recorded for the successor")
+    still_working = still_working_subagent_entries(roster)
+    if not still_working:
+        # Truthful silence, not a failure to derive: everything this session
+        # spawned had already ended, and ended subagents are not recorded
+        # (user-ruled 2026-08-29).
+        return [], (f"spawned-subagent roster: all {len(roster)} spawned subagent(s) had "
+                    "ended by this handoff; none recorded (ended subagents are not "
+                    "carried, ruled 2026-08-29)")
+    return (spawned_subagent_field_lines(still_working),
+            f"spawned-subagent roster: {len(still_working)} still-working subagent(s) "
+            f"recorded for the successor, of {len(roster)} spawned")
 
 
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,

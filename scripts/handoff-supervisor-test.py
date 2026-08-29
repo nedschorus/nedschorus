@@ -11,7 +11,11 @@ run when that fires.
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
+import dataclasses
 import importlib.util
+import inspect
+import io
 import json
 import os
 import re
@@ -434,17 +438,27 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         Path("/tmp/dialog-0002.md"),
         {"written-at": recent, "next-step": "finish the supervisor"},
         4,
-        "queues — nc-queue: 3, oldest 001-stale-item.md",
     )
     check("ignition names the dialog path", "/tmp/dialog-0002.md" in prompt, prompt)
     check("ignition carries the elapsed line", "minutes ago" in prompt, prompt)
     check("ignition states the task count", "4 task(s)" in prompt, prompt)
     check("ignition carries the next step", "finish the supervisor" in prompt, prompt)
-    # The rot-visibility duty (#32): the successor reads the queue depths.
-    check("ignition carries the queue status", "oldest 001-stale-item.md" in prompt, prompt)
     prompt_without_step = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
     check("ignition survives a missing next-step", "continue from where that dialog ends" in prompt_without_step)
-    check("ignition omits an empty queue status", "Queue status" not in prompt_without_step)
+    # The queue-status line was CUT from the prompt (user-ruled 2026-08-29,
+    # expiring his 2026-08-12 #32 ruling: "Also useless is the reminder there
+    # are files in the queues. Thats what queues are for."). The cut is
+    # pinned structurally — nothing can thread a queue status into the
+    # prompt, because neither the builder nor the plan accepts one — and
+    # behaviorally in run_recycle_prompt_composition_cases below, where the
+    # OLD supervisor put the line into every recycle prompt unconditionally.
+    check("build_ignition_prompt no longer takes a queue status",
+          "queue_status" not in inspect.signature(supervisor.build_ignition_prompt).parameters,
+          str(inspect.signature(supervisor.build_ignition_prompt)))
+    check("DialogIgnitionPlan no longer holds a queue status",
+          "queue_status" not in {field.name for field in
+                                 dataclasses.fields(supervisor.DialogIgnitionPlan)},
+          str([field.name for field in dataclasses.fields(supervisor.DialogIgnitionPlan)]))
 
     # --- The launch clock -------------------------------------------------
     # The successor wakes with a dialog whose events are hours old and no
@@ -845,46 +859,64 @@ def run_boot_ignition_case(workspace: Path):
 
 
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
-    """The successor is told which subagents died with the session it replaces.
+    """The successor is told which subagents were still working when the
+    session it replaces ended, and to re-commission each.
 
-    Ruled 2026-08-23, after a fixer subagent owning pull request #150 died in
-    a recycle with nothing in the handoff recording that it had ever run. The
-    remedy is to record and restart, not to wait: killing subagents at a
-    recycle stays the standing policy.
+    Ruled 2026-08-23 (record the subagents, do not wait for them), narrowed
+    2026-08-29: the writer records only subagents still working at write
+    time, so every roster entry the supervisor reads is one the recycle
+    itself killed. The prompt says re-commission, never restart or resume,
+    because resume-by-id across a recycle is impossible — probed 2026-08-29:
+    SendMessage to a predecessor's subagent id returns "No transcript found"
+    (the resolver is session-scoped) although the transcript survives at
+    <predecessor-session-dir>/subagents/agent-<id>.jsonl.
     """
     roster_fields = {
         "written-at": recent,
         "next-step": "merge the queue",
-        # Synthetic ids. These lines used to carry the real agent ids from
-        # session 40a16b9c with a `last event` that did not happen to them —
-        # the second agent completed at 21:54:40Z, and 21:32:36Z was only its
-        # spawn. The ignition prompt does not care whose ids these are, and a
-        # fixture should not assert an event for an agent a reader can look up.
-        "spawned-subagent-1": ('afixture0idle0001 "Fix ignored-path write blind spot" '
-                               'spawned at 2026-08-23T19:55:24Z, '
-                               'last event completed at 2026-08-23T20:52:59Z'),
-        "spawned-subagent-2": ('afixture0silent01 "Review PR 150 independently" '
-                               'spawned at 2026-08-23T21:32:36Z, '
-                               'last event spawned at 2026-08-23T21:32:36Z'),
+        # Synthetic ids, in the narrowed field shape: agent id and job
+        # description only — every recorded entry is still working by
+        # construction, so the field carries no event and no timestamp.
+        "spawned-subagent-1": 'afixture0cutoff01 "Fix ignored-path write blind spot"',
+        "spawned-subagent-2": 'afixture0cutoff02 "Review PR 150 independently"',
     }
-    prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), roster_fields, 0)
-    check("ignition states how many subagents died with the session",
-          "spawned 2 subagent(s), which died with it" in prompt, prompt)
+    predecessor_directory = Path("/tmp/projects/-fixture-seat/0000-session-id")
+    prompt = supervisor.build_ignition_prompt(
+        Path("/tmp/d.md"), roster_fields, 0, predecessor_directory)
+    check("ignition counts the subagents still working at the recycle",
+          "had 2 subagent(s) still working when it ended" in prompt, prompt)
     check("ignition names each subagent and what it was doing",
-          "afixture0idle0001" in prompt and "Fix ignored-path write blind spot" in prompt
-          and "afixture0silent01" in prompt and "Review PR 150 independently" in prompt, prompt)
-    check("ignition carries each subagent's last recorded event",
-          "last event completed at 2026-08-23T20:52:59Z" in prompt
-          and "last event spawned at 2026-08-23T21:32:36Z" in prompt, prompt)
-    # The whole point of Constraint A: a stopped subagent can still own work.
-    check("ignition warns that a completed subagent may still own work",
-          "does not mean its work is finished" in prompt
-          or "not that its work is finished" in prompt, prompt)
+          "afixture0cutoff01" in prompt and "Fix ignored-path write blind spot" in prompt
+          and "afixture0cutoff02" in prompt and "Review PR 150 independently" in prompt, prompt)
+    check("ignition tells the successor to re-commission, a fresh agent on the job",
+          "Re-commission each — a fresh agent on the job" in prompt, prompt)
+    check("ignition names the predecessor's subagent-transcript path",
+          f"{predecessor_directory}/subagents/agent-<id>.jsonl if its state matters" in prompt,
+          prompt)
+    check("ignition says a dead subagent cannot be resumed by id",
+          "A dead subagent cannot be resumed by id." in prompt, prompt)
+    # The 2026-08-23 sentence is gone with the entries it explained: nothing
+    # in the roster is completed any more, and the successor is never told to
+    # restart — the probe measured that a restart by id cannot work.
+    check("the completed-means-stopped sentence is cut",
+          "means that subagent stopped" not in prompt, prompt)
+    check("ignition never says restart",
+          "restart" not in prompt.lower(), prompt)
+    # A caller with no predecessor directory (a direct or test caller — the
+    # supervisor always composes one) gets the directory PATTERN, named as a
+    # placeholder rather than an invented path.
+    fallback_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), roster_fields, 0)
+    check("without a predecessor directory the prompt names the pattern",
+          "<predecessor-session-dir>/subagents/agent-<id>.jsonl" in fallback_prompt,
+          fallback_prompt)
 
     # The roster is optional, and its absence must read as silence rather than
-    # as an empty list. A handoff written before this field existed has none.
+    # as an empty list: when nothing was still working the prompt says NOTHING
+    # about subagents (user-ruled 2026-08-29). A handoff written before this
+    # field existed reads the same way.
     older_prompt = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), {"written-at": recent, "next-step": "merge the queue"}, 0)
+        Path("/tmp/d.md"), {"written-at": recent, "next-step": "merge the queue"}, 0,
+        predecessor_directory)
     check("ignition says nothing about subagents when the handoff has no roster",
           "subagent" not in older_prompt, older_prompt)
 
@@ -892,9 +924,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     # after field 9, and the successor reads them in the order they were spawned.
     many = {"written-at": recent, "next-step": "carry on"}
     for ordinal in range(1, 12):
-        many[f"spawned-subagent-{ordinal}"] = (
-            f"agent-{ordinal:02d} spawned at 2026-08-23T20:00:00Z, "
-            "last event spawned at 2026-08-23T20:00:00Z")
+        many[f"spawned-subagent-{ordinal}"] = f'agent-{ordinal:02d} "job {ordinal:02d}"'
     ordered_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), many, 0)
     check("the roster keeps the writer's order past nine subagents",
           ordered_prompt.index("agent-09") < ordered_prompt.index("agent-10")
@@ -907,8 +937,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
         "written-at: 2026-08-23T22:00:00Z\n"
         "next-step: merge the queue\n"
         "restart-counter: 3\n"
-        "spawned-subagent-1: afixture0idle0001 \"Fix ignored-path\" spawned at "
-        "2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z\n"
+        "spawned-subagent-1: afixture0cutoff01 \"Fix ignored-path\"\n"
         "next-step-verbatim: <<END-OF-NEXT-STEP\n"
         "merge the queue\n"
         "and then rest\n"
@@ -924,6 +953,76 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
           repr(supervisor.next_step_from(parsed)))
 
 
+def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
+    """carry_over_to_successor, with the extractor stubbed: what the recycle
+    actually prints to the console, and what it actually puts in the prompt.
+
+    Two rulings of 2026-08-29 meet here. The queue-status line is CUT from
+    the ignition prompt but the console print STAYS — before this change the
+    supervisor threaded queue status into every recycle prompt
+    unconditionally (queue_status_line always returns a truthy string), so
+    the prompt assertion below fails against that code. And the plan now
+    carries the predecessor's session directory, composed from the retiring
+    session id, so the roster sentence can name where the dead subagents'
+    transcripts survive.
+    """
+    home = workspace / "recycle-composition"
+    handoff_directory = home / "handoffs"
+    handoff_directory.mkdir(parents=True)
+    working_directory = home / "seat"
+    (working_directory / "nc-queue").mkdir(parents=True)
+    (working_directory / "nc-queue" / "2026-07-30-stale-item.md").write_text("x", encoding="utf-8")
+    settings = supervisor.SupervisorSettings(
+        agent="composer", working_directory=working_directory,
+        handoff_directory=handoff_directory, agent_command="true", first_prompt="")
+    settings.handoff_path.write_text(
+        "written-at: " + recent + "\n"
+        "next-step: keep composing\n"
+        "restart-counter: 2\n"
+        "spawned-subagent-1: afixture0cutoff01 \"Fix ignored-path write blind spot\"\n",
+        encoding="utf-8")
+    handoff_fields = supervisor.parse_handoff_file(settings.handoff_path)
+
+    original_extract_dialog = supervisor.extract_dialog
+    original_tasks_root = supervisor.TASKS_ROOT
+    original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+    console = io.StringIO()
+    try:
+        supervisor.extract_dialog = (
+            lambda session_id, working_directory, output_path:
+            output_path.write_text("the extracted dialog\n", encoding="utf-8") > 0)
+        supervisor.TASKS_ROOT = home / "tasks"
+        os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+        with contextlib.redirect_stdout(console):
+            successor_id, plan = supervisor.carry_over_to_successor(
+                settings, "0000-retiring-session", handoff_fields, generation=3)
+    finally:
+        supervisor.extract_dialog = original_extract_dialog
+        supervisor.TASKS_ROOT = original_tasks_root
+        if original_pin is None:
+            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+        else:
+            os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
+
+    printed = console.getvalue()
+    check("a recycle still prints the queue status to its own console",
+          "handoff-supervisor: queues — nc-queue: 1, oldest 2026-07-30-stale-item.md" in printed,
+          printed)
+    check("the plan names the predecessor's session directory, composed from its id",
+          plan is not None and plan.predecessor_session_directory
+          == supervisor.project_directory_for_working_directory(working_directory)
+          / "0000-retiring-session",
+          str(plan and plan.predecessor_session_directory))
+    prompt = plan.compose(datetime(2026, 8, 29, 16, 0,
+                                   tzinfo=timezone(timedelta(hours=-7), "PDT")))
+    check("the recycle prompt carries no queue status",
+          "Queue status" not in prompt and "queues —" not in prompt, prompt)
+    check("the recycle prompt points at the predecessor's subagent transcripts",
+          f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
+    check("the recycle prompt still ignites from the next step",
+          "keep composing" in prompt, prompt)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
@@ -937,6 +1036,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_multi_line_next_step_cases(Path(temporary_directory), recent_timestamp)
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
     run_spawned_subagent_roster_cases(Path(temporary_directory), recent_timestamp)
+    run_recycle_prompt_composition_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:
     print("\n-- live pre-seed canaries (launching real sessions) --")

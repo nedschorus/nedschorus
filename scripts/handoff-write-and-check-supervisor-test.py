@@ -595,17 +595,23 @@ def write_multi_id_fixture_transcript(path: Path) -> None:
 
 
 def run_spawned_subagent_roster_cases(workspace: Path):
-    """The roster of subagents the retiring session spawned (ruled 2026-08-23).
+    """The roster derivation (ruled 2026-08-23) and the still-working filter
+    that narrows what the handoff carries (ruled 2026-08-29).
 
-    The motivating loss: a fixer subagent owning pull request #150 died with
-    its session, and nothing in the handoff said it had ever existed.
+    The derivation still reads every spawn and its last event — that is how
+    the writer knows which subagents were still working at write time. But
+    only the still-working ones reach the handoff: "Completed is junk...
+    Neither I or the next agent cares what is completed", and failed entries
+    are cut too ("presumably the prior agent had a chance to restart"). The
+    #150 orphan shape the 2026-08-23 field hedged is carried by seat-pinned
+    task lists (#141) and the questions-become-tasks rule now.
     """
     transcript_path = workspace / "roster-fixture.jsonl"
     write_fixture_transcript(transcript_path)
     roster = writer.spawned_subagent_roster(transcript_path)
     by_id = {entry["agent_id"]: entry for entry in roster}
 
-    check("the roster holds every subagent spawned and nothing else",
+    check("the derivation reads every subagent spawned and nothing else",
           [entry["agent_id"] for entry in roster]
           == [FIXTURE_IDLE_AGENT, FIXTURE_UNDELIVERED_AGENT, FIXTURE_SILENT_AGENT],
           str([entry["agent_id"] for entry in roster]))
@@ -614,8 +620,8 @@ def run_spawned_subagent_roster_cases(workspace: Path):
               FIXTURE_MONITOR_TASK in entry["agent_id"] for entry in roster),
           str(list(by_id)))
 
-    # The orphan the field exists for: it had STOPPED, and still owned the
-    # unfinished fix. A roster of running subagents would have dropped it.
+    # The last event is what separates a subagent the recycle kills from one
+    # that already ended, so the derivation must still get it right.
     check("a subagent that spawned, was resumed and completed reports its completion",
           by_id[FIXTURE_IDLE_AGENT]["last_event"] == "completed",
           str(by_id[FIXTURE_IDLE_AGENT]))
@@ -641,16 +647,47 @@ def run_spawned_subagent_roster_cases(workspace: Path):
           == "Fix output-path directory traceback",
           repr(by_id[FIXTURE_UNDELIVERED_AGENT]["description"]))
 
-    field_lines = writer.spawned_subagent_field_lines(roster)
-    check("each subagent gets its own numbered field",
-          [line.split(":")[0] for line in field_lines]
-          == ["spawned-subagent-1", "spawned-subagent-2", "spawned-subagent-3"],
+    # The still-working filter (ruled 2026-08-29). Of the three spawned, two
+    # completed — junk to the successor — and only the silent one, which the
+    # recycle itself would kill mid-job, is handoff material.
+    still_working = writer.still_working_subagent_entries(roster)
+    check("only a subagent still working at write time is handoff material",
+          [entry["agent_id"] for entry in still_working] == [FIXTURE_SILENT_AGENT],
+          str([entry["agent_id"] for entry in still_working]))
+
+    # A resume AFTER a terminal notification puts the subagent back to work:
+    # same-session resume is the proven route (probed 2026-08-29), and a
+    # resumed subagent the recycle kills is exactly what the successor must
+    # re-commission. This pins `resumed` in the whitelist.
+    resumed_after_completion_path = workspace / "roster-resumed-after-completion.jsonl"
+    resumed_after_completion_path.write_text(
+        "\n".join(json.dumps(record) for record in [
+            spawn_record(FIXTURE_IDLE_AGENT, "Fix ignored-path write blind spot",
+                         "2026-08-23T19:55:24.756Z"),
+            *notification_records(FIXTURE_IDLE_AGENT, "completed",
+                                  'Agent "Fix ignored-path" finished',
+                                  "2026-08-23T20:52:59.408Z",
+                                  delivered_at="2026-08-23T20:52:59.408Z"),
+            resume_record(FIXTURE_IDLE_AGENT, "2026-08-23T21:10:00.000Z"),
+        ]) + "\n", encoding="utf-8")
+    resumed_roster = writer.spawned_subagent_roster(resumed_after_completion_path)
+    check("a subagent resumed after completing counts as still working",
+          [entry["agent_id"] for entry in
+           writer.still_working_subagent_entries(resumed_roster)]
+          == [FIXTURE_IDLE_AGENT],
+          str(resumed_roster))
+
+    # The narrowed field: agent id and job description, nothing else. Every
+    # recorded entry is still working by construction, so a last-event field
+    # would say nothing, and spawn time is a transcript look-up — the prompt
+    # carries only what the successor needs at its start (ruled 2026-08-29).
+    field_lines = writer.spawned_subagent_field_lines(still_working)
+    check("the recorded entries are numbered from 1 over the filtered set",
+          [line.split(":")[0] for line in field_lines] == ["spawned-subagent-1"],
           str(field_lines))
-    check("a field line names the agent, its task, its spawn and its last event",
-          field_lines[0] == (f'spawned-subagent-1: {FIXTURE_IDLE_AGENT} '
-                             '"Fix ignored-path write blind spot" '
-                             'spawned at 2026-08-23T19:55:24Z, '
-                             'last event completed at 2026-08-23T20:52:59Z'),
+    check("a field line names the agent and its job, and nothing else",
+          field_lines[0] == (f'spawned-subagent-1: {FIXTURE_SILENT_AGENT} '
+                             '"Review PR 150 independently"'),
           field_lines[0])
 
     # One notification, several agents. The harness reports agents from a
@@ -672,6 +709,13 @@ def run_spawned_subagent_roster_cases(workspace: Path):
     check("a later-named agent is not left holding its earlier event",
           multi[FIXTURE_ORPHAN_SECOND]["last_event_at"] != "2026-08-21T18:38:09Z",
           str(multi[FIXTURE_ORPHAN_SECOND]))
+    # `stopped` and `killed` are terminal: a stopped subagent was the prior
+    # session's business (tasked if it mattered), and the whitelist's
+    # polarity cuts any status that is not a spawn or a resume — ended
+    # subagents are not carried (ruled 2026-08-29).
+    check("stopped and killed subagents are not handoff material",
+          writer.still_working_subagent_entries(list(multi.values())) == [],
+          str(multi))
 
     # An empty transcript is not an error: a session may spawn nothing.
     empty_path = workspace / "roster-empty.jsonl"
@@ -700,10 +744,35 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
         environment_overrides={"HOME": str(home), "CLAUDE_CODE_SESSION_ID": FIXTURE_SESSION_ID},
     )
     body = handoff_text(handoffs, "rostercase")
-    check("the handoff carries one field per subagent the session spawned",
-          body.count("spawned-subagent-") == 3, body)
-    check("the writer reports the roster it recorded",
-          "3 subagent(s) recorded" in written.stdout, written.stdout)
+    # Three spawned, two already completed: the handoff records only the one
+    # still working (ruled 2026-08-29 — ended subagents are not carried).
+    check("the handoff carries one field per still-working subagent",
+          body.count("spawned-subagent-") == 1, body)
+    check("the recorded field is the still-working subagent, id and job only",
+          f'spawned-subagent-1: {FIXTURE_SILENT_AGENT} "Review PR 150 independently"'
+          in body.splitlines(),
+          body)
+    check("a subagent that had ended is not in the handoff at all",
+          FIXTURE_IDLE_AGENT not in body and FIXTURE_UNDELIVERED_AGENT not in body, body)
+    check("the writer reports the still-working count against the spawned count",
+          "1 still-working subagent(s) recorded for the successor, of 3 spawned"
+          in written.stdout, written.stdout)
+
+    # A session whose every subagent already ended writes no roster field,
+    # and the console says that is deliberate rather than a failed derivation.
+    all_ended_session_id = "00000000-0000-4000-8000-00000000a11e"
+    write_multi_id_fixture_transcript(projects / f"{all_ended_session_id}.jsonl")
+    all_ended = run_writer(
+        handoffs, "carry on\n", "--agent", "rosterallendedcase",
+        environment_overrides={"HOME": str(home),
+                               "CLAUDE_CODE_SESSION_ID": all_ended_session_id},
+    )
+    all_ended_body = handoff_text(handoffs, "rosterallendedcase")
+    check("a session whose subagents all ended writes no roster field",
+          "spawned-subagent-" not in all_ended_body, all_ended_body)
+    check("the console says all subagents had ended, none recorded",
+          "all 2 spawned subagent(s) had ended" in all_ended.stdout
+          and "none recorded" in all_ended.stdout, all_ended.stdout)
 
     # The roster is an ordinary field, so it must precede the verbatim block —
     # the block is last precisely so its content cannot shadow a real field.
@@ -720,7 +789,7 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
           block_body)
     check("the roster fields read back as fields",
           writer.supervisor.parse_handoff_file(handoffs / "rosterblockcase-handoff.md")
-          .get("spawned-subagent-3", "").startswith(FIXTURE_SILENT_AGENT),
+          .get("spawned-subagent-1", "").startswith(FIXTURE_SILENT_AGENT),
           str(with_block.returncode))
 
     # No transcript for the named session: the handoff is still written.
