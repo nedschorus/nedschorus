@@ -372,19 +372,52 @@ def main() -> int:
         # — so a leak would have to come through the composed string itself.)
         harness = LaunchHarness(root / "task-list-detached")
         result = harness.run(["seat-h", "--no-attach"])
-        check("task list: the pin reaches the supervisor as <seat>-tasks",
+        check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-h-tasks",
+              == "nedschorus-seat-h-tasks",
               result["supervisor_environment"])
         check("task list: the task tools are enabled for the supervisor",
               result["supervisor_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["supervisor_environment"])
+        # --- task-list migration, box-side (user-ruled 2026-08-29): the
+        # rename rides inside the pane command, so it runs under the box's
+        # own $HOME; an existing prefixed store is never overwritten. -------
+        harness = LaunchHarness(root / "task-list-migration")
+        unprefixed_store = harness.home / ".claude" / "tasks" / "seat-h-tasks"
+        unprefixed_store.mkdir(parents=True)
+        (unprefixed_store / "1.json").write_text('{"id": "1"}',
+                                                 encoding="utf-8")
+        result = harness.run(["seat-h", "--no-attach"])
+        prefixed_store = (harness.home / ".claude" / "tasks"
+                          / "nedschorus-seat-h-tasks")
+        check("migration: the unprefixed store is renamed to the prefixed id",
+              not unprefixed_store.exists()
+              and (prefixed_store / "1.json").is_file(),
+              sorted(str(p) for p in
+                     (harness.home / ".claude" / "tasks").glob("*")))
+        harness = LaunchHarness(root / "task-list-migration-no-clobber")
+        unprefixed_store = harness.home / ".claude" / "tasks" / "seat-h-tasks"
+        unprefixed_store.mkdir(parents=True)
+        (unprefixed_store / "1.json").write_text("unprefixed",
+                                                 encoding="utf-8")
+        prefixed_store = (harness.home / ".claude" / "tasks"
+                          / "nedschorus-seat-h-tasks")
+        prefixed_store.mkdir(parents=True)
+        (prefixed_store / "2.json").write_text("prefixed", encoding="utf-8")
+        result = harness.run(["seat-h", "--no-attach"])
+        check("migration: an existing prefixed store is never overwritten",
+              unprefixed_store.is_dir()
+              and (prefixed_store / "2.json").is_file()
+              and not (prefixed_store / "1.json").exists(),
+              sorted(str(p) for p in
+                     (harness.home / ".claude" / "tasks").glob("*")))
+
         harness = LaunchHarness(root / "task-list-second-seat")
         result = harness.run(["seat-i", "--no-attach"])
         check("task list: a second seat name yields a DIFFERENT list id",
               result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-i-tasks",
+              == "nedschorus-seat-i-tasks",
               result["supervisor_environment"])
 
         # --- 9. the same binding on the ATTACHED path, including the
@@ -393,15 +426,15 @@ def main() -> int:
         # TaskList returns empty with no error.
         harness = LaunchHarness(root / "task-list-attached")
         result = harness.run(["seat-j"])
-        check("task list (attached): the supervisor gets <seat>-tasks",
+        check("task list (attached): the supervisor gets nedschorus-<seat>-tasks",
               result["supervisor_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-j-tasks"
+              == "nedschorus-seat-j-tasks"
               and result["supervisor_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["supervisor_environment"])
         check("task list (attached): the after-exit shell keeps the binding",
               result["after_exit_environment"].get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-j-tasks"
+              == "nedschorus-seat-j-tasks"
               and result["after_exit_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["after_exit_environment"])

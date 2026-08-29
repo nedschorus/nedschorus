@@ -371,9 +371,19 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     # the launcher comment's Warning 2, arriving at the one moment
     # continuity is being promised. The launcher branch above needs nothing
     # here; it runs the launcher, which does this itself.
+    # The one-time store migration rides here too (user-ruled 2026-08-29):
+    # this branch bypasses the launcher, so without the rename a recovered
+    # seat would pin to an empty prefixed store while its list sat under the
+    # old unprefixed name. The name is embedded unquoted inside the
+    # double-quoted paths so $HOME expands box-side, safe for the same
+    # reason as the launchers: seat names are charset-validated at launch.
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
-        f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'{name}-tasks')}; "
+        f'if [ -d "$HOME/.claude/tasks/{name}-tasks" ] && '
+        f'[ ! -e "$HOME/.claude/tasks/nedschorus-{name}-tasks" ]; then '
+        f'mv "$HOME/.claude/tasks/{name}-tasks" '
+        f'"$HOME/.claude/tasks/nedschorus-{name}-tasks"; fi; '
+        f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'nedschorus-{name}-tasks')}; "
         "export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; "
         f"python3 {Path(__file__).with_name('handoff-supervisor.py')} "
         f"--agent {shlex.quote(name)} --cd {shlex.quote(str(seat_directory))} "

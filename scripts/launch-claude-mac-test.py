@@ -216,19 +216,54 @@ def main() -> int:
         check("detached: the launcher runs to its tmux launch (exit 0)",
               result.returncode == 0 and sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
-        check("task list: the pin reaches the supervisor as <seat>-tasks",
+        check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-a-tasks",
+              == "nedschorus-seat-a-tasks",
               sandbox.supervisor_environment())
         check("task list: the task tools are enabled for the supervisor",
               sandbox.supervisor_environment().get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               sandbox.supervisor_environment())
+        # --- task-list migration (user-ruled 2026-08-29): a store filled
+        # under the old unprefixed id is renamed to the prefixed id at
+        # launch; an existing prefixed store is never overwritten. ----------
+        sandbox = MacLaunchSandbox(root / "task-list-migration")
+        unprefixed_store = sandbox.home / ".claude" / "tasks" / "seat-m-tasks"
+        unprefixed_store.mkdir(parents=True)
+        (unprefixed_store / "1.json").write_text('{"id": "1"}',
+                                                 encoding="utf-8")
+        result = sandbox.run("~/agents", seat_name="seat-m")
+        prefixed_store = (sandbox.home / ".claude" / "tasks"
+                          / "nedschorus-seat-m-tasks")
+        check("migration: the unprefixed store is renamed to the prefixed id",
+              result.returncode == 0 and not unprefixed_store.exists()
+              and (prefixed_store / "1.json").is_file(),
+              (result.returncode,
+               sorted(str(p) for p in
+                      (sandbox.home / ".claude" / "tasks").glob("*"))))
+        sandbox = MacLaunchSandbox(root / "task-list-migration-no-clobber")
+        unprefixed_store = sandbox.home / ".claude" / "tasks" / "seat-m-tasks"
+        unprefixed_store.mkdir(parents=True)
+        (unprefixed_store / "1.json").write_text("unprefixed",
+                                                 encoding="utf-8")
+        prefixed_store = (sandbox.home / ".claude" / "tasks"
+                          / "nedschorus-seat-m-tasks")
+        prefixed_store.mkdir(parents=True)
+        (prefixed_store / "2.json").write_text("prefixed", encoding="utf-8")
+        result = sandbox.run("~/agents", seat_name="seat-m")
+        check("migration: an existing prefixed store is never overwritten",
+              result.returncode == 0 and unprefixed_store.is_dir()
+              and (prefixed_store / "2.json").is_file()
+              and not (prefixed_store / "1.json").exists(),
+              (result.returncode,
+               sorted(str(p) for p in
+                      (sandbox.home / ".claude" / "tasks").glob("*"))))
+
         sandbox = MacLaunchSandbox(root / "task-list-second-seat")
         sandbox.run("~/agents", seat_name="seat-b")
         check("task list: a second seat name yields a DIFFERENT list id",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-b-tasks",
+              == "nedschorus-seat-b-tasks",
               sandbox.supervisor_environment())
 
         # --- the same binding on the ATTACHED path, including the after-exit
@@ -240,15 +275,15 @@ def main() -> int:
         check("attached: new-session -A with the wrapper executes to exit 0",
               result.returncode == 0 and "-A" in sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
-        check("task list (attached): the supervisor gets <seat>-tasks",
+        check("task list (attached): the supervisor gets nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-c-tasks"
+              == "nedschorus-seat-c-tasks"
               and sandbox.supervisor_environment().get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               sandbox.supervisor_environment())
         check("task list (attached): the after-exit shell keeps the binding",
               sandbox.after_exit_environment().get("CLAUDE_CODE_TASK_LIST_ID")
-              == "seat-c-tasks"
+              == "nedschorus-seat-c-tasks"
               and sandbox.after_exit_environment().get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               sandbox.after_exit_environment())

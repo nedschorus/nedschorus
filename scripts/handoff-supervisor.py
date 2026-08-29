@@ -199,11 +199,12 @@ def pinned_task_list_id() -> str:
     """The seat-keyed task list id the launchers pin, or "" when unpinned.
 
     scripts/launch-claude-mac and scripts/launch-claude-ubuntu export
-    CLAUDE_CODE_TASK_LIST_ID="<seat name>-tasks" into the seat's environment.
+    CLAUDE_CODE_TASK_LIST_ID="nedschorus-<seat name>-tasks" into the seat's
+    environment.
     This supervisor is started inside that environment and passes it on by
     inheritance to every session it launches, so when the variable is set,
     ALL of a seat's generations read and write one store,
-    ~/.claude/tasks/<seat name>-tasks/, and the session id names no store at
+    ~/.claude/tasks/nedschorus-<seat name>-tasks/, and the session id names no store at
     all. Read from the environment rather than recomposed from --agent: the
     launcher is the one place the id is composed, and a second composition
     here would be a second thing to keep in step.
