@@ -142,10 +142,23 @@ def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
     )
 
 
+def _strip_dot_slash(path):
+    """Drop a literal leading './' — and only that.
+
+    `str.lstrip("./")` strips every leading '.' and '/' CHARACTER, so '.env'
+    became 'env' and a request for a dotfile then matched any 'scripts/env'
+    in history — a FOUND with a recovery command for the wrong file.
+    """
+    path = path.strip()
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
 def path_matches(candidate, wanted):
     """True when `candidate` ends at a path-component boundary with `wanted`."""
-    candidate = candidate.strip().lstrip("./")
-    wanted = wanted.strip().lstrip("./")
+    candidate = _strip_dot_slash(candidate)
+    wanted = _strip_dot_slash(wanted)
     if candidate == wanted:
         return True
     return candidate.endswith("/" + wanted)

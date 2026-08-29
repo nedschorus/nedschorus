@@ -65,6 +65,29 @@ check("suffix match on a bare basename", finder.path_matches("docs/a/b/c.md", "c
 check("no match on a partial component",
       not finder.path_matches("docs/notes.md", "otes.md"),
       "matching mid-component would make 'notes.md' find 'my-notes.md'")
+check("a leading './' is ignored on either side",
+      finder.path_matches("./a/b.md", "a/b.md") and finder.path_matches("a/b.md", "./a/b.md"))
+check("a dotfile keeps its dot: '.env' does not match 'scripts/env'",
+      not finder.path_matches("scripts/env", ".env"),
+      "lstrip('./') strips every leading dot, so '.env' became 'env' and matched the wrong file")
+check("a dotfile still matches itself by suffix",
+      finder.path_matches("config/.env", ".env"))
+
+# The narrow trigger for the dotfile defect: no exact pathspec match (so the
+# suffix scan runs) and some non-dot path ends with the same remainder.
+git_dotfile = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "\n", "")),
+    ("--name-only", (0, "scripts/env\nREADME.md\n", "")),
+    # scripts/env is alive and well in history; the fixture must let the
+    # wrong match go all the way to a FOUND, or the case proves nothing.
+    ("log --all --full-history --format=%H|%ad|%s", (0, "ba432e8e5|2026-08-20|add env\n", "")),
+    ("cat-file -e", (0, "", "")),
+])
+report = finder.search_git(".env", "/repo", git_dotfile)
+check("a request for '.env' is NOT FOUND when history only has 'scripts/env'",
+      report.status == NOT_FOUND,
+      "was FOUND with a recovery command for scripts/env: %s" % report.recovery)
 
 # --------------------------------------------------------------------------
 # git
