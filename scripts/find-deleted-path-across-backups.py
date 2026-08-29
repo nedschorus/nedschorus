@@ -39,15 +39,15 @@ A surface that cannot be read must never render as "not found". That distinction
 is the whole point: an agent told "not in Time Machine" stops looking, and an
 agent told "Time Machine needs your password, here is the command" asks for it.
 
-READ-ONLY BY CONSTRUCTION. This script only lists, reads, and copies out. It
-never writes backup state, which agents are forbidden to do
-(.claude/hooks/backup-and-snapshot-write-guard.py holds the tool path; the rule
-binds shell commands too). The single state-changing call it can make is
-`diskutil mount` on the Time Machine destination — mounting a disk the user
-already attached, which is how you read a backup, not a modification of one.
-It is attempted only when the destination is attached but unmounted, because
-the user's disk does go offline and a script that gives up there is useless to
-him (user-ruled 2026-08-23).
+READ-ONLY BY CONSTRUCTION. This script only lists and reads; the copying is
+left to the recovery commands it prints. It never writes backup state, which
+agents are forbidden to do (.claude/hooks/backup-and-snapshot-write-guard.py
+holds the tool path; the rule binds shell commands too). The single
+state-changing call it can make is `diskutil mount` on the Time Machine
+destination — mounting a disk the user already attached, which is how you read
+a backup, not a modification of one. It is attempted only when the destination
+is attached but unmounted, because the user's disk does go offline and a script
+that gives up there is useless to him (user-ruled 2026-08-23).
 
 NO HARDCODED DEVICE NODES. `/dev/disk5s2` was the backup volume on 2026-08-23;
 device numbers reshuffle across replugs. Everything resolves at runtime from the
@@ -56,7 +56,10 @@ destination name that `tmutil destinationinfo` reports.
 Usage:
   python3 scripts/find-deleted-path-across-backups.py <path>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
-  python3 scripts/find-deleted-path-across-backups.py <path> --recover-to DIR
+  python3 scripts/find-deleted-path-across-backups.py <path> --repo ~/Projects/nedschorus
+
+There is no recovery flag: each FOUND line is followed by the exact command
+that recovers the content, for you to run.
 
 <path> may be repo-relative ("docs/issues/46-x.md"), absolute, or any trailing
 fragment of a path ("dispositions.md"). Fragments match by path suffix.

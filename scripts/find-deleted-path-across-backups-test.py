@@ -18,6 +18,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -761,6 +762,20 @@ check("exit 3 when git was searched and empty but the box could not be reached (
       code == 3 and "Could NOT search: timeshift" in text, "exit=%s\n%s" % (code, text))
 
 check("exit_status: no surface at all is 3, not 1", finder.exit_status([]) == 3)
+
+# The file's own Usage block once advertised --recover-to, which argparse
+# rejected with exit 2. Every flag the docstring names must be one it takes.
+documented_flags = sorted(set(re.findall(r"--[a-z][a-z-]+", finder.__doc__)))
+help_out = io.StringIO()
+with contextlib.redirect_stdout(help_out):
+    try:
+        finder.main(["--help"])
+    except SystemExit:
+        pass
+accepted = set(re.findall(r"--[a-z][a-z-]+", help_out.getvalue()))
+check("every flag the docstring names is one the parser accepts",
+      documented_flags and all(flag in accepted for flag in documented_flags),
+      "documented %s, accepted %s" % (documented_flags, sorted(accepted)))
 
 code, text = run_main(["/repo/md-review-records/x/dispositions.md", "--repo", "/repo",
                        "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"], git_absolute)
