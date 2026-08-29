@@ -448,50 +448,51 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
     surface needs no privilege at all — the opposite of Time Machine.
 
     A repo-relative path is tested under each configured root because the same
-    relative path exists under several seats on the box.
+    relative path exists under several seats on the box. It is tested exactly
+    first, and when that misses the root is searched by path suffix, the way
+    git's suffix scan and Time Machine's `find -path` already treat a trailing
+    fragment. The first version only ever tested <root>/<wanted>, so the
+    documented fragment form ("dispositions.md") could not hit, and the
+    surface said "searched every snapshot" for a file in every snapshot.
     """
     if not box_ssh_host:
         return SurfaceReport("timeshift", UNAVAILABLE, ["not searched — no ssh host given (--skip box, or an empty --box-ssh-host)"])
 
-    # Quote the CALLER's path, never the roots. The roots are constants that
-    # deliberately carry a `*` (one seat per directory on the box), and
-    # shlex.quote would wrap that glob in single quotes, making it a literal
-    # asterisk that matches nothing — a surface reporting "searched every
-    # snapshot" while never having looked at the seat directories. An unquoted
-    # `*` still expands when the rest of the word is quoted.
-    if wanted.startswith("/"):
-        probes = [shlex.quote(wanted)]
-    else:
-        probes = ["%s/%s" % (root, shlex.quote(wanted)) for root in search_roots]
-
-    script_lines = ["set -u", "ROOT=%s" % shlex.quote(snapshot_root)]
-    script_lines.append('if [ ! -d "$ROOT" ]; then echo "NOROOT"; exit 0; fi')
-    script_lines.append('for snap in "$ROOT"/*; do')
-    script_lines.append('  [ -d "$snap" ] || continue')
-    for probe in probes:
-        script_lines.append('  for target in "$snap/localhost"%s; do' % probe)
-        script_lines.append('    if [ -e "$target" ]; then echo "HIT $target"; fi')
-        script_lines.append("  done")
-    script_lines.append("done")
-    remote = "\n".join(script_lines)
-
     code, out, stderr = runner(
-        ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, remote],
+        ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host,
+         _timeshift_probe_script(wanted, snapshot_root, search_roots)],
         timeout=LONG_TIMEOUT_SECONDS,
     )
+    first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
     if code == 255:
-        first = stderr.strip().splitlines()[0] if stderr.strip() else "ssh failed"
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
-            ["the box (%s) is unreachable — %s" % (box_ssh_host, first),
+            ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
              "the snapshots are fine; this machine just cannot see them right now"],
+        )
+    if code != 0:
+        # The runner's 124 on timeout, or the script itself failing. Falling
+        # through would count the snapshots it never reached as searched.
+        return SurfaceReport(
+            "timeshift",
+            UNAVAILABLE,
+            ["the search on %s did not complete (exit %s) — %s" % (box_ssh_host, code, first_error or "no error text")],
         )
     if "NOROOT" in out:
         return SurfaceReport("timeshift", UNAVAILABLE, ["%s does not exist on %s — is the backup drive mounted?" % (snapshot_root, box_ssh_host)])
 
     hits = sorted({line[4:].strip() for line in out.splitlines() if line.startswith("HIT ")}, reverse=True)
+    unsearched = [line[10:].strip() for line in out.splitlines() if line.startswith("PROBEFAIL ")]
     if not hits:
+        if unsearched:
+            return SurfaceReport(
+                "timeshift",
+                UNAVAILABLE,
+                ["find failed under %d snapshot director%s on %s, first: %s"
+                 % (len(unsearched), "y" if len(unsearched) == 1 else "ies", box_ssh_host, unsearched[0]),
+                 "the rest were searched and do not have it; those %d were not searched" % len(unsearched)],
+            )
         return SurfaceReport("timeshift", NOT_FOUND, ["searched every snapshot under %s on %s" % (snapshot_root, box_ssh_host)])
 
     lines = ["%d snapshot(s) on %s still have it, newest first:" % (len(hits), box_ssh_host)]
@@ -499,8 +500,44 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
         lines.append("    " + hit)
     if len(hits) > 5:
         lines.append("    ... and %d older" % (len(hits) - 5))
+    if unsearched:
+        lines.append("(find failed under %d snapshot director%s, first: %s — those were not searched)"
+                     % (len(unsearched), "y" if len(unsearched) == 1 else "ies", unsearched[0]))
     recovery = ["scp %s:%s ." % (box_ssh_host, shlex.quote(hits[0]))]
     return SurfaceReport("timeshift", FOUND, lines, recovery)
+
+
+def _timeshift_probe_script(wanted, snapshot_root, search_roots):
+    """The shell that runs on the box. Prints HIT <path> per match, NOROOT if
+    the snapshot root is absent, PROBEFAIL <dir> when a find could not finish.
+
+    Quote the CALLER's path, never the roots. The roots are constants that
+    deliberately carry a `*` (one seat per directory on the box), and
+    shlex.quote would wrap that glob in single quotes, making it a literal
+    asterisk that matches nothing — a surface reporting "searched every
+    snapshot" while never having looked at the seat directories. An unquoted
+    `*` still expands when the rest of the word is quoted. The find pattern
+    is the opposite case: `*/<wanted>` must reach find as ONE quoted word, or
+    the shell expands the `*` against its own cwd first.
+    """
+    script = ["set -u", "ROOT=%s" % shlex.quote(snapshot_root)]
+    script.append('if [ ! -d "$ROOT" ]; then echo "NOROOT"; exit 0; fi')
+    script.append('for snap in "$ROOT"/*; do')
+    script.append('  [ -d "$snap" ] || continue')
+    if wanted.startswith("/"):
+        script.append('  target="$snap/localhost"%s' % shlex.quote(wanted))
+        script.append('  if [ -e "$target" ]; then echo "HIT $target"; fi')
+    else:
+        bases = " ".join('"$snap/localhost"%s' % root for root in search_roots)
+        script.append("  for base in %s; do" % bases)
+        script.append('    [ -d "$base" ] || continue')
+        script.append('    if [ -e "$base"/%s ]; then echo "HIT $base/"%s' % (shlex.quote(wanted), shlex.quote(wanted)))
+        script.append("    else find \"$base\" -path %s -exec printf 'HIT %%s\\n' {} \\; || echo \"PROBEFAIL $base\""
+                      % shlex.quote("*/" + wanted))
+        script.append("    fi")
+        script.append("  done")
+    script.append("done")
+    return "\n".join(script)
 
 
 # --------------------------------------------------------------------------

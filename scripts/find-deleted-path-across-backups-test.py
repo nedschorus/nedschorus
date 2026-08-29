@@ -422,8 +422,71 @@ finder.search_timeshift("a/b.md", "nedlern@ned-box", "/root",
                         finder.DEFAULT_BOX_SEARCH_ROOTS, glob_probe)
 generated = glob_probe.calls[0]
 check("a seat-directory root keeps its glob unquoted so the shell expands it",
-      "/home/nedlern/agents/*/" in generated and "'/home/nedlern/agents/*" not in generated,
+      "/home/nedlern/agents/*" in generated and "'/home/nedlern/agents/*" not in generated
+      and "agents/*'" not in generated,
       generated)
+check("the suffix pattern reaches find as one quoted word, so the shell cannot expand its '*'",
+      "-path '*/a/b.md'" in generated, generated)
+check("the suffix search's find is not piped, so a find that fails is reported",
+      "|" not in generated.replace("||", ""), generated)
+
+# The generated script runs for real against a fake snapshot tree. The first
+# version tested only <root>/<wanted>, so the documented fragment form
+# ("dispositions.md") could never hit, and the surface said "searched every
+# snapshot under ..." for a file that was in every snapshot.
+with tempfile.TemporaryDirectory() as tmp:
+    box = Path(tmp, "box")
+    snapshots = Path(box, "mnt", "backup", "timeshift", "snapshots")
+    for snap in ("2026-08-13_10-00-00", "2026-08-14_11-35-50"):
+        for seat in ("seat-a", "seats/s1"):
+            records = Path(snapshots, snap, "localhost", seat, "md-review-records", "x")
+            records.mkdir(parents=True)
+            Path(records, "dispositions.md").write_text("eleven deferred findings\n")
+    roots = ("/seat-a", "/seats/*")
+
+    def timeshift(wanted, root=str(snapshots)):
+        runner = LocalShellRunner([], box)
+        return finder.search_timeshift(wanted, "nedlern@ned-box", root, roots, runner)
+
+    report = timeshift("md-review-records/x/dispositions.md")
+    check("timeshift, real shell: the repo-relative form is FOUND, newest snapshot first",
+          report.status == FOUND and "2026-08-14" in report.recovery[0], "%s %s" % (report.status, report.lines))
+    report = timeshift("dispositions.md")
+    check("timeshift, real shell: the documented fragment form is FOUND in the same snapshots",
+          report.status == FOUND and any("2026-08-13" in l for l in report.lines) and "2026-08-14" in report.recovery[0],
+          "%s %s" % (report.status, report.lines))
+    check("timeshift, real shell: a seat-glob root is searched by suffix too",
+          any("/seats/s1/" in l for l in report.lines), str(report.lines))
+    report = timeshift("x/dispositions.md")
+    check("timeshift, real shell: a two-component fragment is FOUND", report.status == FOUND, str(report.lines))
+    report = timeshift("ispositions.md")
+    check("timeshift, real shell: a partial component is NOT FOUND (suffix means whole components)",
+          report.status == NOT_FOUND, "%s %s" % (report.status, report.lines))
+    report = timeshift("nowhere.md")
+    check("timeshift, real shell: an absent file is NOT FOUND after a real search",
+          report.status == NOT_FOUND and any("searched every snapshot under" in l for l in report.lines),
+          "%s %s" % (report.status, report.lines))
+    report = timeshift("/seat-a/md-review-records/x/dispositions.md")
+    check("timeshift, real shell: an absolute box path is tested exactly under each snapshot",
+          report.status == FOUND, "%s %s" % (report.status, report.lines))
+    report = timeshift("dispositions.md", root=str(Path(box, "no-such-root")))
+    check("timeshift, real shell: a missing snapshot root is UNAVAILABLE",
+          report.status == UNAVAILABLE and any("is the backup drive mounted" in l for l in report.lines),
+          "%s %s" % (report.status, report.lines))
+
+timeshift_timeout = FakeRunner([("ssh", (124, "", "timed out after 120s: ssh ..."))])
+report = finder.search_timeshift("a/b.md", "nedlern@ned-box", "/mnt/backup/timeshift/snapshots",
+                                 finder.DEFAULT_BOX_SEARCH_ROOTS, timeshift_timeout)
+check("a Timeshift search that times out is UNAVAILABLE, not 'searched every snapshot'",
+      report.status == UNAVAILABLE and any("did not complete" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+timeshift_probefail = FakeRunner([("ssh", (0, "PROBEFAIL /mnt/backup/timeshift/snapshots/2026-08-13_10-00-00/localhost/home/nedlern/Projects/nedschorus\n", ""))])
+report = finder.search_timeshift("a/b.md", "nedlern@ned-box", "/mnt/backup/timeshift/snapshots",
+                                 finder.DEFAULT_BOX_SEARCH_ROOTS, timeshift_probefail)
+check("a find that failed under a snapshot directory makes the surface UNAVAILABLE",
+      report.status == UNAVAILABLE and any("find failed under 1 snapshot directory" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
 
 timeshift_empty = FakeRunner([("ssh", (0, "", ""))])
 report = finder.search_timeshift("a/b.md", "nedlern@ned-box", "/mnt/backup/timeshift/snapshots",
