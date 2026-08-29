@@ -14,7 +14,9 @@ looking. Each blocked surface therefore has a case asserting both the status
 AND that the output says what to do about it.
 """
 
+import contextlib
 import importlib.util
+import io
 import os
 import subprocess
 import sys
@@ -715,6 +717,57 @@ reports_all_blocked = [finder.SurfaceReport("git", NOT_FOUND, ["searched"])]
 text = finder.render("a/b.md", reports_all_blocked)
 check("a wholly empty search says so without claiming the file never existed",
       "No surface that could be searched has it." in text, text)
+
+# --------------------------------------------------------------------------
+# main(): the exit code is the same three-outcome contract, for wrappers
+# that branch on $?. The first version returned 1 — "every surface that could
+# be searched came back empty" — for a run in which no surface could be
+# searched at all.
+# --------------------------------------------------------------------------
+
+
+def run_main(argv, runner):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = finder.main(argv, runner=runner)
+    return code, out.getvalue()
+
+
+NOT_A_REPO = ("rev-parse --git-dir", (128, "", "fatal: not a git repository"))
+code, text = run_main(["a/b.md", "--repo", "/nonexistent-not-a-repo", "--transcripts-dir", "/nonexistent",
+                       "--box-ssh-host", "", "--skip", "timemachine"], FakeRunner([NOT_A_REPO]))
+check("exit 3 when no surface could be searched (git, transcripts, timeshift all UNAVAILABLE)",
+      code == 3 and "Could NOT search: git, transcripts, timeshift" in text, "exit=%s\n%s" % (code, text))
+check("... and the docstring's exit-code block promises exactly that",
+      "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
+
+code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"],
+                      git_absent)
+check("exit 1 only when every surface that ran was searched and none has it",
+      code == 1 and "Could NOT search" not in text, "exit=%s\n%s" % (code, text))
+
+code, text = run_main(["md-review-records/x/dispositions.md", "--repo", "/repo",
+                       "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"], git_found)
+check("exit 0 when a surface FOUND it", code == 0 and "Recoverable from: git." in text, "exit=%s\n%s" % (code, text))
+
+mixed = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "\n", "")),
+    ("--name-only", (0, "docs/other.md\n", "")),
+    ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
+])
+code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "transcripts", "--skip", "timemachine"], mixed)
+check("exit 3 when git was searched and empty but the box could not be reached (not exhaustive)",
+      code == 3 and "Could NOT search: timeshift" in text, "exit=%s\n%s" % (code, text))
+
+check("exit_status: no surface at all is 3, not 1", finder.exit_status([]) == 3)
+
+code, text = run_main(["/repo/md-review-records/x/dispositions.md", "--repo", "/repo",
+                       "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"], git_absolute)
+check("the header shows the repo-relative form an absolute path was searched as",
+      text.startswith("Searching every history this fleet keeps for: md-review-records/x/dispositions.md "
+                      "(given as /repo/md-review-records/x/dispositions.md)"),
+      text.splitlines()[0])
 
 print()
 if failures:

@@ -61,8 +61,13 @@ Usage:
 <path> may be repo-relative ("docs/issues/46-x.md"), absolute, or any trailing
 fragment of a path ("dispositions.md"). Fragments match by path suffix.
 
-Exit code is 0 when at least one surface FOUND it, 1 when every surface that
-could be searched came back empty, and 2 on a usage error.
+Exit code: 0 when at least one surface FOUND it. 1 when every surface that ran
+was searched and none has it — the only exit that means "stop looking". 3 when
+nothing was found and at least one surface could NOT be searched: the same
+thing the summary's "Could NOT search" line says, and the usual result of an
+unattended run, because reading inside Time Machine needs a password. 2 on a
+usage error. The first version returned 1 for the third case too, so a wrapper
+branching on $? was told "not found" by a run that had searched nothing.
 """
 
 # Deferred annotations keep this runnable on the Mac's system python3, which is
@@ -79,6 +84,12 @@ from pathlib import Path
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
 UNAVAILABLE = "UNAVAILABLE"
+
+# The run's exit status, in the same three-outcome vocabulary (2 is argparse's).
+EXIT_FOUND = 0
+EXIT_NOT_FOUND_EVERYWHERE = 1
+EXIT_USAGE = 2
+EXIT_INCOMPLETE = 3
 
 DEFAULT_BOX_SSH_HOST = "nedlern@ned-box"
 DEFAULT_TIMESHIFT_SNAPSHOT_ROOT = "/mnt/backup/timeshift/snapshots"
@@ -864,7 +875,7 @@ def render(wanted, reports):
     return "\n".join(out)
 
 
-def main(argv=None):
+def main(argv=None, runner=run_command):
     parser = argparse.ArgumentParser(
         description="Find a deleted path across git, agent transcripts, Timeshift and Time Machine.",
     )
@@ -882,7 +893,7 @@ def main(argv=None):
 
     # One form for every surface: an absolute path inside the repository is
     # searched for by its repo-relative name, and the header says so.
-    wanted, _ = _repo_relative_form(args.path, args.repo)
+    wanted, _ = _repo_relative_form(args.path, args.repo, runner)
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
     reports = build_report(
@@ -893,9 +904,24 @@ def main(argv=None):
         args.timeshift_snapshot_root,
         DEFAULT_BOX_SEARCH_ROOTS,
         skip=set(args.skip),
+        runner=runner,
     )
     print(render(shown, reports))
-    return 0 if any(r.status == FOUND for r in reports) else 1
+    return exit_status(reports)
+
+
+def exit_status(reports):
+    """The exit code the docstring promises, from the surfaces' statuses.
+
+    FOUND anywhere is 0. Otherwise 1 only when at least one surface ran and
+    every one of them was searched; if any surface was UNAVAILABLE — or no
+    surface ran at all — the run was not exhaustive, and 3 says so.
+    """
+    if any(r.status == FOUND for r in reports):
+        return EXIT_FOUND
+    if not reports or any(r.status == UNAVAILABLE for r in reports):
+        return EXIT_INCOMPLETE
+    return EXIT_NOT_FOUND_EVERYWHERE
 
 
 if __name__ == "__main__":
