@@ -666,6 +666,48 @@ def main():
           ("--disable", "memories") in list(zip(codex_command, codex_command[1:])),
           f"composed command was {codex_command}")
 
+    # The provenance line carries the CLI version the RUNNER measured —
+    # nedschorus#161's cross-version fact rested on the cells' own words.
+    runner_cli = load_runner()
+    real_run = runner_cli.subprocess.run
+
+    def fake_version_run(command, *arguments, **keywords):
+        return subprocess.CompletedProcess(
+            list(command), 0, "9.9.9 (Test CLI)\n", "")
+
+    try:
+        runner_cli.subprocess.run = fake_version_run
+        measured = runner_cli.runtime_cli_version("claude")
+    finally:
+        runner_cli.subprocess.run = real_run
+    check("the CLI version is measured from the binary, spaces hyphenated",
+          measured == "9.9.9-(Test-CLI)", f"measured {measured!r}")
+    check("the measured version is cached per runtime",
+          runner_cli.CLI_VERSION_CACHE.get("claude") == "9.9.9-(Test-CLI)",
+          runner_cli.CLI_VERSION_CACHE)
+
+    def failing_version_run(command, *arguments, **keywords):
+        raise OSError("no such binary")
+
+    runner_cli.CLI_VERSION_CACHE.clear()
+    try:
+        runner_cli.subprocess.run = failing_version_run
+        measured = runner_cli.runtime_cli_version("codex")
+    finally:
+        runner_cli.subprocess.run = real_run
+    check("a failed version probe answers unknown, never raises",
+          measured == "unknown", f"measured {measured!r}")
+
+    runner_cli.CLI_VERSION_CACHE["claude"] = "7.7.7-test"
+    line = runner_cli.provenance_line(
+        "claude", "some-model", "cut", "docs/x.md", False,
+        "commit=abc worktree=clean")
+    check("the provenance line carries cli= alongside the existing facts",
+          "cli=7.7.7-test" in line and "runtime=claude" in line
+          and "model=some-model" in line and "attack=cut" in line
+          and "target=docs/x.md" in line and "worktree=clean" in line,
+          line)
+
     print()
     if failures:
         print(f"{len(failures)} failing case(s): {', '.join(failures)}")
