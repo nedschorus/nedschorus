@@ -236,16 +236,20 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # below are what that system learned from running it.
 #
 # Warning 1 — the store is ONE copy on ONE disk, outside the repository:
-# $HOME/.claude/tasks/<name>-tasks/ on this Mac. It is not committed, not
+# $HOME/.claude/tasks/nedschorus-<name>-tasks/ on this Mac. It is not committed, not
 # backed up with the repository, and not shared with the box, so the same
 # seat name on both machines keeps two unrelated lists. On THIS Mac the
-# reverse also holds, and it is the sharper half: the legacy system's
+# reverse held too, and it was the sharper half: the legacy system's
 # wrapper (~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341) composes
-# the identical "<name>-tasks" id into the same $HOME/.claude/tasks/, so a
-# nedschorus seat and a nedlern agent of the same name share ONE list rather
-# than colliding visibly. No such pair exists today; whether the id should
-# carry a per-system prefix is a question with the user, not something this
-# comment decides.
+# the unprefixed "<name>-tasks" id into the same $HOME/.claude/tasks/, so a
+# nedschorus seat and a nedlern agent of the same name would have shared ONE
+# list rather than colliding visibly. The project prefix closes that, and it
+# is also why the prefix exists at all (user-ruled 2026-08-29): the day
+# nedschorus agents serve several projects, every seat name recurs per
+# project, and an id composed from the seat name alone cannot tell them
+# apart. Nobody hand-writes a store id — a human names the SEAT, and this
+# launcher, the one place the id is composed, names the store; a store id
+# met in prose is a claim about the disk, verified there before use.
 #
 # Warning 2 — a session started OUTSIDE this launcher binds ELSEWHERE, and
 # the failure is silent. Without this export, `claude` falls back to the
@@ -273,8 +277,19 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # (handoff-supervisor.py, preseed_tasks). The pin is what makes the list the
 # SEAT's — one store every generation opens, rather than a fresh directory
 # each recycle has to copy into.
+# One-time migration (user-ruled 2026-08-29): a store filled under the old
+# unprefixed '<name>-tasks' id is renamed to the prefixed id at launch, so a
+# relaunched seat keeps its list and the stale name dies loudly (no
+# directory) instead of lingering as a plausible fork. Never when the
+# prefixed store already exists: an in-use list is not overwritten.
+UNPREFIXED_TASK_STORE="$HOME/.claude/tasks/$AGENT_NAME-tasks"
+PREFIXED_TASK_STORE="$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks"
+if [ -d "$UNPREFIXED_TASK_STORE" ] && [ ! -e "$PREFIXED_TASK_STORE" ]; then
+    mv "$UNPREFIXED_TASK_STORE" "$PREFIXED_TASK_STORE"
+fi
+
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-export CLAUDE_CODE_TASK_LIST_ID='$AGENT_NAME-tasks'; \
+export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 

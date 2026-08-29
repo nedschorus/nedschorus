@@ -163,7 +163,7 @@ AGENT_DIRECTORY_SUPERVISOR=$(escape_remote_double_quote_context "$(escape_single
 # ~/Projects/nedlern/tasks/sessions/.agent-wrapper.sh:341.
 #
 # Warning 1 — the store is ONE copy on ONE disk outside the repository, here
-# $HOME/.claude/tasks/<name>-tasks/ ON THE BOX. It is not committed and not
+# $HOME/.claude/tasks/nedschorus-<name>-tasks/ ON THE BOX. It is not committed and not
 # shared with the Mac, so the same seat name on both machines keeps two
 # unrelated lists.
 #
@@ -177,8 +177,12 @@ AGENT_DIRECTORY_SUPERVISOR=$(escape_remote_double_quote_context "$(escape_single
 # is charset-checked above to letters, digits, - and _, and the single quotes
 # ride through P1's double-quote context to be parsed by the pane shell at
 # P2, exactly as --agent does on the next line.
+# The one-time store migration and the prefixed id, box-side, both inside
+# the pane command because $HOME here is the BOX's home at P2 — same rename
+# and same never-overwrite rule as the Mac twin (user-ruled 2026-08-29).
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
-export CLAUDE_CODE_TASK_LIST_ID='$AGENT_NAME-tasks'; \
+if [ -d \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" ] && [ ! -e \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\" ]; then mv \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\"; fi; \
+export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
 --agent '$AGENT_NAME' --cd '$AGENT_DIRECTORY_SUPERVISOR'"

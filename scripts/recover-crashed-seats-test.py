@@ -696,7 +696,12 @@ with tempfile.TemporaryDirectory() as temporary:
     # statement's trailing semicolon, so compare with it stripped.
     box_assignments = [token.rstrip(";") for token in box_tokens]
     check("task list: the box branch pins the list to the seat name",
-          f"CLAUDE_CODE_TASK_LIST_ID={workspace.name}-tasks" in box_assignments,
+          f"CLAUDE_CODE_TASK_LIST_ID=nedschorus-{workspace.name}-tasks" in box_assignments,
+          box_command)
+    check("task list: the box branch carries the store migration before the pin",
+          f'if [ -d "$HOME/.claude/tasks/{workspace.name}-tasks" ]' in box_command
+          and box_command.index("mv ")
+          < box_command.index("CLAUDE_CODE_TASK_LIST_ID"),
           box_command)
     check("task list: the box branch enables the task tools",
           "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" in box_assignments,
