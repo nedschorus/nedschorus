@@ -249,6 +249,32 @@ check("a box grep that fails is UNAVAILABLE and quotes grep",
                                            for l in report.lines),
       str(report.lines))
 
+# --skip box exists because the box is asleep; the first version still sent
+# the transcripts grep over ssh (only the Timeshift call honoured the skip),
+# so the flag bought nothing but a ConnectTimeout wait.
+skip_box = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository"))])
+reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
+                              "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
+                              skip={"box", "timemachine"}, runner=skip_box)
+check("--skip box sends nothing over ssh",
+      not any(c.startswith("ssh") for c in skip_box.calls), str(skip_box.calls))
+transcripts_report = [r for r in reports if r.surface == "transcripts"][0]
+check("--skip box: the transcripts surface says its box half was not searched",
+      any(l.startswith("the box: not searched") for l in transcripts_report.lines), str(transcripts_report.lines))
+check("--skip box drops the Timeshift surface", not any(r.surface == "timeshift" for r in reports))
+
+skip_timeshift = FakeRunner([
+    ("rev-parse --git-dir", (128, "", "not a git repository")),
+    ("ssh", (1, "", "")),
+])
+reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
+                              "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
+                              skip={"timeshift", "timemachine"}, runner=skip_timeshift)
+check("--skip timeshift still greps the box's transcripts",
+      sum(1 for c in skip_timeshift.calls if c.startswith("ssh")) == 1 and
+      not any(r.surface == "timeshift" for r in reports),
+      str(skip_timeshift.calls))
+
 # --------------------------------------------------------------------------
 # timeshift on the box
 # --------------------------------------------------------------------------

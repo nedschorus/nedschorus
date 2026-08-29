@@ -327,6 +327,8 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             lines.append("the box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
                          % (box_ssh_host, code, first_error or "no error text"))
             statuses.append(UNAVAILABLE)
+    else:
+        lines.append("the box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
 
     if FOUND in statuses:
         # The searching agent's own transcript matches as soon as it types the
@@ -370,7 +372,7 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
     relative path exists under several seats on the box.
     """
     if not box_ssh_host:
-        return SurfaceReport("timeshift", UNAVAILABLE, ["skipped: no box ssh host configured"])
+        return SurfaceReport("timeshift", UNAVAILABLE, ["not searched — no ssh host given (--skip box, or an empty --box-ssh-host)"])
 
     # Quote the CALLER's path, never the roots. The roots are constants that
     # deliberately carry a `*` (one seat per directory on the box), and
@@ -676,6 +678,12 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
         git_report = search_git(wanted, repo, runner)
         newest_date_held = getattr(git_report, "newest_date_held", None)
         reports.append(git_report)
+    if "box" in skip:
+        # Nothing on the box is contacted: the transcripts surface's box half
+        # as well as Timeshift. The reason to type --skip box is that the box
+        # is asleep, and an ssh with ConnectTimeout=10 inside a 120-second
+        # window is exactly the wait the flag exists to avoid.
+        box_ssh_host = ""
     if "transcripts" not in skip:
         reports.append(search_transcripts(wanted, transcripts_dir, box_ssh_host, runner))
     if "box" not in skip and "timeshift" not in skip:
@@ -714,7 +722,8 @@ def main(argv=None):
     parser.add_argument("--timeshift-snapshot-root", default=os.environ.get("FIND_DELETED_PATH_TIMESHIFT_SNAPSHOT_ROOT", DEFAULT_TIMESHIFT_SNAPSHOT_ROOT))
     parser.add_argument("--skip", action="append", default=[],
                         choices=["git", "transcripts", "box", "timeshift", "timemachine"],
-                        help="skip a surface (repeatable)")
+                        help="skip a surface (repeatable); 'box' skips everything on the box — "
+                             "its transcripts as well as Timeshift — so nothing is sent over ssh")
     args = parser.parse_args(argv)
 
     reports = build_report(
