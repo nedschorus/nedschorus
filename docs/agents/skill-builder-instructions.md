@@ -30,7 +30,7 @@ An item's **state** — whether it is unstarted, in progress, built, or ruled ou
 
 ## How skills are built here
 
-Find the project's **skill-authoring checklist** under `docs/` and follow it — it predates you and is the standard your work will be judged against. Three rules have caught previous builds:
+Three rules have caught previous builds:
 
 1. **A skill is instruction-class**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
