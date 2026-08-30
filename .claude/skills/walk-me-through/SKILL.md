@@ -87,7 +87,7 @@ This file is the canonical behavioral contract. A companion-runtime wrapper — 
 
 ## Shared acceptance scenarios
 
-Live user-supervised use is the quality judgment for this skill's interaction behavior — its interaction failures are visible immediately, so it iterates in live use per the project's skill-authoring checklist (findable by that name under `docs/`). These six scenarios are the shared set the contract and every derived wrapper must handle; the mechanically checkable behaviors in them (word caps, count labels, mark-before-advance) get scripted tests only if this skill's failures ever prove silent and frequent enough that live iteration misses them:
+These six scenarios are the shared set the contract and every derived wrapper must handle; the mechanically checkable behaviors in them (word caps, count labels, mark-before-advance) get scripted tests only if this skill's failures ever prove silent and frequent enough that live iteration misses them:
 
 1. An over-compressed explanation the user cannot interpret.
 2. A complex item that must split into sub-steps.
