@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run a full cold-read grid against a document.
 
-One invocation = one review: eight cells ({restate, defect-hunt} x
-{good, floor} x {claude, codex}) launched in parallel, every report saved
+One invocation = one review: four cells ({defect-hunt} x {good, floor} x
+{claude, codex}) launched in parallel, every report saved
 into a dated record directory, progress and next-step instructions printed
 for the reviewing agent as reviews land.
 
@@ -31,7 +31,14 @@ CELL_LAUNCHERS = {
     "claude": REPO_ROOT / "scripts" / "cold-read-claude-cell.py",
     "codex": REPO_ROOT / "scripts" / "cold-read-codex-cell.py",
 }
-PASSES = ["restate", "defect-hunt"]
+# One pass since 2026-08-30 (user-ruled that day): the separate restate
+# pass is cut from the roster. Measured on both labelled 2026-08-26 targets:
+# mining several readers' restatements for disagreement located no defect the
+# defect hunt had not already located, so its four cells bought reading time
+# and nothing the triage could use. A restatement is still an author's tool --
+# the restate cell and its prompt remain invocable singly through the cell
+# launchers; what is cut is only this default roster.
+PASSES = ["defect-hunt"]
 TIERS = ["good", "floor"]
 
 # Documents this instrument refuses to review, keyed on the genre suffix its
@@ -53,16 +60,13 @@ UNREVIEWABLE_TARGET_GENRE_SUFFIXES = ("-log", "-report", "-capture")
 TARGET_CHANGED_MARKER_PREFIX = "<!-- TARGET CHANGED DURING RUN:"
 
 COMPLETION_INSTRUCTIONS = """\
-All eight reviews are complete, in {record_dir}, one file per reviewer.
+All four reviews are complete, in {record_dir}, one file per reviewer.
 
-Read every report in full. The restate reports show what a reader took each
-sentence to mean — compare them against what you intended; a confident
-misreading is a defect in the file, not in the reader. The defect-hunt
-reports flag defects with each reviewer's own confidence; expect heavy
-overlap — the same defect found independently by several reviewers is one
-defect.
+Read every report in full. The defect-hunt reports flag defects with each
+reviewer's own confidence; expect heavy overlap — the same defect found
+independently by several reviewers is one defect.
 
-Keep your judgments provisional until you have read all eight, as later
+Keep your judgments provisional until you have read all four, as later
 reports may offer more insight than earlier ones. Then formulate your draft
 response: which problems are real, and what you propose to do about each.
 Walk that with the user using the walk-me-through skill, ordered from most
@@ -189,7 +193,7 @@ def mark_reports_target_changed(
 
 
 def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
-    """Start all eight cells in parallel. Returns {report_path: (process,
+    """Start all four cells in parallel. Returns {report_path: (process,
     stderr_path)}. The parent's file handles are closed right after each
     spawn; the child keeps its own copies, so a with-block is the wrong
     shape here."""
@@ -244,7 +248,7 @@ def wait_for_cells(running: dict) -> list:
             # happened: the report is (nedschorus#164). The cell enforces the
             # same rule, and the grid checks again rather than trusting it,
             # because the grid is what tells the reviewing agent below what to
-            # believe — and eight "saved" lines over empty files read as eight
+            # believe — and four "saved" lines over empty files read as four
             # reviewers finding nothing.
             has_report = (
                 report_path.is_file()
@@ -357,7 +361,7 @@ def main() -> int:
     record_dir = make_record_dir(target)
     reference_integrity_pre_pass(target, record_dir)
 
-    print(f"Launched eight reviewers against {target}. Reports appear in "
+    print(f"Launched four reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
     # THE TARGET IS FROZEN FOR THE RUN, and this is how the grid knows whether
