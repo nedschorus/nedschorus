@@ -49,7 +49,9 @@ THE FIVE SURFACES, in the order they are searched:
                     VOLUME, not the command: the same mount_apfs runs
                     unprivileged against this Mac's internal Data volume and
                     needs a password against the external backup volume. A
-                    reader who generalises either way gets it wrong.
+                    reader who generalises either way gets it wrong. It is ONE
+                    operation, which is what makes that wall crossable at all —
+                    see CROSSING THE ROOT WALL below.
 
 WHY SURFACE 1 IS NOT REDUNDANT WITH SURFACE 5, measured 2026-08-31.
 `tmutil isexcluded /private/tmp/claude-501` reports [Excluded], so the external
@@ -85,6 +87,39 @@ ro` on a local snapshot opens it READ-ONLY, which is reading a snapshot rather
 than modifying one, and every snapshot this script opens is unmounted again in
 a `finally` — including when the search inside it fails.
 
+CROSSING THE ROOT WALL, WITH NOBODY IN THE ROOM. The whole of surface 5's
+privilege is that one mount_apfs against the external backup volume. Two things
+make it crossable, and they only work together.
+
+  * A FIXED MOUNT POINT. Every Time Machine mount this file makes, and every
+    Time Machine recovery command it prints, names
+    TIME_MACHINE_READONLY_MOUNT_POINT and no other directory. That is what lets
+    the sudoers rule shipped beside this script —
+    config/sudoers-mount-apfs-readonly-for-backup-recovery — be tight enough to
+    be worth installing: it grants one binary, the read-only flag, and that one
+    path. A command naming any other directory does not match the rule and is
+    asked for a password anyway, so the mount point is not cosmetic and must
+    not be varied. The rule is NOT installed by anything here — writing
+    /etc/sudoers.d is root's work and therefore the user's. With it installed
+    the mount simply succeeds and nobody is asked anything; without it every
+    behaviour described here is exactly what it was before.
+  * The script's own root-prompt flag, off by default. Without it the script
+    prints the resolved sudo command and carries on, which is what an
+    unattended run needs. With it the script runs that command itself, so sudo
+    asks in the terminal the person is already sitting at. It exists on the
+    script alone and must never be handed to a hook: a hook has no terminal,
+    and a password prompt with no terminal behind it can only hang until
+    something kills it.
+
+WHEN A HUMAN REALLY IS NEEDED, THIS MAC SAYS SO OUT LOUD. On 2026-08-31 this
+script reported that Time Machine "needs your password"; the agent reading that
+relayed it four paragraphs into a long message, and the user never saw it. The
+channel worked exactly as built and still failed him. So a run that hits the
+wall also speaks one short sentence through macOS `say`, which is the one
+channel here that does not depend on an agent choosing to pass anything on. It
+is gated hard so that it stays rare: speech_line_when_root_password_is_needed
+holds the four conditions and what each of them is protecting against.
+
 NO HARDCODED DEVICE NODES. `/dev/disk5s2` was the backup volume on 2026-08-23;
 device numbers reshuffle across replugs. Everything resolves at runtime from the
 destination name that `tmutil destinationinfo` reports. The local-snapshot
@@ -97,6 +132,7 @@ Usage:
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
   python3 scripts/find-deleted-path-across-backups.py <path> --skip localsnapshots
   python3 scripts/find-deleted-path-across-backups.py <path> --repo ~/Projects/nedschorus
+  python3 scripts/find-deleted-path-across-backups.py <path> --prompt-for-root
 
 There is no recovery flag: each FOUND line is followed by the exact command
 that recovers the content, for you to run.
@@ -117,9 +153,11 @@ Exit code: 0 when at least one surface FOUND it. 1 when every surface that ran
 was searched and none has it — the only exit that means "stop looking". 3 when
 nothing was found and at least one surface could NOT be searched: the same
 thing the summary's "Could NOT search" line says, and the usual result of an
-unattended run, because reading inside Time Machine needs a password. 2 on a
-usage error. The first version returned 1 for the third case too, so a wrapper
-branching on $? was told "not found" by a run that had searched nothing.
+unattended run, because reading inside Time Machine needs root — unless the
+sudoers rule described above is installed, which is exactly what makes that
+surface answerable with nobody in the room. 2 on a usage error. The first
+version returned 1 for the third case too, so a wrapper branching on $? was
+told "not found" by a run that had searched nothing.
 """
 
 # Deferred annotations keep this runnable on the Mac's system python3, which is
@@ -156,6 +194,20 @@ DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
 # How many Time Machine snapshots to open when a password IS available. Each
 # mount costs seconds, and the git surface usually narrows the date first.
 DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT = 4
+
+# The ONE directory a Time Machine snapshot is ever mounted on — by this script
+# and by every recovery command it prints. It is fixed because
+# config/sudoers-mount-apfs-readonly-for-backup-recovery pins this exact path:
+# the rule permits /sbin/mount_apfs, the read-only flag, and this mount point,
+# so a mount anywhere else does not match it and is asked for a password even
+# where the rule is installed. Changing this string without changing that file
+# silently puts the password wall back; the test suite fails the pair apart.
+TIME_MACHINE_READONLY_MOUNT_POINT = "/private/tmp/nedschorus-backup-readonly-mount"
+
+# What the spoken line calls this tool. `say` reads it aloud, so it is the
+# script's name in words rather than its filename — long enough to be
+# unmistakable across a room, short enough to finish before he stops listening.
+SPOKEN_TOOL_NAME = "find deleted path across backups"
 
 # This Mac's Data volume, which is the one that carries the user-file local
 # snapshots: `diskutil apfs listSnapshots /` shows only com.apple.os.update-*
@@ -1066,8 +1118,9 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
 # Surface 5 — Time Machine on the Mac's EXTERNAL backup disk
 # --------------------------------------------------------------------------
 
-def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT, runner=run_command):
-    """Enumerate Time Machine snapshots, and read inside them only if root is free.
+def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
+                        runner=run_command, prompt_for_root=False):
+    """Enumerate Time Machine snapshots, and read inside them when root is reachable.
 
     The measured split (2026-08-23): `tmutil` and `diskutil apfs listSnapshots`
     both answer unprivileged, but `sudo mount_apfs -o ro -s <snapshot>` refuses
@@ -1076,6 +1129,26 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
     non-interactive `sudo -n` (which succeeds when the user has recently
     authenticated), and otherwise hands back the exact command to run rather
     than reporting an empty search.
+
+    THREE WAYS ROOT CAN BE REACHABLE, and the code takes whichever it is given:
+
+      * the sudoers rule beside this script is installed, in which case the
+        `sudo -n` probe below succeeds outright for this one mount and the
+        wall is never met at all — the unattended case this whole thing exists
+        for;
+      * a credential is already cached from something the person ran a moment
+        ago, which is what the probe originally tested for;
+      * `prompt_for_root` is set, meaning a person is at the terminal and has
+        asked to be prompted. Then the wall is not a stopping point: the mount
+        runs as plain `sudo`, which prompts on the tty, and the snapshots are
+        searched. The flag drops `-n` rather than warming the credential with
+        `sudo -v` first, because `-v` validates for EVERY command the user may
+        run and so prompts even where the sudoers rule would have made this
+        one mount free.
+
+    When none of the three holds the surface is UNAVAILABLE, carrying the
+    resolved command — and the report is marked `root_credential_needed` so
+    the assembly step can decide whether this is worth waking a human for.
     """
     destination = _time_machine_destination(runner)
     if destination is None:
@@ -1117,25 +1190,33 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
 
     candidates, dated_by_git = _time_machine_candidates(snapshots, newest_date_held, snapshot_limit)
     can_sudo, _, _ = runner(["sudo", "-n", "true"])
-    if can_sudo != 0:
-        return SurfaceReport(
+    if can_sudo != 0 and not prompt_for_root:
+        wall = SurfaceReport(
             "time machine",
             UNAVAILABLE,
-            ["%d snapshots present, %s .. %s — enumerated fine, but reading INSIDE one needs your password"
+            ["%d snapshots present, %s .. %s — enumerated fine, but reading INSIDE one needs root, "
+             "and no credential is cached, so it needs your password"
              % (len(snapshots), snapshots[-1], snapshots[0]),
              "this is a real wall, not an empty result: the file may well be in there",
+             "installing config/sudoers-mount-apfs-readonly-for-backup-recovery removes this wall for "
+             "this one read-only mount and nothing else, so an unattended run can cross it",
+             "at a terminal, --prompt-for-root runs the mount below from here instead of printing it",
              _candidate_line(candidates[0], dated_by_git),
              _alternative_line(snapshots, candidates[0], dated_by_git)],
-            ["mkdir -p /tmp/tm-ro && sudo mount_apfs -o ro -s %s %s /tmp/tm-ro && ls /tmp/tm-ro"
-             % (candidates[0], device),
-             "# then look for the path under /tmp/tm-ro, and: sudo umount /tmp/tm-ro"],
+            _time_machine_manual_recovery(candidates[0], device),
         )
+        # Read by the assembly step, which is the only place that can see
+        # whether the free surfaces missed. Nothing else in the run knows that
+        # this surface stopped at a credential rather than at a missing disk.
+        wall.root_credential_needed = True
+        wall.snapshots_enumerated = list(snapshots)
+        return wall
 
     hits = []
     searched = []
     unsearched = []
     for snapshot in candidates:
-        outcome, detail = _time_machine_probe(snapshot, device, wanted, runner)
+        outcome, detail = _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root)
         if outcome == "hit":
             hits.append((snapshot, detail))
             searched.append(snapshot)
@@ -1143,32 +1224,53 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
             searched.append(snapshot)
         else:
             unsearched.append((snapshot, detail))
-    lines = ["%d snapshots present; %d of %d candidates searched with an already-warm sudo"
-             % (len(snapshots), len(searched), len(candidates))]
+    how = "with an already-warm sudo" if can_sudo == 0 else "after --prompt-for-root asked at the terminal"
+    lines = ["%d snapshots present; %d of %d candidates searched %s"
+             % (len(snapshots), len(searched), len(candidates), how)]
     for snapshot, reason in unsearched:
         lines.append("could not search %s — %s" % (snapshot, reason))
     if hits:
         for snapshot, hit in hits:
             lines.append("%s holds %s" % (snapshot, hit))
-        recovery = [
-            "mkdir -p /tmp/tm-ro && sudo mount_apfs -o ro -s %s %s /tmp/tm-ro" % (hits[0][0], device),
-            "cp /tmp/tm-ro%s . && sudo umount /tmp/tm-ro" % hits[0][1],
-        ]
-        return SurfaceReport("time machine", FOUND, lines, recovery)
+        return SurfaceReport("time machine", FOUND, lines,
+                             _time_machine_manual_recovery(hits[0][0], device, hits[0][1]))
     if searched:
         lines.append("searched %s and did not find it" % ", ".join(searched))
     if unsearched:
         # A snapshot that would not open was not searched; saying "did not
         # find it" about it is the conflation this file's contract forbids.
-        return SurfaceReport(
-            "time machine",
-            UNAVAILABLE,
-            lines,
-            ["mkdir -p /tmp/tm-ro && sudo mount_apfs -o ro -s %s %s /tmp/tm-ro && ls /tmp/tm-ro"
-             % (unsearched[0][0], device),
-             "# then look for the path under /tmp/tm-ro, and: sudo umount /tmp/tm-ro"],
-        )
+        return SurfaceReport("time machine", UNAVAILABLE, lines,
+                             _time_machine_manual_recovery(unsearched[0][0], device))
     return SurfaceReport("time machine", NOT_FOUND, lines)
+
+
+def _time_machine_manual_recovery(snapshot, device, path_inside=None):
+    """The exact commands that open one Time Machine snapshot and close it again.
+
+    TIME_MACHINE_READONLY_MOUNT_POINT in every line, and the same directory the
+    probe below mounts on, because the sudoers rule beside this script pins that
+    one path: a printed command naming anywhere else asks for a password on a
+    machine where the rule would have made it free, and a reader who follows a
+    printed command that differs from what the script itself runs is debugging
+    two things at once.
+
+    THE RELEASE IS `diskutil unmount` AND CARRIES NO SUDO. Unmounting needs no
+    privilege at all, so `sudo umount` asked for a password to undo something
+    that never needed one; and plain `umount` does not reliably release a
+    freshly mounted snapshot — it fails with "Resource busy — try 'diskutil
+    unmount'", macOS's own words, measured twice on 2026-08-31 on the
+    local-snapshot surface, where an ignored release left the mount point
+    occupied and every later snapshot failed against it.
+    """
+    mount = shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT)
+    open_it = "mkdir -p %s && sudo mount_apfs -o ro -s %s %s %s" % (mount, snapshot, device, mount)
+    if path_inside:
+        return [open_it,
+                "cp %s . && diskutil unmount %s"
+                % (shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT + path_inside), mount)]
+    return [open_it + " && ls %s" % mount,
+            "# then look for the path under %s, and: diskutil unmount %s"
+            % (TIME_MACHINE_READONLY_MOUNT_POINT, mount)]
 
 
 def _time_machine_destination(runner):
@@ -1283,7 +1385,24 @@ def _snapshot_datestamp(snapshot_name):
     return digits[:8]
 
 
-def _time_machine_probe(snapshot, device, wanted, runner):
+def _snapshot_timestamp(snapshot_name):
+    """'com.apple.TimeMachine.2026-08-13-183101.backup' -> '20260813183101', or None.
+
+    The FULL stamp, to the second, and never the date above. A date cannot
+    order a snapshot against a deletion that happened the same day, and
+    same-day is the ordinary case rather than an edge: 7 of the 62 backups on
+    the measured volume share 2026-08-23. The speech gate compares against a
+    git commit timestamp rendered in the same 14 digits, so the comparison is
+    a plain string comparison between two fixed-width local-time stamps.
+
+    None when the name carries no such stamp, so a snapshot this cannot place
+    in time is never counted as predating anything.
+    """
+    digits = "".join(ch for ch in snapshot_name if ch.isdigit())
+    return digits[:14] if len(digits) >= 14 else None
+
+
+def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False):
     """Open one snapshot read-only and look for `wanted` in it.
 
     Returns (outcome, detail):
@@ -1295,10 +1414,23 @@ def _time_machine_probe(snapshot, device, wanted, runner):
     The first version returned a bare None for both a mount failure and an
     absent file, and the caller rendered both as "searched ... and did not
     find it". A snapshot that never opened was not searched.
+
+    THE MOUNT POINT IS THE FIXED ONE, and the argv is exactly the shape the
+    sudoers rule permits — `mount_apfs -o ro -s <snapshot> <device>
+    <TIME_MACHINE_READONLY_MOUNT_POINT>`. sudoers matches argument for
+    argument, so reordering the flags or mounting elsewhere puts the password
+    prompt back on a machine where the rule is installed.
+
+    `prompt_for_root` drops sudo's `-n`, which is the whole of what the flag
+    does here: with `-n` sudo fails rather than ask, which is right for an
+    unattended run; without it sudo prompts on the tty — and on a machine with
+    the sudoers rule installed it does not have to ask at all, because the
+    command matches a NOPASSWD entry either way.
     """
-    mount_point = "/tmp/find-deleted-path-across-backups-ro"
+    mount_point = TIME_MACHINE_READONLY_MOUNT_POINT
     runner(["mkdir", "-p", mount_point])
-    code, _, stderr = runner(["sudo", "-n", "mount_apfs", "-o", "ro", "-s", snapshot, device, mount_point], timeout=LONG_TIMEOUT_SECONDS)
+    sudo = ["sudo"] if prompt_for_root else ["sudo", "-n"]
+    code, _, stderr = runner(sudo + ["mount_apfs", "-o", "ro", "-s", snapshot, device, mount_point], timeout=LONG_TIMEOUT_SECONDS)
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
         return "unmounted", "mount_apfs said: %s" % first
@@ -1322,7 +1454,128 @@ def _time_machine_probe(snapshot, device, wanted, runner):
             return "unreadable", "find said: %s" % first
         return "miss", None
     finally:
-        runner(["sudo", "-n", "umount", mount_point], timeout=LONG_TIMEOUT_SECONDS)
+        # `diskutil unmount`, unprivileged, for the reason spelled out in
+        # _time_machine_manual_recovery: plain `umount` does not reliably
+        # release a freshly mounted snapshot, and this mount point is fixed, so
+        # one snapshot left mounted breaks every later run of this script.
+        runner(["diskutil", "unmount", mount_point], timeout=LONG_TIMEOUT_SECONDS)
+
+
+# --------------------------------------------------------------------------
+# The one channel to the user that does not run through an agent
+# --------------------------------------------------------------------------
+
+def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
+    """Speak one sentence when a person is genuinely needed. Return it, or None.
+
+    WHY SPEECH AT ALL. On 2026-08-31 this script's Time Machine surface said
+    "needs your password" and the agent reading it put that four paragraphs
+    into a long message; the user never saw it. Printing louder cannot fix
+    that, because the failure was in the relay and not in the wording. `say`
+    reaches the room directly. It is the user's own convention for the same
+    reason: he works in other seats' terminals and does not read transcripts.
+
+    It is spoken before the report is printed, and blocks for the few seconds
+    the sentence takes. That is deliberate rather than backgrounded: a spoken
+    line whose process is orphaned when the script exits is a line nobody
+    hears, and this path is rare enough that a few seconds cost nothing.
+
+    NO PLATFORM GUARD, and that is not an oversight. Nothing can reach this
+    call except through a report that `tmutil destinationinfo` and `diskutil
+    info` both answered, which is macOS by construction; ned-box has no Time
+    Machine destination and never gets a wall report to speak about.
+    """
+    sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
+    if sentence is None:
+        return None
+    runner(["say", sentence])
+    return sentence
+
+
+def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner):
+    """The sentence to speak, or None when he must not be disturbed.
+
+    FOUR CONDITIONS, ALL REQUIRED, because a channel that reaches the room is
+    only worth having while it stays rare. Any one of them failing is silence.
+
+      1. Nothing else found it. A run whose git or transcripts surface came
+         back FOUND needs no password and no person: the file is already
+         recoverable and the report says how. UNAVAILABLE elsewhere does NOT
+         excuse the wall — a Timeshift surface that could not be reached
+         because the box is asleep leaves him just as needed, so the test is
+         "did any surface FIND it", not "was every surface searched".
+      2. The Time Machine surface stopped at the credential rather than at
+         anything else. That is the `root_credential_needed` mark, which the
+         surface sets only after it has enumerated snapshots on an attached,
+         mounted disk and `sudo -n true` came back non-zero. It carries
+         conditions 3 and "there is something in there to search" in one flag:
+         a missing disk, an unconfigured destination or a warm credential all
+         leave it unset, and `sudo -n` exits non-zero WITHOUT prompting, so
+         probing for it costs nothing and can never summon a password window
+         by accident.
+      3. A backup exists whose timestamp predates the deletion. Without one,
+         the password cannot help and sending him after it would waste his
+         walk. The bound is the DELETION commit's timestamp, not the newest
+         commit whose tree still holds the blob — that one is usually older
+         than the deletion and would rule out backups that do have the file.
+         A PATH GIT NEVER TRACKED CANNOT SATISFY THIS, and a builder reading
+         only the list above will not derive it: no deletion commit means no
+         bound, no bound means no backup can be shown to predate anything, so
+         the line never speaks for a never-committed file. That is the right
+         answer rather than a gap — a never-committed file is what local
+         snapshots and transcripts are there to answer, and Time Machine
+         excludes the scratchpad those files mostly live in anyway.
+      4. The search is for a known path, not a bare filename. A fragment
+         cannot be tested with one `stat` inside a snapshot; it needs a `find`
+         across the whole tree, which no snapshot surface here runs. Waking
+         him for a search that could not use the mount is the worst of both.
+
+    Condition 2 is also why `--prompt-for-root` is silent: with the flag the
+    surface walks past the wall and never sets the mark, which is correct —
+    the person is already at the terminal, and sudo is about to ask him there.
+    """
+    wall = next((r for r in reports if getattr(r, "root_credential_needed", False)), None)
+    if wall is None:
+        return None
+    if any(r.status == FOUND for r in reports):
+        return None
+    stripped = _strip_dot_slash(wanted)
+    if "/" not in stripped:
+        return None
+    if "git" in skip:
+        # No git surface ran, so there is no deletion commit to bound with, and
+        # asking git anyway would contradict the flag the caller typed.
+        return None
+    deleted_at = _git_deletion_timestamp(stripped, repo, runner)
+    if deleted_at is None:
+        return None
+    stamps = [_snapshot_timestamp(s) for s in getattr(wall, "snapshots_enumerated", [])]
+    if not any(stamp is not None and stamp <= deleted_at for stamp in stamps):
+        return None
+    return "%s needs your password to search Time Machine for %s" % (
+        SPOKEN_TOOL_NAME, os.path.basename(stripped))
+
+
+def _git_deletion_timestamp(wanted, repo, runner):
+    """When the deletion of `wanted` was committed, as '20260813183101', or None.
+
+    `--diff-filter=D` is the whole point: it selects the commit that REMOVED
+    the path, which is the moment after which a backup can no longer hold it.
+    `--all --full-history` gives it the same reach the git surface has, so a
+    path deleted on a branch HEAD cannot see is still bounded.
+
+    The date is asked for as local-time digits rather than %cI, so the
+    comparison against a snapshot name is between two fixed-width strings in
+    one coordinate system — snapshot names carry local time — with no
+    timezone-offset parsing on the system python this file has to run under.
+    """
+    code, out, _ = runner(["git", "-C", repo, "log", "--all", "--full-history", "-1",
+                           "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
+                           "--format=%cd", "--", wanted])
+    if code != 0 or not out.strip():
+        return None
+    stamp = out.strip().splitlines()[0].strip()
+    return stamp if len(stamp) == 14 and stamp.isdigit() else None
 
 
 # --------------------------------------------------------------------------
@@ -1346,7 +1599,8 @@ def _combine(statuses):
     return NOT_FOUND
 
 
-def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(), runner=run_command):
+def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
+                 runner=run_command, prompt_for_root=False):
     reports = []
     newest_date_held = None
 
@@ -1371,7 +1625,12 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     if "box" not in skip and "timeshift" not in skip:
         reports.append(search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner))
     if "timemachine" not in skip:
-        reports.append(search_time_machine(wanted, newest_date_held, runner=runner))
+        reports.append(search_time_machine(wanted, newest_date_held, runner=runner,
+                                           prompt_for_root=prompt_for_root))
+    # Here rather than in main(), because this is the first point at which every
+    # surface's answer exists, and it is what the designed recovery hook will
+    # call: the hook assembles a report, it does not run the command line.
+    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner)
     return reports
 
 
@@ -1407,6 +1666,10 @@ def main(argv=None, runner=run_command):
                         choices=["localsnapshots", "git", "transcripts", "box", "timeshift", "timemachine"],
                         help="skip a surface (repeatable); 'box' skips everything on the box — "
                              "its transcripts as well as Timeshift — so nothing is sent over ssh")
+    parser.add_argument("--prompt-for-root", action="store_true",
+                        help="mount the Time Machine snapshot from here, letting sudo ask for your "
+                             "password in this terminal, instead of printing the command. Only ever "
+                             "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
 
     # One form for every surface: an absolute path inside the repository is
@@ -1423,6 +1686,7 @@ def main(argv=None, runner=run_command):
         DEFAULT_BOX_SEARCH_ROOTS,
         skip=set(args.skip),
         runner=runner,
+        prompt_for_root=args.prompt_for_root,
     )
     print(render(shown, reports))
     return exit_status(reports)

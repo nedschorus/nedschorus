@@ -1166,12 +1166,17 @@ check("a disk that refuses to mount reports diskutil's own words",
 # Warm sudo: the branch that actually opens snapshots. The first version's
 # probe returned None for a mount that failed AND for a file that was absent,
 # so a mount_apfs refusal rendered as "searched ... and did not find it".
+TM_MOUNT = finder.TIME_MACHINE_READONLY_MOUNT_POINT
+TM_FIND = "find %s/Users" % TM_MOUNT
+
 WARM = [
     ("tmutil destinationinfo", DESTINATION_INFO),
     ("diskutil info", DISKUTIL_MOUNTED),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (0, "", "")),
-    ("sudo -n umount", (0, "", "")),
+    # The release is unprivileged and is `diskutil unmount`, not `umount`:
+    # the fixture must not answer a command the script no longer runs.
+    ("diskutil unmount", (0, "", "")),
 ]
 tm_mount_refused = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (1, "", "mount_apfs: volume could not be mounted: Resource busy\n")),
@@ -1192,7 +1197,7 @@ check("a refused mount is not followed by an umount of it",
 
 tm_warm_miss = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (0, "", "")),
-    ("find /tmp/find-deleted-path-across-backups-ro/Users", (0, "", "")),
+    (TM_FIND, (0, "", "")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_warm_miss)
 check("with warm sudo, a snapshot that mounts and lacks the file is NOT FOUND, naming what was searched",
@@ -1200,24 +1205,24 @@ check("with warm sudo, a snapshot that mounts and lacks the file is NOT FOUND, n
                                                        "com.apple.TimeMachine.2026-08-12-202035.backup and did not find it")
                                          for l in report.lines),
       "%s %s" % (report.status, report.lines))
-check("every mounted snapshot is unmounted afterwards",
-      sum(1 for c in tm_warm_miss.calls if "umount" in c) == 2, str(tm_warm_miss.calls))
+check("every mounted snapshot is released afterwards, with diskutil unmount and no sudo",
+      sum(1 for c in tm_warm_miss.calls if c == "diskutil unmount " + TM_MOUNT) == 2
+      and not any(c.startswith("sudo") and "umount" in c for c in tm_warm_miss.calls),
+      str(tm_warm_miss.calls))
 
 tm_warm_hit = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (0, "", "")),
-    ("find /tmp/find-deleted-path-across-backups-ro/Users",
-     (0, "/tmp/find-deleted-path-across-backups-ro/Users/el/Projects/nedschorus/a/b.md\n", "")),
+    (TM_FIND, (0, TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_warm_hit)
 check("with warm sudo, a hit is FOUND with the path inside the snapshot and a cp command",
       report.status == FOUND and any("holds /Users/el/Projects/nedschorus/a/b.md" in l for l in report.lines)
-      and any(c.startswith("cp /tmp/tm-ro/Users/el/Projects/nedschorus/a/b.md") for c in report.recovery),
+      and any(c.startswith("cp " + TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md") for c in report.recovery),
       "%s %s %s" % (report.status, report.lines, report.recovery))
 
 tm_find_fails = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (0, "", "")),
-    ("find /tmp/find-deleted-path-across-backups-ro/Users",
-     (1, "", "find: /tmp/find-deleted-path-across-backups-ro/Users: No such file or directory\n")),
+    (TM_FIND, (1, "", "find: " + TM_MOUNT + "/Users: No such file or directory\n")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_find_fails)
 check("a mounted snapshot whose find fails is UNAVAILABLE quoting find (the /Users layout is unverified)",
@@ -1227,7 +1232,7 @@ check("a mounted snapshot whose find fails is UNAVAILABLE quoting find (the /Use
 tm_one_refused = FakeRunner(WARM + [
     ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
     ("sudo -n mount_apfs", (0, "", "")),
-    ("find /tmp/find-deleted-path-across-backups-ro/Users", (0, "", "")),
+    (TM_FIND, (0, "", "")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_one_refused)
 check("one refused mount among searched-and-empty snapshots is UNAVAILABLE, listing both",
@@ -1326,6 +1331,239 @@ check("the header shows the repo-relative form an absolute path was searched as"
       text.startswith("Searching every history this fleet keeps for: md-review-records/x/dispositions.md "
                       "(given as /repo/md-review-records/x/dispositions.md)"),
       text.splitlines()[0])
+
+
+# --------------------------------------------------------------------------
+# The fixed mount point, and the sudoers rule that fits it and nothing else
+# --------------------------------------------------------------------------
+
+SUDOERS_RULE_PATH = (MODULE_PATH.resolve().parent.parent / "config"
+                     / "sudoers-mount-apfs-readonly-for-backup-recovery")
+sudoers_text = SUDOERS_RULE_PATH.read_text() if SUDOERS_RULE_PATH.exists() else ""
+alias_lines = [l for l in sudoers_text.splitlines() if l.startswith("Cmnd_Alias")]
+
+check("the sudoers rule ships beside the code that depends on it", SUDOERS_RULE_PATH.exists(),
+      "%s is missing, so the mount point below is pinned by a file nobody can read" % SUDOERS_RULE_PATH)
+check("the rule permits exactly one command, and it is a read-only mount_apfs",
+      len(alias_lines) == 1 and "/sbin/mount_apfs -o ro -s" in alias_lines[0],
+      str(alias_lines))
+check("the mount point the code uses is the one and only path the rule permits",
+      len(alias_lines) == 1 and alias_lines[0].split()[-1] == TM_MOUNT,
+      "rule ends %r, code uses %r — a mount anywhere else still asks for a password"
+      % (alias_lines[0].split()[-1] if alias_lines else None, TM_MOUNT))
+check("the fixed mount point is the /private/tmp path the rule was validated against",
+      TM_MOUNT == "/private/tmp/nedschorus-backup-readonly-mount", TM_MOUNT)
+
+# sudoers matches argument for argument, so the argv this script builds has to be
+# the argv the rule spells: same flags, same order, that mount point last.
+mount_calls = [c for c in tm_warm_miss.calls if "mount_apfs" in c]
+check("the mount argv is exactly the shape the sudoers rule permits",
+      mount_calls and mount_calls[0] ==
+      "sudo -n mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup "
+      "/dev/disk5s2 " + TM_MOUNT,
+      str(mount_calls[:1]))
+check("the script mounts on the fixed path rather than only printing it",
+      ("mkdir -p " + TM_MOUNT) in tm_warm_miss.calls, str(tm_warm_miss.calls))
+
+tm_wall_paths = FakeRunner([
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
+    ("sudo -n true", (1, "", "sudo: a password is required\n")),
+])
+wall_report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_wall_paths)
+hit_report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14",
+                                        runner=FakeRunner(WARM + [
+                                            ("sudo -n mount_apfs", (0, "", "")),
+                                            (TM_FIND, (0, TM_MOUNT + "/Users/el/a/b.md\n", "")),
+                                        ]))
+every_tm_command = wall_report.recovery + hit_report.recovery
+check("no printed Time Machine command names any other mount point",
+      every_tm_command and all(TM_MOUNT in c for c in every_tm_command)
+      and not any("/tmp/tm-ro" in c for c in every_tm_command),
+      str(every_tm_command))
+check("the printed release is diskutil unmount and carries no sudo",
+      not any("sudo umount" in c or "sudo -n umount" in c for c in every_tm_command)
+      and any("diskutil unmount " + TM_MOUNT in c for c in every_tm_command),
+      str(every_tm_command))
+check("the wall report names the sudoers rule as what removes the wall unattended",
+      any("config/sudoers-mount-apfs-readonly-for-backup-recovery" in l for l in wall_report.lines),
+      str(wall_report.lines))
+
+# --------------------------------------------------------------------------
+# --prompt-for-root: off by default, and the only thing that drops sudo's -n
+# --------------------------------------------------------------------------
+
+COLD_THEN_PROMPTED = [
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
+    ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    # "sudo mount_apfs" is not a substring of "sudo -n mount_apfs", so this
+    # entry answers the prompting form of the mount and only that form.
+    ("sudo mount_apfs", (0, "", "")),
+    ("diskutil unmount", (0, "", "")),
+    (TM_FIND, (0, TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
+]
+
+tm_cold_default = FakeRunner(COLD_THEN_PROMPTED)
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_cold_default)
+check("without --prompt-for-root a cold sudo stops at the wall, as an unattended run must",
+      report.status == UNAVAILABLE and any("needs your password" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and no sudo without -n is ever run, so an unattended run cannot hang on a prompt",
+      not any(c.startswith("sudo ") and not c.startswith("sudo -n ") for c in tm_cold_default.calls),
+      str(tm_cold_default.calls))
+
+tm_cold_prompted = FakeRunner(COLD_THEN_PROMPTED)
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14",
+                                    runner=tm_cold_prompted, prompt_for_root=True)
+check("with --prompt-for-root a cold sudo is crossed and the snapshot is searched",
+      report.status == FOUND
+      and any("holds /Users/el/Projects/nedschorus/a/b.md" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... by running the mount itself, without -n, so sudo can ask at the terminal",
+      any(c == "sudo mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup "
+               "/dev/disk5s2 " + TM_MOUNT for c in tm_cold_prompted.calls)
+      and not any("sudo -n mount_apfs" in c for c in tm_cold_prompted.calls),
+      str(tm_cold_prompted.calls))
+check("... and the report says the password was asked for, not that sudo was already warm",
+      any("--prompt-for-root asked at the terminal" in l for l in report.lines)
+      and not any("already-warm" in l for l in report.lines),
+      str(report.lines))
+check("... and what it mounted is still released with diskutil unmount",
+      any(c == "diskutil unmount " + TM_MOUNT for c in tm_cold_prompted.calls),
+      str(tm_cold_prompted.calls))
+
+tm_warm_prompted = FakeRunner(WARM + [("sudo mount_apfs", (0, "", "")), (TM_FIND, (0, "", ""))])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14",
+                                    runner=tm_warm_prompted, prompt_for_root=True)
+check("with --prompt-for-root and a credential already cached, the search still runs",
+      report.status == NOT_FOUND, "%s %s" % (report.status, report.lines))
+
+code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git",
+                       "--skip", "transcripts", "--skip", "box", "--prompt-for-root"],
+                      FakeRunner(COLD_THEN_PROMPTED))
+check("--prompt-for-root reaches the Time Machine surface from the command line",
+      code == 0 and "Recoverable from: time machine." in text, "exit=%s\n%s" % (code, text))
+
+code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git",
+                       "--skip", "transcripts", "--skip", "box"], FakeRunner(COLD_THEN_PROMPTED))
+check("the flag is off by default: the identical run without it stops at the wall",
+      code == 3 and "Could NOT search: time machine" in text, "exit=%s\n%s" % (code, text))
+
+# --------------------------------------------------------------------------
+# The spoken line, and the four conditions that keep it rare
+# --------------------------------------------------------------------------
+
+DELETED_2026_08_13_NOON = ("--diff-filter=D", (0, "20260813120000\n", ""))
+SNAPSHOT_BEFORE = "com.apple.TimeMachine.2026-08-12-202035.backup"
+SNAPSHOT_SAME_DAY_AFTER = "com.apple.TimeMachine.2026-08-13-183101.backup"
+
+
+def tm_wall_report(snapshots=(SNAPSHOT_BEFORE, SNAPSHOT_SAME_DAY_AFTER)):
+    """The report shape the Time Machine surface hands back at the password wall."""
+    wall = finder.SurfaceReport("time machine", UNAVAILABLE, ["reading INSIDE one needs your password"])
+    wall.root_credential_needed = True
+    wall.snapshots_enumerated = list(snapshots)
+    return wall
+
+
+def tm_report_without_the_wall_mark(status, line):
+    """A Time Machine report that stopped somewhere OTHER than the credential.
+
+    It carries the enumerated snapshots too, so the only thing separating it
+    from the report above is the mark itself. Without that the condition-2
+    cases would pass merely because the attribute was absent, and a gate that
+    spoke for every UNAVAILABLE Time Machine report would slip through them.
+    """
+    report = finder.SurfaceReport("time machine", status, [line])
+    report.snapshots_enumerated = [SNAPSHOT_BEFORE, SNAPSHOT_SAME_DAY_AFTER]
+    return report
+
+
+def spoken(wanted, reports, table=(DELETED_2026_08_13_NOON,), skip=()):
+    return finder.speech_line_when_root_password_is_needed(
+        wanted, reports, "/repo", skip, FakeRunner(list(table)))
+
+
+missed = [finder.SurfaceReport("git", NOT_FOUND, ["searched"]),
+          finder.SurfaceReport("transcripts", NOT_FOUND, ["searched"])]
+
+line = spoken("docs/a/b.md", missed + [tm_wall_report()])
+check("all four conditions met: there is a line to speak",
+      line is not None, "the announce half of this change does nothing if this never fires")
+check("... naming the tool first and the file last, in one short sentence",
+      line and line.startswith(finder.SPOKEN_TOOL_NAME) and line.endswith("b.md")
+      and "\n" not in line and len(line.split()) < 20,
+      repr(line))
+check("... and it speaks the basename, not a path nobody can follow read aloud",
+      line and "docs/" not in line, repr(line))
+
+check("condition 1 — a surface that FOUND it means nobody is needed",
+      spoken("docs/a/b.md",
+             missed + [finder.SurfaceReport("git", FOUND, ["x"], ["git show a:x"]), tm_wall_report()])
+      is None)
+check("condition 1 — a surface that could NOT be searched does not excuse the wall",
+      spoken("docs/a/b.md",
+             [finder.SurfaceReport("timeshift", UNAVAILABLE, ["box asleep"]), tm_wall_report()])
+      is not None,
+      "an unreachable box leaves him just as needed; only a FOUND makes him unnecessary")
+
+check("condition 2 — no wall mark, no line: a warm sudo searched and never met one",
+      spoken("docs/a/b.md",
+             missed + [tm_report_without_the_wall_mark(NOT_FOUND, "searched")]) is None)
+check("condition 2 — a disconnected disk is UNAVAILABLE but is not a credential wall",
+      spoken("docs/a/b.md",
+             missed + [tm_report_without_the_wall_mark(UNAVAILABLE, "reconnect it")]) is None,
+      "speaking here sends him to type a password at a disk that is not plugged in")
+
+check("condition 3 — a path git never tracked has no deletion commit, so no line",
+      spoken("docs/a/b.md", missed + [tm_wall_report()], table=()) is None,
+      "no deletion commit means no bound, so no backup can be shown to predate anything")
+check("condition 3 — every snapshot postdating the deletion means the password cannot help",
+      spoken("docs/a/b.md", missed + [tm_wall_report(snapshots=(SNAPSHOT_SAME_DAY_AFTER,))]) is None,
+      "18:31 is after a 12:00 deletion; comparing DATES rather than timestamps speaks wrongly here")
+check("condition 3 — the bound is a timestamp, so a same-day EARLIER snapshot does count",
+      spoken("docs/a/b.md",
+             missed + [tm_wall_report(snapshots=("com.apple.TimeMachine.2026-08-13-090000.backup",))])
+      is not None)
+check("condition 3 — skipping git skips the bound rather than asking git behind the flag's back",
+      spoken("docs/a/b.md", missed + [tm_wall_report()], skip={"git"}) is None)
+
+check("condition 4 — a bare filename could not have used the mount anyway",
+      spoken("b.md", missed + [tm_wall_report()]) is None)
+check("condition 4 — an absolute path is a known path and does qualify",
+      spoken("/Users/el/docs/a/b.md", missed + [tm_wall_report()]) is not None)
+
+SPEAKS = [
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "\n", "")),
+    ("--name-only", (0, "docs/other.md\n", "")),
+    DELETED_2026_08_13_NOON,
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
+    ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("say", (0, "", "")),
+]
+
+speaking_runner = FakeRunner(SPEAKS)
+finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
+                    skip={"localsnapshots", "transcripts", "box"}, runner=speaking_runner)
+said = [c for c in speaking_runner.calls if c.startswith("say ")]
+check("a whole run that hits the wall speaks, once, without an agent in between",
+      len(said) == 1 and "b.md" in said[0] and finder.SPOKEN_TOOL_NAME in said[0],
+      str(speaking_runner.calls))
+
+silent_runner = FakeRunner(SPEAKS + [("sudo mount_apfs", (0, "", "")),
+                                     ("diskutil unmount", (0, "", "")),
+                                     (TM_FIND, (0, "", ""))])
+finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
+                    skip={"localsnapshots", "transcripts", "box"}, runner=silent_runner,
+                    prompt_for_root=True)
+check("--prompt-for-root never speaks: the person is already at the terminal",
+      not any(c.startswith("say ") for c in silent_runner.calls), str(silent_runner.calls))
 
 print()
 if failures:
