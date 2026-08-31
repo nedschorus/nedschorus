@@ -355,11 +355,20 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         lines.append("(%s was read as a path relative to the repository; a trailing fragment of some "
                      "other path would need a find over the volume, which this surface does not run)" % wanted)
     if unsearched:
+        # The command handed back has to be one that can work. A snapshot macOS
+        # already holds cannot be mounted a second time — that is what put it in
+        # this list — so offering `mount_apfs` for it would be handing over the
+        # very command whose refusal is quoted two lines above.
+        reachable = [snapshot for snapshot, _ in unsearched if snapshot not in already_mounted]
+        if not reachable:
+            lines.append("every snapshot that could not be searched is one macOS already has mounted; "
+                         "mount_apfs cannot open a snapshot twice, and macOS's own mounts are not this "
+                         "script's to clear — the rest were searched and do not have it")
         return SurfaceReport(
             "local snapshots",
             UNAVAILABLE,
             lines,
-            _local_snapshot_recovery(unsearched[0][0], probe_path, mount_point, stuck),
+            _local_snapshot_recovery(reachable[0], probe_path, mount_point, stuck) if reachable else [],
         )
     return SurfaceReport("local snapshots", NOT_FOUND, lines)
 

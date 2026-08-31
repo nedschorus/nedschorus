@@ -363,6 +363,28 @@ check("a snapshot that is neither readable in place nor mountable is UNAVAILABLE
 check("... and nothing is done to clear macOS's own mount of it",
       not any(c.startswith("diskutil unmount " + STALE_OS_MOUNT) for c in os_mount_ghost.calls),
       str(os_mount_ghost.calls))
+# It is the only unsearchable one here, and macOS holds it, so no command can
+# work — saying that beats handing over a mount_apfs whose refusal is quoted two
+# lines above it.
+check("... and no unrunnable command is offered for a snapshot that cannot be mounted twice",
+      report.recovery == [] and any("mount_apfs cannot open a snapshot twice" in l for l in report.lines),
+      "%s %s" % (report.lines, report.recovery))
+
+# But when something unsearchable IS still mountable, that is the one to offer.
+mixed_unreachable = MountTableRunner([
+    ("test -d", (1, "", "")),
+    ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-30-124711",
+     (75, "", "mount_apfs: volume could not be mounted: Resource busy\n")),
+    ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-31-105031",
+     (77, "", "mount_apfs: volume could not be mounted: Operation not permitted\n")),
+    LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+], MOUNT_LISTING)
+report = finder.search_local_snapshots(REAPED, "/repo", mixed_unreachable)
+check("the command handed back names a snapshot that can still be mounted, not one macOS holds",
+      report.status == UNAVAILABLE and report.recovery
+      and "com.apple.TimeMachine.2026-08-31-105031.local" in report.recovery[0]
+      and "com.apple.TimeMachine.2026-08-30-124711" not in report.recovery[0],
+      "%s %s" % (report.lines, report.recovery))
 
 mount_unreadable = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", ""))])
 report = finder.search_local_snapshots(REAPED, "/repo", mount_unreadable)
