@@ -9,8 +9,8 @@ take their repository root from their own location on disk, so a copy is a
 grid whose record directories and whose `git status` are the scratch tree's
 and never this checkout's. And the stubs are the models: each finds the
 report path in the prompt it was handed — the Claude leg on stdin, the Codex
-leg as an argument — writes a line to it and exits 0, so eight cells complete
-in seconds without a model call. A real grid run is eight reviews and half an
+leg as an argument — writes a line to it and exits 0, so four cells complete
+in seconds without a model call. A real grid run is four reviews and half an
 hour; these cases are about what the grid says, not about what a reviewer
 finds.
 
@@ -40,7 +40,7 @@ WHAT IS PINNED HERE.
   - The line that names changed files still reaches the grid's output, and
     the log is still deleted on success. Those are the two halves the fix
     must not trade against each other: lifting more lines is worthless if the
-    lift stops happening, and keeping the log would leave eight files in
+    lift stops happening, and keeping the log would leave four files in
     every record set for the reviewing agent to sort through.
 
   - A cell that recovered a near-miss report says so on the grid's output.
@@ -108,7 +108,7 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 
 # A stand-in for both runtimes. It takes the report path from the prompt it
 # was given rather than from the environment, because the grid gives each of
-# its eight cells a different one and only the prompt carries which: the
+# its four cells a different one and only the prompt carries which: the
 # Claude leg feeds the prompt on stdin, the Codex leg passes it as an
 # argument, so the stub reads both and looks for a path under the records
 # tree. COLD_READ_GRID_TEST_STUB_EDIT_PATH, when set, is a file to append to
@@ -255,9 +255,9 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in not_checked_lines),
           f"lifted lines were {not_checked_lines!r}")
     check("every cell that could not be checked is named",
-          len(not_checked_lines) == 8, f"{len(not_checked_lines)} of 8: {not_checked_lines!r}")
-    check("the eight reviews still land and the grid still exits 0",
-          result.returncode == 0 and len(saved_lines) == 8,
+          len(not_checked_lines) == 4, f"{len(not_checked_lines)} of 4: {not_checked_lines!r}")
+    check("the four reviews still land and the grid still exits 0",
+          result.returncode == 0 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the stderr logs are still deleted once their lines have been lifted",
@@ -273,7 +273,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # What the reviewer edits here is the document under review, so this one
     # run trips both guards at once and the two are checked together: the
     # stray write is named, and the target is reported as having changed
-    # under the reviewers. The run therefore exits 3, not 0 — a set of eight
+    # under the reviewers. The run therefore exits 3, not 0 — a set of four
     # reports describing text that no longer exists is the condition a caller
     # most needs to branch on, and it outranks the fact that every cell
     # succeeded. The case after this one keeps the plain stray-write path
@@ -294,8 +294,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f"lifted lines were {stray_lines!r}")
     check("a run whose check did run is not also reported as unchecked",
           "WRITE CHECK DID NOT RUN" not in result.stdout, repr(result.stdout))
-    check("the eight reviews land, and a target edited under them exits 3",
-          result.returncode == 3 and len(saved_lines) == 8,
+    check("the four reviews land, and a target edited under them exits 3",
+          result.returncode == 3 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid says the target changed, on its own output, in one line",
           result.stdout.count("TARGET CHANGED DURING RUN:") == 1, repr(result.stdout))
@@ -315,7 +315,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # A moved target and a settled one call for opposite next actions, so the
     # exit-3 path must not close with the instructions to triage the set.
     check("a moved target does not get the closing instructions to triage",
-          "All eight reviews are complete" not in result.stdout, repr(result.stdout))
+          "All four reviews are complete" not in result.stdout, repr(result.stdout))
     check("a moved target is told to stop editing and run the grid again",
           "Stop editing the document" in result.stdout
           and "Do not triage this set" in result.stdout, repr(result.stdout))
@@ -325,17 +325,17 @@ with tempfile.TemporaryDirectory() as scratch:
           and list(record_directory.glob("*.stderr.log")) == [],
           f"logs left in {record_directory}")
     # The reports are marked, never deleted: each still records truthfully
-    # what one reviewer read, which is evidence. Eight cell reports plus the
+    # what one reviewer read, which is evidence. Four cell reports plus the
     # reference-integrity pre-pass.
     reports = sorted(record_directory.glob("*.md"))
     check("every report in the set is still on disk — they are evidence",
-          len(reports) == 9, [report.name for report in reports])
+          len(reports) == 5, [report.name for report in reports])
     check("every report in the set carries the marker",
           all("<!-- TARGET CHANGED DURING RUN:" in report.read_text(encoding="utf-8")
               for report in reports),
           [report.name for report in reports
            if "<!-- TARGET CHANGED DURING RUN:" not in report.read_text(encoding="utf-8")])
-    stamped = record_directory / f"{record_directory.name}--claude-restate-good.md"
+    stamped = record_directory / f"{record_directory.name}--claude-hunt-good.md"
     check("the set holds a report named for both the run and the cell",
           stamped.is_file(), sorted(path.name for path in record_directory.iterdir()))
     # Read once, and survive an absent file: a name this suite got wrong should
@@ -380,21 +380,21 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a reviewer that strayed into another file is reported too",
           stray_lines != [] and all(stray_relative_path in line for line in stray_lines),
           f"lifted lines were {stray_lines!r}")
-    check("a stray write outside the target is not a failure: eight reviews, exit 0",
-          result.returncode == 0 and len(saved_lines) == 8,
+    check("a stray write outside the target is not a failure: four reviews, exit 0",
+          result.returncode == 0 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("a target nobody edited is not reported as changed",
           "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
     check("a settled target still gets the closing instructions to triage",
-          "All eight reviews are complete" in result.stdout
+          "All four reviews are complete" in result.stdout
           and "Stop editing the document" not in result.stdout, repr(result.stdout))
 
     # --- A target that moved while a cell also failed -----------------------
     # The two conditions are independent and land together often enough to
     # write down: the closing text follows the target change (do not triage,
     # run the grid again), so the note naming the failed cells must not send
-    # the reader back to a triage that is not happening. Both good-tier Claude
-    # cells fail outright here — the stub refuses every model in their chain —
+    # the reader back to a triage that is not happening. The good-tier Claude
+    # cell fails outright here — the stub refuses every model in its chain —
     # while the floor and Codex cells save their reports and edit the document
     # under review on the way out.
     repository = build_scratch_repository(scratch, "checkout-changed-and-failed")
@@ -405,16 +405,16 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
-    check("a run can lose two cells and its target at once: six saved, exit 3",
-          result.returncode == 3 and len(saved_lines) == 6,
+    check("a run can lose a cell and its target at once: three saved, exit 3",
+          result.returncode == 3 and len(saved_lines) == 3,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     # Read the NOTE line itself rather than the whole output: the per-cell
     # STRAY WRITE line also says "before triage", and it is emitted while the
     # cells run, before the grid can know the target moved.
     note_lines = [line for line in result.stdout.splitlines()
                   if line.startswith("NOTE: ")]
-    check("the failed cells are still named on the moved-target path",
-          note_lines != [] and "2 review(s) failed" in note_lines[0],
+    check("the failed cell is still named on the moved-target path",
+          note_lines != [] and "1 review(s) failed" in note_lines[0],
           f"note lines were {note_lines!r}")
     check("that note does not send the reader back to triage a short set",
           note_lines != [] and "before triage" not in note_lines[0],
@@ -426,9 +426,9 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- A cell that fell back says so ------------------------------------
     # The stub refuses to be claude-opus-5, which leads the Claude good tier.
-    # Both good-tier Claude cells therefore fall back to claude-fable-5 and
-    # produce their reports under it; the two floor cells and the four Codex
-    # cells are untouched, so eight reviews still land.
+    # The good-tier Claude cell therefore falls back to claude-fable-5 and
+    # produces its report under it; the floor cell and the two Codex cells
+    # are untouched, so four reviews still land.
     repository = build_scratch_repository(scratch, "checkout-fell-back")
     result = run_grid(
         repository, stubs,
@@ -440,15 +440,15 @@ with tempfile.TemporaryDirectory() as scratch:
                        if line.startswith("FELL BACK:")]
     check("a cell whose first-choice model failed says so on the grid's output",
           fell_back_lines != [], f"stdout was {result.stdout!r}")
-    check("both cells of the tier that fell back are named",
-          len(fell_back_lines) == 2 and all("claude" in line and "good" in line
+    check("the cell that fell back is named",
+          len(fell_back_lines) == 1 and all("claude" in line and "good" in line
                                             for line in fell_back_lines),
           f"lifted lines were {fell_back_lines!r}")
     check("the line names the model that actually wrote the report",
           all("claude-fable-5" in line for line in fell_back_lines),
           f"lifted lines were {fell_back_lines!r}")
-    check("a fallback is not a failure: eight reviews still land, grid exits 0",
-          result.returncode == 0 and len(saved_lines) == 8,
+    check("a fallback is not a failure: four reviews still land, grid exits 0",
+          result.returncode == 0 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the stderr logs are deleted once the fallback line has been lifted",
@@ -473,10 +473,10 @@ with tempfile.TemporaryDirectory() as scratch:
     recovered_lines = [line for line in result.stdout.splitlines()
                        if line.startswith("RECOVERED:")]
     check("a run whose cells recovered a near-miss still succeeds",
-          result.returncode == 0 and len(saved_lines) == 8,
+          result.returncode == 0 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid prints RECOVERED: for each cell that recovered a report",
-          len(recovered_lines) == 8, f"lifted lines were {recovered_lines!r}")
+          len(recovered_lines) == 4, f"lifted lines were {recovered_lines!r}")
     # Two directories now: the one the grid made and the one the stubs
     # invented. The grid's is the one holding the reference-integrity
     # pre-pass, which no stub ever writes — the invented one's name differs by
@@ -491,12 +491,12 @@ with tempfile.TemporaryDirectory() as scratch:
         grid_record_directories[0].name if grid_record_directories else "")
     check("the RECOVERED line names the cell it belongs to, run and all",
           any(line.startswith(
-              f"RECOVERED: {recovered_record_directory_name}--claude-restate-good.md")
+              f"RECOVERED: {recovered_record_directory_name}--claude-hunt-good.md")
               for line in recovered_lines),
           f"lifted lines were {recovered_lines!r}")
     check("the recovered reports are back in the directory the grid made",
           len(grid_record_directories) == 1
-          and len(list(grid_record_directories[0].glob("*.md"))) == 9,
+          and len(list(grid_record_directories[0].glob("*.md"))) == 5,
           [directory.name for directory in record_directories])
     check("the reports are moved out of the mistyped directory, not copied",
           all(list(directory.glob("*.md")) == [] for directory in record_directories
@@ -538,7 +538,7 @@ with tempfile.TemporaryDirectory() as scratch:
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
     check("a name ending in no genre suffix is not refused",
-          result.returncode == 0 and len(saved_lines) == 8,
+          result.returncode == 0 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stderr={result.stderr!r}")
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
@@ -564,9 +564,9 @@ with tempfile.TemporaryDirectory() as scratch:
         [f"{record_directory.name}--reference-check.md"]
         + [f"{record_directory.name}--{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
-           for pass_token in ("restate", "hunt")
+           for pass_token in ("hunt",)
            for tier in ("good", "floor")])
-    check("the set holds the eight cells plus the reference-integrity pre-pass",
+    check("the set holds the four cells plus the reference-integrity pre-pass",
           written_names == expected_names, written_names)
 
 print()

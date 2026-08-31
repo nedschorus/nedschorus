@@ -303,7 +303,7 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
 
     Without a baseline this reported every already-dirty path as the
     reviewer's doing. A cold read's ordinary subject is a draft that has not
-    landed, so the ordinary run starts dirty and all eight cells would
+    landed, so the ordinary run starts dirty and every cell of a grid would
     accuse the reviewer of changes it never made. A detector that cries wolf
     on the common case is one its readers learn to skip.
 
