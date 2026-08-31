@@ -1,6 +1,6 @@
 ---
 status: built
-rulings-as-of: 2026-08-27
+rulings-as-of: 2026-08-31
 ---
 
 # Session recycling — the handoff system
@@ -20,6 +20,7 @@ Each script's module docstring says what it does and why it is shaped that way; 
 - `scripts/handoff-write-and-check-supervisor.py` — the writer: fills every field a machine can compute, writes the handoff file, reports supervisor liveness.
 - `scripts/handoff-supervisor.py` — the supervisor: watch, kill, extract, carry tasks across (since PR #141 a launched seat's generations share one launcher-pinned list and nothing is copied; pre-seed copying is the unpinned-session path), launch the successor with the ignition prompt; one per agent, self-registered, lock-guarded.
 - `scripts/handoff-extract-conversation.py` — the extractor: carries the word-floor tail of the dialog verbatim to the successor.
+- `scripts/resupervise-seat.py` — the recovery tool: a seat whose supervisor died is restored by running this from ANOTHER window, not by the seat itself. Landed 2026-08-19 ([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), "unsupervised seats have a recovery procedure, not a hand improvisation") and missing from this list until 2026-08-31. It refuses when the seat's handoff counter is at or below the supervisor's consumed counter, on the reading that nothing is waiting.
 
 ## What a recycle kills, and how work survives it
 
@@ -40,14 +41,16 @@ A recycle kills the session, and the session's in-process subagents die with it:
 
 ## The handoff file format
 
-**Status: the block form below is QUEUED, not built** (R20 in
-`fleet-git-worktree-working-model.md`; the document's `status: built`
-frontmatter covers the rest of the system, not this). Today the writer
-collapses every whitespace run in the next step to a single space, and the
-supervisor parses one `key: value` line at a time with no block parser — so a
-multi-line next step reaches the successor as a dense chain. This section
-specifies what both ends will do, because a reader-only change cannot restore
-line breaks a writer has already destroyed.
+**Status: the block form below is BUILT and in daily use** (R20 in
+`fleet-git-worktree-working-model.md`). This section read "QUEUED, not built"
+until 2026-08-31, describing a writer that only collapsed whitespace and a
+supervisor that "parses one `key: value` line at a time with no block parser".
+Both ends have the block: `handoff-supervisor.py:parse_handoff_file` reads the
+opening marker, matches the terminator as an exact line, and records an
+unterminated block as a flag rather than a value; `write_handoff_file` appends
+it last. Verified on live output, not inferred — the merge-lane seat's handoff
+of 2026-08-31 carries a `next-step-verbatim:` block. The paragraphs below
+describe what both ends DO, not what they will do.
 
 The handoff file is a short list of `key: value` lines, written whole — the
 writer renders it to a `.partial` file and renames, so no reader ever sees it
@@ -66,11 +69,24 @@ writes it LAST:
     next-step: FIRST ACTION: run the suite. THEN: fix only the locale case.
     restart-counter: 7
     written-in: /Users/el/agents/git-infra
+    written-by-session: 616fccdf-2f79-4674-94e8-69c53043e8f0
     next-step-verbatim: <<END-OF-NEXT-STEP
     FIRST ACTION: run the suite and read the three failures.
     THEN: fix only the locale case; leave the other two for the
     design walk on docs/issues/45-remote-named-agent-launch-and-reattach.md@3406ac3.
     END-OF-NEXT-STEP
+
+`written-by-session` was added to the example on 2026-08-31; it had been
+written by `write_handoff_file` and missing from this shape. Its companion
+comment in the writer states which field discriminates a collision, and the
+answer is not the session id: *"written-in is the discriminator, not the
+session id: successive generations of one seat are different sessions in the
+SAME directory, while two seats sharing a name are different directories."*
+
+Three further fields are conditional and appear in this order after the five
+above: `dont-restart:` when the agent passed `--dont-restart`; then one
+`spawned-subagent-N:` line per subagent still working (specified below); then
+the verbatim block, always last.
 
 The opening marker is `<<END-OF-NEXT-STEP`, on the `next-step-verbatim:` line.
 The terminator is `END-OF-NEXT-STEP` alone, with no `<<`, on a line by itself.
@@ -139,6 +155,118 @@ would make an old supervisor boot its successor with the marker string as its
 entire instruction — silently, which is the failure this whole change exists to
 remove.
 
+### QUEUED: the per-session handoff file and consume-by-removal
+
+**Status: specified 2026-08-31, NOT built.** User-directed the same evening. The
+block form above shows what this section is for: a specification both ends must
+honour, written before either end changes.
+
+**What the user observed.** A handoff is mostly a summary of the session
+transcript that produced it, and every handoff file already carries
+`written-by-session`. So the handoff is a derived artefact of one `.jsonl`, and
+naming it after that transcript makes the relation addressable from either end.
+His second observation is the one that makes it work: a session can write more
+than one handoff, but **all but the latest are obsolete**, so one file per
+session, overwritten in place, loses nothing.
+
+**Why the counter is not simply deleted, and what actually retires it.** The
+`restart-counter` field does three jobs, and only the third is naming:
+
+1. **Novelty.** The supervisor polls one fixed path and must know whether the
+   file is one it has already acted on. `next_restart_counter` takes
+   `max(from_file, from_state, 0) + 1`, so the value is guaranteed to read as
+   new even when the file is missing, malformed, or older than what was
+   consumed.
+2. **Prune ordering.** `prune_old_generations` globs `<stem>-*.md` and sorts
+   **by filename**. The zero-padded counter is what makes lexical order equal
+   chronological order.
+3. **Archive identity.** Which handoff is which.
+
+Job 3 is better served by the session id. Job 2 disappears, because per-session
+files never collide and so nothing needs pruning — the cost of keeping every
+handoff is a few kilobytes against the multi-megabyte transcript each one
+summarises. Job 1 is the one that needs care, and **consume-by-removal** is what
+retires it: make the pending handoff a file whose PRESENCE means "waiting", and
+have the supervisor move it into the archive only after a successor has actually
+come up. Novelty becomes "does a file exist", with no counter and no high-water
+mark, and a session that writes twice simply rewrites its own pending file.
+
+**A recorded correction, because the wrong reason was argued first.** This seat
+defended the counter with a double-write scenario: a session writes a handoff,
+the supervisor consumes it without launching, the session writes a second one,
+and a supervisor comparing session ids sees "already consumed" and ignores a
+live handoff. The user rejected it and was right. `stop_session(process)` runs at
+`handoff-supervisor.py:1015`, before everything else, so **consuming a handoff
+implies the writing session was stopped**. A session that lives to write twice is
+one whose first handoff was never consumed, and then the session id compares
+correctly. The scenario cannot arise on the paths that exist.
+
+**The one path where consume and stop come apart** is the supervisor's boot and
+adoption path (`handoff-supervisor.py:906` and `:922`), where a supervisor
+starting up finds a handoff already on disk whose writing session may still be
+alive and is adopted rather than replaced. A build of this specification must
+state what consume-by-removal does there. It is not a reason to keep the
+counter; it is the case the new protocol has to answer explicitly.
+
+**The shape.** A pending handoff is one file per writing session:
+
+    ~/.claude/handoffs/pending/<seat>-<session-id>.md
+
+**The pending directory is not decoration, and this is the migration hazard that
+must not be missed.** `prune_old_generations` globs `<seat>-handoff-*.md`. A new
+per-session file placed beside the legacy ones with a name of that shape WOULD
+MATCH THAT GLOB, and an old supervisor would prune it — deleting a live pending
+handoff as though it were a stale generation. A subdirectory puts the new files
+outside every existing glob, and it makes "presence means waiting" literal.
+`.claude/handoffs/` and everything beneath it is writable by an agent since
+[#215](https://github.com/nedschorus/nedschorus/pull/215), so the subdirectory
+needs no further permission work.
+
+**Migration — two phases, and only the second one is gated.**
+
+- **Phase 1 is additive and safe to land at any time.** The writer writes BOTH:
+  the legacy `<seat>-handoff.md` exactly as today, counter included, and the new
+  pending file. A new supervisor prefers the pending file and falls back to the
+  legacy one; an old supervisor never looks in `pending/` and reads the legacy
+  file as it always has. Every combination of old and new writer against old and
+  new supervisor works, which is the property that matters, because supervisors
+  are long-running processes that outlive the code on disk.
+- **Phase 2 is gated on every seat's supervisor running current code.** The
+  writer stops emitting the legacy file and the counter, and the machinery below
+  is removed. Landing phase 2 while any supervisor is old would strand that
+  seat: `resupervise-seat.py:122` refuses a handoff that carries no readable
+  restart-counter, saying the supervisor would not ignite from it. That is why
+  the phases are separated rather than done as one change.
+
+**What phase 2 removes**, counted 2026-08-31 across the three scripts and their
+test suites:
+
+| machinery | scripts | tests |
+|---|---|---|
+| `restart-counter` field and `counter_from()` | 20 | 24 |
+| `next_restart_counter()` | 2 | — |
+| `consumed_counter` state and `consumed_counter_from_state()` | 18 | 12 |
+| `prune_old_generations()`, `GENERATIONS_KEPT`, two call sites | 3 | 1 |
+| `resupervise-seat.py`'s `counter <= consumed` refusal | — | — |
+
+Two are partly rather than wholly removed, and the difference is worth stating
+so a builder does not over-delete. `generation` (24 + 12) stops being an
+identifier but survives as the recycle count the supervisor prints at `:966` and
+`:983`. `--claim` and `claiming_directory()` (5 + 2) lose their stated reason — a
+handoff lost unread, because two seats sharing a name overwrote one file — since
+per-session files no longer collide; but the agent name still selects the
+supervisor STATE file and the LOCK, so the refusal narrows rather than vanishes.
+
+**A defect this repairs as a side effect, which is why it is worth doing rather
+than merely tidy.** On a seat whose supervisor has no terminal, `--dont-restart`
+answers "n" itself, records the counter consumed, and exits
+(`handoff-supervisor.py:1018-1033`), leaving a dead seat, no supervisor, and a
+consumed handoff — precisely the state `resupervise-seat.py:130` refuses to act
+on, because `counter <= consumed` reads as "nothing is waiting". Under
+consume-by-removal with consumption defined as move-AFTER-successful-launch,
+nothing is consumed unless a successor exists, so the seat stays recoverable.
+That defect is recorded separately as walk item 10.
+
 ### Relationship to the whitespace collapse
 
 The writer's whitespace collapse is one of the mechanisms recorded in the
@@ -181,7 +309,9 @@ is still impossible; the prompt simply no longer says so, per the same
 look-it-up-if-you-need-to principle. The sentence still appears only when
 the roster is non-empty.)
 
-Unlike the block form above, this field is built and in use. A retiring
+This field is built and in use, as is the block form above — that contrast
+read "Unlike the block form above" until 2026-08-31, when the block form's
+status was corrected. A retiring
 session records every subagent it spawned as one numbered field each:
 
     spawned-subagent-1: a309071aa3681d280 "Fix ignored-path write blind spot" spawned at 2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z
@@ -269,8 +399,14 @@ Four generations of a headless essay-writing agent; three auto-triggered recycle
 
 - Pre-seed (the unpinned-session path since PR #141) and the seat-pin variable both ride undocumented harness state; detection is the ignition count-check, the queues are the backstop, the `--canary` cases are the diagnosis (accepted risk, user-ruled 2026-08-12). (Reconciled 2026-08-30 against this change: the count-check line was cut from the ignition prompt; detection is now the successor finding its tasks missing, the queues stay the backstop, the `--canary` cases stay the diagnosis.)
 - Very-long-session material can predate the word-floor window and every durable store; bounded by commit-as-you-go and the full-JSONL pointer in every extract. A live thread longer than the floor hands over a partial thread, bounded by the header's left-behind count.
-- A supervisor is a per-agent process; if it dies, nothing watches until the next threshold crossing, when the hook-fired skill run starts an adopting supervisor (self-healing since 2026-08-12; `handoff-supervisor.py --check --agent <name>` reports liveness on demand).
+- **A dead supervisor does NOT self-heal, and a human must intervene** (corrected 2026-08-31; this bullet claimed self-healing since 2026-08-12). The adopt-and-recycle path it relied on — the writer starting a detached supervisor that adopted the running session — was REMOVED from `handoff-write-and-check-supervisor.py` on 2026-08-14, after its second observed failure. Its tombstone comment states the reason and the consequence: a successor inherits the supervisor's stdio, and a detached supervisor's console is a log file, so every successor it launched died at its first need for input (the desktop-app case observed 2026-08-11, the terminal-console case 2026-08-14). Hence: *"Only a seat-owning supervisor (a tmux pane via the launchers) can recycle; every other seat hands off by the user relaunching and pointing the fresh session at the handoff file."* Recovery is `scripts/resupervise-seat.py`, run by a person from another window; `handoff-supervisor.py --check --agent <name>` still reports liveness on demand.
 
-## Open question — attached to the seat move
+## Settled question — where the successor's output goes in an interactive pane
 
-**Where the successor's output goes in an interactive pane.** A self-started supervisor is detached, its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching — correct headless, wrong for a console pane. Recommendation: panes run their supervisor directly (the supervisor as parent), leaving adoption as the bootstrap and recovery path. Settle before the seat move.
+**SETTLED, and settled harder than the recommendation asked for** (recorded 2026-08-31; carried as an open question until then).
+
+The question was: a self-started supervisor is detached, its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching — correct headless, wrong for a console pane. The recommendation was that panes run their supervisor directly, with the supervisor as parent.
+
+That is what happens, and it is not merely preferred: the alternative was removed on 2026-08-14 because it did not work. A successor launched from a detached supervisor died at its first need for input, twice observed. So the seat-owning supervisor is now the only arrangement that recycles at all, and `scripts/launch-claude-mac` starts it that way.
+
+Measured on this seat rather than assumed, 2026-08-31: the process ancestry runs `claude` ← `python handoff-supervisor.py` ← `zsh` ← `tmux -L merge-lane`, and the supervisor's stdin is `/dev/ttys008`, a real terminal. That is also why the supervisor is the seat's PARENT, which makes replacing it a seat recycle rather than background maintenance.
