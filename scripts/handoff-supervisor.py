@@ -183,21 +183,28 @@ def counter_from(fields: dict):
         return None
 
 
-def elapsed_phrase(written_at: str) -> str:
-    """Describe how stale a handoff is, for the ignition prompt."""
+def written_at_wariness_sentence(written_at: str) -> str:
+    """The dialog line's tail: the handoff's written-at stamp plus the
+    wariness rule, for the ignition prompt.
+
+    The successor computes the elapsed time itself from `date` and applies
+    age-proportional wariness (user-approved 2026-08-30). This replaces a
+    composition-time elapsed phrase, which read "0 minutes ago" even on
+    ignitions consumed much later. The stamp is the handoff's own written-at
+    field rendered as UTC ISO-8601 with a Z suffix — never invented: an
+    unreadable field falls back to the standing warning, not a made-up time.
+    """
     try:
         written = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
-        return "written at an unrecorded time — treat every pointer in it as possibly stale"
-
-    minutes = (datetime.now(timezone.utc) - written).total_seconds() / 60
-    if minutes < 90:
-        amount = f"{int(minutes)} minutes"
-    elif minutes < 60 * 48:
-        amount = f"{int(minutes / 60)} hours"
-    else:
-        amount = f"{int(minutes / 60 / 24)} days"
-    return f"written {amount} ago — the longer the gap, the more will have changed since"
+        return "written at an unrecorded time — treat every pointer in it as possibly stale."
+    if written.tzinfo is None:
+        written = written.replace(tzinfo=timezone.utc)  # the field is documented as UTC
+    stamp = written.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (f"written at {stamp}. Calculate from `date` how long ago that was, "
+            "and be wary of obsolescence and drift in everything in this handoff "
+            "in proportion to that gap: the older it is, the more you must "
+            "re-verify against the live state before acting.")
 
 
 def pinned_task_list_id() -> str:
@@ -217,28 +224,18 @@ def pinned_task_list_id() -> str:
     return os.environ.get("CLAUDE_CODE_TASK_LIST_ID", "").strip()
 
 
-def task_count_for(session_id: str) -> int:
-    """How many task records the session with this id will actually see.
-
-    Under a pinned list the session id names nothing and the count comes
-    from the pinned store — which is the whole point of the ignition
-    count-check: it must state what the successor will find, not what some
-    directory named after its id holds.
-    """
-    directory = TASKS_ROOT / (pinned_task_list_id() or session_id)
-    return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
-
-
 def preseed_tasks(retiring_session_id: str, successor_session_id: str) -> int:
     """Copy task records into the successor's directory before it boots.
 
     Rides undocumented harness state: tasks are <N>.json files under
     ~/.claude/tasks/<session-id>/, and a session started with an explicit id
-    reads whatever is already there. An upgrade breaking this is detected at
-    the successor's ignition count-check, with the queues as the backstop
-    (per-upgrade canary re-runs were dropped as a remembered duty,
-    user-ruled 2026-08-12); the canaries in handoff-supervisor-test.py
-    (--canary) diagnose it when that fires.
+    reads whatever is already there. An upgrade breaking this is detected by
+    the successor finding its predecessor's tasks missing, with the queues as
+    the backstop (the ignition count-check that used to announce the count
+    was cut with the task-count line, user-ruled 2026-08-30; per-upgrade
+    canary re-runs were dropped as a remembered duty, user-ruled 2026-08-12);
+    the canaries in handoff-supervisor-test.py (--canary) diagnose it when
+    that fires.
 
     None of that applies under a pinned list, which is why this returns 0
     without copying there: the retiring and successor sessions already share
@@ -392,20 +389,23 @@ def launch_clock_sentence(launch_time: Optional[datetime] = None) -> str:
             "take every time stamp from `date`, never from estimate.")
 
 
-def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: int,
+def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
                           launch_time: Optional[datetime] = None) -> str:
     """Compose the successor's first prompt.
 
     The prompt is tuned like a CLAUDE.md file (user-ruled 2026-08-29: "we
     should only put in the stuff that they need to know at their start. The
-    rest they can look up if they need to"). It carries five things: the
-    dialog line, the launch clock, the task-count check, the malformed-block
-    note when the verbatim block was damaged, and the next step — plus, only
-    when the handoff recorded subagents still working at the recycle, the
-    re-commission sentence below. Queue status does not ride it (the user
-    expired that 2026-08-12 ruling on 2026-08-29); the supervisor prints it
-    to its own console instead.
+    rest they can look up if they need to"). It carries four things: the
+    dialog line — the extract path with the handoff's written-at stamp and
+    the wariness rule (see written_at_wariness_sentence) — the launch clock,
+    the malformed-block note when the verbatim block was damaged, and the
+    next step — plus, only when the handoff recorded subagents still working
+    at the recycle, the re-commission sentence below. Queue status does not
+    ride it (the user expired that 2026-08-12 ruling on 2026-08-29); the
+    supervisor prints it to its own console instead. The task-count check
+    was cut too (user-ruled 2026-08-30: the task list is a standing tool;
+    the count line is junk).
 
     predecessor_session_directory is the retiring session's directory under
     ~/.claude/projects — the place its subagents' transcripts survive
@@ -430,11 +430,10 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict, task_count: 
     and the format.
     """
     next_step = next_step_from(handoff_fields)
-    elapsed = elapsed_phrase(handoff_fields.get("written-at", ""))
     lines = [
-        f"Read {extract_path} — it is the dialog from the session you are continuing, {elapsed}.",
+        f"Read {extract_path} — the dialog from the session you are continuing, "
+        + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
         launch_clock_sentence(launch_time),
-        f"Confirm {task_count} task(s) are visible to you; if the count differs, say so before starting work.",
     ]
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
@@ -484,7 +483,6 @@ class DialogIgnitionPlan:
     """
     extract_path: Path
     handoff_fields: dict
-    task_count: int
     # The retiring session's directory under ~/.claude/projects, where its
     # subagents' transcripts survive the recycle. Optional so a direct caller
     # without one still composes; the supervisor always passes it.
@@ -492,7 +490,6 @@ class DialogIgnitionPlan:
 
     def compose(self, launch_time: datetime) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
-                                     self.task_count,
                                      self.predecessor_session_directory,
                                      launch_time=launch_time)
 
@@ -858,7 +855,7 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
         print(f"handoff-supervisor: carried {copied} task record(s) to the successor")
 
     plan = DialogIgnitionPlan(
-        extract_path, handoff_fields, task_count_for(successor_session_id),
+        extract_path, handoff_fields,
         project_directory_for_working_directory(settings.working_directory) / retiring_session_id,
     )
     return successor_session_id, plan
