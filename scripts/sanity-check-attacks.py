@@ -128,9 +128,8 @@ Running a sanity-check, and reading its output:
   it; everything else the comparison covers is unchanged, the rest of the
   record directory included, and an earlier run's leftover scratch is watched
   like any other file that was on disk when this run started. Because it
-  compares rather
-  than watches, a write made and undone before the comparison runs leaves
-  nothing to find. The one undoing that used to happen routinely is closed: a
+  compares rather than watches, a write made and undone before the comparison
+  runs leaves nothing to find. The one undoing that used to happen routinely is closed: a
   write to a report path that this runner's own report then erases is reported
   as `WARNING: <audit>-<runtime> found a stray write at its own report path and
   overwrote it: <path>`. Writes to other ignored paths are not detected —
@@ -747,11 +746,14 @@ class RunnerReportWriteLedger:
         with self._lock:
             expected = {**baseline, **self._writes}
             own_dir = self._own_record_directory(repo_root)
+            # The subtree holding every cell's sanctioned working space; None
+            # when this run has no record directory inside the repository.
+            scratch_root = (None if own_dir is None
+                            else f"{own_dir}/{CELL_SCRATCH_DIRECTORY_NAME}")
             now = {path: entry
                    for path, entry in worktree_snapshot(repo_root).items()
-                   if self._reportable_by_this_run(
-                       path, entry, expected, own_dir,
-                       self._own_scratch_root(repo_root))}
+                   if self._reportable_by_this_run(path, entry, expected,
+                                                   own_dir, scratch_root)}
             return stray_paths(expected, now)
 
     def _own_record_directory(self, repo_root: pathlib.Path):
@@ -763,15 +765,6 @@ class RunnerReportWriteLedger:
             return self._own_record_dir.relative_to(repo_root).as_posix()
         except ValueError:
             return None
-
-    def _own_scratch_root(self, repo_root: pathlib.Path):
-        """This run's scratch subtree, repo-relative, or None when it has no
-        record directory inside the repository — the subtree holding every
-        cell's sanctioned working space (see cell_scratch_dir)."""
-        own_dir = self._own_record_directory(repo_root)
-        if own_dir is None:
-            return None
-        return f"{own_dir}/{CELL_SCRATCH_DIRECTORY_NAME}"
 
     @staticmethod
     def _reportable_by_this_run(path: str, entry: tuple, expected: dict,
