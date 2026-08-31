@@ -7,6 +7,6 @@ description: Hand this session over to a fresh one. A program gives your success
 
 ## What to do
 
-1. Tell your successor what their first action should be. List any open walks or open items. List anything that needs immediate restarting. If your prompt references a file, include its path and commit SHA. If it references a GitHub issue, include the repository and number. 
-2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <the file holding your prompt>`. It stamps the time of the handoff, sets the restart counter, records the subagents this session spawned so your successor can restart the ones still owing work, writes the handoff file, and reports whether a supervisor is watching. Add `--dont-restart` only when the user asked to be consulted before a relaunch.
-3. Do what it reports. When it found a supervisor watching, or started one, stop working and wait — it takes over within seconds. When it reports it could not start one, do not stop: keep working, and tell the user that the handoff is written but nothing is watching for it.
+1. Write in `~/.claude/handoffs/<your name>-next-step-<YYYYMMDD-HHMMSS from date>.md` the first action your successor should take. Also list any open walks or open items. List anything that needs immediate restarting. If the prompt references files, include path and commit SHA. If it references GitHub issues, include the repository and number.
+2. Run `scripts/handoff-write-and-check-supervisor.py --agent <your name> --next-step-file <that file>`. Add `--dont-restart` if the user does not want an automatic relaunch.
+3. If it reports a supervisor watching, stop working and wait — it takes over within seconds. If it reports nothing is watching, keep working and relay its printed instructions to the user. If it refuses, fix what it names and rerun.
