@@ -503,12 +503,29 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           synced_prompt[:900])
     check("the branch-state instruction follows the sync result, exactly",
           "branch sync: fixture-branch is 3 commit(s) behind main — if behind, "
-          "catch up with origin/main when safe. On conflicts, if you can't "
-          "resolve them, explain the situation to the user. If this seat has "
+          "catch up with origin/main before your first substantive action; "
+          "resolve conflicts you can verify, run the affected test suites, and "
+          "explain the situation to the user if you cannot. If this seat has "
           "open pull requests, check their state with `gh`: merge-lane reviews "
           "and merges them; a changes-requested one gets a fix round from a "
           "fresh agent — never extend a head you've already announced."
           in synced_prompt,
+          synced_prompt[:1100])
+    # The catch-up half of that instruction, pinned as its own exact line
+    # (user-ruled 2026-08-31, verbatim). Three elements the 2026-08-30 wording
+    # did not have — WHEN to act ("before your first substantive action"), how
+    # far to go on a conflict ("resolve conflicts you can verify"), and how to
+    # know the catch-up worked ("run the affected test suites") — so each is
+    # pinned here rather than only inside the whole-instruction check above.
+    check("the catch-up instruction gives timing, a conflict bound, and verification, exactly",
+          " — if behind, catch up with origin/main before your first "
+          "substantive action; resolve conflicts you can verify, run the "
+          "affected test suites, and explain the situation to the user if you "
+          "cannot." in synced_prompt,
+          synced_prompt[:1100])
+    check("the superseded 2026-08-30 catch-up wording is gone from the ignition prompt",
+          "when safe" not in synced_prompt
+          and "if you can't resolve them" not in synced_prompt,
           synced_prompt[:1100])
     check("the branch-state line precedes the next step",
           "" if not synced_prompt else
@@ -917,11 +934,13 @@ def run_boot_ignition_case(workspace: Path):
     check("the boot-recovery ignition prompt carries the sync's own report",
           "branch sync:" in launched, launched[:400])
     check("the boot-recovery ignition prompt carries the branch-state instruction, exactly",
-          " — if behind, catch up with origin/main when safe. On conflicts, if "
-          "you can't resolve them, explain the situation to the user. If this "
-          "seat has open pull requests, check their state with `gh`: merge-lane "
-          "reviews and merges them; a changes-requested one gets a fix round "
-          "from a fresh agent — never extend a head you've already announced."
+          " — if behind, catch up with origin/main before your first "
+          "substantive action; resolve conflicts you can verify, run the "
+          "affected test suites, and explain the situation to the user if you "
+          "cannot. If this seat has open pull requests, check their state with "
+          "`gh`: merge-lane reviews and merges them; a changes-requested one "
+          "gets a fix round from a fresh agent — never extend a head you've "
+          "already announced."
           in launched,
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
@@ -1183,7 +1202,8 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           and "Calculate from `date` how long ago that was" in prompt, prompt)
     check("the recycle prompt carries the branch-state line the plan was composed with",
           "branch sync: composer-branch is 2 commit(s) behind main — if behind, "
-          "catch up with origin/main when safe." in prompt, prompt)
+          "catch up with origin/main before your first substantive action;"
+          in prompt, prompt)
     check("the recycle prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
     check("the recycle prompt still ignites from the next step",
