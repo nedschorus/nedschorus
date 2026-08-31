@@ -36,10 +36,22 @@ agent can delete.
 The harness's auto-memory under ~/.claude/projects/ is deliberately inside the
 protected set (user-ruled 2026-08-11): every memory entry is user-reviewed.
 Other harness state (transcripts, handoffs) carries no review requirement — a
-carve-out is added when a real harness write trips this guard, not in advance.
-Two exist, each added that way: `.claude/worktrees/` (an agent's isolated
-checkout) and `.claude/jobs/` (a background job's scratch directory, which the
-harness hands out for temporary files and deletes with the job).
+carve-out is added when a real write trips this guard, not in advance. Three
+exist, each added that way: `.claude/worktrees/` (an agent's isolated
+checkout), `.claude/jobs/` (a background job's scratch directory, which the
+harness hands out for temporary files and deletes with the job), and
+`.claude/handoffs/` (a seat's handoff material). The handoffs carve-out was
+user-ruled 2026-08-31 after the handoff skill began prescribing
+`~/.claude/handoffs/<seat>-next-step-<stamp>.md` for the retiring agent's own
+draft and this guard refused the Write. Note what tripped it: an agent's Write,
+prescribed by a committed skill, rather than a write by the harness itself.
+That is a shade narrower than the sentence above, and is recorded rather than
+smoothed over.
+
+Transcripts stay protected, and that is collateral rather than intent: the
+`.jsonl` files sit under ~/.claude/projects/ beside the auto-memory, so no
+directory-level carve-out separates them. `.claude/handoffs/` has no such
+entanglement — it is a sibling of projects/ holding nothing user-reviewed.
 """
 
 import json
@@ -133,13 +145,14 @@ def is_protected(file_path: str) -> bool:
     parts = path.resolve().parts
     for index, part in enumerate(parts):
         if part == PROTECTED_DIRECTORY:
-            if index + 1 < len(parts) and parts[index + 1] in ("worktrees", "jobs"):
-                # A worktree checkout's home under .claude/worktrees/, or a
-                # background job's scratch directory under .claude/jobs/<id>/tmp
-                # — both are working space the harness hands out, not machinery
-                # that instructs anybody. The jobs carve-out was added 2026-08-13
-                # after a real write tripped the guard, which is the condition
-                # this file's docstring sets for adding one.
+            if index + 1 < len(parts) and parts[index + 1] in ("worktrees", "jobs", "handoffs"):
+                # A worktree checkout's home under .claude/worktrees/, a
+                # background job's scratch directory under .claude/jobs/<id>/tmp,
+                # or a seat's handoff material under .claude/handoffs/ — all
+                # working space the harness hands out, not machinery that
+                # instructs anybody. Each carve-out was added after a real write
+                # tripped the guard, which is the condition this file's docstring
+                # sets for adding one: jobs 2026-08-13, handoffs 2026-08-31.
                 continue
             return True
     return False

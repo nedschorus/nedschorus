@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(decoy, workspace, str(workspace / "docs" / "ordinary.md"))
     check("an ordinary file passes", result.returncode == 0, result.stderr)
 
-    # The two carve-outs: harness working space, not machinery. Each was added
+    # The three carve-outs: harness working space, not machinery. Each was added
     # after a real write tripped the guard, and each is asserted against its
     # neighbours so a future widening cannot quietly take the protected paths
     # with it.
@@ -94,6 +94,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "jobs.json"))
     check("a file merely named jobs.json under .claude/ is still protected",
+          result.returncode == 2)
+
+    # The handoffs carve-out (2026-08-31). The write that earned it is the
+    # retiring agent's own next-step draft, which the handoff skill prescribes
+    # at ~/.claude/handoffs/<seat>-next-step-<stamp>.md.
+    result = run_hook(decoy, workspace,
+                      str(workspace / ".claude" / "handoffs" / "merge-lane-next-step-20260831-043554.md"))
+    check("a seat's handoff next-step draft passes", result.returncode == 0, result.stderr)
+
+    result = run_hook(decoy, workspace, str(workspace / ".claude" / "handoffs" / "merge-lane-handoff.md"))
+    check("a seat's live handoff file passes", result.returncode == 0, result.stderr)
+
+    result = run_hook(decoy, workspace, str(workspace / ".claude" / "handoffs.md"))
+    check("a file merely named handoffs.md under .claude/ is still protected",
+          result.returncode == 2)
+
+    result = run_hook(decoy, workspace,
+                      str(workspace / ".claude" / "handoffs" / "seat" / "CLAUDE.md"))
+    check("a CLAUDE.md under the handoffs carve-out is still protected (basename rule)",
           result.returncode == 2)
 
     worktree = workspace / ".claude" / "worktrees" / "some-worktree"
