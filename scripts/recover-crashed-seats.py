@@ -91,7 +91,12 @@ _watcher_spec.loader.exec_module(watcher)
 # test suite, so a wording change there fails loudly.
 EMPTY_SUCCESSOR_MARKERS = (
     "No handoff exists yet",            # handoff-supervisor's default first prompt
-    "it is the dialog from the session you are continuing",  # its recycle opener
+    # Its recycle opener, shortened to the span both eras share: openers
+    # before 2026-08-30 read "it is the dialog from the session you are
+    # continuing, written N minutes ago" and sit in transcripts on disk;
+    # openers since read "— the dialog from the session you are continuing,
+    # written at <UTC>Z". Do not lengthen it back to either full sentence.
+    "the dialog from the session you are continuing",
     "crash recovery, nedschorus#120",   # this script's ignition prompt
     "resumed by crash recovery",        # this script's resume prompt
 )

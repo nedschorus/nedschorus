@@ -390,6 +390,9 @@ with tempfile.TemporaryDirectory() as temporary:
     all_dead()
     write_transcript(workspace.project_directory(), "pre-crash-real", "real work",
                      age_seconds=3600, records=6)
+    # The PRE-2026-08-30 opener shape, kept deliberately: transcripts written
+    # before the wariness template sit on disk and must still match the
+    # shortened marker. The post-change shape is covered at P2 below.
     ignition_shape = write_transcript(
         workspace.project_directory(), "supervisor-ignition",
         "Read /x/y-dialog-0002.md — it is the dialog from the session you are "
@@ -407,8 +410,8 @@ with tempfile.TemporaryDirectory() as temporary:
           and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
           recovery.EMPTY_SUCCESSOR_MARKERS)
     check("F8: the ignition-opener literal is verbatim in handoff-supervisor.py",
-          "it is the dialog from the session you are continuing" in source
-          and "it is the dialog from the session you are continuing"
+          "the dialog from the session you are continuing" in source
+          and "the dialog from the session you are continuing"
               in recovery.EMPTY_SUCCESSOR_MARKERS,
           "opener literal missing from supervisor source or the marker set")
 
@@ -503,8 +506,16 @@ with tempfile.TemporaryDirectory() as temporary:
     # Round 3 P2: a recycled successor that crashed AFTER doing real work is
     # resumed, not skipped for its handed-off parent; one that died before
     # doing anything is skipped. Both under 100KB — turns decide, not bytes.
-    ignition_opener = ("Read /x/seat-a-dialog-0003.md — it is the dialog from "
-                      "the session you are continuing, written 0 minutes ago.")
+    # The opener is the post-2026-08-30 shape the supervisor now composes —
+    # written-at stamp, gap computed by the reader from `date` — so the
+    # marker match against the CURRENT template is what these cases prove
+    # (the pre-change shape is covered at F3/P2 above).
+    ignition_opener = (
+        "Read /x/seat-a-dialog-0003.md — the dialog from the session you are "
+        "continuing, written at 2026-08-28T12:00:00Z. Calculate from `date` "
+        "how long ago that was, and be wary of obsolescence and drift in "
+        "everything in this handoff in proportion to that gap: the older it "
+        "is, the more you must re-verify against the live state before acting.")
     workspace = Workspace(root / "r11")
     all_dead()
     write_transcript(workspace.project_directory(), "generation-3-handed-off",

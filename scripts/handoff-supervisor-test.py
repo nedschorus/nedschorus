@@ -4,9 +4,9 @@
 Run: python3 scripts/handoff-supervisor-test.py
 Add --canary to also run the two live task-preseed canaries, which launch
 real headless sessions. Pre-seed rides undocumented harness state; an
-upgrade breaking it is detected at the successor's ignition count-check
-(the queues are the backstop), and these two cases are the diagnosis to
-run when that fires.
+upgrade breaking it shows up as a successor finding its predecessor's tasks
+missing (the queues are the backstop), and these two cases are the
+diagnosis to run when that fires.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -119,16 +119,29 @@ def run_offline_cases(workspace: Path):
     check("--check exits zero for a live supervisor", check_result.returncode == 0,
           f"code {check_result.returncode}: {check_result.stdout.strip()}")
 
-    # --- Elapsed-time phrasing -------------------------------------------
+    # --- The written-at stamp and wariness sentence -----------------------
+    # The successor computes the elapsed time from `date` itself and applies
+    # age-proportional wariness (user-approved 2026-08-30); the sentence
+    # carries the handoff's written-at stamp rendered as UTC with a Z, never
+    # a composition-time elapsed phrase.
     recent = (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat()
-    old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-    check(
-        "recent handoff reports minutes",
-        "minutes ago" in supervisor.elapsed_phrase(recent),
-        supervisor.elapsed_phrase(recent),
-    )
-    check("old handoff reports days", "days ago" in supervisor.elapsed_phrase(old), supervisor.elapsed_phrase(old))
-    check("unparseable timestamp still warns", "stale" in supervisor.elapsed_phrase("whenever"))
+    check("a Z-suffixed written-at is rendered exactly, with the wariness rule",
+          supervisor.written_at_wariness_sentence("2026-08-30T18:04:00Z")
+          == ("written at 2026-08-30T18:04:00Z. Calculate from `date` how long "
+              "ago that was, and be wary of obsolescence and drift in everything "
+              "in this handoff in proportion to that gap: the older it is, the "
+              "more you must re-verify against the live state before acting."),
+          supervisor.written_at_wariness_sentence("2026-08-30T18:04:00Z"))
+    check("a +00:00 offset with microseconds renders as the same UTC stamp with a Z",
+          supervisor.written_at_wariness_sentence("2026-08-30T18:04:00.123456+00:00")
+          .startswith("written at 2026-08-30T18:04:00Z. "),
+          supervisor.written_at_wariness_sentence("2026-08-30T18:04:00.123456+00:00"))
+    check("a non-UTC offset converts to UTC before rendering",
+          supervisor.written_at_wariness_sentence("2026-08-30T11:04:00-07:00")
+          .startswith("written at 2026-08-30T18:04:00Z. "),
+          supervisor.written_at_wariness_sentence("2026-08-30T11:04:00-07:00"))
+    check("unparseable timestamp still warns",
+          "stale" in supervisor.written_at_wariness_sentence("whenever"))
     return recent
 
 
@@ -334,7 +347,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     check("a terminated block sets no unterminated flag",
           "next-step-verbatim-unterminated" not in fields, str(sorted(fields)))
 
-    prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), fields, 0)
+    prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), fields)
     check("the ignition prompt carries the block's line breaks",
           "FIRST ACTION: run it.\n\nTHEN: fix the locale case." in prompt, repr(prompt))
     check("the ignition prompt prefers the verbatim block over the collapsed line",
@@ -355,7 +368,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     check("an unterminated block is recorded as unterminated",
           truncated_fields.get("next-step-verbatim-unterminated") == "yes",
           str(truncated_fields))
-    truncated_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), truncated_fields, 0)
+    truncated_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), truncated_fields)
     check("an unterminated block falls back to the collapsed next-step",
           "the collapsed instruction survives" in truncated_prompt, repr(truncated_prompt))
     check("an unterminated block tells the successor what happened",
@@ -402,7 +415,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     legacy = workspace / "legacy-handoff.md"
     legacy.write_text("written-at: " + recent + "\nnext-step: do the old thing\n", encoding="utf-8")
     legacy_prompt = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), supervisor.parse_handoff_file(legacy), 0)
+        Path("/tmp/d.md"), supervisor.parse_handoff_file(legacy))
     check("a handoff with no block still ignites from next-step",
           "do the old thing" in legacy_prompt, repr(legacy_prompt))
 
@@ -436,14 +449,40 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # --- Ignition prompt --------------------------------------------------
     prompt = supervisor.build_ignition_prompt(
         Path("/tmp/dialog-0002.md"),
-        {"written-at": recent, "next-step": "finish the supervisor"},
-        4,
+        {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
     )
     check("ignition names the dialog path", "/tmp/dialog-0002.md" in prompt, prompt)
-    check("ignition carries the elapsed line", "minutes ago" in prompt, prompt)
-    check("ignition states the task count", "4 task(s)" in prompt, prompt)
+    # The exact opening line (template text user-approved 2026-08-30): the
+    # written-at stamp rides it, and the successor computes the gap from
+    # `date` itself. Against the old supervisor this fails — the opener there
+    # read "it is the dialog ... written N minutes ago", an elapsed phrase
+    # computed at composition time.
+    check("ignition opens with the written-at stamp and the wariness rule, exactly",
+          prompt.startswith(
+              "Read /tmp/dialog-0002.md — the dialog from the session you are "
+              "continuing, written at 2026-08-30T17:20:00Z. Calculate from `date` "
+              "how long ago that was, and be wary of obsolescence and drift in "
+              "everything in this handoff in proportion to that gap: the older "
+              "it is, the more you must re-verify against the live state before "
+              "acting."),
+          prompt[:400])
+    check("the composition-time elapsed phrase is gone", "minutes ago" not in prompt, prompt)
+    # The task-count line was CUT (user-ruled 2026-08-30: the task list is a
+    # standing tool; the count line is junk). Pinned behaviorally — the OLD
+    # supervisor put "Confirm N task(s) are visible to you" into every
+    # ignition prompt unconditionally — and structurally below, where neither
+    # the builder nor the plan accepts a count any more.
+    check("the task-count line is cut from the ignition prompt",
+          "task(s) are visible" not in prompt and "Confirm" not in prompt, prompt)
+    check("build_ignition_prompt no longer takes a task count",
+          "task_count" not in inspect.signature(supervisor.build_ignition_prompt).parameters,
+          str(inspect.signature(supervisor.build_ignition_prompt)))
+    check("DialogIgnitionPlan no longer holds a task count",
+          "task_count" not in {field.name for field in
+                               dataclasses.fields(supervisor.DialogIgnitionPlan)},
+          str([field.name for field in dataclasses.fields(supervisor.DialogIgnitionPlan)]))
     check("ignition carries the next step", "finish the supervisor" in prompt, prompt)
-    prompt_without_step = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
+    prompt_without_step = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent})
     check("ignition survives a missing next-step", "continue from where that dialog ends" in prompt_without_step)
     # The queue-status line was CUT from the prompt (user-ruled 2026-08-29,
     # expiring his 2026-08-12 #32 ruling: "Also useless is the reminder there
@@ -464,7 +503,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # The successor wakes with a dialog whose events are hours old and no
     # sense of now; estimating cost one session's handoff stamps up to 1h45.
     stamped = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), {"written-at": recent, "next-step": "keep going"}, 0,
+        Path("/tmp/d.md"), {"written-at": recent, "next-step": "keep going"},
         launch_time=datetime(2026, 8, 27, 20, 44,
                              tzinfo=timezone(timedelta(hours=-7), "PDT")),
     )
@@ -478,7 +517,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # suite sits in — but something has to stand between the time and "at
     # launch", or `astimezone()` could be deleted and this case stay green.
     naive_stamped = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), {"written-at": recent}, 0,
+        Path("/tmp/d.md"), {"written-at": recent},
         launch_time=datetime(2026, 8, 27, 20, 44),
     )
     check("a naive launch moment still names a zone",
@@ -500,7 +539,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     real_datetime = supervisor.datetime
     supervisor.datetime = ClockStuckIn1999
     try:
-        unstamped = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent}, 0)
+        unstamped = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent})
     finally:
         supervisor.datetime = real_datetime
     check("an unsupplied launch clock is read at the call, not at import",
@@ -536,6 +575,11 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # ambient value would take a different path depending on who ran it.
     original_tasks_root = supervisor.TASKS_ROOT
     original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+
+    def task_record_count(list_id: str) -> int:
+        directory = supervisor.TASKS_ROOT / list_id
+        return len(list(directory.glob("*.json"))) if directory.is_dir() else 0
+
     try:
         os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         supervisor.TASKS_ROOT = workspace / "tasks"
@@ -550,19 +594,19 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               supervisor.pinned_task_list_id())
         copied = supervisor.preseed_tasks(retiring, successor)
         check("pre-seed copies every task record", copied == 2, f"copied {copied}")
-        check("pre-seed counts what the successor will see", supervisor.task_count_for(successor) == 2)
-        check("pre-seed leaves the source intact", supervisor.task_count_for(retiring) == 2)
+        check("pre-seed puts the records where the successor will read them",
+              task_record_count(successor) == 2, task_record_count(successor))
+        check("pre-seed leaves the source intact", task_record_count(retiring) == 2)
         check("pre-seed of a taskless session copies nothing", supervisor.preseed_tasks("never-existed", "x") == 0)
 
         # --- Recycle under a PINNED list (nedschorus#141) -----------------
-        # The failure this replaces: claude wrote the seat-keyed store while
-        # the supervisor counted the successor's session-UUID directory, so
-        # every recycle after a seat created a task told the successor
-        # "Confirm 0 task(s) are visible to you" over a list holding N —
-        # a false mismatch warning, deterministically, before work began.
-        # Shaped like a real recycle: tasks already in the seat's store, a
-        # fresh successor id, nothing copied, and the ignition line the
-        # successor is actually handed.
+        # The seat's generations share one launcher-pinned store, so a
+        # recycle copies nothing and the seat's records survive untouched.
+        # (The ignition count-check this block once guarded — "Confirm 0
+        # task(s) are visible to you" over a list holding N — was cut with
+        # the task-count line, user-ruled 2026-08-30.) Shaped like a real
+        # recycle: tasks already in the seat's store, a fresh successor id,
+        # nothing copied.
         pinned_id = "handoff-supervisor-test-pin-tasks"
         os.environ["CLAUDE_CODE_TASK_LIST_ID"] = pinned_id
         pinned_store = supervisor.TASKS_ROOT / pinned_id
@@ -576,9 +620,6 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         check("pinned: the list id is read from the environment",
               supervisor.pinned_task_list_id() == pinned_id,
               supervisor.pinned_task_list_id())
-        check("pinned: the successor's count comes from the SEAT's store, not its id",
-              supervisor.task_count_for(pinned_successor) == 3,
-              supervisor.task_count_for(pinned_successor))
         check("pinned: nothing is pre-seeded — one store, both generations",
               supervisor.preseed_tasks(retiring, pinned_successor) == 0)
         check("pinned: no directory is created for the successor's session id",
@@ -588,17 +629,12 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               sorted(p.name for p in pinned_store.glob("*.json"))
               == ["1.json", "2.json", "3.json"],
               sorted(p.name for p in pinned_store.glob("*.json")))
-        pinned_prompt = supervisor.build_ignition_prompt(
-            Path("/tmp/extract.md"), {"written-at": "2026-08-22T00:00:00Z"},
-            supervisor.task_count_for(pinned_successor))
-        check("pinned: the successor is told to confirm 3 tasks, not 0",
-              "Confirm 3 task(s)" in pinned_prompt, pinned_prompt[:200])
         # The un-pinned store this block started with must not have been
         # disturbed by any of the above.
         os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         check("pinned cases left the un-pinned fixture alone",
-              supervisor.task_count_for(retiring) == 2,
-              supervisor.task_count_for(retiring))
+              task_record_count(retiring) == 2,
+              task_record_count(retiring))
     finally:
         supervisor.TASKS_ROOT = original_tasks_root
         if original_pin is None:
@@ -882,7 +918,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     }
     predecessor_directory = Path("/tmp/projects/-fixture-seat/0000-session-id")
     prompt = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), roster_fields, 0, predecessor_directory)
+        Path("/tmp/d.md"), roster_fields, predecessor_directory)
     check("ignition counts the subagents still working at the recycle",
           "had 2 subagent(s) still working when it ended" in prompt, prompt)
     check("ignition names each subagent and what it was doing",
@@ -905,7 +941,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     # A caller with no predecessor directory (a direct or test caller — the
     # supervisor always composes one) gets the directory PATTERN, named as a
     # placeholder rather than an invented path.
-    fallback_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), roster_fields, 0)
+    fallback_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), roster_fields)
     check("without a predecessor directory the prompt names the pattern",
           "<predecessor-session-dir>/subagents/agent-<id>.jsonl" in fallback_prompt,
           fallback_prompt)
@@ -915,7 +951,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     # about subagents (user-ruled 2026-08-29). A handoff written before this
     # field existed reads the same way.
     older_prompt = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), {"written-at": recent, "next-step": "merge the queue"}, 0,
+        Path("/tmp/d.md"), {"written-at": recent, "next-step": "merge the queue"},
         predecessor_directory)
     check("ignition says nothing about subagents when the handoff has no roster",
           "subagent" not in older_prompt, older_prompt)
@@ -925,7 +961,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     many = {"written-at": recent, "next-step": "carry on"}
     for ordinal in range(1, 12):
         many[f"spawned-subagent-{ordinal}"] = f'agent-{ordinal:02d} "job {ordinal:02d}"'
-    ordered_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), many, 0)
+    ordered_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), many)
     check("the roster keeps the writer's order past nine subagents",
           ordered_prompt.index("agent-09") < ordered_prompt.index("agent-10")
           < ordered_prompt.index("agent-11"), ordered_prompt)
@@ -1017,6 +1053,11 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
                                    tzinfo=timezone(timedelta(hours=-7), "PDT")))
     check("the recycle prompt carries no queue status",
           "Queue status" not in prompt and "queues —" not in prompt, prompt)
+    check("the recycle prompt carries no task-count line",
+          "task(s) are visible" not in prompt, prompt)
+    check("the recycle prompt stamps the written-at and defers the gap to `date`",
+          "written at 20" in prompt
+          and "Calculate from `date` how long ago that was" in prompt, prompt)
     check("the recycle prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
     check("the recycle prompt still ignites from the next step",
