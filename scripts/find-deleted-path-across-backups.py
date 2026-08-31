@@ -1123,32 +1123,44 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
     """Enumerate Time Machine snapshots, and read inside them when root is reachable.
 
     The measured split (2026-08-23): `tmutil` and `diskutil apfs listSnapshots`
-    both answer unprivileged, but `sudo mount_apfs -o ro -s <snapshot>` refuses
-    without a password, so the CONTENT of a snapshot is unreachable to an
-    unattended agent. This function therefore always enumerates, tries a
-    non-interactive `sudo -n` (which succeeds when the user has recently
-    authenticated), and otherwise hands back the exact command to run rather
-    than reporting an empty search.
+    both answer unprivileged, but `sudo mount_apfs -o ro -s <snapshot>` refused
+    without a password, so the CONTENT of a snapshot was unreachable to an
+    unattended agent. This function therefore always enumerates, then TRIES the
+    mount, and hands back the exact command to run only once sudo has actually
+    refused it — rather than reporting an empty search.
 
     THREE WAYS ROOT CAN BE REACHABLE, and the code takes whichever it is given:
 
-      * the sudoers rule beside this script is installed, in which case the
-        `sudo -n` probe below succeeds outright for this one mount and the
-        wall is never met at all — the unattended case this whole thing exists
-        for;
+      * the sudoers rule beside this script is installed, so the MOUNT COMMAND
+        itself matches a NOPASSWD entry and runs with nothing cached and
+        nobody asked — the unattended case this whole thing exists for;
       * a credential is already cached from something the person ran a moment
-        ago, which is what the probe originally tested for;
+        ago, which is what `sudo -n true` tests for;
       * `prompt_for_root` is set, meaning a person is at the terminal and has
-        asked to be prompted. Then the wall is not a stopping point: the mount
-        runs as plain `sudo`, which prompts on the tty, and the snapshots are
-        searched. The flag drops `-n` rather than warming the credential with
+        asked to be prompted, so the mount runs as plain `sudo` and prompts on
+        the tty. The flag drops `-n` rather than warming the credential with
         `sudo -v` first, because `-v` validates for EVERY command the user may
         run and so prompts even where the sudoers rule would have made this
         one mount free.
 
-    When none of the three holds the surface is UNAVAILABLE, carrying the
-    resolved command — and the report is marked `root_credential_needed` so
-    the assembly step can decide whether this is worth waking a human for.
+    THE WALL IS DECLARED BY THE MOUNT'S OWN REFUSAL, NEVER BY `sudo -n true`.
+    That probe still runs, but only to tell a warm credential from the rule in
+    the report's wording — it can never stand in for the rule, because sudo's
+    NOPASSWD tag applies to the COMMANDS IN THAT ENTRY and the rule covers one
+    mount_apfs invocation and nothing else. `true` is not that command, so
+    `sudo -n true` matches the ordinary passworded admin entry and exits
+    non-zero with the rule installed exactly as it does without it (measured
+    2026-08-31: "sudo: a password is required"). An earlier version of this
+    change stopped the surface on that probe, which would have left the rule
+    doing nothing at all: the one run it was written for — no credential, no
+    person, rule installed — would have reported UNAVAILABLE without ever
+    trying the mount that would have succeeded.
+
+    So the candidates are walked, and the wall is declared only when a mount
+    comes back with sudo's own non-interactive refusal. Then no later
+    candidate can do better, the report is marked `root_credential_needed`,
+    and the assembly step decides whether this is worth waking a human for.
+    Any other mount failure is one snapshot's problem and the walk goes on.
     """
     destination = _time_machine_destination(runner)
     if destination is None:
@@ -1190,33 +1202,17 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
 
     candidates, dated_by_git = _time_machine_candidates(snapshots, newest_date_held, snapshot_limit)
     can_sudo, _, _ = runner(["sudo", "-n", "true"])
-    if can_sudo != 0 and not prompt_for_root:
-        wall = SurfaceReport(
-            "time machine",
-            UNAVAILABLE,
-            ["%d snapshots present, %s .. %s — enumerated fine, but reading INSIDE one needs root, "
-             "and no credential is cached, so it needs your password"
-             % (len(snapshots), snapshots[-1], snapshots[0]),
-             "this is a real wall, not an empty result: the file may well be in there",
-             "installing config/sudoers-mount-apfs-readonly-for-backup-recovery removes this wall for "
-             "this one read-only mount and nothing else, so an unattended run can cross it",
-             "at a terminal, --prompt-for-root runs the mount below from here instead of printing it",
-             _candidate_line(candidates[0], dated_by_git),
-             _alternative_line(snapshots, candidates[0], dated_by_git)],
-            _time_machine_manual_recovery(candidates[0], device),
-        )
-        # Read by the assembly step, which is the only place that can see
-        # whether the free surfaces missed. Nothing else in the run knows that
-        # this surface stopped at a credential rather than at a missing disk.
-        wall.root_credential_needed = True
-        wall.snapshots_enumerated = list(snapshots)
-        return wall
 
     hits = []
     searched = []
     unsearched = []
     for snapshot in candidates:
         outcome, detail = _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root)
+        if outcome == "no credential":
+            # sudo refused for want of a password. Every remaining candidate
+            # would refuse identically, so the walk stops here rather than
+            # filing each one under the same message.
+            return _time_machine_root_wall(snapshots, candidates, dated_by_git, device, detail, unsearched)
         if outcome == "hit":
             hits.append((snapshot, detail))
             searched.append(snapshot)
@@ -1224,7 +1220,14 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
             searched.append(snapshot)
         else:
             unsearched.append((snapshot, detail))
-    how = "with an already-warm sudo" if can_sudo == 0 else "after --prompt-for-root asked at the terminal"
+    if can_sudo == 0:
+        how = "with an already-warm sudo"
+    elif prompt_for_root:
+        how = "with --prompt-for-root, which let sudo ask at the terminal"
+    else:
+        # Nothing was cached and nobody was asked, and the mounts went through
+        # anyway: that can only be the sudoers rule, and it is the whole point.
+        how = "with no credential cached and nobody asked — the sudoers rule is installed"
     lines = ["%d snapshots present; %d of %d candidates searched %s"
              % (len(snapshots), len(searched), len(candidates), how)]
     for snapshot, reason in unsearched:
@@ -1242,6 +1245,59 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
         return SurfaceReport("time machine", UNAVAILABLE, lines,
                              _time_machine_manual_recovery(unsearched[0][0], device))
     return SurfaceReport("time machine", NOT_FOUND, lines)
+
+
+def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal, unsearched):
+    """The UNAVAILABLE report for a mount sudo would not run without a password.
+
+    Built here rather than inline because it is the report the whole announce
+    half turns on: `root_credential_needed` is what tells the assembly step
+    that this surface stopped at a CREDENTIAL and not at a missing disk, an
+    unconfigured destination, or a snapshot that happened to be busy. Those
+    other stops are UNAVAILABLE too, and speaking about any of them would send
+    the user to type a password that could not help.
+
+    The mark is stronger than "no credential is cached": it means the mount
+    was actually attempted and sudo refused it, so neither a cached credential
+    nor the sudoers rule was there to carry it. `sudo -n true` alone could
+    never have established that.
+    """
+    lines = [
+        "%d snapshots present, %s .. %s — enumerated fine, but the mount was refused: %s"
+        % (len(snapshots), snapshots[-1], snapshots[0], refusal),
+        "this is a real wall, not an empty result: the file may well be in there",
+        "installing config/sudoers-mount-apfs-readonly-for-backup-recovery removes this wall for "
+        "this one read-only mount and nothing else, so an unattended run can cross it",
+        "at a terminal, --prompt-for-root runs the mount below from here instead of printing it",
+    ]
+    for snapshot, reason in unsearched:
+        # Snapshots that refused for some other reason before the credential
+        # wall was reached. Reported, never classified, like everywhere else.
+        lines.append("could not search %s — %s" % (snapshot, reason))
+    lines.append(_candidate_line(candidates[0], dated_by_git))
+    lines.append(_alternative_line(snapshots, candidates[0], dated_by_git))
+    wall = SurfaceReport("time machine", UNAVAILABLE, lines,
+                         _time_machine_manual_recovery(candidates[0], device))
+    wall.root_credential_needed = True
+    wall.snapshots_enumerated = list(snapshots)
+    return wall
+
+
+def _is_sudo_non_interactive_refusal(stderr):
+    """True when `sudo -n` refused for want of a password, rather than mount_apfs failing.
+
+    The two are not the same thing and must not be conflated: sudo refusing
+    means NO snapshot on this disk can be opened until a credential or the
+    sudoers rule appears, while mount_apfs refusing is one snapshot's problem
+    and the next candidate may well open.
+
+    The signature is sudo's own `-n` message, "sudo: a password is required"
+    (measured on this Mac 2026-08-31). It is matched case-insensitively and by
+    substring, because the surrounding wording has varied across sudo versions
+    — older ones say "sorry, a password is required to run sudo" — while that
+    phrase has not.
+    """
+    return "password is required" in (stderr or "").lower()
 
 
 def _time_machine_manual_recovery(snapshot, device, path_inside=None):
@@ -1408,12 +1464,19 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
     Returns (outcome, detail):
       ("hit", path inside the snapshot)   — the file is there
       ("miss", None)                      — mounted and searched, not there
-      ("unmounted", reason)               — mount_apfs refused; NOT searched
+      ("no credential", reason)           — SUDO refused for want of a password;
+                                            NOT searched, and no later candidate
+                                            on this disk can do better
+      ("unmounted", reason)               — MOUNT_APFS refused; NOT searched,
+                                            but the next candidate may open
       ("unreadable", reason)              — mounted, but find failed; NOT searched
 
     The first version returned a bare None for both a mount failure and an
     absent file, and the caller rendered both as "searched ... and did not
-    find it". A snapshot that never opened was not searched.
+    find it". A snapshot that never opened was not searched. "no credential"
+    is split off from "unmounted" for the mirror-image reason: one of them is
+    a wall across the whole surface and the other is one snapshot's bad luck,
+    and only the first is worth interrupting a person about.
 
     THE MOUNT POINT IS THE FIXED ONE, and the argv is exactly the shape the
     sudoers rule permits — `mount_apfs -o ro -s <snapshot> <device>
@@ -1433,6 +1496,10 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
     code, _, stderr = runner(sudo + ["mount_apfs", "-o", "ro", "-s", snapshot, device, mount_point], timeout=LONG_TIMEOUT_SECONDS)
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
+        if _is_sudo_non_interactive_refusal(stderr):
+            # Verbatim, and with no prefix of ours: sudo's own message already
+            # names sudo, and "sudo said: sudo: ..." reads like a bug.
+            return "no credential", first
         return "unmounted", "mount_apfs said: %s" % first
     try:
         if wanted.startswith("/"):
@@ -1507,12 +1574,15 @@ def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner
       2. The Time Machine surface stopped at the credential rather than at
          anything else. That is the `root_credential_needed` mark, which the
          surface sets only after it has enumerated snapshots on an attached,
-         mounted disk and `sudo -n true` came back non-zero. It carries
-         conditions 3 and "there is something in there to search" in one flag:
-         a missing disk, an unconfigured destination or a warm credential all
-         leave it unset, and `sudo -n` exits non-zero WITHOUT prompting, so
-         probing for it costs nothing and can never summon a password window
-         by accident.
+         mounted disk, ATTEMPTED the mount, and had sudo itself refuse for
+         want of a password. It carries the design's third condition and "there
+         is something in there to search" in one flag: a missing disk, an
+         unconfigured destination, a warm credential and an installed sudoers
+         rule all leave it unset. `sudo -n` refuses WITHOUT prompting, so
+         finding out costs nothing and can never summon a password window by
+         accident — and it is the mount's refusal rather than a `sudo -n true`
+         probe, because that probe fails whether or not the rule is installed
+         and would have made the rule useless.
       3. A backup exists whose timestamp predates the deletion. Without one,
          the password cannot help and sending him after it would waste his
          walk. The bound is the DELETION commit's timestamp, not the newest

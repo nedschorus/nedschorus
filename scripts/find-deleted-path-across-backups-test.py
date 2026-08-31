@@ -1065,6 +1065,7 @@ tm_no_password = FakeRunner([
     ("diskutil info", DISKUTIL_MOUNTED),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_no_password)
 check("Time Machine without a password is UNAVAILABLE, never NOT FOUND",
@@ -1092,6 +1093,7 @@ tm_no_date = FakeRunner([
     ("diskutil info", DISKUTIL_MOUNTED),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
 ])
 undated = finder.search_time_machine("a/b.md", newest_date_held=None, runner=tm_no_date)
 check("with no git date, the report admits the candidate may postdate the deletion",
@@ -1135,6 +1137,7 @@ tm_remount = RemountRunner([
     ("tmutil destinationinfo", DESTINATION_INFO),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
 ])
 report = finder.search_time_machine("a/b.md", runner=tm_remount)
 check("an attached-but-unmounted disk is mounted rather than given up on",
@@ -1370,6 +1373,7 @@ tm_wall_paths = FakeRunner([
     ("diskutil info", DISKUTIL_MOUNTED),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
 ])
 wall_report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_wall_paths)
 hit_report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14",
@@ -1399,6 +1403,7 @@ COLD_THEN_PROMPTED = [
     ("diskutil info", DISKUTIL_MOUNTED),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
     # "sudo mount_apfs" is not a substring of "sudo -n mount_apfs", so this
     # entry answers the prompting form of the mount and only that form.
     ("sudo mount_apfs", (0, "", "")),
@@ -1409,8 +1414,12 @@ COLD_THEN_PROMPTED = [
 tm_cold_default = FakeRunner(COLD_THEN_PROMPTED)
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_cold_default)
 check("without --prompt-for-root a cold sudo stops at the wall, as an unattended run must",
-      report.status == UNAVAILABLE and any("needs your password" in l for l in report.lines),
+      report.status == UNAVAILABLE and getattr(report, "root_credential_needed", False)
+      and any("the mount was refused: sudo: a password is required" in l for l in report.lines),
       "%s %s" % (report.status, report.lines))
+check("... after actually TRYING the mount, which is the only thing that can see the sudoers rule",
+      any("sudo -n mount_apfs" in c for c in tm_cold_default.calls),
+      "`sudo -n true` fails with the rule installed too, so stopping on it makes the rule useless")
 check("... and no sudo without -n is ever run, so an unattended run cannot hang on a prompt",
       not any(c.startswith("sudo ") and not c.startswith("sudo -n ") for c in tm_cold_default.calls),
       str(tm_cold_default.calls))
@@ -1427,8 +1436,8 @@ check("... by running the mount itself, without -n, so sudo can ask at the termi
                "/dev/disk5s2 " + TM_MOUNT for c in tm_cold_prompted.calls)
       and not any("sudo -n mount_apfs" in c for c in tm_cold_prompted.calls),
       str(tm_cold_prompted.calls))
-check("... and the report says the password was asked for, not that sudo was already warm",
-      any("--prompt-for-root asked at the terminal" in l for l in report.lines)
+check("... and the report says sudo was given the terminal, not that it was already warm",
+      any("--prompt-for-root, which let sudo ask at the terminal" in l for l in report.lines)
       and not any("already-warm" in l for l in report.lines),
       str(report.lines))
 check("... and what it mounted is still released with diskutil unmount",
@@ -1545,6 +1554,7 @@ SPEAKS = [
     ("diskutil info", DISKUTIL_MOUNTED),
     ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
     ("say", (0, "", "")),
 ]
 
@@ -1564,6 +1574,96 @@ finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
                     prompt_for_root=True)
 check("--prompt-for-root never speaks: the person is already at the terminal",
       not any(c.startswith("say ") for c in silent_runner.calls), str(silent_runner.calls))
+
+
+# --------------------------------------------------------------------------
+# The run the sudoers rule exists for, and the failure it must not be confused with
+# --------------------------------------------------------------------------
+
+# Nobody at the keyboard, nothing cached, and the mount goes through anyway
+# because the rule covers that one command. `sudo -n true` still FAILS here —
+# NOPASSWD applies to the commands in the entry and `true` is not one of them —
+# so a surface that stopped on that probe would report UNAVAILABLE for the very
+# run the rule was written for, and would speak about it.
+RULE_INSTALLED = [
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
+    ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (0, "", "")),
+    ("diskutil unmount", (0, "", "")),
+    (TM_FIND, (0, TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
+]
+
+tm_rule_installed = FakeRunner(RULE_INSTALLED)
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_rule_installed)
+check("with the sudoers rule installed the surface is searched with nobody present",
+      report.status == FOUND,
+      "`sudo -n true` fails with the rule installed too; only trying the mount can tell")
+check("... and no wall is declared, so nothing goes looking for the user",
+      not getattr(report, "root_credential_needed", False), str(report.lines))
+check("... and the report names the rule as what carried it, not a warm credential",
+      any("the sudoers rule is installed" in l for l in report.lines)
+      and not any("already-warm" in l for l in report.lines),
+      str(report.lines))
+
+rule_installed_run = FakeRunner(RULE_INSTALLED + [
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("log --all --full-history -1 --format=%H", (0, "\n", "")),
+    ("--name-only", (0, "docs/other.md\n", "")),
+    DELETED_2026_08_13_NOON,
+])
+finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
+                    skip={"localsnapshots", "transcripts", "box"}, runner=rule_installed_run)
+check("with the rule installed nothing is spoken: the wall was never reached",
+      not any(c.startswith("say ") for c in rule_installed_run.calls), str(rule_installed_run.calls))
+
+
+class FirstCandidateBusyRunner(FakeRunner):
+    """The 2026-08-13 candidate refuses with Resource busy; everything else answers the table.
+
+    A surface that treated any cold mount failure as the password wall would
+    stop here and send the user after a password that was never the problem.
+    """
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        joined = " ".join(argv)
+        if "mount_apfs" in joined and "2026-08-13-183101" in joined:
+            self.calls.append(joined)
+            return (1, "", "mount_apfs: volume could not be mounted: Resource busy\n")
+        return FakeRunner.__call__(self, argv, timeout, cwd)
+
+
+tm_busy_then_mounts = FirstCandidateBusyRunner(RULE_INSTALLED)
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_busy_then_mounts)
+check("a busy snapshot is one snapshot's problem, not a credential wall: the walk goes on",
+      report.status == FOUND and not getattr(report, "root_credential_needed", False),
+      "%s %s" % (report.status, report.lines))
+check("... and the busy one is still reported, in mount_apfs's own words",
+      any("could not search com.apple.TimeMachine.2026-08-13-183101.backup" in l and "Resource busy" in l
+          for l in report.lines),
+      str(report.lines))
+
+tm_busy_then_walled = FirstCandidateBusyRunner([
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", SNAPSHOT_LIST),
+    ("sudo -n true", (1, "", "sudo: a password is required\n")),
+    ("sudo -n mount_apfs", (1, "", "sudo: a password is required\n")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_busy_then_walled)
+check("a wall reached after another failure reports that earlier one too, rather than dropping it",
+      getattr(report, "root_credential_needed", False)
+      and any("Resource busy" in l for l in report.lines)
+      and any("a password is required" in l for l in report.lines),
+      str(report.lines))
+
+check("sudo's non-interactive refusal is told apart from mount_apfs's own failures",
+      finder._is_sudo_non_interactive_refusal("sudo: a password is required\n")
+      and finder._is_sudo_non_interactive_refusal("sudo: sorry, a password is required to run sudo\n")
+      and not finder._is_sudo_non_interactive_refusal(
+          "mount_apfs: volume could not be mounted: Resource busy\n")
+      and not finder._is_sudo_non_interactive_refusal(""))
 
 print()
 if failures:
