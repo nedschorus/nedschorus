@@ -757,6 +757,49 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an unreported token total is omitted, never guessed at",
           "tokens=" not in provenance_stamp_of(report), repr(provenance_stamp_of(report)))
 
+    # --- The effort a cell runs at is the caller's to name ----------------
+    # The tier maps pin an effort per tier, and --effort overrides them the
+    # way --model overrides the model chain: honored exactly, no fallback.
+    # The behavior this pins showed up in the 2026-08-29 walk-reviewer model
+    # trial: every cell had to run at a named effort while the Codex tier map
+    # pins xhigh, and an override quietly running the mapped level would have
+    # measured the wrong configuration under a stamp naming the right one.
+    # The ruled fast tier (2026-08-30: gpt-5.6-terra at low) runs through
+    # this same flag.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "effort-default", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    check("a cell given no --effort runs at the tier map's level",
+          result.returncode == 0
+          and "effort=high" in provenance_stamp_of(report),
+          f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")
+
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "effort-override", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, "--effort", "low",
+    )
+    check("--effort overrides the tier map and is stamped as what ran",
+          result.returncode == 0
+          and "effort=low" in provenance_stamp_of(report),
+          f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")
+
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "effort-unknown", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, "--effort", "extreme",
+    )
+    check("an effort level the runtimes do not accept is refused, not passed on",
+          result.returncode == 64 and not report.is_file(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
     # --- The stray-write detector runs for the Codex leg too --------------
     # The cases at the top of this file drive the Claude launcher; this one
     # drives the Codex launcher through the same shared call, so the pair is

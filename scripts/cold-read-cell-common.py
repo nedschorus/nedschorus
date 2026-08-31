@@ -80,7 +80,14 @@ import time
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
-CELL_CHOICES = ["restate", "defect-hunt"]
+# The passes a cell can be asked to run; each reads its prompt from
+# .claude/skills/cold-read/prompts/<cell>.md. `fast-clarify` is the fast
+# tier's one-reviewer ask (user-ruled 2026-08-30, provisional per the same
+# day's qualifier): a concise sentence-level restatement, then concise
+# criterion-tagged stumble and coverage findings. It is run singly -- one
+# cell against one walk item -- never by the grid, whose roster is
+# scripts/cold-read-grid.py's own.
+CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify"]
 TIER_CHOICES = ["good", "floor"]
 
 
@@ -148,6 +155,16 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
              "and a run that leaves it absent or empty fails",
     )
     parser.add_argument("--model", help=model_help)
+    parser.add_argument(
+        "--effort", choices=["low", "medium", "high", "xhigh", "max"],
+        help="reasoning effort, overriding the tier mapping. Honored exactly, "
+             "with no fallback, the way --model is: a caller who names an "
+             "effort is answering the question the tier map exists to answer, "
+             "and quietly running the mapped level instead would defeat the "
+             "request. The ruled fast-tier configuration (2026-08-30, "
+             "gpt-5.6-terra at low) runs through this flag; no tier map pins "
+             "low.",
+    )
     return parser
 
 
@@ -739,7 +756,7 @@ def run_cell(
     # names a model is answering the question the chain exists to answer, and
     # silently running a different one would defeat the request.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
-    effort = tier_to_effort[args.tier]
+    effort = args.effort or tier_to_effort[args.tier]
 
     return run_model_chain(
         program=program, runtime=runtime, chain=chain, effort=effort,
