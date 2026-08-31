@@ -1,4 +1,5 @@
 {
+  "outputStyle": "Zero-Context Explanation",
   "env": {
     "DISABLE_AUTOUPDATER": "1"
   },
