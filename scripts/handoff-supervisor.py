@@ -62,6 +62,17 @@ EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
+# Text appended to every launched session's system prompt, through
+# `claude --append-system-prompt-file`. The default is a COMMITTED file, and the
+# supervisor rather than the launchers owns the flag on purpose: a supervisor is
+# started by launch-claude-mac, by launch-claude-ubuntu, and by
+# resupervise-seat.py, so putting it in the launchers would leave a recovered
+# seat silently running without it. One place, every path.
+DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
+    Path(__file__).resolve().parent.parent / "docs" / "agents"
+    / "seat-session-appended-system-prompt.md"
+)
+
 # The supervisor stamps its state file while polling so anyone can ask whether
 # a supervisor is still watching. Without this an agent can write a handoff,
 # stop working, and wait forever on a supervisor that died — a hang that looks
@@ -615,7 +626,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
-                         remote_control_name: str = ""):
+                         remote_control_name: str = "",
+                         appended_system_prompt_file: str = ""):
     """Start one interactive session, inheriting this console's terminal.
 
     resume=True launches `--resume <id>` instead of `--session-id <id>`: the
@@ -650,6 +662,11 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     command = [agent_command, flag, session_id]
     if remote_control_name:
         command += ["--remote-control", remote_control_name]
+    if appended_system_prompt_file:
+        command += ["--append-system-prompt-file", appended_system_prompt_file]
+    # The prompt stays LAST, after every flag — the stub agent in the test suite
+    # reads it by taking the final argument, and a flag appended after it would
+    # be read as the prompt.
     command.append(prompt)
     return subprocess.Popen(command, cwd=str(working_directory))
 
@@ -789,6 +806,8 @@ class SupervisorSettings:
     # recycles mint fresh ids as always. The caller is responsible for having
     # checked that no unconsumed handoff waits — boot-ignition is skipped.
     resume_session_id: str = ""
+    # Appended to each launched session's system prompt; "" launches without it.
+    appended_system_prompt_file: str = ""
     # A real annotation, not a string: this module is loaded by importlib in the
     # threshold hook and the tests, where a forward reference cannot resolve.
     adopted_session: Optional[AdoptedSession] = None
@@ -984,6 +1003,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, prompt,
                 resume=resume_first_launch, remote_control_name=settings.agent,
+                appended_system_prompt_file=settings.appended_system_prompt_file,
             )
             resume_first_launch = False  # recovery applies to the first launch only
 
@@ -1056,6 +1076,13 @@ def main(argv=None) -> int:
     parser.add_argument("--cd", default=".", help="the agent's worktree")
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="machine-local handoff directory")
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
+    parser.add_argument(
+        "--agent-append-system-prompt-file",
+        default=str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH),
+        help="file whose text is appended to every launched session's system prompt "
+             "(default: the committed docs/agents/seat-session-appended-system-prompt.md "
+             "beside this script). Pass an empty string to launch without it.",
+    )
     parser.add_argument("--first-prompt", default="", help="prompt for the first session (no handoff yet)")
     parser.add_argument(
         "--first-prompt-file", default="",
@@ -1122,6 +1149,20 @@ def main(argv=None) -> int:
         print(f"handoff-supervisor: no such command: {arguments.agent_command}", file=sys.stderr)
         return 3
 
+    # A missing file WARNS and launches without it, rather than refusing. The
+    # default points into the checkout beside this script, and a supervisor run
+    # from a tree that does not have the file yet — an older checkout, or one
+    # mid-rebase — must still be able to seat its agent. Losing the appended
+    # text degrades a session; refusing to launch loses the seat.
+    appended_system_prompt_file = arguments.agent_append_system_prompt_file
+    if appended_system_prompt_file and not Path(appended_system_prompt_file).is_file():
+        print(
+            f"handoff-supervisor: no appended-system-prompt file at "
+            f"{appended_system_prompt_file} — launching sessions without it",
+            file=sys.stderr,
+        )
+        appended_system_prompt_file = ""
+
     handoff_directory = Path(arguments.handoff_dir).expanduser()
     handoff_directory.mkdir(parents=True, exist_ok=True)
 
@@ -1132,6 +1173,7 @@ def main(argv=None) -> int:
         agent_command=arguments.agent_command,
         first_prompt=arguments.first_prompt,
         resume_session_id=arguments.resume_session_id,
+        appended_system_prompt_file=appended_system_prompt_file,
         adopted_session=adopted,
     )
 

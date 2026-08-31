@@ -459,7 +459,11 @@ with tempfile.TemporaryDirectory() as temporary:
     state_seen_at_launch = {}
     class StopLoop(Exception):
         pass
-    def probe_launch(agent_command, session_id, working_directory, prompt, resume=False, remote_control_name=""):
+    # Mirrors launch_agent_session's signature exactly, on purpose: a stub with
+    # **kwargs would swallow a signature change instead of failing here, and
+    # this probe exists to assert what the supervisor passes at launch.
+    def probe_launch(agent_command, session_id, working_directory, prompt, resume=False,
+                     remote_control_name="", appended_system_prompt_file=""):
         state_seen_at_launch.update(json.loads(
             (workspace.handoffs / "seat-a-supervisor-state.json").read_text()))
         state_seen_at_launch["resume_flag"] = resume
@@ -543,7 +547,9 @@ with tempfile.TemporaryDirectory() as temporary:
     # P3-4: the supervisor's own default prompt on a resume launch is the
     # truthful crash-recovery text, not ask-for-work.
     launched_prompts = []
-    def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False, remote_control_name=""):
+    # Mirrors launch_agent_session's signature exactly; see probe_launch above.
+    def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False,
+                     remote_control_name="", appended_system_prompt_file=""):
         launched_prompts.append((prompt, resume))
         raise StopIteration()
     sup = supervisor_module

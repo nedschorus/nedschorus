@@ -929,6 +929,76 @@ def run_boot_ignition_case(workspace: Path):
 
 
 
+def run_appended_system_prompt_cases(workspace: Path):
+    """Every launched session gets --append-system-prompt-file, and a missing
+    file degrades the session rather than losing the seat.
+
+    The supervisor owns this flag rather than the launchers because a
+    supervisor is started three ways -- launch-claude-mac, launch-claude-ubuntu
+    and resupervise-seat.py -- and a flag living in the launchers would leave a
+    recovered seat silently running without the appended text.
+    """
+    def boot_once(name: str, extra_arguments: list) -> str:
+        """Boot-ignite once with an argument-recording stub; return its argv."""
+        handoff_directory = workspace / name
+        handoff_directory.mkdir(parents=True, exist_ok=True)
+        (handoff_directory / f"{name}-handoff.md").write_text(
+            "written-at: 2026-08-31T00:00:00Z\nnext-step: carry on\nrestart-counter: 5\n",
+            encoding="utf-8",
+        )
+        supervisor.write_supervisor_state(
+            handoff_directory / f"{name}-supervisor-state.json",
+            {"consumed_counter": 4, "session_id": "no-such-session", "generation": 4},
+        )
+        record_path = handoff_directory / "argv.txt"
+        stub_agent = handoff_directory / "stub-agent"
+        # Records EVERY argument, one per line -- the neighbouring boot case
+        # records only the last one, which cannot see a flag.
+        stub_agent.write_text(
+            "#!/bin/sh\n"
+            "exec >/dev/null 2>&1\n"
+            f"printf '%s\\n' \"$@\" > '{record_path}'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        stub_agent.chmod(0o755)
+        subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
+             "--handoff-dir", str(handoff_directory),
+             "--agent-command", str(stub_agent)] + extra_arguments,
+            capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL, timeout=60,
+        )
+        return record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+
+    prompt_file = workspace / "appended-system-prompt.md"
+    prompt_file.write_text("You may commission subagents on your own initiative.\n",
+                           encoding="utf-8")
+
+    argv = boot_once("appendon", ["--agent-append-system-prompt-file", str(prompt_file)])
+    check("the launched session carries --append-system-prompt-file",
+          "--append-system-prompt-file" in argv.splitlines(), argv)
+    check("it carries the path it was given",
+          str(prompt_file) in argv.splitlines(), argv)
+    # The prompt is read by position in the neighbouring case and by every
+    # reader of this command; a flag appended after it would BE the prompt.
+    lines = [line for line in argv.splitlines() if line]
+    check("the prompt is still the last argument, after the new flag",
+          lines and lines[-1] not in ("--append-system-prompt-file", str(prompt_file)),
+          repr(lines[-3:] if lines else lines))
+
+    argv = boot_once("appendoff", ["--agent-append-system-prompt-file", ""])
+    check("an empty value launches with no such flag",
+          "--append-system-prompt-file" not in argv.splitlines(), argv)
+
+    missing = workspace / "no-such-appended-prompt.md"
+    argv = boot_once("appendmissing", ["--agent-append-system-prompt-file", str(missing)])
+    check("a missing file does not lose the seat -- the session still launches",
+          argv.strip() != "", "the stub agent recorded nothing, so no session launched")
+    check("a missing file launches with no such flag",
+          "--append-system-prompt-file" not in argv.splitlines(), argv)
+
+
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     """The successor is told which subagents were still working when the
     session it replaces ended, and that it may need to re-commission
@@ -1128,6 +1198,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
+    run_appended_system_prompt_cases(Path(temporary_directory))
     run_first_prompt_file_cases(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))
     run_multi_line_next_step_cases(Path(temporary_directory), recent_timestamp)
