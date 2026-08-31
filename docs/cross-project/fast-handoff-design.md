@@ -18,7 +18,7 @@ Each script's module docstring says what it does and why it is shaped that way; 
 - `scripts/handoff-context-threshold-hook.py` — the auto-trigger: a Stop hook that reads context used from the session's own transcript and tells the agent to run the skill at the threshold — or, while one of the session's subagents is still in flight and context is below the ceiling, that the handoff is deferred until it finishes (next section).
 - `.claude/skills/handoff/SKILL.md` — the skill: the agent writes `next-step`, runs the writer, does what it reports. Walked and landed 2026-08-06 (dispositions in `docs/drafts/handoff-skill-draft.md`).
 - `scripts/handoff-write-and-check-supervisor.py` — the writer: fills every field a machine can compute, writes the handoff file, reports supervisor liveness.
-- `scripts/handoff-supervisor.py` — the supervisor: watch, kill, extract, carry tasks across (since PR #141 a launched seat's generations share one launcher-pinned list and nothing is copied; pre-seed copying is the unpinned-session path), launch the successor with the ignition prompt; one per agent, self-registered, lock-guarded.
+- `scripts/handoff-supervisor.py` — the supervisor: watch, kill, extract, carry tasks across (since PR #141 a launched seat's generations share one launcher-pinned list and nothing is copied; pre-seed copying is the unpinned-session path), launch the successor with the ignition prompt; one per agent, lock-guarded, and SEAT-OWNED — started by the launchers, not self-registered (see the Rulings entry, corrected 2026-08-31).
 - `scripts/handoff-extract-conversation.py` — the extractor: carries the word-floor tail of the dialog verbatim to the successor.
 - `scripts/resupervise-seat.py` — the recovery tool: a seat whose supervisor died is restored by running this from ANOTHER window, not by the seat itself. Landed 2026-08-19 ([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45), "unsupervised seats have a recovery procedure, not a hand improvisation") and missing from this list until 2026-08-31. It refuses when the seat's handoff counter is at or below the supervisor's consumed counter, on the reading that nothing is waiting.
 
@@ -169,27 +169,38 @@ His second observation is the one that makes it work: a session can write more
 than one handoff, but **all but the latest are obsolete**, so one file per
 session, overwritten in place, loses nothing.
 
-**Why the counter is not simply deleted, and what actually retires it.** The
-`restart-counter` field does three jobs, and only the third is naming:
+**TWO counters exist and they are different fields.** Conflating them is easy
+and this document did it, on 2026-08-31, in the first draft of this section; the
+error is recorded rather than quietly fixed, because the next reader will be
+tempted the same way.
 
-1. **Novelty.** The supervisor polls one fixed path and must know whether the
-   file is one it has already acted on. `next_restart_counter` takes
-   `max(from_file, from_state, 0) + 1`, so the value is guaranteed to read as
-   new even when the file is missing, malformed, or older than what was
-   consumed.
-2. **Prune ordering.** `prune_old_generations` globs `<stem>-*.md` and sorts
-   **by filename**. The zero-padded counter is what makes lexical order equal
-   chronological order.
-3. **Archive identity.** Which handoff is which.
+- **`restart-counter:`** lives in the handoff file and is mirrored as
+  `consumed_counter` in the supervisor's state. It does exactly ONE job:
+  **novelty** — has the supervisor already acted on this file?
+  `next_restart_counter` takes `max(from_file, from_state, 0) + 1`, so the value
+  reads as new even when the file is missing, malformed, or older than what was
+  consumed.
+- **`generation`** lives only in the supervisor's state. It names the archives —
+  `f"{settings.agent}-handoff-{generation:04d}.md"` at
+  `handoff-supervisor.py:831`, and the dialog equivalent at `:819` — and so it
+  is what supplies **prune ordering**, since `prune_old_generations` sorts its
+  glob **by filename** (`:516`). **`restart-counter` appears in no filename
+  anywhere.**
 
-Job 3 is better served by the session id. Job 2 disappears, because per-session
-files never collide and so nothing needs pruning — the cost of keeping every
-handoff is a few kilobytes against the multi-megabyte transcript each one
-summarises. Job 1 is the one that needs care, and **consume-by-removal** is what
-retires it: make the pending handoff a file whose PRESENCE means "waiting", and
+That split is what makes the change cleaner than it first looked. Archive
+identity and prune ordering were never `restart-counter`'s jobs, so retiring it
+costs neither: its ONLY job is novelty, and **consume-by-removal** is what
+retires that: make the pending handoff a file whose PRESENCE means "waiting", and
 have the supervisor move it into the archive only after a successor has actually
 come up. Novelty becomes "does a file exist", with no counter and no high-water
 mark, and a session that writes twice simply rewrites its own pending file.
+
+`generation` is retired by a different half of the same change: per-session
+files never collide, so nothing needs pruning, and the cost of keeping every
+handoff is a few kilobytes against the multi-megabyte transcript each one
+summarises. What survives is `generation` as the recycle COUNT the supervisor
+prints at `:966` and `:983` — a number for a human reading a console, no longer
+an identifier.
 
 **A recorded correction, because the wrong reason was argued first.** This seat
 defended the counter with a double-write scenario: a session writes a handoff,
@@ -201,12 +212,26 @@ implies the writing session was stopped**. A session that lives to write twice i
 one whose first handoff was never consumed, and then the session id compares
 correctly. The scenario cannot arise on the paths that exist.
 
-**The one path where consume and stop come apart** is the supervisor's boot and
-adoption path (`handoff-supervisor.py:906` and `:922`), where a supervisor
-starting up finds a handoff already on disk whose writing session may still be
-alive and is adopted rather than replaced. A build of this specification must
-state what consume-by-removal does there. It is not a reason to keep the
-counter; it is the case the new protocol has to answer explicitly.
+**Where consume and stop come apart is the supervisor's own BOOT**, and it is
+worth naming the two paths precisely, because a first draft of this section
+called them "the adoption path" and that is wrong on both counts.
+
+- `handoff-supervisor.py:906` — `if resume_first_launch and
+  settings.handoff_path.is_file():`. This is crash-recovery RESUME
+  (`--resume-session-id`), and its own comment says what it does and why: *"Mark
+  any waiting handoff consumed BEFORE the resume launch — the operator chose the
+  transcript over the handoff by passing the flag."* The writing session is dead
+  by construction here.
+- `handoff-supervisor.py:922` — `if adopted is None and not resume_first_launch
+  and settings.handoff_path.is_file():`. This is BOOT-IGNITION, and the guard
+  says it runs only when nothing was adopted. It launches a FRESH successor
+  through `carry_over_to_successor`, so it replaces rather than adopts. On the
+  real adoption path (`--adopt-session-id`), `adopted` is not None, this branch
+  is skipped, and no handoff is consumed at boot at all.
+
+Both consume a handoff without stopping a session, because at boot there is no
+session of the supervisor's own to stop. That is the case a build of this
+specification must answer explicitly. It is not a reason to keep the counter.
 
 **The shape.** A pending handoff is one file per writing session:
 
@@ -218,9 +243,12 @@ per-session file placed beside the legacy ones with a name of that shape WOULD
 MATCH THAT GLOB, and an old supervisor would prune it — deleting a live pending
 handoff as though it were a stale generation. A subdirectory puts the new files
 outside every existing glob, and it makes "presence means waiting" literal.
-`.claude/handoffs/` and everything beneath it is writable by an agent since
-[#215](https://github.com/nedschorus/nedschorus/pull/215), so the subdirectory
-needs no further permission work.
+`.claude/handoffs/` is carved out of the instruction-file guard since
+[#215](https://github.com/nedschorus/nedschorus/pull/215) (merged 554dddd), so
+the subdirectory needs no further permission work. One limit, because "and
+everything beneath it" would overstate: the guard's BASENAME rule is checked
+before any carve-out, so a `CLAUDE.md` or `CLAUDE.local.md` anywhere beneath the
+carve-out is still refused. `instruction-file-guard-test.py` pins that case.
 
 **Migration — two phases, and only the second one is gated.**
 
@@ -238,21 +266,32 @@ needs no further permission work.
   restart-counter, saying the supervisor would not ignite from it. That is why
   the phases are separated rather than done as one change.
 
-**What phase 2 removes**, counted 2026-08-31 across the three scripts and their
-test suites:
+**What phase 2 removes.** Counted 2026-08-31. **The method matters more than the
+numbers and is stated so anyone can reproduce them:** MATCHING LINES, whole file,
+`grep -Ec <pattern>` over the concatenation of the three scripts
+(`handoff-supervisor.py`, `handoff-write-and-check-supervisor.py`,
+`resupervise-seat.py`) and separately over their three test suites. A first draft
+of this table gave four of these rows wrongly and named no unit at all, which is
+what made the errors invisible.
 
-| machinery | scripts | tests |
+| pattern | scripts | tests |
 |---|---|---|
-| `restart-counter` field and `counter_from()` | 20 | 24 |
-| `next_restart_counter()` | 2 | — |
-| `consumed_counter` state and `consumed_counter_from_state()` | 18 | 12 |
-| `prune_old_generations()`, `GENERATIONS_KEPT`, two call sites | 3 | 1 |
-| `resupervise-seat.py`'s `counter <= consumed` refusal | — | — |
+| `restart-counter\|counter_from` | 20 | 28 |
+| `next_restart_counter` | 2 | 6 |
+| `consumed_counter` | 18 | 12 |
+| `prune_old_generations\|GENERATIONS_KEPT` | 6 | 1 |
+| `resupervise-seat.py`'s `counter <= consumed` refusal (`:130`) | 1 | — |
+
+These are line counts of MENTIONS, not a measure of work: a line may mention a
+pattern twice, and some mentions are prose in a docstring. They size the change;
+they do not scope it.
 
 Two are partly rather than wholly removed, and the difference is worth stating
-so a builder does not over-delete. `generation` (24 + 12) stops being an
+so a builder does not over-delete. `generation` (24 + 12, same method) stops being an
 identifier but survives as the recycle count the supervisor prints at `:966` and
-`:983`. `--claim` and `claiming_directory()` (5 + 2) lose their stated reason — a
+`:983`. `--claim` and `claiming_directory()` (7 + 5, same method — and this row
+is sensitive to whether module-docstring mentions are counted, so treat it as
+indicative) lose their stated reason — a
 handoff lost unread, because two seats sharing a name overwrote one file — since
 per-session files no longer collide; but the agent name still selects the
 supervisor STATE file and the LOCK, so the refusal narrows rather than vanishes.
@@ -311,8 +350,12 @@ the roster is non-empty.)
 
 This field is built and in use, as is the block form above — that contrast
 read "Unlike the block form above" until 2026-08-31, when the block form's
-status was corrected. A retiring
-session records every subagent it spawned as one numbered field each:
+status was corrected.
+
+**The two example lines immediately below are the 2026-08-23 FORM and are kept
+as history, not as a description of today's output** (corrected 2026-08-31).
+As built then, a retiring session recorded every subagent it spawned as one
+numbered field each, carrying spawn time and last event:
 
     spawned-subagent-1: a309071aa3681d280 "Fix ignored-path write blind spot" spawned at 2026-08-23T19:55:24Z, last event completed at 2026-08-23T20:52:59Z
     spawned-subagent-2: abb92c2626197a6f5 "Fix output-path directory traceback" spawned at 2026-08-23T20:12:30Z, last event completed at 2026-08-23T20:47:50Z
@@ -323,9 +366,19 @@ Every one of that session's nine subagents completed, so no line of it shows
 exercised by the test fixture instead, which is constructed for exactly the
 cases the record does not happen to contain.
 
-One field per subagent, numbered from 1 in spawn order, carrying the agent
-id, the task description, the spawn time and the last event recorded for that
-subagent. Numbered rather than repeated, because the reader takes the first
+**What the field carries TODAY** (corrected 2026-08-31; the paragraph here
+described the 2026-08-23 build and the examples above are that form, kept as
+history): one line per still-working subagent, numbered from 1 in spawn order,
+carrying the agent id and the job description AND NOTHING ELSE —
+
+    spawned-subagent-1: a309071aa3681d280 "Fix ignored-path write blind spot"
+
+No spawn time and no last event. `spawned_subagent_field_lines`
+(`handoff-write-and-check-supervisor.py:392-400`) renders exactly
+`{prefix}{ordinal}: {agent_id} "{description}"`, and its docstring gives the
+reason: every recorded entry is still working by construction, so a last-event
+field would say nothing, and spawn time is a transcript look-up. Numbered rather
+than repeated, because the reader takes the first
 occurrence of a key and a repeated `spawned-subagent:` would lose every
 subagent but the first. Written with the computed fields, before any verbatim
 block. A session that spawned nothing writes no field at all, so its handoff
@@ -336,20 +389,28 @@ the field sees unknown keys and ignores them; a reader that has the field
 meets a handoff without it, derives an empty roster, and says nothing about
 subagents. Nothing migrates.
 
-**`last event` is stated, never interpreted.** It is whatever the transcript
+**`last event` is stated, never interpreted — TRUE OF THE DERIVATION, AND IT NO
+LONGER REACHES THE FILE** (corrected 2026-08-31). The derivation
+(`spawned_subagent_roster`) does copy the transcript's status through rather than
+matching it against a set, so the paragraph below is right about that. But
+`last_event` is then used only to FILTER, and never appears in the handoff:
+`STILL_WORKING_SUBAGENT_LAST_EVENTS = ("spawned", "resumed")`
+(`handoff-write-and-check-supervisor.py:96`) is a whitelist, which is the
+OPPOSITE polarity to what the open-by-construction claim implies — a status the
+harness adds later reads as ended and is cut, not carried. The original text
+follows, as the 2026-08-23 reasoning. It is whatever the transcript
 last recorded — `spawned`, `resumed`, or any `<status>` a notification
 carries, which across the measured transcripts means `completed`, `killed`,
-`failed` and `stopped`. That list is open by construction rather than
-exhaustive: the derivation copies the status through instead of matching it
-against a set, so a status the harness adds later appears here with no code
-change. `stopped` earns its place in the list because it is what the harness
+`failed` and `stopped`. `stopped` earns its place in the list because it is what the harness
 uses to report agents from a previous session with no completion record —
 the orphan report this whole roster exists to carry.
 
-The ignition prompt tells the successor plainly that `completed` means the
-subagent is no longer running, not that its work is done. Deciding which
-entries still own work is the successor's judgement, and the writer does not
-pretend to compute it.
+(Corrected 2026-08-31: this paragraph said the ignition prompt tells the
+successor that `completed` means the subagent is no longer running rather than
+that its work is done. No such sentence is in `build_ignition_prompt`, and none
+is needed — `completed` entries are never recorded at all, having been filtered
+out by the whitelist above. Deciding which entries still own work remains the
+successor's judgement, and the writer still does not pretend to compute it.)
 
 ## Rulings
 
@@ -363,10 +424,10 @@ Dated decisions and their reasons — the part of the design a reader cannot rec
 - **The retiring agent exercises no judgment over what its successor receives (user-ruled 2026-08-06).** The extractor's word-floor tail is the recycling boundary — the floor value and its sizing rationale live in the extractor — extended back to the nearest user prompt; `--boundary-quote` survives as a manual override only. The 5-topics rule, the "err long" hedge, and the boundary field died with this ruling.
 - **`next-step` is an instruction to act on, not a summary, and every pointer carries a pin** (path + commit SHA, repository + issue number) so the successor resolves what the writer meant. Text of record: the skill (2026-08-06).
 - **The skill runs one script that does everything best done by script (user-ruled 2026-08-06).** The writer and the liveness report are one command because they are one decision: a handoff nobody is watching must not stop the agent working, and an agent that runs only half of a two-step procedure would stop anyway.
-- **Self-registration, not discovery (user-asked 2026-08-06).** The agent starts its own supervisor when its handoff script finds none watching; nothing scans the machine. Two questions dissolve structurally: only sessions carrying the skill ever get a supervisor, and subagents raise `SubagentStop`, not `Stop`, so the hook never fires for them. A per-agent lock refuses a second supervisor (two would double-kill and double-launch). Adoption also closed the bootstrap hole: a hand-started session can be picked up and recycled.
+- **Self-registration, not discovery (user-asked 2026-08-06) — THE SELF-STARTING HALF IS DEAD; corrected 2026-08-31.** As ruled, the agent started its own supervisor when its handoff script found none watching, and nothing scanned the machine. The self-starting half was REMOVED from `handoff-write-and-check-supervisor.py` on 2026-08-14 (tombstone at `:476-484`): a successor inherits the supervisor's stdio, a detached supervisor's console is a log file, and every successor it launched died at its first need for input. Today the writer starts nothing — its only subprocess call is the branch-protection audit — and on finding no supervisor it prints instructions to run `scripts/resupervise-seat.py`. What SURVIVES of the ruling: nothing scans the machine, a per-agent lock still refuses a second supervisor, only sessions carrying the skill get one, and subagents raise `SubagentStop` rather than `Stop` so the hook never fires for them. Adoption survives as a flag (`--adopt-session-id`) a person or a recovery tool passes, not as something the writer does. Two questions dissolve structurally: only sessions carrying the skill ever get a supervisor, and subagents raise `SubagentStop`, not `Stop`, so the hook never fires for them. A per-agent lock refuses a second supervisor (two would double-kill and double-launch). Adoption also closed the bootstrap hole: a hand-started session can be picked up and recycled.
 - **The founding boot is one committed file, no standing machinery.** Launched with the ruled prompt pattern (`claude "$(cat <path>)"` — a launcher passes the prompt; CLAUDE.md instructions do not wake a session, [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27)). A boss-called durable snapshot is an ordinary commit on request.
 - **The auto-trigger reads the transcript, and only the transcript (user-ruled 2026-08-12).** The statusline relay — a second data source riding the interactive-only statusline — was cut: its sole remaining trigger was a session whose first turn had not completed, a moment the threshold cannot be crossed. The statusline renderer survives as `scripts/session-statusline-command.py`, outside this system.
-- **The hook fires at the threshold unconditionally (user-ruled 2026-08-12).** Its supervisor-liveness gate was cut: self-registration made an unwatched firing self-healing (the writer starts an adopting supervisor), so silence could only turn a dead supervisor into a permanently un-recycled session. Per-agent wiring of the hook, if ever wanted, waits on an agent-naming convention and gates on being a named agent, not on liveness. *Unconditionally* here ruled out the supervisor-liveness gate, which was the condition then in question; the 2026-08-27 deferral below is the one condition added since, and it postpones the firing rather than cancelling it.
+- **The hook fires at the threshold unconditionally (user-ruled 2026-08-12).** Its supervisor-liveness gate was cut: self-registration made an unwatched firing self-healing (the writer starts an adopting supervisor), so silence could only turn a dead supervisor into a permanently un-recycled session. (Corrected 2026-08-31: the parenthesis states the 2026-08-06 reasoning, and the mechanism it names died on 2026-08-14 — the writer starts no supervisor now. The RULING still stands on its own terms, because a liveness gate would still only convert a dead supervisor into a permanently un-recycled session; what changed is that the firing is no longer self-healing, so a dead supervisor now needs `resupervise-seat.py`.) Per-agent wiring of the hook, if ever wanted, waits on an agent-naming convention and gates on being a named agent, not on liveness. *Unconditionally* here ruled out the supervisor-liveness gate, which was the condition then in question; the 2026-08-27 deferral below is the one condition added since, and it postpones the firing rather than cancelling it.
 - **The queue-status line rides the ignition prompt (user-ruled 2026-08-12).** The #32 rot-visibility duty (queue depth and oldest item, visible to the boss) discharged into a log file under detached and headless supervisors; every successor now receives the line with the instruction to surface anything rotting. The console print stays for a watched pane. (Reconciled 2026-08-29 against this change: expired by the user — "Also useless is the reminder there are files in the queues. Thats what queues are for." The line no longer rides the ignition prompt; the supervisor's console print stays, for a watched pane or the log.)
 - **Record the subagents, do not wait for them (user-ruled 2026-08-23).** Subagents die with the session that spawned them, and that stays the policy: killing and restarting them is cheaper than draining them before a recycle. What was missing is that nothing told the successor they had existed. On 2026-08-23 the merge-lane seat commissioned a subagent that built pull request #150. Read off session `40a16b9c` rather than remembered: it was spawned at 21:20:43Z and **completed at 21:31:18Z**, then sat idle and resumable; #150 opened at 21:32:07Z and drew review findings; the session was killed at 22:08:12Z. So the subagent did not die mid-task — it died stopped, still the owner of unfinished work on #150, which is the harder case and the one a liveness check would have missed. Its work survived — worktree and branch on disk at exactly the reviewed head — but its ownership did not: nothing computed by the handoff said #150 had a fixer. The successor found the orphan only because the retiring agent happened to write a sentence of prose about it — accurately, as it turns out: *"#150 — a fixer this seat commissioned; resume it by name from the transcript, or re-commission."* It re-commissioned, spawning a fresh fixer at 22:25:28Z. Prose is the faculty least to be relied on at recycle time, and it is what this field replaces. Hence the roster field above, and a supervisor that names it in the ignition prompt. Two shapes the field deliberately does NOT take, each of which loses the case it exists for: a roster of *running* subagents (the #150 fixer had stopped and was sitting idle, still owning the fix), and liveness inferred from unmatched tool_use/tool_result pairs (see the harness facts below — the spawn's result arrives at spawn time, so every spawn is a matched pair whatever becomes of the subagent). (Reconciled 2026-08-29 against this change: narrowed by the user's own word — "Completed is junk. If someting is completed its on main or minimally in the worktree. Neither I or the next agent cares what is completed", and failed entries cut too: "presumably the prior agent had a chance to restart, and if that worked it would have restarted." The roster now records only subagents still working when the handoff is written — the ones the recycle itself kills — and the ignition prompt tells the successor to re-commission each and names where the dead one's transcript survives; re-commission because resume-by-id across a recycle is impossible, probed 2026-08-29: the resolver is session-scoped, "No transcript found", though the transcript is on disk at `<predecessor-session-dir>/subagents/agent-<id>.jsonl`. The #150 shape this ruling answered — stopped, still owning work — is carried by seat-pinned task lists (#141) and the questions-become-tasks rule now, and the user accepts the residue: "theyd find out when or if that mattered".) (Reconciled 2026-08-30 against this change: the roster sentence was reworded in the user's second round, ruled on a rendered mock of the prompt — "You may need to re-commission similar agents. If you need more context, the dead agents' full transcripts are at `<predecessor-session-dir>/subagents/agent-<id>.jsonl`." — softening the re-commission duty to a may-need and dropping the cannot-be-resumed sentence from the prompt; the transcript pointer stays, and the 2026-08-29 probe's finding stands.)
 - **A recycle waits for the session's running subagents, up to a ceiling (user-ruled 2026-08-27).** Bought by a loss: a builder subagent dispatched at 20:38 on 2026-08-27 died at 20:43 when the hook fired at 50%. The threshold hook defers while any Agent-tool subagent is in flight, saying so once rather than at every turn boundary: the subagent's completion notification wakes the session by itself, and a hook that refused the stop each time would drive an idle session into a turn per boundary for as long as the subagent ran. `--ceiling-used-percentage` (default 65) bounds the wait. This is the single exception to the 2026-08-23 record-not-wait ruling; what a recycle kills, and what a brief owes a job that outlives one step, is the section above.
