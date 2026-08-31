@@ -228,6 +228,20 @@ def run_end_to_end_case(workspace: Path):
     per-seat-server change (2026-08-21) doubles as the transition case: a
     seat launched before that change lives there, and the kill must fall back
     to the default socket to find it.
+
+    EVERY tmux call here names `-L default` EXPLICITLY, and that is what makes
+    this case runnable where it is actually run. A bare `tmux new-session`
+    resolves through `$TMUX` when one is set, so inside a seat's own session it
+    creates on the SURROUNDING per-seat server rather than on the default
+    socket. The script under test probes two named sockets -- `-L <seat name>`
+    and `-L default` -- so a session parked on a third server is invisible to
+    it, the kill reports nothing to clear, and both assertions below fail.
+    Measured 2026-08-31 from the merge-lane seat ($TMUX pointing at socket
+    `merge-lane`): bare creation put the session there while `-L default` had
+    no server at all, and the same suite passed under `env -u TMUX`. Every
+    seat runs this suite from inside tmux, so without the explicit socket the
+    pair is red for everyone and red-by-default is where a real regression
+    hides.
     """
     if shutil.which("tmux") is None:
         print("SKIP  end-to-end: tmux is not installed")
@@ -249,7 +263,8 @@ def run_end_to_end_case(workspace: Path):
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     created = subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session, "-c", str(workspace), "sleep 120"],
+        ["tmux", "-L", "default", "new-session", "-d", "-s", session,
+         "-c", str(workspace), "sleep 120"],
         capture_output=True, text=True, check=False,
     )
     if created.returncode != 0:
@@ -266,7 +281,7 @@ def run_end_to_end_case(workspace: Path):
               launcher_record.is_file() and session in launcher_record.read_text(),
               result.stdout + result.stderr)
         still_there = subprocess.run(
-            ["tmux", "has-session", "-t", f"={session}"],
+            ["tmux", "-L", "default", "has-session", "-t", f"={session}"],
             capture_output=True, text=True, check=False,
         )
         check("the proceed path clears the stale tmux session",
@@ -276,7 +291,7 @@ def run_end_to_end_case(workspace: Path):
               and "an unconsumed handoff is waiting" in result.stdout,
               result.stdout)
     finally:
-        subprocess.run(["tmux", "kill-session", "-t", f"={session}"],
+        subprocess.run(["tmux", "-L", "default", "kill-session", "-t", f"={session}"],
                        capture_output=True, check=False)
 
 
