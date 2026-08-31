@@ -507,15 +507,17 @@ with tempfile.TemporaryDirectory() as temporary:
     # resumed, not skipped for its handed-off parent; one that died before
     # doing anything is skipped. Both under 100KB — turns decide, not bytes.
     # The opener is the post-2026-08-30 shape the supervisor now composes —
-    # written-at stamp, gap computed by the reader from `date` — so the
-    # marker match against the CURRENT template is what these cases prove
-    # (the pre-change shape is covered at F3/P2 above).
+    # written-at stamp, gap computed by the reader from `date`, the wariness
+    # tail cut and the open-walks duty added in the user's second round the
+    # same day — so the marker match against the CURRENT template is what
+    # these cases prove (the pre-change shape is covered at F3/P2 above).
     ignition_opener = (
         "Read /x/seat-a-dialog-0003.md — the dialog from the session you are "
         "continuing, written at 2026-08-28T12:00:00Z. Calculate from `date` "
         "how long ago that was, and be wary of obsolescence and drift in "
-        "everything in this handoff in proportion to that gap: the older it "
-        "is, the more you must re-verify against the live state before acting.")
+        "everything in this handoff in proportion to that gap. This handoff "
+        "should list what items or walks are open. Display them to the user, "
+        "and continue them when you get a chance.")
     workspace = Workspace(root / "r11")
     all_dead()
     write_transcript(workspace.project_directory(), "generation-3-handed-off",
