@@ -29,7 +29,11 @@ THE FIVE SURFACES, in the order they are searched:
                     day (measured 2026-08-23: 24 snapshots, 15 of them from that
                     day; re-measured 2026-08-31: 18) — so it is the right first
                     place to look for something lost minutes or hours ago and no
-                    substitute at all for the archive surfaces below.
+                    substitute at all for the archive surfaces below. macOS
+                    mounts some of these for itself — the newest one especially,
+                    which is the one this case needs — and those are read where
+                    they already sit, because a snapshot that is already mounted
+                    cannot be mounted again.
   2. git          — every ref in this repo, full history, including paths that
                     no commit reachable from HEAD still contains.
   3. transcripts  — agent session JSONL under ~/.claude/projects, on this Mac
@@ -287,8 +291,10 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
              "macOS keeps roughly a day of them; anything older has to come from the archive surfaces"],
         )
 
+    already_mounted = _local_snapshots_already_mounted(runner)
     hits = []
     searched = []
+    in_place = []
     unsearched = []
     stuck = None
     for snapshot in snapshots:
@@ -302,20 +308,25 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             # each one had refused on its own account.
             unsearched.append((snapshot, stuck))
             continue
-        outcome, detail, release_failure = _local_snapshot_probe(snapshot, probe_path, mount_point, runner)
-        if outcome == "hit":
-            hits.append(snapshot)
-            searched.append(snapshot)
-        elif outcome == "miss":
-            searched.append(snapshot)
+        outcome, where, release_failure = _local_snapshot_probe(
+            snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
+        if outcome == "unmounted":
+            unsearched.append((snapshot, where))
         else:
-            unsearched.append((snapshot, detail))
+            searched.append(snapshot)
+            if where != mount_point:
+                in_place.append(snapshot)
+            if outcome == "hit":
+                hits.append((snapshot, where))
         if release_failure is not None:
             stuck = ("not reached: %s stayed mounted on %s — %s" % (snapshot, mount_point, release_failure))
 
     lines = ["%d local snapshot(s) retained, %d searched — no password needed for any of it"
              % (len(snapshots), len(searched)),
              "tested %s inside each" % probe_path]
+    if in_place:
+        lines.append("%d of them were read where macOS already had them mounted, mounting nothing: %s"
+                     % (len(in_place), ", ".join(in_place[:3]) + (", ..." if len(in_place) > 3 else "")))
     for snapshot, reason, repeats in _grouped_by_reason(unsearched):
         # Reported, never classified: a snapshot that would not open was not
         # searched, and the failures reachable from mount_apfs were never
@@ -326,12 +337,13 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
 
     if hits:
         lines.append("%d snapshot(s) still have it, newest first:" % len(hits))
-        for snapshot in hits[:5]:
+        for snapshot, _ in hits[:5]:
             lines.append("    " + snapshot)
         if len(hits) > 5:
             lines.append("    ... and %d older" % (len(hits) - 5))
         return SurfaceReport("local snapshots", FOUND, lines,
-                             _local_snapshot_recovery(hits[0], probe_path, mount_point, stuck))
+                             _local_snapshot_recovery(hits[0][0], probe_path, mount_point, stuck,
+                                                      already_at=hits[0][1] if hits[0][1] != mount_point else None))
 
     if searched:
         lines.append("searched %s .. %s and none of them has it" % (searched[-1], searched[0]))
@@ -352,16 +364,27 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
     return SurfaceReport("local snapshots", NOT_FOUND, lines)
 
 
-def _local_snapshot_recovery(snapshot, probe_path, mount_point, stuck=None):
+def _local_snapshot_recovery(snapshot, probe_path, mount_point, stuck=None, already_at=None):
     """The exact commands that open a snapshot, take the file out, and close it.
 
     No `sudo`, deliberately and in full: this is the surface whose entire value
     is that reading it costs no password, and a recovery line that asked for one
     anyway would send the reader after a credential nothing here needs.
 
+    A snapshot macOS already has mounted needs no mount and no unmount at all —
+    and must not be handed one, because mount_apfs against an already-mounted
+    snapshot exits 75, "Resource busy". So the copy comes straight out of where
+    it sits. Verified 2026-08-31 by reading a file out of one such mount: 43391
+    bytes, byte-identical to the live file.
+
     When a snapshot stayed mounted, clearing the mount point comes first, or
     every command below it fails on the mount point rather than on the snapshot.
     """
+    if already_at:
+        return [
+            "cp %s ." % shlex.quote(already_at + probe_path),
+            "# macOS already has %s mounted there — nothing to mount, nothing to release" % snapshot,
+        ]
     clear = ["diskutil unmount %s" % shlex.quote(mount_point)] if stuck else []
     return clear + [
         "mkdir -p %s && mount_apfs -o ro -s %s %s %s"
@@ -409,6 +432,45 @@ def _local_snapshots(runner):
              if line.strip().endswith(LOCAL_SNAPSHOT_NAME_SUFFIX)}
     # The names embed an ISO-ish timestamp, so lexical order is time order.
     return sorted(names, reverse=True), None
+
+
+def _local_snapshots_already_mounted(runner):
+    """{snapshot name: the mount point macOS already has it on}.
+
+    macOS mounts local snapshots for its own use, under
+    /Volumes/com.apple.TimeMachine.localsnapshots, and a snapshot that is
+    already mounted cannot be mounted a second time: mount_apfs exits 75,
+    "Resource busy" (measured 2026-08-31). The snapshot most likely to be in
+    that state is the NEWEST one — exactly the one the "I deleted it minutes
+    ago" case needs — so reading it where it already sits is not a nicety. On
+    2026-08-31 the two newest snapshots were both in that state within the hour.
+
+    Such a mount point IS the Data volume's root, so a path inside it has the
+    same shape as one inside a mount of this script's own, and reading it costs
+    nothing: verified that day by copying a 43391-byte file out of one,
+    byte-identical to the live original.
+
+    Some of these mounts are stale. Four on 2026-08-31 were listed by `mount`
+    while their mount points did not resolve at all, so the caller tests the
+    mount point before trusting it and falls back to mounting for itself; those
+    four then report Resource busy verbatim, which is the honest answer for a
+    snapshot nothing here can reach. They are macOS's own state and this script
+    does not try to clear them.
+
+    `mount` prints `<what>@<device> on <mount point> (<options>)`. The options
+    parenthesis is last, so splitting the tail off is safe for a mount point
+    that itself contains " (".
+    """
+    code, out, _ = runner(["mount"])
+    if code != 0:
+        return {}
+    mounted = {}
+    for line in out.splitlines():
+        name, at, rest = line.partition("@")
+        if not at or not name.endswith(LOCAL_SNAPSHOT_NAME_SUFFIX) or " on " not in rest:
+            continue
+        mounted[name] = rest.split(" on ", 1)[1].rsplit(" (", 1)[0]
+    return mounted
 
 
 def _local_snapshot_probe_path(wanted, repo, runner):
@@ -466,13 +528,19 @@ def _below_data_volume(path):
     return path
 
 
-def _local_snapshot_probe(snapshot, probe_path, mount_point, runner):
-    """Mount one local snapshot read-only, test one path in it, unmount.
+def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mounted=None):
+    """Read one local snapshot and test one path in it.
 
-    Returns (outcome, detail, release failure or None):
-      ("hit", None, ...)          — the path is in this snapshot
-      ("miss", None, ...)         — mounted and tested; the path is not in it
+    Returns (outcome, where, release failure or None):
+      ("hit", mount point, ...)   — the path is in this snapshot, read there
+      ("miss", mount point, ...)  — read and tested; the path is not in it
       ("unmounted", reason, ...)  — mount_apfs refused; this was NOT searched
+
+    `already_mounted` is where macOS itself has this snapshot, when it has it.
+    That mount is read in place — no mount, no release — both because it is
+    free and because mounting an already-mounted snapshot cannot work. A stale
+    entry (the mount point does not resolve) falls through to mounting for
+    ourselves, which then reports its own refusal verbatim.
 
     No sudo anywhere, which is this surface's whole point: mount_apfs against
     this Mac's INTERNAL Data volume succeeds as the ordinary user, and so does
@@ -500,6 +568,11 @@ def _local_snapshot_probe(snapshot, probe_path, mount_point, runner):
     is in a `finally` for the same reason the check exists: a snapshot this
     script leaves mounted makes its own mount point refuse every later run.
     """
+    if already_mounted:
+        resolves, _, _ = runner(["test", "-d", already_mounted])
+        if resolves == 0:
+            exists, _, _ = runner(["test", "-e", already_mounted + probe_path])
+            return ("hit" if exists == 0 else "miss"), already_mounted, None
     runner(["mkdir", "-p", mount_point])
     code, _, stderr = runner(["mount_apfs", "-o", "ro", "-s", snapshot, MAC_DATA_VOLUME, mount_point])
     if code != 0:
@@ -514,7 +587,7 @@ def _local_snapshot_probe(snapshot, probe_path, mount_point, runner):
     if released != 0:
         first = release_error.strip().splitlines()[0] if release_error.strip() else "no error text"
         release_failure = "diskutil unmount exited %s: %s" % (released, first)
-    return outcome, None, release_failure
+    return outcome, mount_point, release_failure
 
 
 # --------------------------------------------------------------------------

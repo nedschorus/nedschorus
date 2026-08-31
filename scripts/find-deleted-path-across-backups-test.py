@@ -285,6 +285,93 @@ check("... and its recovery clears the mount point first, or every command below
       and "mount_apfs -o ro -s" in report.recovery[1],
       str(report.recovery))
 
+
+# macOS mounts local snapshots for its own use, and one that is already mounted
+# cannot be mounted again — mount_apfs exits 75, "Resource busy". Measured
+# 2026-08-31: the two NEWEST snapshots were both in that state within the hour,
+# which is precisely the pair the "deleted it minutes ago" case needs, so
+# reading them where they sit is what keeps the headline case working. A file
+# copied out of one that day was 43391 bytes, byte-identical to the live one.
+# The mount point below deliberately contains " (" so the parse is pinned.
+LIVE_OS_MOUNT = ("/Volumes/com.apple.TimeMachine.localsnapshots/Backups.backupdb/"
+                 "Ed (air)/2026-08-31-115113/Data")
+STALE_OS_MOUNT = "/Volumes/stale/2026-08-30-124711/Data"
+MOUNT_LISTING = (
+    "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n"
+    "com.apple.TimeMachine.2026-08-31-115113.local@/dev/disk3s5 on %s "
+    "(apfs, local, read-only, journaled, nobrowse, protect)\n"
+    "com.apple.TimeMachine.2026-08-30-124711.local@/dev/disk3s5 on %s "
+    "(apfs, local, read-only, journaled, nobrowse, protect)\n" % (LIVE_OS_MOUNT, STALE_OS_MOUNT))
+
+
+class MountTableRunner(FakeRunner):
+    """Answers the bare `mount` command from a listing; everything else from the table."""
+
+    def __init__(self, table, mount_output):
+        FakeRunner.__init__(self, table)
+        self.mount_output = mount_output
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv == ["mount"]:
+            self.calls.append("mount")
+            return (0, self.mount_output, "")
+        return FakeRunner.__call__(self, argv, timeout, cwd)
+
+
+read_in_place = MountTableRunner([
+    ("test -d " + LIVE_OS_MOUNT, (0, "", "")),
+    ("test -d", (1, "", "")),          # the stale entry does not resolve
+    ("test -e " + LIVE_OS_MOUNT, (0, "", "")),
+    ("test -e", (1, "", "")),
+    LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE,
+], MOUNT_LISTING)
+report = finder.search_local_snapshots(REAPED, "/repo", read_in_place)
+check("a snapshot macOS already has mounted is read where it sits, not mounted again",
+      report.status == FOUND
+      and not any("mount_apfs" in c and "2026-08-31-115113" in c for c in read_in_place.calls),
+      "%s %s" % (report.status, read_in_place.calls))
+check("... and the report says so, since it is the difference between searched and not",
+      any(l == "1 of them were read where macOS already had them mounted, mounting nothing: "
+               "com.apple.TimeMachine.2026-08-31-115113.local" for l in report.lines),
+      str(report.lines))
+check("... and the recovery copies straight out of that mount, with nothing to mount or release",
+      report.recovery[0].startswith("cp ") and (LIVE_OS_MOUNT + REAPED) in report.recovery[0]
+      and not any("mount_apfs" in c for c in report.recovery),
+      str(report.recovery))
+check("a mount point containing ' (' survives the parse, since the options paren is the last one",
+      any(c == "test -d " + LIVE_OS_MOUNT for c in read_in_place.calls),
+      str([c for c in read_in_place.calls if c.startswith("test -d")]))
+check("a stale entry whose mount point does not resolve falls through to mounting it here",
+      any("mount_apfs" in c and "2026-08-30-124711" in c for c in read_in_place.calls),
+      str(read_in_place.calls))
+
+# The four ghosts on 2026-08-31: listed by `mount`, mount points that do not
+# resolve, and unmountable because the snapshot is already attached. They are
+# macOS's own state; this script reports them and does not try to clear them.
+os_mount_ghost = MountTableRunner([
+    ("test -d", (1, "", "")),
+    ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-30-124711",
+     (75, "", "mount_apfs: volume could not be mounted: Resource busy\n")),
+    LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+], MOUNT_LISTING)
+report = finder.search_local_snapshots(REAPED, "/repo", os_mount_ghost)
+check("a snapshot that is neither readable in place nor mountable is UNAVAILABLE, quoting mount_apfs",
+      report.status == UNAVAILABLE
+      and any(l == "could not search com.apple.TimeMachine.2026-08-30-124711.local — mount_apfs exited 75: "
+                   "mount_apfs: volume could not be mounted: Resource busy" for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and nothing is done to clear macOS's own mount of it",
+      not any(c.startswith("diskutil unmount " + STALE_OS_MOUNT) for c in os_mount_ghost.calls),
+      str(os_mount_ghost.calls))
+
+mount_unreadable = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", ""))])
+report = finder.search_local_snapshots(REAPED, "/repo", mount_unreadable)
+check("a `mount` that cannot be read costs nothing: every snapshot is opened by this script instead",
+      report.status == NOT_FOUND
+      and sum(1 for c in mount_unreadable.calls if c.startswith("mount_apfs")) == 3
+      and not any("read where macOS already had them mounted" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
 local_no_tmutil = FakeRunner([("tmutil listlocalsnapshots", (127, "", "tmutil: not found on this machine"))])
 report = finder.search_local_snapshots(REAPED, "/repo", local_no_tmutil)
 check("a machine without tmutil is UNAVAILABLE carrying its words, not NOT FOUND",
