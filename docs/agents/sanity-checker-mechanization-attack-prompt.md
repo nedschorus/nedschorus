@@ -1,6 +1,6 @@
 # Sanity-checker mechanization audit — reviewer instructions
 
-Status: STANDING, adopted 2026-08-17 — the user ruled, on the validation experiment's scorecard (recoverable: `git show 'ab541cc^':md-review-records/2026-08-12-attack-split-experiment/scorecard.md`), that the three-audit split is the sanity-check's standing shape. Derived 2026-08-12 as a delta of the retired unsplit prompt, `docs/drafts/sanity-checker-prompt-draft.md`; the decision trail is that path's commit history (`git log -- docs/drafts/sanity-checker-prompt-draft.md`). This audit carries: the Encode, Constrain, Externalize, and Verify questions, the hunt for steps left to human memory, and the prompts-to-code doctrine. Its siblings are the cut and fresh-eyes audits (`docs/agents/sanity-checker-cut-attack-prompt.md`, `docs/agents/sanity-checker-fresh-eyes-attack-prompt.md`). `scripts/sanity-check-attacks.py` dispatches this prompt; its docstring is the operating-rules home. It sends everything below the `<!-- SANITY-CHECK-PROMPT-BODY -->` line to the review agents it launches.
+Status: STANDING, adopted 2026-08-17 — the user ruled, on the validation experiment's scorecard (recoverable: `git show 'ab541cc^':md-review-records/2026-08-12-attack-split-experiment/scorecard.md`), that the three-audit split is the sanity-check's standing shape. Derived 2026-08-12 as a delta of the retired unsplit prompt, `docs/drafts/sanity-checker-prompt-draft.md`; the decision trail is that path's commit history (`git log -- docs/drafts/sanity-checker-prompt-draft.md`). This audit carries: the Encode, Constrain, Externalize, and Verify questions, the hunt for steps left to human memory, and the prompts-to-code doctrine. Its siblings are the cut and fresh-eyes audits (`docs/agents/sanity-checker-cut-attack-prompt.md`, `docs/agents/sanity-checker-fresh-eyes-attack-prompt.md`). `scripts/sanity-check-attacks.py` dispatches this prompt; its docstring is the operating-rules home.
 
 Everything below the marker is the prompt itself, written for a reviewer with zero context beyond what it and the appended review request supply.
 
@@ -45,14 +45,14 @@ Candidates become findings only here: the method above produces candidates, this
 ## Priority order when changes conflict
 
 1. **Simpler to operate** — more reliable, more autonomous, fewer or no user interventions; mechanical guarantees over trained agent habit; zero remembered human steps.
-2. **Simpler to understand** — the design easier to step through, with only necessary states.
+2. **Simpler to understand** — the document easier to follow; the design easier to step through, with only necessary states.
 3. **Simpler to build or maintain** — welcome, but never at the expense of reliability; and where the mechanism is code, never at the expense of its testability. AI steps with clear, direct prompts are legitimately hard to test but can solve complex or messy problems with a useful level of reliability.
 
 ## Report format
 
 Open your report by listing the referenced documents you read and those you did not, so triage knows this review's reach before weighing its findings.
 
-Then comes the **prompts-to-code table**. It has one row per step you examined in the document under review — every place its text hands work to a model or a person, whether or not code already covers it, and one row per part when the parts of a step earn different outcomes. Each row gives: where (the quoted phrase), a label naming the work, one outcome from the list below, and the outcome's reason where the list asks for one. When two outcomes could fit, take the first that fits in this order:
+Then comes the **prompts-to-code table**. It has one row per step you examined in the document under review — every place its text hands work to a model or a person, whether or not code already covers it, and one row per part when the parts of a step earn different outcomes. Each row gives: a number, where (the quoted phrase), a label naming the work, one outcome from the list below, and the outcome's reason where the list asks for one. When two outcomes could fit, take the first that fits in this order:
 
 - **finding below** — you propose a mechanism that does, narrows, moves, or checks the work; details in your findings.
 - **not worth building** — a mechanism could do or check it, but the guard rejects the trade; name the mechanism and why it does not pay.
@@ -60,7 +60,7 @@ Then comes the **prompts-to-code table**. It has one row per step you examined i
 - **already mechanized** — code already does this and the document's text has not caught up; name the code, so triage can walk the text fix like a finding.
 - **could not evaluate** — name what you could not read.
 
-Exhaustiveness here is the audit's core duty; a row that ends in no finding is worth as much as one that does.
+Exhaustiveness here is the audit's core duty; a row that ends in no finding is worth as much as one that does. Close the table with a coverage list: every heading of the document under review at every level, and the text above the first heading, each with its row numbers or the word none — a skipped section then shows itself.
 
 Then findings, deepest first — whole-procedure encodings before single-fact lookups. For each:
 
