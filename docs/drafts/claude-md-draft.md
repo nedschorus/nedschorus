@@ -44,9 +44,9 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 13. When creating or inventing names, for directories, file names, globals, functions, etc., use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
     *admission 2026-08-06 → ADMITTED verbatim.*
 14. ~~A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear; justifying data lives in the records and git history.~~
-    *admission 2026-08-06 → CUT from the floor, RE-HOMED by boss ruling: this belongs in the skill-making governor, not CLAUDE.md — landed verbatim in docs/wiki/queue/skill-authoring-checklist.md (the current skill-build rulebook; a future skill-writing skill inherits it from there).*
+    *admission 2026-08-06 → CUT from the floor, RE-HOMED by boss ruling: this belongs in the skill-making governor, not CLAUDE.md — landed verbatim in the skill-authoring checklist. That checklist was retired as obsolete on 2026-08-30 and the user ruled its rulings lapse with it, so this one is spent: it is neither in CLAUDE.md nor anywhere else.*
 15. ~~Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; the shared concepts skills rely on are defined here, once.~~
-    *admission 2026-08-06 → CUT from the floor, RE-HOMED beside line 14 in the skill-authoring checklist Register section. The Definitions section below (lines 18–21) now stands or falls on its own merits.*
+    *admission 2026-08-06 → CUT from the floor, RE-HOMED beside line 14 in the skill-authoring checklist Register section, and spent with it on 2026-08-30 for the reason given above. The Definitions section below (lines 18–21) now stands or falls on its own merits.*
 
 ## Sessions
 
