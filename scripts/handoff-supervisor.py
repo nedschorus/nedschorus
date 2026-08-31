@@ -27,9 +27,10 @@ The handoff file the agent writes (simple `key: value` lines):
   dont-restart:         optional; any value makes the supervisor ask before relaunching
   spawned-subagent-<n>: optional, one per subagent still working when the
                         handoff was written; the recycle kills them, so the
-                        successor is told to re-commission each. Subagents
-                        that completed, failed, or were stopped are not
-                        recorded at all (user-ruled 2026-08-29)
+                        successor is told it may need to re-commission
+                        similar agents. Subagents that completed, failed, or
+                        were stopped are not recorded at all (user-ruled
+                        2026-08-29)
 
 How much dialog to carry is not among them: the extractor takes the tail that
 clears its word floor, so the retiring agent exercises no judgment over what
@@ -76,6 +77,17 @@ NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+
+# Appended to sync_working_branch_with_main's one-line result in the ignition
+# prompt. The wording is the user's, ruled 2026-08-30 on a rendered mock of
+# the prompt; only the sync line it follows is computed.
+BRANCH_STATE_INSTRUCTION = (
+    " — if behind, catch up with origin/main when safe. On conflicts, if you "
+    "can't resolve them, explain the situation to the user. If this seat has "
+    "open pull requests, check their state with `gh`: merge-lane reviews and "
+    "merges them; a changes-requested one gets a fix round from a fresh agent "
+    "— never extend a head you've already announced."
+)
 
 
 def parse_handoff_file(handoff_path: Path) -> dict:
@@ -193,6 +205,9 @@ def written_at_wariness_sentence(written_at: str) -> str:
     ignitions consumed much later. The stamp is the handoff's own written-at
     field rendered as UTC ISO-8601 with a Z suffix — never invented: an
     unreadable field falls back to the standing warning, not a made-up time.
+    The sentence ends at the gap itself since the user's second round
+    (ruled 2026-08-30 on a rendered mock): the "the older it is, the more
+    you must re-verify" tail was cut as saying nothing the gap does not.
     """
     try:
         written = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
@@ -203,8 +218,7 @@ def written_at_wariness_sentence(written_at: str) -> str:
     stamp = written.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return (f"written at {stamp}. Calculate from `date` how long ago that was, "
             "and be wary of obsolescence and drift in everything in this handoff "
-            "in proportion to that gap: the older it is, the more you must "
-            "re-verify against the live state before acting.")
+            "in proportion to that gap.")
 
 
 def pinned_task_list_id() -> str:
@@ -360,52 +374,28 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
     return [value for _, value in sorted(numbered)]
 
 
-def launch_clock_sentence(launch_time: Optional[datetime] = None) -> str:
-    """The one sentence telling a successor what the clock read at its launch.
-
-    Every prompt the supervisor launches a session on carries this, whether
-    the successor gets a dialog extract or only its next-step: the context
-    that is thinnest is the one that can least afford a guessed time. The
-    wording is the user's, ruled verbatim in nedschorus#175; only the stamp
-    inside it is computed.
-
-    The stamp is local time with its zone abbreviation, formatted
-    %Y-%m-%d %H:%M %Z. That is not the layout bare `date` prints, but it is
-    the same clock, and `date +"%Y-%m-%d %H:%M %Z"` reproduces it exactly, so
-    the successor can hold the two side by side. Its resolution is a minute,
-    which is why callers in the supervisor read the moment immediately before
-    launching rather than earlier: any delay that crosses a minute boundary
-    makes an earlier reading print a minute that has already passed.
-
-    launch_time is read here when a caller does not supply one, in the body
-    rather than as a signature default: a default is evaluated once at import,
-    and this supervisor runs for days, so it would stamp the moment the
-    process started.
-    """
-    moment = launch_time if launch_time is not None else datetime.now()
-    if moment.tzinfo is None:
-        moment = moment.astimezone()  # a naive moment is local; name that zone
-    return (f"The clock read {moment.strftime('%Y-%m-%d %H:%M %Z')} at launch; "
-            "take every time stamp from `date`, never from estimate.")
-
-
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
-                          launch_time: Optional[datetime] = None) -> str:
+                          branch_sync_report: str = "") -> str:
     """Compose the successor's first prompt.
 
     The prompt is tuned like a CLAUDE.md file (user-ruled 2026-08-29: "we
     should only put in the stuff that they need to know at their start. The
-    rest they can look up if they need to"). It carries four things: the
-    dialog line — the extract path with the handoff's written-at stamp and
-    the wariness rule (see written_at_wariness_sentence) — the launch clock,
-    the malformed-block note when the verbatim block was damaged, and the
-    next step — plus, only when the handoff recorded subagents still working
-    at the recycle, the re-commission sentence below. Queue status does not
+    rest they can look up if they need to"). It carries the dialog line —
+    the extract path with the handoff's written-at stamp and the wariness
+    rule (see written_at_wariness_sentence) — the open-walks duty, the
+    pointer at this script, the branch-state line, the malformed-block note
+    when the verbatim block was damaged, and the next step — plus, only when
+    the handoff recorded subagents still working at the recycle, the roster
+    sentence below. Every boilerplate sentence is the user's, ruled
+    2026-08-30 on a rendered mock of the prompt. Queue status does not
     ride it (the user expired that 2026-08-12 ruling on 2026-08-29); the
     supervisor prints it to its own console instead. The task-count check
     was cut too (user-ruled 2026-08-30: the task list is a standing tool;
-    the count line is junk).
+    the count line is junk). The launch-clock sentence — the user's own
+    nedschorus#175 wording — was cut by the user himself on the same mock
+    (2026-08-30); the `date` discipline now rides only the dialog line's
+    "Calculate from `date`".
 
     predecessor_session_directory is the retiring session's directory under
     ~/.claude/projects — the place its subagents' transcripts survive
@@ -413,38 +403,39 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     retiring session id and the working directory; a caller without one gets
     the literal `<predecessor-session-dir>` placeholder in the sentence.
 
-    launch_time is the wall clock the prompt reports. The supervisor reads it
-    immediately before launch_agent_session and passes it in — see
-    DialogIgnitionPlan, which holds everything else until that moment, so
-    that "The clock read ... at launch" names the launch and not an earlier
-    composition. A caller that supplies nothing gets the clock read here, at
-    the call: that is the path direct callers and tests take, and it is read
-    in the body rather than defaulted in the signature because a signature
-    default is evaluated once at import, and this supervisor runs for days —
-    the stamp would name the moment the process started.
-
-    The successor is told the time because it cannot otherwise know it: it
-    wakes with a dialog whose events are hours old and no sense of now. Left
-    to estimate, one session's handoff stamps drifted by as much as an hour
-    and forty-five minutes, twice. launch_clock_sentence carries the wording
-    and the format.
+    branch_sync_report is sync_working_branch_with_main's one-line result —
+    fast-forwarded, ahead, behind counts, or the refusal's reason. The
+    supervisor runs the sync immediately before launch_agent_session and
+    passes the line in — see DialogIgnitionPlan, which holds everything else
+    until that moment, so the prompt reports the sync that actually ran for
+    this launch and not an earlier state. A caller that supplies nothing
+    gets no branch-state segment at all rather than an invented one: every
+    sentence here is ruled wording, and a placeholder would be wording the
+    user never saw.
     """
     next_step = next_step_from(handoff_fields)
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
         + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
-        launch_clock_sentence(launch_time),
+        "This handoff should list what items or walks are open. Display them "
+        "to the user, and continue them when you get a chance.",
+        "This session was launched by scripts/handoff-supervisor.py, which "
+        "watches this seat and composed this prompt — read it if you need to "
+        "investigate the handoff mechanism.",
     ]
+    if branch_sync_report:
+        lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
-        # The orphaned-subagent duty, narrowed 2026-08-29: the writer records
-        # only subagents still working at the recycle, so every entry here is
-        # one the recycle killed mid-job. The successor re-commissions —
-        # spawns a fresh agent on the job — because a dead subagent cannot be
-        # resumed by id across a recycle: probed 2026-08-29, SendMessage to a
-        # predecessor's subagent id returns "No transcript found" (the
-        # resolver is session-scoped) even though the transcript survives on
-        # disk at <predecessor-session-dir>/subagents/agent-<id>.jsonl.
+        # The orphaned-subagent duty, narrowed 2026-08-29, softened to "may
+        # need" in the user's second round (ruled 2026-08-30): the writer
+        # records only subagents still working at the recycle, so every entry
+        # here is one the recycle killed mid-job. Re-commission rather than
+        # resume, because a dead subagent cannot be resumed by id across a
+        # recycle: probed 2026-08-29, SendMessage to a predecessor's subagent
+        # id returns "No transcript found" (the resolver is session-scoped)
+        # even though the transcript survives on disk at
+        # <predecessor-session-dir>/subagents/agent-<id>.jsonl.
         # `agent-<id>.jsonl` stays a literal pattern: each entry names its
         # own id, so the successor substitutes per entry.
         transcript_directory = (predecessor_session_directory
@@ -453,9 +444,9 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         lines.append(
             f"The session you are replacing had {len(roster)} subagent(s) still working when it ended: "
             + "; ".join(roster)
-            + ". Re-commission each — a fresh agent on the job; the dead one's full transcript is at "
-            f"{transcript_directory}/subagents/agent-<id>.jsonl if its state matters. "
-            "A dead subagent cannot be resumed by id."
+            + ". You may need to re-commission similar agents. If you need more "
+            "context, the dead agents' full transcripts are at "
+            f"{transcript_directory}/subagents/agent-<id>.jsonl."
         )
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
@@ -471,15 +462,16 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
 
 @dataclass
 class DialogIgnitionPlan:
-    """The successor's first prompt, composed all but the clock.
+    """The successor's first prompt, composed all but the branch-state line.
 
     Everything here is known when the retiring session's dialog is extracted.
-    The clock is not taken then, because a branch sync runs between that work
-    and the launch, and the prompt tells the successor "The clock read ... at
-    launch" — a stamp with minute resolution, which any delay across a minute
-    boundary makes wrong. Holding the parts and composing at the launch site
-    keeps the sentence true; compose() is called there with the moment just
-    read.
+    The branch-state line is not, because the branch sync runs between that
+    work and the launch, and the prompt hands the successor the sync's own
+    one-line result — a report an earlier composition could not contain.
+    Holding the parts and composing at the launch site keeps the line true;
+    compose() is called there with the report just produced. (The launch
+    clock traveled this same way until the user cut its sentence on the
+    rendered mock, 2026-08-30.)
     """
     extract_path: Path
     handoff_fields: dict
@@ -488,10 +480,10 @@ class DialogIgnitionPlan:
     # without one still composes; the supervisor always passes it.
     predecessor_session_directory: Optional[Path] = None
 
-    def compose(self, launch_time: datetime) -> str:
+    def compose(self, branch_sync_report: str) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
-                                     launch_time=launch_time)
+                                     branch_sync_report=branch_sync_report)
 
 
 @dataclass
@@ -502,19 +494,21 @@ class BootRecoveryIgnitionPlan:
     or the transcript is gone — so the next-step and the repository are the
     successor's whole context. That is the thinnest context this supervisor
     ever launches on, and the reason this plan exists rather than an f-string:
-    it composes at the launch site through the same clock sentence as the
-    dialog path, so the successor that can least afford a guessed time is not
-    the one launched without the clock.
+    it composes at the launch site, so the successor that can least afford a
+    stale picture of its branch is not the one launched without the
+    branch-state line the dialog path carries.
     """
     next_step: str
 
-    def compose(self, launch_time: datetime) -> str:
-        return (
+    def compose(self, branch_sync_report: str) -> str:
+        prompt = (
             f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
             "session's dialog extract is unavailable; this next-step and the "
-            "repository are your whole context.) "
-            f"{launch_clock_sentence(launch_time)}"
+            "repository are your whole context.)"
         )
+        if branch_sync_report:
+            prompt += " " + branch_sync_report + BRANCH_STATE_INSTRUCTION
+        return prompt
 
 
 def prune_old_generations(directory: Path, stem: str) -> None:
@@ -818,8 +812,9 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
     Returns (successor_session_id, DialogIgnitionPlan), or (None, None) when
     extraction failed and relaunching would lose the dialog. The plan is not
-    yet a prompt: the caller composes it at the launch, with the clock read
-    there, so the stamp the successor reads names its own launch.
+    yet a prompt: the caller composes it at the launch, with the branch sync
+    run there, so the branch-state line the successor reads names its own
+    launch.
     """
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
@@ -882,7 +877,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
     adopted = settings.adopted_session
     # Set when the next launch is an ignition: the prompt is composed from it
-    # at the launch site, so the clock it carries is read there.
+    # at the launch site, so the branch-state line it carries reports the
+    # sync that runs there.
     ignition_plan = None
     # A fresh start always mints a new session id. Reusing the one in the state
     # file would launch `claude --session-id` against a transcript that already
@@ -974,11 +970,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             # Only on the launch path: an adopted session is alive in this
             # directory, and changing files under a working agent is the one
             # thing this must never do.
-            print(f"handoff-supervisor: {sync_working_branch_with_main(settings.working_directory)}")
+            branch_sync_report = sync_working_branch_with_main(settings.working_directory)
+            print(f"handoff-supervisor: {branch_sync_report}")
             if ignition_plan is not None:
-                # Here, not where the plan was made: the sync above takes as
-                # long as a fetch takes, and the prompt says "at launch".
-                prompt = ignition_plan.compose(datetime.now())
+                # Here, not where the plan was made: the sync above is what
+                # produces the branch-state line the prompt carries, and it
+                # cannot run earlier — the retiring session still owned the
+                # tree when the plan was composed.
+                prompt = ignition_plan.compose(branch_sync_report)
                 ignition_plan = None
             verb = "resuming" if resume_first_launch else "launching"
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")

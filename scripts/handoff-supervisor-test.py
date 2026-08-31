@@ -18,7 +18,6 @@ import inspect
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -123,14 +122,16 @@ def run_offline_cases(workspace: Path):
     # The successor computes the elapsed time from `date` itself and applies
     # age-proportional wariness (user-approved 2026-08-30); the sentence
     # carries the handoff's written-at stamp rendered as UTC with a Z, never
-    # a composition-time elapsed phrase.
+    # a composition-time elapsed phrase. The sentence ends at the gap itself
+    # (user's second round, ruled 2026-08-30 on a rendered mock): the "the
+    # older it is, the more you must re-verify" tail was cut, so the exact
+    # equality below FAILS against the pre-revision supervisor.
     recent = (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat()
     check("a Z-suffixed written-at is rendered exactly, with the wariness rule",
           supervisor.written_at_wariness_sentence("2026-08-30T18:04:00Z")
           == ("written at 2026-08-30T18:04:00Z. Calculate from `date` how long "
               "ago that was, and be wary of obsolescence and drift in everything "
-              "in this handoff in proportion to that gap: the older it is, the "
-              "more you must re-verify against the live state before acting."),
+              "in this handoff in proportion to that gap."),
           supervisor.written_at_wariness_sentence("2026-08-30T18:04:00Z"))
     check("a +00:00 offset with microseconds renders as the same UTC stamp with a Z",
           supervisor.written_at_wariness_sentence("2026-08-30T18:04:00.123456+00:00")
@@ -452,21 +453,71 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
     )
     check("ignition names the dialog path", "/tmp/dialog-0002.md" in prompt, prompt)
-    # The exact opening line (template text user-approved 2026-08-30): the
-    # written-at stamp rides it, and the successor computes the gap from
-    # `date` itself. Against the old supervisor this fails — the opener there
-    # read "it is the dialog ... written N minutes ago", an elapsed phrase
-    # computed at composition time.
+    # The exact opening line (template text user-approved 2026-08-30; tail
+    # cut in the user's second round the same day, ruled on a rendered
+    # mock): the written-at stamp rides it, and the successor computes the
+    # gap from `date` itself. Against the pre-revision supervisor this fails
+    # — the opener there carried the "the older it is, the more you must
+    # re-verify" tail after the gap.
     check("ignition opens with the written-at stamp and the wariness rule, exactly",
           prompt.startswith(
               "Read /tmp/dialog-0002.md — the dialog from the session you are "
               "continuing, written at 2026-08-30T17:20:00Z. Calculate from `date` "
               "how long ago that was, and be wary of obsolescence and drift in "
-              "everything in this handoff in proportion to that gap: the older "
-              "it is, the more you must re-verify against the live state before "
-              "acting."),
+              "everything in this handoff in proportion to that gap."),
           prompt[:400])
+    check("the wariness tail past the gap is cut",
+          "the older it is" not in prompt and "re-verify against the live state" not in prompt,
+          prompt[:500])
     check("the composition-time elapsed phrase is gone", "minutes ago" not in prompt, prompt)
+    # The open-walks duty (user-ruled 2026-08-30, second round), immediately
+    # after the wariness sentence. Exact text; absent from the pre-revision
+    # supervisor, so this pin fails there.
+    check("ignition carries the open-walks duty, exactly",
+          "in proportion to that gap. This handoff should list what items or "
+          "walks are open. Display them to the user, and continue them when "
+          "you get a chance." in prompt,
+          prompt[:600])
+    # The pointer at the supervisor itself (user-ruled 2026-08-30, second
+    # round), after the open-walks duty. Exact text; absent before.
+    check("ignition points at the supervisor that composed it, exactly",
+          "continue them when you get a chance. This session was launched by "
+          "scripts/handoff-supervisor.py, which watches this seat and composed "
+          "this prompt — read it if you need to investigate the handoff "
+          "mechanism." in prompt,
+          prompt[:800])
+    # The branch-state line (user-ruled 2026-08-30, second round): the sync's
+    # own one-line result, then the static instruction. Called through
+    # try/except so this case FAILS cleanly against a supervisor whose
+    # builder does not take the parameter, instead of crashing the suite.
+    try:
+        synced_prompt = supervisor.build_ignition_prompt(
+            Path("/tmp/dialog-0002.md"),
+            {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
+            branch_sync_report="branch sync: fixture-branch is 3 commit(s) behind main",
+        )
+    except TypeError:
+        synced_prompt = ""
+    check("ignition carries the branch sync's own one-line result",
+          "branch sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
+          synced_prompt[:900])
+    check("the branch-state instruction follows the sync result, exactly",
+          "branch sync: fixture-branch is 3 commit(s) behind main — if behind, "
+          "catch up with origin/main when safe. On conflicts, if you can't "
+          "resolve them, explain the situation to the user. If this seat has "
+          "open pull requests, check their state with `gh`: merge-lane reviews "
+          "and merges them; a changes-requested one gets a fix round from a "
+          "fresh agent — never extend a head you've already announced."
+          in synced_prompt,
+          synced_prompt[:1100])
+    check("the branch-state line precedes the next step",
+          "" if not synced_prompt else
+          synced_prompt.index("branch sync:") < synced_prompt.index("Then take the next step:"),
+          synced_prompt[:1100])
+    # A caller without a sync report gets no branch-state segment at all —
+    # never invented placeholder wording, which the user has not seen.
+    check("without a sync report the prompt says nothing about branch state",
+          "branch sync" not in prompt and "origin/main" not in prompt, prompt)
     # The task-count line was CUT (user-ruled 2026-08-30: the task list is a
     # standing tool; the count line is junk). Pinned behaviorally — the OLD
     # supervisor put "Confirm N task(s) are visible to you" into every
@@ -499,51 +550,23 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
                                  dataclasses.fields(supervisor.DialogIgnitionPlan)},
           str([field.name for field in dataclasses.fields(supervisor.DialogIgnitionPlan)]))
 
-    # --- The launch clock -------------------------------------------------
-    # The successor wakes with a dialog whose events are hours old and no
-    # sense of now; estimating cost one session's handoff stamps up to 1h45.
-    stamped = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), {"written-at": recent, "next-step": "keep going"},
-        launch_time=datetime(2026, 8, 27, 20, 44,
-                             tzinfo=timezone(timedelta(hours=-7), "PDT")),
-    )
-    check("ignition stamps the wall clock at launch, with its zone",
-          "The clock read 2026-08-27 20:44 PDT at launch" in stamped, stamped[:300])
-    check("ignition says where the successor's time stamps come from",
-          "take every time stamp from `date`, never from estimate" in stamped, stamped[:300])
-    # A naive moment is read as local time and printed with a zone attached,
-    # which is what the successor is told to compare against `date`. The zone
-    # ITSELF is not pinned — it is whichever zone the machine running this
-    # suite sits in — but something has to stand between the time and "at
-    # launch", or `astimezone()` could be deleted and this case stay green.
-    naive_stamped = supervisor.build_ignition_prompt(
-        Path("/tmp/d.md"), {"written-at": recent},
-        launch_time=datetime(2026, 8, 27, 20, 44),
-    )
-    check("a naive launch moment still names a zone",
-          bool(re.search(r"The clock read 2026-08-27 20:44 \S+ at launch", naive_stamped)),
-          naive_stamped[:300])
-    # Read at the call, not defaulted in the signature: a supervisor runs for
-    # days, and an import-time default would stamp every successor with the
-    # moment the supervisor started. Asserting today's date cannot tell those
-    # two apart, since import and call fall on the same day. Replacing the
-    # module's clock AFTER import can: a signature default was evaluated
-    # before this stand-in existed, so it cannot produce the moment below.
-    class ClockStuckIn1999(supervisor.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            fixed = datetime(1999, 12, 31, 23, 58,
-                             tzinfo=timezone(timedelta(hours=-7), "PDT"))
-            return fixed.astimezone(tz) if tz is not None else fixed
-
-    real_datetime = supervisor.datetime
-    supervisor.datetime = ClockStuckIn1999
-    try:
-        unstamped = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent})
-    finally:
-        supervisor.datetime = real_datetime
-    check("an unsupplied launch clock is read at the call, not at import",
-          "The clock read 1999-12-31 23:58 PDT at launch" in unstamped, unstamped[:300])
+    # --- The launch clock is CUT ------------------------------------------
+    # The user cut his own nedschorus#175 sentence ("The clock read ... take
+    # every time stamp from `date`, never from estimate") on the rendered
+    # mock, 2026-08-30: the `date` discipline now rides only the opener's
+    # "Calculate from `date`". Pinned behaviorally — the pre-revision
+    # supervisor put the sentence into every ignition prompt — and
+    # structurally: neither the builder nor the plan threads a launch time
+    # any more, and the sentence's helper is gone from the module.
+    check("the launch-clock sentence is cut from the ignition prompt",
+          "The clock read" not in prompt and "never from estimate" not in prompt,
+          prompt)
+    check("build_ignition_prompt no longer takes a launch time",
+          "launch_time" not in inspect.signature(supervisor.build_ignition_prompt).parameters,
+          str(inspect.signature(supervisor.build_ignition_prompt)))
+    check("the launch-clock helper is gone from the supervisor",
+          not hasattr(supervisor, "launch_clock_sentence"),
+          str(getattr(supervisor, "launch_clock_sentence", None)))
 
     # --- Retention --------------------------------------------------------
     for generation in range(1, 6):
@@ -880,15 +903,27 @@ def run_boot_ignition_case(workspace: Path):
           "resume the audit" in launched, launched[:200])
     # The boot-recovery path builds its own prompt: no dialog extract exists,
     # so the next-step and the repository are the successor's whole context.
-    # That is the thinnest context this supervisor launches on, and it used to
-    # be the one launch that carried no clock at all (measured by the merge
-    # lane on #177, before BootRecoveryIgnitionPlan routed it through
-    # launch_clock_sentence).
-    check("the boot-recovery ignition prompt carries the launch clock, stamped and zoned",
-          bool(re.search(r"The clock read \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+ at launch", launched)),
+    # It composes at the launch site through the same threading as the dialog
+    # path, which since the user's second round (2026-08-30) carries the
+    # branch sync's result instead of the launch clock — the clock sentence
+    # was cut by the user himself on the rendered mock. This is the
+    # end-to-end proof that the report produced at the launch site reaches
+    # the launched prompt: the workspace is what it is, so only the stable
+    # "branch sync:" prefix of the report is pinned, never one variant.
+    check("the launch-clock sentence is cut from the boot-recovery ignition prompt",
+          launched and "The clock read" not in launched
+          and "never from estimate" not in launched,
           launched[:400])
-    check("the boot-recovery ignition prompt names `date` as the source of stamps",
-          "take every time stamp from `date`, never from estimate" in launched, launched[:400])
+    check("the boot-recovery ignition prompt carries the sync's own report",
+          "branch sync:" in launched, launched[:400])
+    check("the boot-recovery ignition prompt carries the branch-state instruction, exactly",
+          " — if behind, catch up with origin/main when safe. On conflicts, if "
+          "you can't resolve them, explain the situation to the user. If this "
+          "seat has open pull requests, check their state with `gh`: merge-lane "
+          "reviews and merges them; a changes-requested one gets a fix round "
+          "from a fresh agent — never extend a head you've already announced."
+          in launched,
+          launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
 
@@ -896,10 +931,12 @@ def run_boot_ignition_case(workspace: Path):
 
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     """The successor is told which subagents were still working when the
-    session it replaces ended, and to re-commission each.
+    session it replaces ended, and that it may need to re-commission
+    similar agents.
 
     Ruled 2026-08-23 (record the subagents, do not wait for them), narrowed
-    2026-08-29: the writer records only subagents still working at write
+    2026-08-29, reworded in the user's second round (ruled 2026-08-30 on a
+    rendered mock): the writer records only subagents still working at write
     time, so every roster entry the supervisor reads is one the recycle
     itself killed. The prompt says re-commission, never restart or resume,
     because resume-by-id across a recycle is impossible — probed 2026-08-29:
@@ -924,13 +961,19 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     check("ignition names each subagent and what it was doing",
           "afixture0cutoff01" in prompt and "Fix ignored-path write blind spot" in prompt
           and "afixture0cutoff02" in prompt and "Review PR 150 independently" in prompt, prompt)
-    check("ignition tells the successor to re-commission, a fresh agent on the job",
-          "Re-commission each — a fresh agent on the job" in prompt, prompt)
-    check("ignition names the predecessor's subagent-transcript path",
-          f"{predecessor_directory}/subagents/agent-<id>.jsonl if its state matters" in prompt,
+    # The roster sentence's tail, exactly as the user reworded it (ruled
+    # 2026-08-30 on a rendered mock). Against the pre-revision supervisor
+    # this fails — the sentence there read "Re-commission each — a fresh
+    # agent on the job; the dead one's full transcript is at ... if its
+    # state matters. A dead subagent cannot be resumed by id."
+    check("ignition says the successor may need to re-commission similar agents, exactly",
+          ". You may need to re-commission similar agents. If you need more "
+          "context, the dead agents' full transcripts are at "
+          f"{predecessor_directory}/subagents/agent-<id>.jsonl." in prompt,
           prompt)
-    check("ignition says a dead subagent cannot be resumed by id",
-          "A dead subagent cannot be resumed by id." in prompt, prompt)
+    check("the first-round roster wording is gone",
+          "Re-commission each" not in prompt and "if its state matters" not in prompt
+          and "cannot be resumed by id" not in prompt, prompt)
     # The 2026-08-23 sentence is gone with the entries it explained: nothing
     # in the roster is completed any more, and the successor is never told to
     # restart — the probe measured that a restart by id cannot work.
@@ -1049,15 +1092,28 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           == supervisor.project_directory_for_working_directory(working_directory)
           / "0000-retiring-session",
           str(plan and plan.predecessor_session_directory))
-    prompt = plan.compose(datetime(2026, 8, 29, 16, 0,
-                                   tzinfo=timezone(timedelta(hours=-7), "PDT")))
+    # compose() takes the branch sync's one-line report since the user's
+    # second round (2026-08-30) — the launch site produces it immediately
+    # before composing, exactly where the launch clock used to be read.
+    # Guarded so the cases below FAIL cleanly against the pre-revision plan
+    # instead of crashing the suite: compose(launch_time) there feeds the
+    # report string to the clock helper, which raises on it.
+    try:
+        prompt = plan.compose("branch sync: composer-branch is 2 commit(s) behind main")
+    except (TypeError, AttributeError):
+        prompt = ""
     check("the recycle prompt carries no queue status",
           "Queue status" not in prompt and "queues —" not in prompt, prompt)
     check("the recycle prompt carries no task-count line",
           "task(s) are visible" not in prompt, prompt)
+    check("the recycle prompt carries no launch-clock sentence",
+          "The clock read" not in prompt and "never from estimate" not in prompt, prompt)
     check("the recycle prompt stamps the written-at and defers the gap to `date`",
           "written at 20" in prompt
           and "Calculate from `date` how long ago that was" in prompt, prompt)
+    check("the recycle prompt carries the branch-state line the plan was composed with",
+          "branch sync: composer-branch is 2 commit(s) behind main — if behind, "
+          "catch up with origin/main when safe." in prompt, prompt)
     check("the recycle prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
     check("the recycle prompt still ignites from the next step",
