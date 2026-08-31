@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for sanity-check-attacks.py — the worktree write detector, the record
-directory claim, the prompt-body boundary, and the codex cells' memory switch.
+directory claim, the cells' sanctioned scratch directories, the prompt-body
+boundary, and the cells' launch flags.
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -31,6 +32,17 @@ holes under test were found reviewing PRs #98, #102 and #147, and nedschorus#161
     2026-08-21 a claude cell wrote a 25,170-byte file to the worktree root and
     nothing caught it, because run_cell only ran the comparison for codex
     (nedschorus#161)
+
+The cells' scratch directories (cases 19-22) are the other side of the same
+subject. A cell needs working space for notes and drafts, and the prompts used
+to answer that with "write no files" — which the cells did not reliably keep
+and the detector then reported. Each cell now gets a directory of its own under
+the run's record directory, named to it in its prompt, and the detector exempts
+that subtree (user-ruled 2026-08-29): the cases below pin that the runner makes
+the directory, that the path reaches the cell in place of the prompt MD's
+placeholder token, that a write inside the subtree is silent while the rest of
+the record directory stays watched, and that a claude cell launches with the
+Write tool the instruction needs.
 
 Run: python3 scripts/sanity-check-attacks-test.py
 """
@@ -532,16 +544,147 @@ def main():
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
     runner_gate.run_claude = lambda prompt: (0, "the cell's report body\n")
     buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        runner_gate.run_cell(
-            "cut", "claude", "docs/agents/sanity-checker-cut-attack-prompt.md",
-            [], pathlib.Path("unused-problem-statement.md"),
-            pathlib.Path("unused-out-dir"), {}, (), StubLedger([stray_name]))
+    # A real record directory, in a temporary tree: run_cell makes the cell's
+    # scratch directory under the one it is handed, and a relative path here
+    # would leave that directory wherever this file happens to be run from.
+    with tempfile.TemporaryDirectory() as scratch:
+        with contextlib.redirect_stdout(buffer):
+            runner_gate.run_cell(
+                "cut", "claude", "docs/agents/sanity-checker-cut-attack-prompt.md",
+                [], pathlib.Path("unused-problem-statement.md"),
+                pathlib.Path(scratch), {}, (), StubLedger([stray_name]))
     output = buffer.getvalue()
     check("a claude cell that leaves a stray path behind is warned about, "
           "same as a codex cell",
           f"WARNING: cut-claude modified the worktree: {stray_name}" in output,
           f"output was {output!r}")
+
+    # Case 19: the per-cell scratch directory the runner makes. The prompts
+    # used to say "write no files", which the cells did not reliably keep and
+    # the detector then reported; each cell now gets a sanctioned working space
+    # of its own instead (user-ruled 2026-08-29). The runner makes it, so a
+    # cell never has to, and it sits inside the run's record directory so the
+    # record's disposal disposes of it too.
+    with tempfile.TemporaryDirectory() as scratch:
+        out_dir = pathlib.Path(scratch) / "2026-08-29-design"
+        out_dir.mkdir()
+        made = runner.cell_scratch_dir(out_dir, "cut-claude")
+        check("the runner creates the cell's scratch directory", made.is_dir(),
+              f"{made} is not a directory")
+        check("the scratch directory is per cell, under the run's record directory",
+              made == out_dir / "scratch" / "cut-claude", f"the runner made {made}")
+        check("a scratch directory that already exists is not an error",
+              runner.cell_scratch_dir(out_dir, "cut-claude") == made,
+              "the second call did not return the same directory")
+
+    # Case 20: the write detector exempts this run's scratch subtree. A cell
+    # writing notes where its prompt told it to write must not be named as a
+    # stray — a warning on ordinary behaviour teaches its reader to skip the
+    # warning that means something, the same defect case 9 measures. The
+    # exemption is of the subtree and only of THIS run's: everywhere else,
+    # inside the run's own record directory included, is watched unchanged.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore the record directory")
+        out_dir = repo / records_name / "2026-08-29-design"
+        out_dir.mkdir(parents=True)
+        earlier_scratch = (repo / records_name / "2026-08-28-design"
+                           / "scratch" / "cut-claude")
+        earlier_scratch.mkdir(parents=True)
+        (earlier_scratch / "leftover.md").write_text("an earlier run's notes\n",
+                                                     encoding="utf-8")
+        ledger = new_ledger(out_dir)
+        if ledger is None:
+            for case_name in (
+                    "a cell writing in its own scratch directory is not a stray",
+                    "the exemption covers the whole scratch subtree",
+                    "the scratch exemption does not reach the rest of the record directory",
+                    "an earlier run's scratch is not exempt"):
+                check(case_name, False, ledger_takes_no_record_dir)
+        else:
+            baseline = snapshot(repo)
+            cell_scratch = runner.cell_scratch_dir(out_dir, "cut-claude")
+            (cell_scratch / "working-notes.md").write_text(
+                "the notes this cell took\n", encoding="utf-8")
+            found = ledger.stray_paths_since(baseline, repo)
+            check("a cell writing in its own scratch directory is not a stray",
+                  found == [], f"stray list was {found}")
+
+            # Every cell's directory, not just the one that happens to ask:
+            # stray_paths_since is per run and cannot tell which cell is
+            # calling it, so the exemption is of the whole subtree.
+            other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-codex")
+            (other_scratch / "sketch-draft.md").write_text(
+                "another cell's draft\n", encoding="utf-8")
+            found = ledger.stray_paths_since(baseline, repo)
+            check("the exemption covers the whole scratch subtree",
+                  found == [], f"stray list was {found}")
+
+            # Where the exemption stops: the rest of the run's own record
+            # directory is the reports, and a cell writing there is case 12's
+            # third check — still named.
+            (out_dir / "cell-scribble.md").write_text("a cell wrote this\n",
+                                                      encoding="utf-8")
+            found = ledger.stray_paths_since(baseline, repo)
+            check("the scratch exemption does not reach the rest of the record directory",
+                  f"{records_name}/2026-08-29-design/cell-scribble.md" in found,
+                  f"stray list was {found}")
+
+            # An earlier run's scratch belongs to nobody here: it was on disk
+            # when this run started, sits in the baseline, and is compared like
+            # any other file.
+            (earlier_scratch / "leftover.md").write_text(
+                "a cell wrote over this\n", encoding="utf-8")
+            found = ledger.stray_paths_since(baseline, repo)
+            check("an earlier run's scratch is not exempt",
+                  f"{records_name}/2026-08-28-design/scratch/cut-claude/leftover.md"
+                  in found, f"stray list was {found}")
+
+    # Case 21: the boundary of case 20, asserted rather than assumed — the same
+    # service case 11 does for the ignored-path watch. The exemption is of the
+    # subtree, so it holds whatever git says about a path inside it: a cell
+    # running `git add -f` on its own scratch file is not reported, where the
+    # same act on a report is (case 14). This case passes before and after
+    # case 20's exemption is written; it states the carve-out's price, and it
+    # fails if the exemption ever silently narrows to unstaged files.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore the record directory")
+        out_dir = repo / records_name / "2026-08-29-design"
+        out_dir.mkdir(parents=True)
+        ledger = new_ledger(out_dir)
+        if ledger is None:
+            check("a cell force-adding its own scratch file is NOT reported "
+                  "(the declared limit)", False, ledger_takes_no_record_dir)
+        else:
+            baseline = snapshot(repo)
+            note = runner.cell_scratch_dir(out_dir, "cut-claude") / "working-notes.md"
+            note.write_text("the notes this cell took\n", encoding="utf-8")
+            git(repo, "add", "-f", str(note))
+            found = ledger.stray_paths_since(baseline, repo)
+            check("a cell force-adding its own scratch file is NOT reported "
+                  "(the declared limit)", found == [], f"stray list was {found}")
+
+    # Case 22: the scratch path reaches the cell. The sentence granting the
+    # working space lives in the prompt MD, where the cold read reviews it;
+    # only the path — data, and different for every cell — comes from the
+    # runner, which substitutes it for the MD's placeholder token. A cell that
+    # received the token instead of a path would have nowhere to write.
+    runner_substitution = load_runner()
+    cell_scratch_path = "/tmp/records/2026-08-29-design/scratch/cut-claude"
+    assembled = runner_substitution.assemble_prompt(
+        "cut", "docs/x.md", [], pathlib.Path("unused-problem-statement.md"),
+        cell_scratch_path)
+    check("the assembled prompt names this cell's scratch directory",
+          cell_scratch_path in assembled,
+          f"assembled prompt began {assembled[:120]!r}")
+    check("no placeholder token survives into the assembled prompt",
+          runner_substitution.PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER not in assembled,
+          "the placeholder token reached the cell")
 
     # The prompt-body boundary. The marker replaced a bare `---` rule, which is
     # ordinary markdown: a horizontal rule anywhere above the intended split
@@ -550,6 +693,7 @@ def main():
         scratch_dir = pathlib.Path(scratch)
         marker = runner.PROMPT_BODY_MARKER
         heading = runner.PROMPT_BODY_FIRST_LINE
+        placeholder = runner.PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER
 
         def prompt_file(name, text):
             path = scratch_dir / name
@@ -569,7 +713,8 @@ def main():
                 return exc.code == 2
             return False
 
-        good = f"# Header\n\nStatus: names the {marker} line inline.\n\n{marker}\n\n{heading}\n\nBody text.\n"
+        good = (f"# Header\n\nStatus: names the {marker} line inline.\n\n"
+                f"{marker}\n\n{heading}\n\nBody text writing to {placeholder}.\n")
         prompt_file("good.md", good)
         body = runner.prompt_body("cut")
         check("a header naming the marker inline still splits at the marker line",
@@ -577,13 +722,34 @@ def main():
               f"body began {body[:60]!r}")
 
         check("a prompt with no marker line is refused",
-              split_fails("none.md", f"# Header\n\n{heading}\n\nBody.\n"))
+              split_fails("none.md", f"# Header\n\n{heading}\n\n{placeholder}\n"))
         check("a prompt with two marker lines is refused",
-              split_fails("two.md", f"# Header\n\n{marker}\n\n{heading}\n\n{marker}\n\nBody.\n"))
+              split_fails("two.md",
+                          f"# Header\n\n{marker}\n\n{heading}\n\n{marker}\n\n{placeholder}\n"))
         check("a body not opening with the expected heading is refused",
-              split_fails("wrong.md", f"# Header\n\n{marker}\n\nStray line.\n\n{heading}\n"))
+              split_fails("wrong.md",
+                          f"# Header\n\n{marker}\n\nStray line.\n\n{heading}\n\n{placeholder}\n"))
 
-        rules = f"# Header\n\n---\n\nStatus text.\n\n---\n\n{marker}\n\n{heading}\n\nBody.\n"
+        # The scratch placeholder, checked in the same place and for the same
+        # reason: a body that stopped naming its scratch directory would send
+        # a cell out with a directory it was never told about, and the failure
+        # must land before any model cost. Counted in the body alone — a
+        # header explaining the token is not a body that carries it, the same
+        # distinction the marker search makes.
+        check("a prompt body with no scratch placeholder is refused",
+              split_fails("no-scratch.md",
+                          f"# Header\n\n{marker}\n\n{heading}\n\nBody text.\n"))
+        check("a prompt body with two scratch placeholders is refused",
+              split_fails("two-scratch.md",
+                          f"# Header\n\n{marker}\n\n{heading}\n\n"
+                          f"{placeholder} and again {placeholder}.\n"))
+        check("a header naming the scratch placeholder is not a body that carries it",
+              split_fails("header-scratch.md",
+                          f"# Header explaining {placeholder}.\n\n{marker}\n\n"
+                          f"{heading}\n\nBody text.\n"))
+
+        rules = (f"# Header\n\n---\n\nStatus text.\n\n---\n\n{marker}\n\n"
+                 f"{heading}\n\nBody writing to {placeholder}.\n")
         prompt_file("rules.md", rules)
         body = runner.prompt_body("cut")
         check("horizontal rules above the marker no longer move the split",
@@ -665,6 +831,34 @@ def main():
     check("run_codex launches codex with memories disabled",
           ("--disable", "memories") in list(zip(codex_command, codex_command[1:])),
           f"composed command was {codex_command}")
+
+    # The claude cells must launch with Write in the tool set: each is given a
+    # scratch directory and told to keep its notes and drafts there
+    # (user-ruled 2026-08-29), and without the tool that instruction asks for
+    # something the cell cannot do. Inspected, not run, for the same reason as
+    # the memories check above.
+    runner_tools = load_runner()
+    captured_claude = {}
+
+    def capture_claude_command(command, *arguments, **keywords):
+        captured_claude["command"] = list(command)
+        return subprocess.CompletedProcess(list(command), 0, "", "")
+
+    real_claude_run = runner_tools.subprocess.run
+    try:
+        runner_tools.subprocess.run = capture_claude_command
+        runner_tools.run_claude("a prompt no model ever sees")
+    finally:
+        runner_tools.subprocess.run = real_claude_run
+    claude_command = captured_claude.get("command", [])
+    allowed_tools = (claude_command[claude_command.index("--allowedTools") + 1]
+                     if "--allowedTools" in claude_command else "")
+    check("run_claude launches claude with Write in the tool set",
+          "Write" in allowed_tools.split(","),
+          f"allowed tools were {allowed_tools!r}")
+    check("the reading tools a review cell needs are still in the tool set",
+          {"Read", "Grep", "Glob"} <= set(allowed_tools.split(",")),
+          f"allowed tools were {allowed_tools!r}")
 
     # The provenance line carries the CLI version the RUNNER measured —
     # nedschorus#161's cross-version fact rested on the cells' own words.
