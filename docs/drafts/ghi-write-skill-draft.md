@@ -2,7 +2,7 @@
 
 *Landed 2026-08-12: the ruled text lives at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md); this draft is the decision trail.*
 
-Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) (the commission) and `docs/wiki/queue/skill-authoring-checklist.md` (the authoring rules). Instructions only; the justifying evidence lives in the commission issue.
+Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) (the commission) and the skill-authoring checklist (the authoring rules; retired 2026-08-30 as obsolete — in git history at `git show 19e2e9b:docs/wiki/queue/skill-authoring-checklist.md`). Instructions only; the justifying evidence lives in the commission issue.
 
 One tension for the walk: the commission asks for a description "written pushy" (undertriggering is the known failure direction); the checklist calls pushy descriptions a hypothesis to adopt only with false-trigger tests. The draft's description is firm about the trigger class without exhortation — rule which register wins. *(Ruled 2026-08-12: the plain register wins; see walk-order item 2.)*
 
