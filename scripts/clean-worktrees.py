@@ -32,8 +32,8 @@ ever swept a branch whose worktree is already gone — list_worktrees()
 enumerates worktrees, not refs. So the report also carries one line naming
 every local branch that no worktree has checked out and that carries nothing
 origin/main lacks: the refs removable losing nothing. Orphaned refs that DO
-carry commits origin/main lacks are deliberately NOT named — 41 of this
-repository's 51 local branches were in that state on 2026-08-31. Their
+carry commits origin/main lacks are deliberately NOT named — 41 of the 51
+local branches left after 2026-08-31's hand sweep were in that state. Their
 disposal is a judgment rather than a sweep, and printing them at every boot
 teaches a reader to skip the line. The line prints in every mode; --remove
 deletes the refs it names.
@@ -145,21 +145,27 @@ def branch_refs_with_no_worktree_fully_on_main(repo):
     Removing a worktree does not remove the branch it was on. Three mechanisms
     leave one behind: the Agent tool's worktree isolation, which creates a
     `worktree-agent-<id>` branch whose worktree is later reaped; a seat home
-    retired by hand; and `git worktree remove` run directly. Counted here on
-    2026-08-31: 51 local branches, 41 of them with no worktree at all. The
-    landed-orphan population was zero at that instant, because all 41 still
-    carried unlanded work — it does not stay zero, since each becomes a landed
-    ref the moment its work reaches main, and the reaper's own removals are
-    the only thing that deletes a branch today.
+    retired by hand; and `git worktree remove` run directly. Counted on
+    2026-08-31 with `git for-each-ref refs/heads/`, BEFORE a hand sweep that
+    same night: 143 local branches, 81 of them landed orphans — every commit
+    already on origin/main, no worktree, and nothing in this project reaping
+    them. Those 81 were deleted by hand, along with 15 stale review refs, and
+    the count of commits reachable from local branches but from no remote did
+    not move (264 before, 264 after), which is what proved the 81 held nothing
+    of their own.
 
-    A count of 143 branches with 81 landed was cited while this was designed.
-    It does not reproduce against refs/heads/; it matches a count of
-    refs/heads/ and refs/remotes/ together — 150 and 80 by that reckoning on
-    2026-08-31 — so it is recorded as superseded rather than repeated.
+    That is why counting again AFTER the sweep gives a different answer, and
+    why a later reader should not read it as the first count being wrong: 51
+    local branches remain, 41 with no worktree, and the landed-orphan
+    population is momentarily ZERO because the hand sweep just took all of
+    them. It does not stay zero. Each of the 41 becomes a landed ref the
+    moment its work reaches main, and the reaper's own removals are the only
+    thing that deletes a branch today — which is the whole reason this
+    function exists rather than a second hand sweep six weeks from now.
 
     Orphaned refs that DO carry commits origin/main lacks are deliberately not
-    reported: 41 of this repository's 51 local branches were in that state on
-    2026-08-31. They are nobody's to delete on a boot-time report, and naming
+    reported: 41 of the 51 local branches left after the sweep were in that
+    state. They are nobody's to delete on a boot-time report, and naming
     them every run is noise that teaches a reader to skip the line. Their
     disposal is a judgment, not a sweep.
 
