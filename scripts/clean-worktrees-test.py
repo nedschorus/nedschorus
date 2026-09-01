@@ -11,6 +11,12 @@ on a healthy machine, so they run the reaper with a stub lsof first on PATH.
 Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
+A last section covers the branch refs whose worktree is already gone: refs
+attached to nothing, refs still carrying unlanded work, refs a live worktree
+or the main checkout holds, a tag shadowing a branch name, remote-tracking
+refs, and a git branch -d refusal — the ordinary state of a checkout whose
+local main lags origin/main.
+
 Run: python3 scripts/clean-worktrees-test.py
 """
 
@@ -23,7 +29,25 @@ from pathlib import Path
 
 CLEAN_SCRIPT = Path(__file__).with_name("clean-worktrees.py")
 
+ORPHANED_BRANCH_REF_LINE_MARKER = (
+    "branch ref(s) with no worktree, nothing beyond origin/main:")
+
 failures = []
+
+
+def orphaned_branch_refs_named(output):
+    """The branch names on the orphaned-branch-ref line, [] when it is absent.
+
+    Parsed rather than substring-matched: the line's own prose contains
+    "origin/main", so a check that a remote-tracking ref went unnamed would
+    pass against the sentence instead of against the names.
+    """
+    for line in output.splitlines():
+        if line.startswith(ORPHANED_BRANCH_REF_LINE_MARKER):
+            named = line[len(ORPHANED_BRANCH_REF_LINE_MARKER):]
+            named = named.rsplit(" — ", 1)[0]
+            return [name.strip() for name in named.split(",") if name.strip()]
+    return []
 
 
 def check(case_name, condition, detail=""):
@@ -158,6 +182,10 @@ with tempfile.TemporaryDirectory() as scratch:
         check("--only-done stays silent about kept worktrees",
               "dirty-wt" not in only_done and "unlanded-wt" not in only_done,
               only_done)
+        # Every branch here is still attached to a worktree, so there is
+        # nothing to name; the line must be absent rather than empty.
+        check("--only-done says nothing about branch refs when none is orphaned",
+              ORPHANED_BRANCH_REF_LINE_MARKER not in only_done, only_done)
 
         # --- An untrustworthy vacancy answer keeps, and says so honestly ----
         # Each case below reaps done-wt against the pre-fix implementation,
@@ -255,6 +283,117 @@ with tempfile.TemporaryDirectory() as scratch:
         still_listed = git(checkout, "worktree", "list", "--porcelain")
         check("the dead registration survives --remove — the prune stays deliberate",
               "dead-registration-wt" in still_listed, still_listed)
+
+        # --- Branch refs whose worktree is already gone ----------------------
+        # Removing a worktree does not remove its branch, and nothing swept a
+        # branch left behind: list_worktrees() enumerates worktrees, not refs.
+        # Counted 2026-08-31, 41 of this repository's 51 local branches had no
+        # worktree — none of them landed yet, each one landing eventually.
+        #
+        # Ordering inside this block is load-bearing. The successful --remove
+        # below must run BEFORE origin/main is advanced: once the checkout's
+        # local main lags, git branch -d refuses even a ref that is fully on
+        # origin/main, which is the refusal case at the end.
+
+        # Attached to nothing, carrying nothing origin/main lacks.
+        git(checkout, "branch", "--no-track", "landed-orphan-branch", "origin/main")
+        # Attached to nothing, but carrying a commit origin/main lacks.
+        git(checkout, "branch", "--no-track", "unlanded-orphan-branch",
+            "unlanded-wt-branch")
+        # A remote-tracking ref with no worktree, trivially inside origin/main:
+        # a candidate the moment the sweep looks outside refs/heads/.
+        git(checkout, "push", "origin", "main:refs/heads/landed-elsewhere")
+        # A detached worktree: git's porcelain says `detached` where the branch
+        # line would be, so it names no branch of its own.
+        detached_wt = scratch / "detached-wt"
+        git(checkout, "worktree", "add", "--detach", str(detached_wt), "origin/main")
+        # A tag sharing a live worktree's branch name. %(refname:short) answers
+        # `heads/<name>` for a branch a tag shadows, which matches nothing in
+        # the attached set — so the sweep would name a branch that is in use.
+        shadowed_wt = scratch / "tag-shadowed-name-wt"
+        git(checkout, "worktree", "add", "-b", "tag-shadowed-name",
+            str(shadowed_wt), "origin/main")
+        git(checkout, "tag", "tag-shadowed-name", "origin/main")
+
+        orphan_report = run_clean(checkout).stdout
+        named = orphaned_branch_refs_named(orphan_report)
+        check("a landed branch with no worktree is named",
+              "landed-orphan-branch" in named, orphan_report)
+        check("the orphaned-ref line carries the removal command",
+              "scripts/clean-worktrees.py --remove" in "\n".join(
+                  line for line in orphan_report.splitlines()
+                  if line.startswith(ORPHANED_BRANCH_REF_LINE_MARKER)),
+              orphan_report)
+        check("a branch carrying commits origin/main lacks is not named",
+              "unlanded-orphan-branch" not in named, orphan_report)
+        # The precondition matters: without it the case passes vacuously
+        # against a branch that would have been excluded as unlanded anyway.
+        check("a branch a live worktree holds is not named, though it is landed",
+              "dirty-wt-branch" not in named
+              and git(checkout, "rev-list", "--count",
+                      "origin/main..dirty-wt-branch").strip() == "0",
+              orphan_report)
+        check("a tag shadowing an attached branch's name does not orphan it",
+              "tag-shadowed-name" not in named
+              and "heads/tag-shadowed-name" not in named, orphan_report)
+        check("the branch checked out in the main checkout is not named",
+              "main" not in named
+              and git(checkout, "rev-list", "--count",
+                      "origin/main..main").strip() == "0",
+              orphan_report)
+        check("a detached worktree names no branch and suppresses no ref",
+              "landed-orphan-branch" in named and "detached" not in named
+              and not any(name.startswith("/") for name in named),
+              orphan_report)
+        check("remote-tracking refs are never named",
+              not any(name.startswith("origin/") for name in named)
+              and "landed-elsewhere" not in named, orphan_report)
+
+        orphan_only_done = run_clean(checkout, "--only-done").stdout
+        check("--only-done carries the orphaned-ref line (the launchers' boot mode)",
+              "landed-orphan-branch" in orphaned_branch_refs_named(orphan_only_done),
+              orphan_only_done)
+
+        orphan_removal = run_clean(checkout, "--remove")
+        check("--remove deletes the orphaned landed ref",
+              git(checkout, "branch", "--list", "landed-orphan-branch").strip() == ""
+              and "landed-orphan-branch" in orphan_removal.stdout,
+              orphan_removal.stdout)
+        check("--remove leaves a ref carrying commits origin/main lacks",
+              git(checkout, "branch", "--list",
+                  "unlanded-orphan-branch").strip() != "",
+              orphan_removal.stdout)
+        check("--remove leaves the branches live worktrees hold",
+              git(checkout, "branch", "--list", "dirty-wt-branch").strip() != ""
+              and git(checkout, "branch", "--list",
+                      "tag-shadowed-name").strip() != "",
+              orphan_removal.stdout)
+        check("--remove exits 0 when every named ref was deletable",
+              orphan_removal.returncode == 0, str(orphan_removal.returncode))
+
+        # A local main behind origin/main is the ordinary state of a checkout
+        # after somebody else's work lands, and in it git branch -d refuses a
+        # ref that IS fully on origin/main: -d asks about HEAD and about the
+        # ref's upstream, never about origin/main. The refusal is git's second
+        # opinion, so the ref stays — but it is reported and counted, because a
+        # sweep that silently keeps failing is a sweep nobody knows to fix.
+        advance_wt = add_worktree("advance-wt", where=scratch)
+        (advance_wt / "advanced.txt").write_text("landed elsewhere\n", encoding="utf-8")
+        git(advance_wt, "add", "-A")
+        git(advance_wt, "commit", "-m", "work that lands on origin/main")
+        git(advance_wt, "push", "origin", "advance-wt-branch:main")
+        git(checkout, "fetch", "origin")
+        git(checkout, "branch", "--no-track",
+            "landed-ahead-of-local-main", "origin/main")
+        refused = run_clean(checkout, "--remove")
+        check("a refused ref deletion is reported, not swallowed",
+              "landed-ahead-of-local-main" in refused.stdout
+              and "FAILED" in refused.stdout, refused.stdout)
+        check("a refused ref deletion exits 1", refused.returncode == 1,
+              str(refused.returncode))
+        check("a refused ref deletion leaves the ref in place",
+              git(checkout, "branch", "--list",
+                  "landed-ahead-of-local-main").strip() != "", refused.stdout)
     finally:
         if occupant is not None:
             occupant.kill()
