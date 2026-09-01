@@ -10,6 +10,7 @@ a linked worktree on its own branch (the seat).
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,11 +34,23 @@ def git(arguments, cwd: Path):
                           capture_output=True, text=True, check=False)
 
 
-def run_catch_up(extra_arguments):
+def run_catch_up(extra_arguments, path_prefix=None):
+    environment = dict(os.environ)
+    if path_prefix is not None:
+        environment["PATH"] = f"{path_prefix}{os.pathsep}{environment['PATH']}"
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--interval-seconds", "0", *extra_arguments],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, env=environment,
     )
+
+
+def emitted_object(result):
+    """The decision object a run emitted, or None when it spoke plain text."""
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def configure_identity(repository: Path):
@@ -80,14 +93,38 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(origin, "advance-one.txt", "one\n", "advance one")
 
     result = run_catch_up(["--cwd", str(seat)])
-    check("a clean behind seat is merged", "merged origin/main into seat" in result.stdout,
-          result.stdout + result.stderr)
-    check("the merge names the files it changed", "advance-one.txt" in result.stdout,
-          result.stdout)
+    # A LANDED merge is an attention state (user-ruled 2026-08-31), so this run
+    # speaks one channel: a single decision:block object carrying every line the
+    # run produced, the reference checkout's included.
+    #
+    # Parsing the WHOLE of stdout is the assertion that matters, and it is the
+    # regression test for the mixing this design exists to prevent: a merge lands
+    # only when origin/main advanced, which is exactly when the reference
+    # checkout also has something to say. A JSON object with a plain line
+    # appended is neither valid JSON nor plain text — Claude Code reports it as a
+    # hook error and the block is lost. Substring checks against raw stdout would
+    # pass either way, since the same text sits inside the JSON.
+    try:
+        emitted_merge = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        emitted_merge = None
+    check("a landed merge emits exactly one JSON object on stdout",
+          isinstance(emitted_merge, dict), result.stdout + result.stderr)
+    merge_reason = (emitted_merge or {}).get("reason", "")
+    check("a landed merge blocks, so the agent hears it rather than the display",
+          (emitted_merge or {}).get("decision") == "block", result.stdout)
+    check("a clean behind seat is merged",
+          "merged origin/main into seat" in merge_reason, merge_reason)
+    check("the merge names the files it changed",
+          "advance-one.txt" in merge_reason, merge_reason)
+    check("the merge warns against amending onto it",
+          "--amend" in merge_reason and "git show --stat" in merge_reason,
+          merge_reason)
     check("the seat now has the remote commit", (seat / "advance-one.txt").exists())
-    check("the reference clone fast-forwarded on the same pass",
-          "reference checkout" in result.stdout and (reference / "advance-one.txt").exists(),
-          result.stdout)
+    check("the reference clone fast-forwarded on the same pass, reported inside "
+          "the same object",
+          "reference checkout" in merge_reason and (reference / "advance-one.txt").exists(),
+          merge_reason)
     check("the stamp records zero behind after the merge", stamp_of(seat).get("behind") == 0,
           str(stamp_of(seat)))
 
@@ -339,6 +376,109 @@ with tempfile.TemporaryDirectory() as no_git_scratch:
           unlaunchable.returncode != 1, str(unlaunchable.returncode))
     check("callers still see it as a failure",
           unlaunchable.returncode != 0, str(unlaunchable.returncode))
+
+# ---------------------------------------------------------------------------
+# Channel classification. The landed-merge case pins its own channel; without
+# these, no other path is pinned to one. A substring assertion against raw
+# stdout matches identically whether the text is plain or wrapped in a
+# decision:block object, so a path reclassified in either direction passes
+# unnoticed — verified by sabotage, review finding 2026-08-31.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as channel_scratch:
+    tmp = Path(channel_scratch)
+    origin = tmp / "origin-repo"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    configure_identity(origin)
+    commit_file(origin, "shared.txt", "first\n", "first commit")
+    reference = tmp / "reference-clone"
+    git(["clone", "-q", str(origin), str(reference)], tmp)
+    configure_identity(reference)
+    seat = tmp / "seat-worktree"
+    git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
+    configure_identity(seat)
+
+    # ROUTINE stays on the display: a dirty tree blocks the merge, and that is
+    # the agent's own doing — it does not need a forced turn to learn it.
+    commit_file(origin, "advance.txt", "one\n", "advance")
+    (seat / "shared.txt").write_text("local edit in progress\n", encoding="utf-8")
+    blocked = run_catch_up(["--cwd", str(seat)])
+    check("a blocked merge reports on the display, not to the agent",
+          emitted_object(blocked) is None and "not merged" in blocked.stdout,
+          blocked.stdout)
+    git(["checkout", "--", "shared.txt"], seat)
+
+    # ATTENTION reaches the agent: a conflicted merge whose abort FAILED leaves
+    # the tree mid-merge. This is the state emit_attention was built for, and
+    # nothing exercised the PATH to it — only the emitter in isolation. The
+    # abort is made to fail by a git shim that forwards everything else.
+    real_git = shutil.which("git")
+    shim_directory = tmp / "git-shim"
+    shim_directory.mkdir()
+    shim = shim_directory / "git"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = merge ]; then\n'
+        '  for argument in "$@"; do\n'
+        '    case "$argument" in (--abort) echo "shim: abort refused" >&2; exit 1;; esac\n'
+        "  done\n"
+        "fi\n"
+        f'exec {real_git} "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    commit_file(seat, "shared.txt", "seat version\n", "seat edits the shared file")
+    commit_file(origin, "shared.txt", "origin version\n", "origin edits the same file")
+
+    # ROUTINE again, and a DIFFERENT routine path from the dirty tree above: a
+    # merge that would conflict is attempted, aborted cleanly, and reported to
+    # the display. The tree is exactly as the agent left it, so there is nothing
+    # it must act on before its next turn.
+    conflicted = run_catch_up(["--cwd", str(seat)])
+    check("a would-conflict merge reports on the display, not to the agent",
+          emitted_object(conflicted) is None and "would conflict" in conflicted.stdout,
+          conflicted.stdout)
+
+    # A fresh conflict pair, so the standing-conflict throttle does not skip the
+    # retry the failed-abort case needs.
+    commit_file(origin, "shared.txt", "origin version two\n", "origin edits it again")
+    stuck = run_catch_up(["--cwd", str(seat)], path_prefix=str(shim_directory))
+    stuck_object = emitted_object(stuck)
+    check("a failed abort reaches the agent as one JSON object",
+          isinstance(stuck_object, dict) and stuck_object.get("decision") == "block",
+          stuck.stdout + stuck.stderr)
+    check("the failed abort says the tree needs attention",
+          "needs attention" in (stuck_object or {}).get("reason", ""),
+          (stuck_object or {}).get("reason", ""))
+    git(["merge", "--abort"], seat)
+
+# ---------------------------------------------------------------------------
+# --reference-pull must still speak. Its only other case exercises the
+# unknowable-count path, which queues nothing, so the flush there was never
+# reached: deleting it silenced the mode with the suite green (review finding,
+# 2026-08-31). Both launchers call this mode at every launch.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as reference_pull_scratch:
+    tmp = Path(reference_pull_scratch)
+    origin = tmp / "origin-repo"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    configure_identity(origin)
+    commit_file(origin, "shared.txt", "first\n", "first commit")
+    reference = tmp / "reference-clone"
+    git(["clone", "-q", str(origin), str(reference)], tmp)
+    configure_identity(reference)
+    commit_file(origin, "advance.txt", "one\n", "advance")
+
+    pulled = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("--reference-pull reports the fast-forward it performed",
+          "reference checkout" in pulled.stdout and "fast-forwarded" in pulled.stdout,
+          pulled.stdout + pulled.stderr)
+    check("--reference-pull actually advanced the checkout",
+          (reference / "advance.txt").exists())
+    check("--reference-pull speaks plain text, never a block",
+          emitted_object(pulled) is None, pulled.stdout)
+
 
 print()
 if failures:
