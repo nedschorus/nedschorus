@@ -78,13 +78,50 @@ def emit_attention(message: str) -> None:
     A Stop hook's plain stdout reaches the transcript display but never the
     agent (verified against the hooks contract, 2026-08-17). For routine
     events that is right — the stamp and status line carry them for free.
-    The one attention state (a conflicted merge whose cleanup failed, leaving
-    the tree mid-merge) is worth a forced turn: the agent seated in that tree
-    is the right responder, now. Emitting decision:block on a Stop hook makes
-    the agent continue with the reason in hand (user-ruled 2026-08-17:
-    attention states only; everything routine stays display-plus-stamp).
+    Emitting decision:block on a Stop hook makes the agent continue with the
+    reason in hand (user-ruled 2026-08-17: attention states only; everything
+    routine stays display-plus-stamp).
+
+    Two states qualify. A conflicted merge whose cleanup failed, leaving the
+    tree mid-merge — the agent seated in that tree is the right responder,
+    now. And a merge that LANDED, reclassified from routine to attention
+    (user-ruled 2026-08-31): the agent's branch just gained commits it did
+    not author, and on 2026-08-31 an agent amended its own commit onto such a
+    merge and absorbed another pull request's file into its authorship. The
+    message that would have prevented it was already written and already
+    printed — to the display, which the agent cannot read.
     """
     print(json.dumps({"decision": "block", "reason": message}))
+
+
+# Hook-mode output is ONE channel per run: either a plain display report or a
+# single decision:block object, never both. Claude Code parses a hook's whole
+# stdout, so a JSON object followed by a plain line is neither — as of 2.1.248
+# it is reported as a hook error, and the block is lost. That is not a corner
+# case: a merge lands only when origin/main advanced, which is exactly when the
+# reference checkout also has something to report. So lines are queued here and
+# the channel is chosen once, at the end of the run.
+REPORT_LINES = []
+REPORT_NEEDS_ATTENTION = False
+
+
+def report(line: str, attention: bool = False) -> None:
+    """Queue one line of hook output. `attention` latches the whole run."""
+    global REPORT_NEEDS_ATTENTION
+    REPORT_LINES.append(line)
+    if attention:
+        REPORT_NEEDS_ATTENTION = True
+
+
+def flush_report() -> None:
+    """Emit everything queued, on whichever channel the run earned."""
+    if not REPORT_LINES:
+        return
+    if REPORT_NEEDS_ATTENTION:
+        emit_attention("\n".join(REPORT_LINES))
+    else:
+        for queued_line in REPORT_LINES:
+            print(queued_line)
 
 
 def run_git(arguments, working_directory: Path, timeout: int = 60):
@@ -221,8 +258,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     if blockers:
         stamp["last_action"] = f"skipped: {'; '.join(blockers)}"
         write_stamp(stamp_path, stamp)
-        print(f"catch-up: {branch} is {behind} behind origin/main; not merged — "
-              f"{'; '.join(blockers)}")
+        report(f"catch-up: {branch} is {behind} behind origin/main; not merged — "
+               f"{'; '.join(blockers)}")
         return
 
     before = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
@@ -235,9 +272,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     conflict_pair = f"{before}:{main_tip}"
     if stamp.get("conflict_pair") == conflict_pair:
         write_stamp(stamp_path, stamp)
-        print(f"catch-up: {branch} is {behind} behind origin/main; the merge still "
-              f"conflicts (not retried) — merge by hand at a clean point "
-              f"(git merge origin/main)")
+        report(f"catch-up: {branch} is {behind} behind origin/main; the merge still "
+               f"conflicts (not retried) — merge by hand at a clean point "
+               f"(git merge origin/main)")
         return
 
     # Immediately before merging, re-verify no merge state appeared since the
@@ -247,8 +284,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     if (git_dir / "MERGE_HEAD").exists():
         stamp["last_action"] = "skipped: a foreign merge appeared mid-check"
         write_stamp(stamp_path, stamp)
-        print(f"catch-up: {branch} is {behind} behind origin/main; not merged — "
-              f"another merge is in progress here, left exactly as found")
+        report(f"catch-up: {branch} is {behind} behind origin/main; not merged — "
+               f"another merge is in progress here, left exactly as found")
         return
 
     merged = run_git(["-c", "core.editor=true", "merge", "--no-edit", "origin/main"],
@@ -262,9 +299,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             detail = (merged.stderr or merged.stdout).strip().splitlines()
             stamp["last_action"] = "merge failed without a conflict; nothing touched"
             write_stamp(stamp_path, stamp)
-            print(f"catch-up: {branch} is {behind} behind origin/main; the merge "
-                  f"failed without conflicting and nothing was aborted — "
-                  f"{detail[0] if detail else 'no detail'}")
+            report(f"catch-up: {branch} is {behind} behind origin/main; the merge "
+                   f"failed without conflicting and nothing was aborted — "
+                   f"{detail[0] if detail else 'no detail'}")
             return
         aborted = run_git(["merge", "--abort"], checkout, timeout=60)
         if aborted.returncode != 0 or (git_dir / "MERGE_HEAD").exists():
@@ -272,19 +309,20 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             # and someone must look (silent-safety rule).
             stamp["last_action"] = "conflict: ABORT FAILED, tree needs attention"
             write_stamp(stamp_path, stamp)
-            emit_attention(
+            report(
                 f"catch-up: {branch} conflicted with origin/main and the abort "
                 f"FAILED — this checkout is mid-merge and needs attention before "
                 f"other work: inspect `git status`, resolve or abort the merge "
                 f"by hand, and only then continue. Detail: "
-                f"{aborted.stderr.strip() or 'none'}")
+                f"{aborted.stderr.strip() or 'none'}",
+                attention=True)
             return
         stamp["conflict_pair"] = conflict_pair
         stamp["last_action"] = "conflict: merge aborted cleanly"
         write_stamp(stamp_path, stamp)
-        print(f"catch-up: {branch} is {behind} behind origin/main; the merge would "
-              f"conflict, so nothing was touched — merge by hand at a clean point "
-              f"(git merge origin/main)")
+        report(f"catch-up: {branch} is {behind} behind origin/main; the merge would "
+               f"conflict, so nothing was touched — merge by hand at a clean point "
+               f"(git merge origin/main)")
         return
     stamp.pop("conflict_pair", None)
 
@@ -295,8 +333,12 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         named += f", … {len(changed) - CHANGED_FILES_NAMED_LIMIT} more"
     stamp["behind"], stamp["last_action"] = 0, f"merged {behind} commit(s)"
     write_stamp(stamp_path, stamp)
-    print(f"catch-up: merged origin/main into {branch} ({behind} commit(s)). "
-          f"Changed: {named or 'no files'} — re-read any of these before editing them.")
+    report(f"catch-up: merged origin/main into {branch} ({behind} commit(s)). "
+           f"Changed: {named or 'no files'} — re-read any of these before editing "
+           f"them. Your branch now carries commits you did not author: check "
+           f"`git show --stat` before pushing, and do not `git commit --amend` "
+           f"onto the merge.",
+           attention=True)
 
 
 def reference_checkout_of(checkout: Path):
@@ -350,21 +392,21 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int) -> N
     if real_blockers:
         stamp["last_action"] = f"reference skipped: {'; '.join(real_blockers)}"
         write_stamp(stamp_path, stamp)
-        print(f"catch-up: reference checkout {reference} is {behind} behind and was "
-              f"left alone — {'; '.join(real_blockers)}")
+        report(f"catch-up: reference checkout {reference} is {behind} behind and was "
+               f"left alone — {'; '.join(real_blockers)}")
         return
 
     pulled = run_git(["merge", "--ff-only", "origin/main"], reference, timeout=120)
     if pulled.returncode != 0:
         stamp["last_action"] = "reference ff-only refused"
         write_stamp(stamp_path, stamp)
-        print(f"catch-up: reference checkout {reference} could not fast-forward: "
-              f"{pulled.stderr.strip() or 'no detail'}")
+        report(f"catch-up: reference checkout {reference} could not fast-forward: "
+               f"{pulled.stderr.strip() or 'no detail'}")
         return
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
     write_stamp(stamp_path, stamp)
-    print(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
-          f"to origin/main")
+    report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
+           f"to origin/main")
 
 
 def report_line(checkout: Path, interval_seconds: int) -> str:
@@ -412,11 +454,11 @@ def main(argv=None) -> int:
 
     if arguments.reference_pull:
         root = checkout_root(Path(arguments.repo).resolve())
-        if root is None:
-            return 0
-        reference = reference_checkout_of(root)
-        if reference is not None:
-            fast_forward_reference_checkout(reference, arguments.interval_seconds)
+        if root is not None:
+            reference = reference_checkout_of(root)
+            if reference is not None:
+                fast_forward_reference_checkout(reference, arguments.interval_seconds)
+        flush_report()
         return 0
 
     # Hook mode: the session's own checkout, then the machine's reference copy.
@@ -429,18 +471,21 @@ def main(argv=None) -> int:
             payload = {}
         session_cwd = Path(payload.get("cwd") or ".")
 
+    # One exit, one flush: an early return here would be a silent hook, which
+    # is the failure mode this queue introduces if it is not funnelled.
     root = checkout_root(session_cwd)
-    if root is None:
-        return 0
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], root, timeout=15).stdout.strip()
-    if branch == "main":
-        # A session seated in the reference copy itself: ff-only, never merge.
-        fast_forward_reference_checkout(root, arguments.interval_seconds)
-        return 0
-    catch_up_session_checkout(root, arguments.interval_seconds)
-    reference = reference_checkout_of(root)
-    if reference is not None and reference != root:
-        fast_forward_reference_checkout(reference, arguments.interval_seconds)
+    if root is not None:
+        branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], root,
+                         timeout=15).stdout.strip()
+        if branch == "main":
+            # A session seated in the reference copy itself: ff-only, never merge.
+            fast_forward_reference_checkout(root, arguments.interval_seconds)
+        else:
+            catch_up_session_checkout(root, arguments.interval_seconds)
+            reference = reference_checkout_of(root)
+            if reference is not None and reference != root:
+                fast_forward_reference_checkout(reference, arguments.interval_seconds)
+    flush_report()
     return 0
 
 
