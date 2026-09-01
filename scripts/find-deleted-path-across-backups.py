@@ -204,6 +204,12 @@ DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT = 4
 # silently puts the password wall back; the test suite fails the pair apart.
 TIME_MACHINE_READONLY_MOUNT_POINT = "/private/tmp/nedschorus-backup-readonly-mount"
 
+# Time Machine snapshots on the external disk are named
+# com.apple.TimeMachine.<stamp>.backup, and the directory holding that
+# snapshot's files at its own root is <stamp>.backup — the name with this
+# prefix removed. See _time_machine_snapshot_data_root.
+TIME_MACHINE_SNAPSHOT_NAME_PREFIX = "com.apple.TimeMachine."
+
 # What the spoken line calls this tool. `say` reads it aloud, so it is the
 # script's name in words rather than its filename — long enough to be
 # unmistakable across a room, short enough to finish before he stops listening.
@@ -1206,8 +1212,20 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
     hits = []
     searched = []
     unsearched = []
+    stuck = None
     for snapshot in candidates:
-        outcome, detail = _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root)
+        if stuck is not None:
+            # The same shape as the local-snapshot walk, for the same reason:
+            # this mount point is fixed by the sudoers rule, so once one
+            # snapshot will not release, every later mount onto it fails with
+            # one identical message and filing each candidate under that
+            # message hides the real cause.
+            unsearched.append((snapshot, "not reached: " + stuck))
+            continue
+        outcome, detail, release_failure = _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root)
+        if release_failure is not None:
+            stuck = "%s stayed mounted on %s — %s" % (
+                snapshot, TIME_MACHINE_READONLY_MOUNT_POINT, release_failure)
         if outcome == "no credential":
             # sudo refused for want of a password. Every remaining candidate
             # would refuse identically, so the walk stops here rather than
@@ -1232,19 +1250,30 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
              % (len(snapshots), len(searched), len(candidates), how)]
     for snapshot, reason in unsearched:
         lines.append("could not search %s — %s" % (snapshot, reason))
+    if stuck and not unsearched:
+        # The LAST candidate in the walk reaches no `unsearched` entry to carry
+        # its failed release, so without this the run says nothing at all about
+        # the mount it left on a mount point every later run needs.
+        lines.append(stuck)
     if hits:
         for snapshot, hit in hits:
             lines.append("%s holds %s" % (snapshot, hit))
         return SurfaceReport("time machine", FOUND, lines,
-                             _time_machine_manual_recovery(hits[0][0], device, hits[0][1]))
+                             _time_machine_manual_recovery(hits[0][0], device, hits[0][1],
+                                                           clear_first=bool(stuck)))
     if searched:
         lines.append("searched %s and did not find it" % ", ".join(searched))
     if unsearched:
         # A snapshot that would not open was not searched; saying "did not
         # find it" about it is the conflation this file's contract forbids.
         return SurfaceReport("time machine", UNAVAILABLE, lines,
-                             _time_machine_manual_recovery(unsearched[0][0], device))
-    return SurfaceReport("time machine", NOT_FOUND, lines)
+                             _time_machine_manual_recovery(unsearched[0][0], device,
+                                                           clear_first=bool(stuck)))
+    # NOT FOUND stands even when a mount was left behind: every candidate WAS
+    # opened and searched. The clear command rides along so the mount point the
+    # next run needs can be freed.
+    return SurfaceReport("time machine", NOT_FOUND, lines,
+                         [_time_machine_clear_mount_point_command()] if stuck else [])
 
 
 def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal, unsearched):
@@ -1300,7 +1329,12 @@ def _is_sudo_non_interactive_refusal(stderr):
     return "password is required" in (stderr or "").lower()
 
 
-def _time_machine_manual_recovery(snapshot, device, path_inside=None):
+def _time_machine_clear_mount_point_command():
+    """The one command that frees the fixed Time Machine mount point."""
+    return "diskutil unmount %s" % shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT)
+
+
+def _time_machine_manual_recovery(snapshot, device, path_inside=None, clear_first=False):
     """The exact commands that open one Time Machine snapshot and close it again.
 
     TIME_MACHINE_READONLY_MOUNT_POINT in every line, and the same directory the
@@ -1319,14 +1353,20 @@ def _time_machine_manual_recovery(snapshot, device, path_inside=None):
     occupied and every later snapshot failed against it.
     """
     mount = shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT)
+    # The mount point is where the SNAPSHOT lands; the files are a level down,
+    # under <stamp>.backup/Data. A cp naming the mount point directly is the
+    # blocking defect of PR #223 in printed form — it would not find the file
+    # any more than the probe did.
+    data_root = _time_machine_snapshot_data_root(snapshot, TIME_MACHINE_READONLY_MOUNT_POINT)
+    clear = [_time_machine_clear_mount_point_command()] if clear_first else []
     open_it = "mkdir -p %s && sudo mount_apfs -o ro -s %s %s %s" % (mount, snapshot, device, mount)
     if path_inside:
-        return [open_it,
-                "cp %s . && diskutil unmount %s"
-                % (shlex.quote(TIME_MACHINE_READONLY_MOUNT_POINT + path_inside), mount)]
-    return [open_it + " && ls %s" % mount,
-            "# then look for the path under %s, and: diskutil unmount %s"
-            % (TIME_MACHINE_READONLY_MOUNT_POINT, mount)]
+        return clear + [open_it,
+                        "cp %s . && diskutil unmount %s"
+                        % (shlex.quote(data_root + path_inside), mount)]
+    return clear + [open_it + " && ls %s" % shlex.quote(data_root),
+                    "# then look for the path under %s, and: diskutil unmount %s"
+                    % (data_root, mount)]
 
 
 def _time_machine_destination(runner):
@@ -1458,6 +1498,47 @@ def _snapshot_timestamp(snapshot_name):
     return digits[:14] if len(digits) >= 14 else None
 
 
+def _time_machine_snapshot_data_root(snapshot, mount_point):
+    """Where a mounted Time Machine snapshot actually keeps the backed-up files.
+
+    NOT the mount point, WHICH IS WHAT THIS SCRIPT USED TO TEST. Measured on
+    this Mac's backup volume on 2026-08-31 by mounting
+    com.apple.TimeMachine.2026-08-31-175312.backup read-only and listing it:
+    the root holds one <stamp>.backup directory, 87 <stamp>.previous ones, two
+    .interrupted ones and backup_manifest.plist. There is NO /Users at the
+    root — `ls <mount>/Users` is "No such file or directory". The files are one
+    level further down, under <stamp>.backup/Data, which does carry the
+    machine's own absolute layout: <mount>/2026-08-31-175312.backup/Data/Users/
+    el/Projects/nedschorus/README.md is 6130 bytes, the live file's size.
+
+    The stamp is the snapshot's OWN: the volume seen through snapshot
+    com.apple.TimeMachine.<stamp>.backup has <stamp>.backup at its root, so the
+    directory is the name with TIME_MACHINE_SNAPSHOT_NAME_PREFIX removed. One
+    .backup entry existed at that root, and its stamp was the mounted
+    snapshot's.
+
+    THE .previous DIRECTORIES ARE NOT SEARCHED, and that is deliberate rather
+    than an omission. Each holds a Data tree, but a PARTIAL one: the README.md
+    present under the .backup root is absent from
+    2026-07-27-163922.previous/Data on the same mount. Treating one as a
+    point-in-time root would report "searched and did not find it" about a tree
+    that never held the file in the first place — the exact conflation the
+    honesty contract at the top of this file exists to refuse. Reaching further
+    back in time is what the OTHER candidate snapshots are for.
+
+    WHY THIS WENT WRONG. The old code tested <mount><absolute path> and its own
+    comment said the /Users layout was "UNVERIFIED here: confirming it needs the
+    password this whole branch exists because we do not have". The sudoers rule
+    removed that wall, the mount then succeeded, and an unverified assumption
+    became a confident NOT FOUND — exit 1, "stop looking" — for a file sitting
+    in the backup (PR #223 review, blocking finding).
+    """
+    stamp = snapshot
+    if stamp.startswith(TIME_MACHINE_SNAPSHOT_NAME_PREFIX):
+        stamp = stamp[len(TIME_MACHINE_SNAPSHOT_NAME_PREFIX):]
+    return "%s/%s/Data" % (mount_point, stamp)
+
+
 def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False):
     """Open one snapshot read-only and look for `wanted` in it.
 
@@ -1469,7 +1550,12 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
                                             on this disk can do better
       ("unmounted", reason)               — MOUNT_APFS refused; NOT searched,
                                             but the next candidate may open
-      ("unreadable", reason)              — mounted, but find failed; NOT searched
+      ("unreadable", reason)              — mounted, but the tree could not be
+                                            read; NOT searched
+    plus a third value: the release failure, or None. `diskutil unmount`'s exit
+    code was discarded here while the local-snapshot twin checked it — the same
+    lesson, not carried across (PR #223 review). This mount point is fixed by
+    the sudoers rule, so one snapshot left mounted refuses every later run.
 
     The first version returned a bare None for both a mount failure and an
     absent file, and the caller rendered both as "searched ... and did not
@@ -1493,39 +1579,60 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
     mount_point = TIME_MACHINE_READONLY_MOUNT_POINT
     runner(["mkdir", "-p", mount_point])
     sudo = ["sudo"] if prompt_for_root else ["sudo", "-n"]
+    release_failure = None
     code, _, stderr = runner(sudo + ["mount_apfs", "-o", "ro", "-s", snapshot, device, mount_point], timeout=LONG_TIMEOUT_SECONDS)
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
         if _is_sudo_non_interactive_refusal(stderr):
             # Verbatim, and with no prefix of ours: sudo's own message already
             # names sudo, and "sudo said: sudo: ..." reads like a bug.
-            return "no credential", first
-        return "unmounted", "mount_apfs said: %s" % first
+            return "no credential", first, None
+        return "unmounted", "mount_apfs said: %s" % first, None
+    # HELD IN A VARIABLE, NOT RETURNED FROM THE `try`. A `return` inside a try
+    # block computes its value before the `finally` runs, so a release failure
+    # discovered down there could never reach the caller.
     try:
-        if wanted.startswith("/"):
-            probe = mount_point + wanted
-            exists, _, _ = runner(["test", "-e", probe])
-            return ("hit", wanted) if exists == 0 else ("miss", None)
-        # Assumes a mounted Time Machine snapshot exposes /Users at its root.
-        # That is the documented layout, but it is UNVERIFIED here: confirming it
-        # needs the password this whole branch exists because we do not have.
-        code, out, stderr = runner(
-            ["find", mount_point + "/Users", "-path", "*/" + wanted, "-maxdepth", "12"],
-            timeout=LONG_TIMEOUT_SECONDS,
-        )
-        for line in out.splitlines():
-            if line.strip():
-                return "hit", line.strip()[len(mount_point):]
-        if code != 0:
-            first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
-            return "unreadable", "find said: %s" % first
-        return "miss", None
+        # The files are under <stamp>.backup/Data, never at the mount point
+        # itself — see _time_machine_snapshot_data_root for the measurement.
+        data_root = _time_machine_snapshot_data_root(snapshot, mount_point)
+        laid_out, _, _ = runner(["test", "-d", data_root])
+        if laid_out != 0:
+            # Mounted, but not shaped like the volume this was measured against.
+            # NOT a miss: "searched and did not find it" about a tree that was
+            # never opened is the conflation this file's contract forbids, and
+            # is exactly how the old wrong-root probe failed.
+            outcome = ("unreadable", "mounted, but %s is not there — a snapshot of this backup "
+                                     "volume keeps its files under <stamp>.backup/Data" % data_root)
+        elif wanted.startswith("/"):
+            exists, _, _ = runner(["test", "-e", data_root + wanted])
+            outcome = ("hit", wanted) if exists == 0 else ("miss", None)
+        else:
+            code, out, stderr = runner(
+                ["find", data_root + "/Users", "-path", "*/" + wanted, "-maxdepth", "12"],
+                timeout=LONG_TIMEOUT_SECONDS,
+            )
+            found = next((line.strip() for line in out.splitlines() if line.strip()), None)
+            if found is not None:
+                # Rendered as the machine's own absolute path, which is what the
+                # data root carries — the mount point and the <stamp>.backup/Data
+                # prefix are this script's plumbing, not the reader's path.
+                outcome = ("hit", found[len(data_root):])
+            elif code != 0:
+                first = stderr.strip().splitlines()[0] if stderr.strip() else "exit %s" % code
+                outcome = ("unreadable", "find said: %s" % first)
+            else:
+                outcome = ("miss", None)
     finally:
         # `diskutil unmount`, unprivileged, for the reason spelled out in
         # _time_machine_manual_recovery: plain `umount` does not reliably
         # release a freshly mounted snapshot, and this mount point is fixed, so
         # one snapshot left mounted breaks every later run of this script.
-        runner(["diskutil", "unmount", mount_point], timeout=LONG_TIMEOUT_SECONDS)
+        released, _, release_error = runner(["diskutil", "unmount", mount_point],
+                                            timeout=LONG_TIMEOUT_SECONDS)
+    if released != 0:
+        first = release_error.strip().splitlines()[0] if release_error.strip() else "exit %s" % released
+        release_failure = "diskutil unmount exited %s: %s" % (released, first)
+    return outcome[0], outcome[1], release_failure
 
 
 # --------------------------------------------------------------------------

@@ -1170,7 +1170,21 @@ check("a disk that refuses to mount reports diskutil's own words",
 # probe returned None for a mount that failed AND for a file that was absent,
 # so a mount_apfs refusal rendered as "searched ... and did not find it".
 TM_MOUNT = finder.TIME_MACHINE_READONLY_MOUNT_POINT
-TM_FIND = "find %s/Users" % TM_MOUNT
+
+# WHERE A MOUNTED TIME MACHINE SNAPSHOT ACTUALLY KEEPS FILES. Measured on this
+# Mac's backup volume 2026-08-31 by mounting one read-only and listing it: the
+# root holds one <stamp>.backup directory, 87 <stamp>.previous, two
+# .interrupted and backup_manifest.plist, and NO /Users at all. These two
+# constants are written out by hand from that measurement rather than built by
+# calling the function under test, so the test would still catch the function
+# changing its mind.
+TM_NEWEST_SNAPSHOT = "com.apple.TimeMachine.2026-08-13-183101.backup"
+TM_DATA_ROOT = TM_MOUNT + "/2026-08-13-183101.backup/Data"
+TM_OLDER_DATA_ROOT = TM_MOUNT + "/2026-08-12-202035.backup/Data"
+# Prefix form: the fixture answers for either candidate's root, and the
+# assertions below pin which root the commands actually named.
+TM_FIND = "find %s" % TM_MOUNT
+TM_LAID_OUT = ("test -d " + TM_MOUNT, (0, "", ""))
 
 WARM = [
     ("tmutil destinationinfo", DESTINATION_INFO),
@@ -1180,6 +1194,7 @@ WARM = [
     # The release is unprivileged and is `diskutil unmount`, not `umount`:
     # the fixture must not answer a command the script no longer runs.
     ("diskutil unmount", (0, "", "")),
+    TM_LAID_OUT,
 ]
 tm_mount_refused = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (1, "", "mount_apfs: volume could not be mounted: Resource busy\n")),
@@ -1215,22 +1230,91 @@ check("every mounted snapshot is released afterwards, with diskutil unmount and 
 
 tm_warm_hit = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (0, "", "")),
-    (TM_FIND, (0, TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
+    (TM_FIND, (0, TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_warm_hit)
 check("with warm sudo, a hit is FOUND with the path inside the snapshot and a cp command",
       report.status == FOUND and any("holds /Users/el/Projects/nedschorus/a/b.md" in l for l in report.lines)
-      and any(c.startswith("cp " + TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md") for c in report.recovery),
+      and any(c.startswith("cp " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md") for c in report.recovery),
       "%s %s %s" % (report.status, report.lines, report.recovery))
 
 tm_find_fails = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (0, "", "")),
-    (TM_FIND, (1, "", "find: " + TM_MOUNT + "/Users: No such file or directory\n")),
+    (TM_FIND, (1, "", "find: " + TM_DATA_ROOT + "/Users: No such file or directory\n")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_find_fails)
-check("a mounted snapshot whose find fails is UNAVAILABLE quoting find (the /Users layout is unverified)",
+check("a mounted snapshot whose find fails is UNAVAILABLE quoting find, never a miss",
       report.status == UNAVAILABLE and any("find said" in l and "No such file" in l for l in report.lines),
       "%s %s" % (report.status, report.lines))
+
+# THE BLOCKING DEFECT OF PR #223, pinned. The probe tested <mount><absolute
+# path> and the find ran over <mount>/Users — neither of which exists in a
+# mounted snapshot of this backup volume. With the sudoers rule installed the
+# mount succeeds, so the wrong root turned an honest UNAVAILABLE into
+# "2 of 2 candidates searched ... and did not find it", exit 1, for
+# /Users/el/Projects/nedschorus/README.md, which is 6130 bytes in the backup.
+check("the find runs under <stamp>.backup/Data/Users, never at the mount point's own root",
+      any(c.startswith("find " + TM_DATA_ROOT + "/Users") for c in tm_warm_hit.calls)
+      and not any(c.startswith("find " + TM_MOUNT + "/Users") for c in tm_warm_hit.calls),
+      str([c for c in tm_warm_hit.calls if c.startswith("find")]))
+
+tm_absolute = FakeRunner(WARM + [
+    ("sudo -n mount_apfs", (0, "", "")),
+    ("test -e " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/README.md", (0, "", "")),
+    ("test -e", (1, "", "")),
+])
+report = finder.search_time_machine("/Users/el/Projects/nedschorus/README.md",
+                                    newest_date_held="2026-08-14", runner=tm_absolute)
+check("an absolute path is tested under <stamp>.backup/Data too, so a file that IS there is FOUND",
+      report.status == FOUND
+      and any("holds /Users/el/Projects/nedschorus/README.md" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and the cp handed back reads from that root, not from the mount point",
+      any(c.startswith("cp " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/README.md")
+          for c in report.recovery),
+      str(report.recovery))
+
+# A snapshot that mounts but is not laid out this way was NOT searched. Calling
+# it a miss is the conflation the honesty contract forbids, and is precisely how
+# the wrong-root probe failed.
+tm_unexpected_layout = FakeRunner(WARM[:-1] + [
+    ("test -d", (1, "", "")),
+    ("sudo -n mount_apfs", (0, "", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_unexpected_layout)
+check("a snapshot with no <stamp>.backup/Data is UNAVAILABLE, never searched-and-not-found",
+      report.status == UNAVAILABLE and not any("did not find it" in l for l in report.lines)
+      and any("keeps its files under <stamp>.backup/Data" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+# `diskutil unmount`'s exit code was discarded here while the local-snapshot
+# twin checked it. The mount point is fixed by the sudoers rule, so one snapshot
+# left mounted refuses every later run of this script.
+class TimeMachineReleaseFailsRunner(FakeRunner):
+    """Mounts and searches fine; the release will not go through."""
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        joined = " ".join(argv)
+        if joined.startswith("diskutil unmount"):
+            self.calls.append(joined)
+            return (1, "", "umount(%s): Resource busy -- try 'diskutil unmount'\n" % TM_MOUNT)
+        return FakeRunner.__call__(self, argv, timeout, cwd)
+
+
+tm_stuck = TimeMachineReleaseFailsRunner(WARM + [
+    ("sudo -n mount_apfs", (0, "", "")),
+    (TM_FIND, (0, "", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_stuck)
+check("a Time Machine snapshot that will not release is named, with the mount point it holds",
+      any(TM_NEWEST_SNAPSHOT + " stayed mounted on " + TM_MOUNT in l and "Resource busy" in l
+          for l in report.lines),
+      str(report.lines))
+check("... and the walk stops rather than filing every later candidate under the same refusal",
+      sum(1 for c in tm_stuck.calls if c.startswith("sudo -n mount_apfs")) == 1,
+      str(tm_stuck.calls))
+check("... and the command that frees the mount point comes back with the report",
+      "diskutil unmount " + TM_MOUNT in report.recovery, str(report.recovery))
 
 tm_one_refused = FakeRunner(WARM + [
     ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
@@ -1379,7 +1463,7 @@ wall_report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14"
 hit_report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14",
                                         runner=FakeRunner(WARM + [
                                             ("sudo -n mount_apfs", (0, "", "")),
-                                            (TM_FIND, (0, TM_MOUNT + "/Users/el/a/b.md\n", "")),
+                                            (TM_FIND, (0, TM_DATA_ROOT + "/Users/el/a/b.md\n", "")),
                                         ]))
 every_tm_command = wall_report.recovery + hit_report.recovery
 check("no printed Time Machine command names any other mount point",
@@ -1408,7 +1492,8 @@ COLD_THEN_PROMPTED = [
     # entry answers the prompting form of the mount and only that form.
     ("sudo mount_apfs", (0, "", "")),
     ("diskutil unmount", (0, "", "")),
-    (TM_FIND, (0, TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
+    TM_LAID_OUT,
+    (TM_FIND, (0, TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
 ]
 
 tm_cold_default = FakeRunner(COLD_THEN_PROMPTED)
@@ -1592,7 +1677,8 @@ RULE_INSTALLED = [
     ("sudo -n true", (1, "", "sudo: a password is required\n")),
     ("sudo -n mount_apfs", (0, "", "")),
     ("diskutil unmount", (0, "", "")),
-    (TM_FIND, (0, TM_MOUNT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
+    TM_LAID_OUT,
+    (TM_FIND, (0, TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
 ]
 
 tm_rule_installed = FakeRunner(RULE_INSTALLED)
