@@ -62,6 +62,15 @@ Operating rules:
   requesting agent deletes the directory when the work it served lands, or
   when nothing further will use it. What survives is what landed — the
   reports themselves are archived nowhere.
+- Each review agent is given a scratch directory of its own at
+  `sanity-check-records/<date>-<target-stem>/scratch/<audit>-<runtime>/`, made
+  by the runner and named to that agent in its prompt: working notes, drafts,
+  anything it needs. It replaces the bare "write no files" the prompts used to
+  carry (user-ruled 2026-08-29) — agents need working space, and a sanctioned
+  place for it is worth more than a prohibition the tooling cannot enforce. An
+  agent's report is still its reply, never a file: nothing in scratch is read
+  as findings, so scratch is archived as-is with the run record, never
+  triaged, and deleted when that record directory is deleted.
 
 Usage:
 
@@ -98,11 +107,13 @@ Running a sanity-check, and reading its output:
 - Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
   described above. Expect hits on every run: the off-limits list must name
   the design's paths to forbid them, and those paths are coined names.
-- Every review agent may reach the internet to check facts: claude agents
-  carry web tools and no write tools; codex agents run workspace-write with
-  network on, writes forbidden by prompt. Neither restriction proved airtight
-  — on 2026-08-21 a claude agent wrote a file to the worktree despite carrying
-  no write tools (nedschorus#161) — so the check below runs after every agent
+- Every review agent may reach the internet to check facts, and every one may
+  write: claude agents carry web tools plus Write, codex agents run
+  workspace-write with network on. Where they may write is instructed, not
+  enforced — each prompt names that agent's scratch directory and confines it
+  there. Withholding the tools was never the protection it looked like: on
+  2026-08-21 a claude agent wrote a file to the worktree while carrying no
+  write tools at all (nedschorus#161) — so the check below runs after every agent
   that completes, on both runtimes: one that modifies the worktree is reported as
   `WARNING: <audit>-<runtime> modified the worktree: <paths>` — with two
   agents running per audit, the warning names the one whose audit saw it.
@@ -111,9 +122,14 @@ Running a sanity-check, and reading its output:
   as dirty or untracked, plus this runner's own record directory
   (`sanity-check-records/`) — gitignored, so git reports it in no form, and
   the place a stray write does the most damage, since the reports it holds are
-  what triage reads against each other afterwards. Because it compares rather
-  than watches, a write made and undone before the comparison runs leaves
-  nothing to find. The one undoing that used to happen routinely is closed: a
+  what triage reads against each other afterwards. One subtree inside it is
+  exempt: this run's own `scratch/`, where each agent is told to work. A write
+  there is the sanctioned behaviour and is never reported, however git labels
+  it; everything else the comparison covers is unchanged, the rest of the
+  record directory included, and an earlier run's leftover scratch is watched
+  like any other file that was on disk when this run started. Because it
+  compares rather than watches, a write made and undone before the comparison
+  runs leaves nothing to find. The one undoing that used to happen routinely is closed: a
   write to a report path that this runner's own report then erases is reported
   as `WARNING: <audit>-<runtime> found a stray write at its own report path and
   overwrote it: <path>`. Writes to other ignored paths are not detected —
@@ -153,6 +169,11 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIRECTORY_NAME = "sanity-check-records"
 RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 
+# The sanctioned working space, one directory per cell, inside the run's own
+# record directory: <record dir>/scratch/<audit>-<runtime>/. See
+# cell_scratch_dir for why it lives there and why it is per cell.
+CELL_SCRATCH_DIRECTORY_NAME = "scratch"
+
 # Ignored paths the write detector watches, repo-relative. `git status` reports
 # no ignored path in any form, so a cell writing to one was invisible however
 # the porcelain was parsed; the record directory is the ignored path that
@@ -186,6 +207,13 @@ CELL_TIMEOUT_SECONDS = 3600
 PROMPT_BODY_MARKER = "<!-- SANITY-CHECK-PROMPT-BODY -->"
 PROMPT_BODY_FIRST_LINE = "## Your assignment"
 
+# The token each prompt body carries where its cell's scratch directory goes;
+# the runner substitutes the real path when it assembles that cell's prompt.
+# Every prompt body must carry exactly one — checked in prompt_body, so a
+# prompt that stopped naming its scratch directory fails before model cost
+# rather than launching a cell that was never told where it may write.
+PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER = "SANITY-CHECK-SCRATCH-DIRECTORY-PATH"
+
 ATTACKS = ("cut", "mechanization", "fresh-eyes")
 RUNTIMES = ("claude", "codex")
 
@@ -211,7 +239,7 @@ GENERIC_HYPHENATED_WORDS = {
 
 
 def prompt_body(attack: str) -> str:
-    """The prompt below the file's body marker.
+    """The prompt below the file's body marker, its scratch placeholder intact.
 
     The marker is a line no ordinary edit produces. The boundary was the first
     `---` line until 2026-08-19, and `---` is ordinary markdown punctuation: a
@@ -222,6 +250,13 @@ def prompt_body(attack: str) -> str:
     needs neither the special case nor an editor's memory (user-ruled
     2026-08-19, on the first live check of the cut prompt, where five of six
     cells raised the old boundary independently).
+
+    The scratch placeholder is checked here for the same reason and in the same
+    place: every cell is given a scratch directory, and a body that no longer
+    names one would send a cell out with a directory it was never told about
+    and no sanctioned place to write. Counted in the body alone, never the
+    header — a header that explains the token must not be mistaken for a body
+    that carries it, the same distinction the marker search makes.
     """
     path = ATTACK_PROMPT_FILES[attack]
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -239,6 +274,12 @@ def prompt_body(attack: str) -> str:
     if first_line != PROMPT_BODY_FIRST_LINE:
         print(f"attack prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
               f"found {first_line!r}: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    placeholder_count = body.count(PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER)
+    if placeholder_count != 1:
+        print(f"attack prompt body needs exactly one "
+              f"{PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER} placeholder, found "
+              f"{placeholder_count}: {path}", file=sys.stderr)
         raise SystemExit(2)
     return body
 
@@ -290,33 +331,44 @@ def injected_instruction_files() -> list:
     return [path for path in candidates if path.is_file()]
 
 
-def assemble_prompt(attack: str, target: str, context: list, problem_statement: pathlib.Path) -> str:
+def assemble_prompt(attack: str, target: str, context: list,
+                    problem_statement: pathlib.Path,
+                    scratch_directory: str) -> str:
     # Data only below the rule: every instruction lives in the prompt MDs,
     # which get a cold read; nothing reviewable hides here (user-ruled
-    # 2026-08-17).
+    # 2026-08-17). The scratch path is substituted into the body for the same
+    # reason: the sentence granting the working space is in the MD where it
+    # can be reviewed, and only the path — data, and different for every cell
+    # — comes from here. Absolute, not repo-relative: a cell resolves it the
+    # same wherever its own working directory ends up.
+    body = prompt_body(attack).replace(PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER,
+                                       scratch_directory)
     if attack == "fresh-eyes":
         problem = problem_statement.read_text(encoding="utf-8")
-        return prompt_body(attack) + "\n\n---\n\n" + problem
+        return body + "\n\n---\n\n" + problem
     request_lines = [f"Document under review: `{target}`"]
     if context:
         request_lines.append("Context documents:")
         request_lines.extend(f"- {path}" for path in context)
-    return prompt_body(attack) + "\n\n---\n\n" + "\n".join(request_lines)
+    return body + "\n\n---\n\n" + "\n".join(request_lines)
 
 
 def run_claude(prompt: str) -> tuple:
     # Every cell may check facts on the internet (user-ruled 2026-08-18);
     # isolation and write discipline are instructed in the prompts and
-    # checked (leak scan; worktree check), never enforced here. The tool set
-    # omits every write tool, but that was not proof against an actual write:
-    # a claude cell wrote to the worktree anyway on 2026-08-21 (nedschorus#161),
-    # so run_cell's worktree check now runs for claude cells too, not only codex's.
+    # checked (leak scan; worktree check), never enforced here. Write joined
+    # the tool set on 2026-08-29, when the cells gained a sanctioned scratch
+    # directory: the prompt now names a place to put notes and drafts, so the
+    # tool that place needs is here. Withholding it never was the protection
+    # it looked like — a claude cell wrote to the worktree on 2026-08-21 with
+    # no write tool at all (nedschorus#161), which is why run_cell's worktree
+    # check runs for claude cells too, not only codex's.
     command = [
         "claude", "-p",
         "--model", CLAUDE_MODEL,
         "--effort", REASONING_EFFORT,
         "--output-format", "text",
-        "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch",
+        "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
     ]
     completed = subprocess.run(
         command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -328,9 +380,10 @@ def run_claude(prompt: str) -> tuple:
 def run_codex(prompt: str) -> tuple:
     # workspace-write plus network: the cells may reach the internet and
     # GitHub to check facts (user-ruled 2026-08-18; the read-only sandbox
-    # blocks even DNS, measured that day). Disk writes become possible and
-    # are forbidden by the prompts; run_cell's worktree check detects strays
-    # — containment over prevention, the house doctrine.
+    # blocks even DNS, measured that day). Disk writes are possible here and
+    # confined by the prompt to the cell's own scratch directory; run_cell's
+    # worktree check detects strays outside it — containment over prevention,
+    # the house doctrine.
     last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="attack-cell-")[1])
     command = [
         "codex", "exec",
@@ -683,7 +736,8 @@ class RunnerReportWriteLedger:
 
         Under a watched ignored path this run accounts for what was on disk
         when it started, what its own ledger wrote, and everything inside the
-        record directory it owns. A file that merely appears elsewhere under
+        record directory it owns except its scratch subtree, where the cells
+        are told to work. A file that merely appears elsewhere under
         the record root is what a second invocation of this runner
         legitimately creates, and from here the two are indistinguishable.
         Everything git reports outside those paths is compared in full, as
@@ -692,9 +746,14 @@ class RunnerReportWriteLedger:
         with self._lock:
             expected = {**baseline, **self._writes}
             own_dir = self._own_record_directory(repo_root)
+            # The subtree holding every cell's sanctioned working space; None
+            # when this run has no record directory inside the repository.
+            scratch_root = (None if own_dir is None
+                            else f"{own_dir}/{CELL_SCRATCH_DIRECTORY_NAME}")
             now = {path: entry
                    for path, entry in worktree_snapshot(repo_root).items()
-                   if self._reportable_by_this_run(path, entry, expected, own_dir)}
+                   if self._reportable_by_this_run(path, entry, expected,
+                                                   own_dir, scratch_root)}
             return stray_paths(expected, now)
 
     def _own_record_directory(self, repo_root: pathlib.Path):
@@ -709,7 +768,15 @@ class RunnerReportWriteLedger:
 
     @staticmethod
     def _reportable_by_this_run(path: str, entry: tuple, expected: dict,
-                                own_dir: str) -> bool:
+                                own_dir: str, scratch_root: str) -> bool:
+        # This run's scratch subtree, exempt whatever git says about the path:
+        # every cell is given a directory under it and told to keep its notes
+        # and drafts there, so a write there is the behaviour the prompt asked
+        # for, not a stray (user-ruled 2026-08-29). Only this run's scratch —
+        # an earlier run's leftover scratch was on disk at the start, sits in
+        # the baseline, and is compared like any other file.
+        if scratch_root is not None and path.startswith(scratch_root + "/"):
+            return False
         if path in expected or not path_watched_as_ignored(path):
             return True
         if own_dir is not None and (path == own_dir
@@ -738,13 +805,38 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
             counter += 1
 
 
+def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:
+    """One cell's sanctioned working space, created here:
+    `<record dir>/scratch/<audit>-<runtime>/`.
+
+    A review agent's deliverable is its reply, but an agent working a document
+    still needs somewhere to put notes and drafts. The prompts used to answer
+    that with a prohibition — "write no files" — which the agents did not
+    reliably keep (nedschorus#161) and the write detector then reported. A
+    sanctioned directory replaces the prohibition (user-ruled 2026-08-29): the
+    path is substituted into that cell's prompt, the detector exempts the
+    subtree, and nothing here is ever read as findings.
+
+    Inside the run's record directory rather than a temporary one, so it is
+    archived with the run and disposed of when the record is — no second
+    lifetime to manage. Per cell rather than per run, so two cells writing at
+    once cannot overwrite each other's notes; the exemption is of the whole
+    subtree, because the detector's checks are per run and cannot tell which
+    cell is asking.
+    """
+    scratch = out_dir / CELL_SCRATCH_DIRECTORY_NAME / cell
+    scratch.mkdir(parents=True, exist_ok=True)
+    return scratch
+
+
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
              baseline_status: dict, corpus: tuple,
              report_ledger: RunnerReportWriteLedger) -> tuple:
     """Run one cell; returns (cell_name, ok)."""
     cell = f"{attack}-{runtime}"
-    prompt = assemble_prompt(attack, target, context, problem_statement)
+    prompt = assemble_prompt(attack, target, context, problem_statement,
+                             str(cell_scratch_dir(out_dir, cell)))
     fresh_eyes = attack == "fresh-eyes"
     runner = run_claude if runtime == "claude" else run_codex
     try:
@@ -846,8 +938,15 @@ def main() -> int:
         if args.print_surface == "fresh-eyes" and args.problem_statement is None:
             print("--print fresh-eyes needs --problem-statement", file=sys.stderr)
             return 2
+        # A print surface is per audit while a scratch directory is per cell,
+        # so the shape is shown with its varying parts left as names: a real
+        # path would claim one runtime's directory for both of the audit's
+        # cells, and a reader would take it for the literal path.
+        illustrative_scratch = (RECORDS_ROOT / "<date>-<target-stem>"
+                                / CELL_SCRATCH_DIRECTORY_NAME
+                                / f"{args.print_surface}-<runtime>")
         print(assemble_prompt(args.print_surface, args.target, args.context,
-                              args.problem_statement))
+                              args.problem_statement, str(illustrative_scratch)))
         return 0
 
     design_names = coined_names(target_path)
