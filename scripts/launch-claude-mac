@@ -125,6 +125,16 @@ case "$AGENT_NAME" in
     (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
+# Resolve Claude Code the way the SEAT will resolve it, and do it before
+# anything checks for it or updates it. The supervisor command further down
+# exports this same directory, so without it here the launcher can check and
+# update one copy while the seat it starts runs another. Measured 2026-08-31:
+# this Mac's update step reached a Homebrew-installed claude while its seats
+# ran the native build at ~/.local/bin, and the machine sat a week behind with
+# every launch looking normal. The box twin already exports it around its own
+# update step; this is the Mac catching up.
+export PATH="$HOME/.local/bin:$PATH"
+
 # Every prerequisite is checked before anything is created, and each failure
 # names its own fix: a launcher that half-starts an agent is worse than one
 # that refuses.
