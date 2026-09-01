@@ -206,6 +206,31 @@ def main() -> int:
               not any(sandbox.workdir.iterdir()),
               sorted(str(p) for p in sandbox.workdir.iterdir()))
 
+        # --- the update step resolves the SEAT's claude, not the ambient one
+        # The launcher exports ~/.local/bin ahead of the inherited PATH before
+        # it checks for or updates Claude Code, so the copy it updates is the
+        # copy the seat will run. Measured 2026-08-31: without that export the
+        # Mac's update step reached a Homebrew-installed claude while its seats
+        # ran the native build, and the machine sat a week behind with every
+        # launch looking normal. Asserted on WHICH binary ran, not on the
+        # command text: the stubs record $0, so the two copies are told apart
+        # by the path the shell actually resolved.
+        sandbox = MacLaunchSandbox(root / "update-step-path")
+        seat_binary_directory = sandbox.home / ".local" / "bin"
+        seat_binary_directory.mkdir(parents=True)
+        write_stub(seat_binary_directory, "claude",
+                   f'echo "$0" >> "{sandbox.captures}/commands-invoked.txt"\n'
+                   "exit 0\n")
+        result = sandbox.run(str(root / "update-step-path-agents"))
+        invoked = sandbox.invoked_commands()
+        check("update step: the claude under $HOME/.local/bin is the one invoked",
+              str(seat_binary_directory / "claude") in invoked, invoked[:400])
+        check("update step: the inherited-PATH claude is never reached",
+              str(sandbox.stubs / "claude") not in invoked, invoked[:400])
+        check("update step: the launch still completes, reaching tmux",
+              result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[:300]))
+
         # --- task-list persistence, detached: both variables reach the
         # supervisor's environment, and the list id is derived from the SEAT
         # NAME. Two different seat names are the teeth: an id arriving from
