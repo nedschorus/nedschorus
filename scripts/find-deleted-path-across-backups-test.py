@@ -149,7 +149,11 @@ LISTS_SNAPSHOTS = ("tmutil listlocalsnapshots", LOCAL_SNAPSHOT_LIST)
 # whole-volume local snapshots. Ten files were recovered out of the 11:51
 # snapshot on 2026-08-31 with no password typed.
 REAPED = "/private/tmp/claude-501/w/scratchpad/reaped.md"
-MOUNT_POINT = "/tmp/find-deleted-path-across-backups-local-snapshot-ro"
+# /private/tmp, not /tmp: `mount` reports the resolved spelling, and the script
+# compares its own mount point against that table. See the constant's own
+# comment for what the /tmp spelling cost.
+MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro"
+MOUNT_POINT_TMP_SPELLING = "/tmp/find-deleted-path-across-backups-local-snapshot-ro"
 
 local_hit = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (0, "", ""))])
 report = finder.search_local_snapshots(REAPED, "/repo", local_hit)
@@ -285,6 +289,30 @@ check("... and its recovery clears the mount point first, or every command below
       and "mount_apfs -o ro -s" in report.recovery[1],
       str(report.recovery))
 
+# The LAST snapshot in the walk is the one that reaches no `unsearched` entry to
+# carry its failed release: the loop ends, the skip guard never runs again, and
+# the run fell through to a bare NOT FOUND — exit 1, the docstring's only status
+# meaning "stop looking" — from a run that had just wedged its own mount point,
+# naming neither the snapshot nor the mount point (PR #222 review, finding 2).
+# One snapshot in the list makes the first snapshot the last one.
+LISTS_ONE_SNAPSHOT = ("tmutil listlocalsnapshots",
+                      (0, "Snapshots for volume group containing disk /System/Volumes/Data:\n"
+                          "com.apple.TimeMachine.2026-08-31-115113.local\n", ""))
+stuck_last = ReleaseFailsRunner([LISTS_ONE_SNAPSHOT, MOUNTS_FINE, ("test -e", (1, "", ""))])
+report = finder.search_local_snapshots(REAPED, "/repo", stuck_last)
+check("a failed release on the LAST snapshot is still reported, naming it and the mount point",
+      any("com.apple.TimeMachine.2026-08-31-115113.local stayed mounted on " + MOUNT_POINT in l
+          and "Resource busy" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and the mount point it left behind comes back as a command that clears it",
+      report.recovery == ["diskutil unmount " + MOUNT_POINT], str(report.recovery))
+# Every snapshot WAS opened and tested, and UNAVAILABLE means the surface could
+# not be searched. The defect was the silence, not the status.
+check("... and the status stays NOT FOUND, because the search itself was complete",
+      report.status == NOT_FOUND, "%s %s" % (report.status, report.lines))
+check("... and it is not labelled 'not reached', which belongs to snapshots the walk stopped short of",
+      not any("not reached" in l for l in report.lines), str(report.lines))
+
 
 # macOS mounts local snapshots for its own use, and one that is already mounted
 # cannot be mounted again — mount_apfs exits 75, "Resource busy". Measured
@@ -369,6 +397,70 @@ check("... and nothing is done to clear macOS's own mount of it",
 check("... and no unrunnable command is offered for a snapshot that cannot be mounted twice",
       report.recovery == [] and any("mount_apfs cannot open a snapshot twice" in l for l in report.lines),
       "%s %s" % (report.lines, report.recovery))
+
+# A MOUNT POINT THIS SCRIPT ITSELF LEFT OCCUPIED, which is the state finding 2
+# above creates and a killed run creates just as easily. It is not macOS's
+# mount and must not be reported as one. Under the old /tmp spelling of the
+# constant the two never compared equal — `mount` prints the resolved
+# /private/tmp form, observed on this Mac as
+# `com.apple.TimeMachine.2026-08-12-202035.backup@/dev/disk5s2 on
+# /private/tmp/nedschorus-backup-readonly-mount (apfs, ...)` — so the leftover
+# was filed as one macOS holds, the report said "nothing to mount, nothing to
+# release", and every later run searched 1 snapshot of 17 (PR #222, finding 1).
+OCCUPIED_LISTING = (
+    "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n"
+    "com.apple.TimeMachine.2026-08-30-124711.local@/dev/disk3s5 on %s "
+    "(apfs, local, read-only, journaled, nobrowse, protect)\n" % MOUNT_POINT)
+
+def occupied_runner(occupier_has_it):
+    """The two snapshots not on the mount point are refused with the real 77."""
+    return MountTableRunner([
+        ("test -d " + MOUNT_POINT, (0, "", "")),
+        ("test -e " + MOUNT_POINT, (0, "", "") if occupier_has_it else (1, "", "")),
+        ("mount_apfs", (77, "", "mount_apfs: volume could not be mounted: Operation not permitted\n")),
+        LISTS_SNAPSHOTS,
+    ], OCCUPIED_LISTING)
+
+occupied = occupied_runner(occupier_has_it=False)
+report = finder.search_local_snapshots(REAPED, "/repo", occupied)
+check("a mount point occupied before the walk started is named, with what is on it",
+      any(l.startswith("the mount point " + MOUNT_POINT + " already had "
+                       "com.apple.TimeMachine.2026-08-30-124711.local on it when this run started")
+          for l in report.lines),
+      str(report.lines))
+check("... and the first command handed back is the one that frees it",
+      report.recovery and report.recovery[0] == "diskutil unmount " + MOUNT_POINT, str(report.recovery))
+# The whole misreport: this script's own leftover called macOS's, with "nothing
+# to mount, nothing to release" — the sentence that keeps the tool wedged.
+check("... and it is NOT counted as one macOS already had mounted, because it is this script's",
+      not any("read where macOS already had them mounted" in l for l in report.lines)
+      and not any("nothing to mount, nothing to release" in c for c in report.recovery),
+      "%s %s" % (report.lines, report.recovery))
+check("... and the snapshots that could not be mounted past it are still UNAVAILABLE, not 'not found'",
+      report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+
+# The occupier is a perfectly good read-only mount of a real snapshot, so when
+# the file is in it the answer is FOUND — and one command both takes the file
+# out and clears the occupation. Clearing FIRST would unmount the tree the copy
+# reads from.
+occupied_hit = occupied_runner(occupier_has_it=True)
+report = finder.search_local_snapshots(REAPED, "/repo", occupied_hit)
+check("a hit inside the leftover mount is FOUND and copied straight out of it",
+      report.status == FOUND
+      and report.recovery == ["cp %s%s . && diskutil unmount %s" % (MOUNT_POINT, REAPED, MOUNT_POINT)],
+      "%s %s" % (report.status, report.recovery))
+
+# The parameter gets the same normalisation as the constant, so a caller that
+# spells it /tmp is not silently given the broken comparison back.
+if os.path.realpath("/tmp") == "/private/tmp":
+    tmp_spelled = occupied_runner(occupier_has_it=False)
+    report = finder.search_local_snapshots(REAPED, "/repo", tmp_spelled,
+                                           mount_point=MOUNT_POINT_TMP_SPELLING)
+    check("a caller passing the /tmp spelling of the mount point gets the same answer",
+          report.status == UNAVAILABLE
+          and any(l.startswith("the mount point " + MOUNT_POINT + " already had ") for l in report.lines),
+          "%s %s" % (report.status, report.lines))
+
 
 # But when something unsearchable IS still mountable, that is the one to offer.
 mixed_unreachable = MountTableRunner([

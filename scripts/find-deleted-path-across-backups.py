@@ -172,7 +172,17 @@ LOCAL_SNAPSHOT_NAME_SUFFIX = ".local"
 
 # A mount point of this surface's own, so that a local-snapshot search and a
 # Time Machine search in one run cannot collide on a single directory.
-LOCAL_SNAPSHOT_MOUNT_POINT = "/tmp/find-deleted-path-across-backups-local-snapshot-ro"
+#
+# SPELLED /private/tmp, NOT /tmp, AND THE SPELLING IS LOAD-BEARING. /tmp is a
+# symlink to /private/tmp on macOS and `mount` reports only the resolved form,
+# observed on this Mac as `... on /private/tmp/nedschorus-backup-readonly-mount
+# (apfs, ...)`. Under the /tmp spelling this script's own leftover mount never
+# compared equal to its own mount point: a mount point left occupied by a killed
+# run was filed as one macOS holds, the report said "nothing to mount, nothing
+# to release", and every later run searched 1 snapshot of 17 (PR #222 review,
+# finding 1). search_local_snapshots normalises its parameter the same way, so a
+# caller passing the /tmp spelling gets the same answer.
+LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro"
 
 # Command timeouts. ssh to a sleeping box must not hang a recovery.
 SHORT_TIMEOUT_SECONDS = 20
@@ -270,6 +280,12 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
     `mount_point` is a parameter so the tests can drive the whole surface
     against a fake volume instead of this machine's real snapshots.
     """
+    # /tmp and /private/tmp name one directory and `mount` prints only the
+    # second, so the mount point is resolved to the mount table's spelling
+    # before anything compares against it. The same normalisation the probe path
+    # already gets, for the same reason — see LOCAL_SNAPSHOT_MOUNT_POINT and
+    # _below_data_volume.
+    mount_point = os.path.realpath(mount_point)
     probe_path, unavailable_lines = _local_snapshot_probe_path(wanted, repo, runner)
     if probe_path is None:
         return SurfaceReport("local snapshots", UNAVAILABLE, unavailable_lines)
@@ -292,6 +308,19 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         )
 
     already_mounted = _local_snapshots_already_mounted(runner)
+    # A mount point left occupied by an earlier run is the one state that
+    # degrades this whole surface: mount_apfs onto an occupied directory exits
+    # 77, "Operation not permitted", for every snapshot the walk has to mount
+    # for itself. It is detected HERE rather than inferred from the walk,
+    # because `stuck` below only ever learns about a release THIS run attempted
+    # — a leftover from a killed run contributed no clear command to the
+    # recovery at all (PR #222 review, finding 1, second layer).
+    #
+    # DETECTED AND REPORTED, NEVER CLEARED. This mount point is one fixed path
+    # for the whole fleet, so a second seat's live mount is indistinguishable
+    # from a dead run's leftover, and unmounting it would break a run in
+    # progress. Handing the operator the command is the honest half.
+    occupying = sorted(name for name, where in already_mounted.items() if where == mount_point)
     hits = []
     searched = []
     in_place = []
@@ -306,24 +335,37 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             # reason. Measured twice on 2026-08-31: an unchecked release left a
             # snapshot mounted and the rest of the run was reported as though
             # each one had refused on its own account.
-            unsearched.append((snapshot, stuck))
+            unsearched.append((snapshot, "not reached: " + stuck))
             continue
-        outcome, where, release_failure = _local_snapshot_probe(
+        outcome, where, release_failure, read_in_place = _local_snapshot_probe(
             snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
         if outcome == "unmounted":
             unsearched.append((snapshot, where))
         else:
             searched.append(snapshot)
-            if where != mount_point:
+            if read_in_place and where != mount_point:
                 in_place.append(snapshot)
             if outcome == "hit":
-                hits.append((snapshot, where))
+                hits.append((snapshot, where, read_in_place))
         if release_failure is not None:
-            stuck = ("not reached: %s stayed mounted on %s — %s" % (snapshot, mount_point, release_failure))
+            # Stored as the bare fact. "not reached: " is prepended at the one
+            # site that means it — a LATER snapshot the walk stopped short of.
+            # Prefixing it here mislabelled the final-return line added below,
+            # which is about a snapshot that WAS searched (PR #222, finding 2).
+            stuck = "%s stayed mounted on %s — %s" % (snapshot, mount_point, release_failure)
 
     lines = ["%d local snapshot(s) retained, %d searched — no password needed for any of it"
              % (len(snapshots), len(searched)),
              "tested %s inside each" % probe_path]
+    if occupying:
+        # Named on EVERY outcome, not only the UNAVAILABLE one. A run whose only
+        # readable snapshot is the occupier itself returns FOUND or NOT FOUND
+        # with nothing in `unsearched`, and before this line those two paths
+        # said nothing at all about the mount point that was wedging the tool.
+        lines.append("the mount point %s already had %s on it when this run started, so every snapshot "
+                     "this run had to mount for itself was refused — mount_apfs exits 77, \"Operation "
+                     "not permitted\", on an occupied mount point"
+                     % (mount_point, ", ".join(occupying)))
     if in_place:
         lines.append("%d of them were read where macOS already had them mounted, mounting nothing: %s"
                      % (len(in_place), ", ".join(in_place[:3]) + (", ..." if len(in_place) > 3 else "")))
@@ -335,15 +377,32 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         if repeats:
             lines.append("    ... and %d more snapshot(s) with the same message" % repeats)
 
+    if stuck and not unsearched:
+        # The LAST snapshot in the walk is the one case where a failed release
+        # reaches no `unsearched` entry to carry it: the loop ends, the guard at
+        # the top never runs again, and the run returned a bare NOT FOUND naming
+        # neither the snapshot still mounted nor the mount point it sits on —
+        # exit 1, which this file's docstring makes the only status meaning
+        # "stop looking", from a run that had just wedged its own mount point
+        # (PR #222 review, finding 2). The search itself WAS complete, so the
+        # status stays NOT FOUND; what was missing was saying this out loud.
+        lines.append(stuck)
+
+    # A mount point needing a clear before any command below it can work, from
+    # either cause: this run failed to release one, or an earlier run's leftover
+    # was already there.
+    clear_first = bool(stuck) or bool(occupying)
+
     if hits:
         lines.append("%d snapshot(s) still have it, newest first:" % len(hits))
-        for snapshot, _ in hits[:5]:
+        for snapshot, _, _ in hits[:5]:
             lines.append("    " + snapshot)
         if len(hits) > 5:
             lines.append("    ... and %d older" % (len(hits) - 5))
+        best_snapshot, best_where, best_read_in_place = hits[0]
         return SurfaceReport("local snapshots", FOUND, lines,
-                             _local_snapshot_recovery(hits[0][0], probe_path, mount_point, stuck,
-                                                      already_at=hits[0][1] if hits[0][1] != mount_point else None))
+                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first,
+                                                      already_at=best_where if best_read_in_place else None))
 
     if searched:
         lines.append("searched %s .. %s and none of them has it" % (searched[-1], searched[0]))
@@ -368,12 +427,27 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             "local snapshots",
             UNAVAILABLE,
             lines,
-            _local_snapshot_recovery(reachable[0], probe_path, mount_point, stuck) if reachable else [],
+            _local_snapshot_recovery(reachable[0], probe_path, mount_point, clear_first) if reachable
+            else ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []),
         )
-    return SurfaceReport("local snapshots", NOT_FOUND, lines)
+    # NOT FOUND, and it stays NOT FOUND even when a mount was left behind: every
+    # snapshot WAS searched, and UNAVAILABLE means the surface could not be. The
+    # clear command rides along so the operator can undo what this run left.
+    return SurfaceReport("local snapshots", NOT_FOUND, lines,
+                         [_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else [])
 
 
-def _local_snapshot_recovery(snapshot, probe_path, mount_point, stuck=None, already_at=None):
+def _local_snapshot_clear_mount_point_command(mount_point):
+    """The one command that frees this surface's mount point.
+
+    `diskutil unmount`, not `umount`: see _local_snapshot_probe for the run that
+    proved the difference. Named as a function because three call sites and the
+    recovery builder all have to emit the identical string.
+    """
+    return "diskutil unmount %s" % shlex.quote(mount_point)
+
+
+def _local_snapshot_recovery(snapshot, probe_path, mount_point, clear_first=False, already_at=None):
     """The exact commands that open a snapshot, take the file out, and close it.
 
     No `sudo`, deliberately and in full: this is the surface whose entire value
@@ -386,15 +460,26 @@ def _local_snapshot_recovery(snapshot, probe_path, mount_point, stuck=None, alre
     it sits. Verified 2026-08-31 by reading a file out of one such mount: 43391
     bytes, byte-identical to the live file.
 
-    When a snapshot stayed mounted, clearing the mount point comes first, or
-    every command below it fails on the mount point rather than on the snapshot.
+    When the mount point needs clearing — this run failed to release it, or an
+    earlier run's leftover was already on it — the clear comes first, or every
+    command below fails on the mount point rather than on the snapshot. The one
+    exception is a snapshot sitting on that mount point itself: see below.
     """
+    if already_at == mount_point:
+        # The snapshot is sitting on this script's OWN mount point, left there by
+        # an earlier run — so one line both takes the file out and clears the
+        # occupation. A separate clear ahead of it would unmount the very tree
+        # the copy reads from (PR #222 review, finding 1).
+        return [
+            "cp %s . && %s"
+            % (shlex.quote(already_at + probe_path), _local_snapshot_clear_mount_point_command(mount_point)),
+        ]
     if already_at:
         return [
             "cp %s ." % shlex.quote(already_at + probe_path),
             "# macOS already has %s mounted there — nothing to mount, nothing to release" % snapshot,
         ]
-    clear = ["diskutil unmount %s" % shlex.quote(mount_point)] if stuck else []
+    clear = [_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []
     return clear + [
         "mkdir -p %s && mount_apfs -o ro -s %s %s %s"
         % (shlex.quote(mount_point), snapshot, MAC_DATA_VOLUME, shlex.quote(mount_point)),
@@ -540,10 +625,16 @@ def _below_data_volume(path):
 def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mounted=None):
     """Read one local snapshot and test one path in it.
 
-    Returns (outcome, where, release failure or None):
+    Returns (outcome, where, release failure or None, read in place):
       ("hit", mount point, ...)   — the path is in this snapshot, read there
       ("miss", mount point, ...)  — read and tested; the path is not in it
       ("unmounted", reason, ...)  — mount_apfs refused; this was NOT searched
+
+    The fourth value says whether the snapshot was read WHERE IT ALREADY SAT
+    rather than mounted here. The caller cannot infer it from `where`: a
+    leftover on this script's own mount point and a snapshot this run mounted
+    itself both report `where == mount_point`, and only the first is still
+    mounted when the report is written (PR #222 review, finding 1).
 
     `already_mounted` is where macOS itself has this snapshot, when it has it.
     That mount is read in place — no mount, no release — both because it is
@@ -581,12 +672,12 @@ def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mou
         resolves, _, _ = runner(["test", "-d", already_mounted])
         if resolves == 0:
             exists, _, _ = runner(["test", "-e", already_mounted + probe_path])
-            return ("hit" if exists == 0 else "miss"), already_mounted, None
+            return ("hit" if exists == 0 else "miss"), already_mounted, None, True
     runner(["mkdir", "-p", mount_point])
     code, _, stderr = runner(["mount_apfs", "-o", "ro", "-s", snapshot, MAC_DATA_VOLUME, mount_point])
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
-        return "unmounted", "mount_apfs exited %s: %s" % (code, first), None
+        return "unmounted", "mount_apfs exited %s: %s" % (code, first), None, False
     try:
         exists, _, _ = runner(["test", "-e", mount_point + probe_path])
         outcome = "hit" if exists == 0 else "miss"
@@ -596,7 +687,7 @@ def _local_snapshot_probe(snapshot, probe_path, mount_point, runner, already_mou
     if released != 0:
         first = release_error.strip().splitlines()[0] if release_error.strip() else "no error text"
         release_failure = "diskutil unmount exited %s: %s" % (released, first)
-    return outcome, mount_point, release_failure
+    return outcome, mount_point, release_failure, False
 
 
 # --------------------------------------------------------------------------
