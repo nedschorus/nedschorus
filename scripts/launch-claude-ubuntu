@@ -214,13 +214,32 @@ fi
 # the mid-session update banner is clutter); that switch leaves this
 # explicit `claude update` working. Running sessions are unaffected by an
 # update (user-established across many updates: installed versions are
-# retained on disk). A failed or slow update warns and proceeds, because
-# an update problem must never block starting an agent.
+# retained on disk). A failed or slow update proceeds anyway, because an
+# update problem must never block starting an agent: `|| true` is what
+# holds that here, and it is load-bearing twice over, because the
+# PREPARE_COMMAND chain below joins this command to the box-side
+# preparation with `&&` — a non-zero update would take the home directory,
+# the worktree and the seat with it.
+#
+# The launcher writes no warning of its own except on the timeout: `claude
+# update` prints its own diagnosis whenever it runs to completion, and the
+# warning removed on 2026-08-31 could not see the failure that actually
+# happened. The twin carries that case in full. The timeout is the exception
+# both twins keep, because a killed command says nothing and the launcher is
+# what killed it; GNU timeout reports 124 for that, measured. The limit is 120
+# seconds, raised from 45 (user-ruled 2026-08-31), because a slow but WORKING
+# update killed at the limit leaves the box silently on its old version; the
+# limit bounds a hung update rather than racing a real download.
+#
+# The final `if` returns 0 when its condition is false, so the `&&` chain
+# below is unaffected either way — the same job `|| true` did before.
 # The twin does the same locally, at scripts/launch-claude-mac.
 UPDATE_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
-timeout \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45} claude update \
-|| echo 'launch-claude-ubuntu: claude update failed or timed out; launching on the installed version' >&2"
+UPDATE_TIMEOUT=\${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120}; \
+UPDATE_STATUS=0; \
+timeout \$UPDATE_TIMEOUT claude update || UPDATE_STATUS=\$?; \
+if [ \$UPDATE_STATUS -eq 124 ]; then echo \"launch-claude-ubuntu: the update was still running after \${UPDATE_TIMEOUT}s and was stopped; launching on the installed version\" >&2; fi"
 
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never

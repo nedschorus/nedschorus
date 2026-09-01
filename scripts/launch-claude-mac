@@ -148,12 +148,40 @@ command -v claude >/dev/null 2>&1 || {
 # banner is clutter); that switch leaves this explicit `claude update`
 # working. Running sessions are unaffected by an update (user-established
 # across many updates: installed versions are retained on disk). A failed
-# or slow update warns and proceeds, because an update problem must never
-# block starting an agent.
-UPDATE_TIMEOUT="${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-45}"
+# or slow update proceeds anyway, because an update problem must never
+# block starting an agent: `|| true` is what holds that under `set -eu`,
+# not decoration.
+#
+# The launcher writes no warning of its own. The one removed here claimed
+# to report a failed update but could not see the failure that actually
+# happened: on 2026-08-31 this Mac was found frozen at 2.1.241 for a week
+# because `claude update` refuses to overwrite a Homebrew-managed copy. It
+# printed the reason and exited 0, so the `||` branch never ran and every
+# launch looked normal. `claude update` prints its own diagnosis whenever it
+# runs to completion, so a launcher paraphrase adds nothing and can mislead.
+# The install was repaired instead, to the native build at ~/.local/bin that
+# both launchers already assume (user-ruled 2026-08-31).
+#
+# The timeout is the ONE case the launcher still reports, and the only one it
+# can honestly report: the command is killed mid-flight, so it says nothing,
+# and the launcher is what killed it. Reporting only what this script itself
+# observed is what the removed message failed to do.
+# 120 seconds, raised from 45 (user-ruled 2026-08-31): a slow but WORKING
+# update killed at the limit leaves the machine silently on its old version,
+# which is the same outcome as the refused update above and just as quiet.
+# The limit exists to bound a hung update, not to race a real download, so it
+# is set well clear of one.
+UPDATE_TIMEOUT="${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120}"
 echo "launch-claude-mac: checking for a Claude Code update"
-perl -e 'alarm shift; exec @ARGV' "$UPDATE_TIMEOUT" claude update \
-    || echo "launch-claude-mac: claude update failed or timed out; launching on the installed version" >&2
+UPDATE_STATUS=0
+perl -e 'alarm shift; exec @ARGV' "$UPDATE_TIMEOUT" claude update || UPDATE_STATUS=$?
+# 142 is 128 + SIGALRM (14): the alarm fired and killed the update. Measured,
+# not assumed. Every other non-zero status left the command's own diagnosis on
+# the terminal, so the launcher stays quiet for those. The `if` is what keeps a
+# non-timeout status from reaching `set -e`.
+if [ "$UPDATE_STATUS" -eq 142 ]; then
+    echo "launch-claude-mac: the update was still running after ${UPDATE_TIMEOUT}s and was stopped; launching on the installed version" >&2
+fi
 
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
 mkdir -p "$AGENT_DIRECTORY"
