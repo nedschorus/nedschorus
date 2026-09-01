@@ -1,0 +1,35 @@
+# nedschorus: let the backup-recovery tool mount a Time Machine snapshot
+# read-only without a password.
+#
+# WHY THIS EXISTS. scripts/find-deleted-path-across-backups.py searches five
+# histories for a file that is no longer on disk. Four of the five need no
+# privilege. The fifth -- a snapshot on the EXTERNAL Time Machine disk --
+# needs root for exactly one operation: the mount. Reading inside a mounted
+# snapshot needs no privilege, unmounting needs none, and mounting the backup
+# DISK itself needs none (its FileVault key is in the keychain). Local
+# snapshots on the internal disk need none either.
+#
+# Without this rule that surface is unreachable unattended, because the
+# recovery hook has no terminal and can never answer a password prompt. The
+# operator is then asked for a password, or -- as happened 2026-08-31 -- is
+# never told at all, because the tool says "needs your password" to the agent
+# and the agent buries it. Removing the prompt is the only fix that works
+# while nobody is watching (user-ruled 2026-08-31).
+#
+# WHAT IT GRANTS, and nothing more: one binary, the read-only flag, and one
+# fixed mount point that no other user can substitute. It cannot mount
+# read-write, cannot mount anywhere else, and grants no other command.
+#
+# INSTALL (the operator runs this; it cannot be done by an agent):
+#   sudo visudo -c -f config/sudoers-mount-apfs-readonly-for-backup-recovery
+#   sudo install -m 0440 -o root -g wheel \
+#     config/sudoers-mount-apfs-readonly-for-backup-recovery \
+#     /etc/sudoers.d/nedschorus-mount-apfs-readonly
+# The visudo -c check first is not optional: a malformed file in
+# /etc/sudoers.d breaks sudo for everything.
+#
+# REMOVE:  sudo rm /etc/sudoers.d/nedschorus-mount-apfs-readonly
+
+Cmnd_Alias NEDSCHORUS_BACKUP_READONLY_MOUNT = /sbin/mount_apfs -o ro -s * /dev/* /private/tmp/nedschorus-backup-readonly-mount
+
+el ALL=(root) NOPASSWD: NEDSCHORUS_BACKUP_READONLY_MOUNT
