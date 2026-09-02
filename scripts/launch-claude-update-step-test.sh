@@ -1,8 +1,9 @@
 #!/bin/sh
 # Tests for the launchers' update-at-launch step (nedschorus#62): every
-# launch checks for an update first, a hanging or failing update warns and
-# never blocks the launch, and the ubuntu twin carries the same step inside
-# its box-side command. Every external binary the step touches is stubbed
+# launch checks for an update first, a hanging or failing update never
+# blocks the launch, a TIMED-OUT update is the one case the launcher reports
+# itself while a plain failure stays quiet, and the ubuntu twin carries the
+# same step inside its box-side command. Every external binary the step touches is stubbed
 # onto PATH, so no seat, session, or update actually happens.
 set -u
 
@@ -51,6 +52,18 @@ exit 0
 EOF
 chmod +x "$STUBS/claude" "$STUBS/tmux" "$STUBS/git"
 
+# True when the MAC LAUNCHER ITSELF wrote a line to stderr. Every message the
+# launcher writes is prefixed "launch-claude-mac: ", so matching that prefix
+# catches any rewording of a removed warning, not just its original sentence.
+# Two lines carrying the same prefix are NOT the launcher's: the shell's own
+# job report for the timed-out update names the script and a line number
+# ("launch-claude-mac: line 166: 12345 Alarm clock: ..."), and `set -x`-style
+# traces would do the same, so the "line <n>:" form is excluded.
+launcher_wrote_to_stderr() {
+    grep '^launch-claude-mac: ' "$1" 2>/dev/null \
+        | grep -qv '^launch-claude-mac: line [0-9]'
+}
+
 run_mac_launcher() {
     update_mode="$1"; label="$2"
     CLAUDE_UPDATE_MARKER="$WORKSPACE/update-ran-$label"
@@ -65,20 +78,26 @@ run_mac_launcher() {
     echo $?
 }
 
-# A HANGING update: the launch must still complete, fast, with the warning
-# on stderr.
+# A HANGING update: the launch must still complete, fast, and say so — the
+# timeout is the one case the launcher reports, because it killed the command
+# before the command could report anything itself.
 start=$(date +%s)
 status=$(run_mac_launcher hang hangcase)
 elapsed=$(( $(date +%s) - start ))
 check "a hanging update does not block the launch" "$([ "$status" -eq 0 ]; echo $?)"
 check "the hang is cut off by the timeout, not waited out" "$([ "$elapsed" -lt 15 ]; echo $?)"
-grep -q "failed or timed out" "$WORKSPACE/err-hangcase"; check "the hang warns on stderr" $?
+if launcher_wrote_to_stderr "$WORKSPACE/err-hangcase"; then hang_warned=0; else hang_warned=1; fi
+check "the hang is reported by the launcher" "$hang_warned"
+grep -q "still running after 2s and was stopped" "$WORKSPACE/err-hangcase"
+check "the hang report names the limit it exceeded" $?
 grep -q "new-session" "$WORKSPACE/tmux-calls-hangcase"; check "the seat is still created after the hang" $?
 
-# A FAILING update: warn and proceed.
+# A FAILING update: proceed anyway, and say nothing the launcher made up.
 status=$(run_mac_launcher fail failcase)
 check "a failing update does not block the launch" "$([ "$status" -eq 0 ]; echo $?)"
-grep -q "failed or timed out" "$WORKSPACE/err-failcase"; check "the failure warns on stderr" $?
+if launcher_wrote_to_stderr "$WORKSPACE/err-failcase"; then fail_warned=1; else fail_warned=0; fi
+check "a failing update produces no launcher-written warning" "$fail_warned"
+grep -q "new-session" "$WORKSPACE/tmux-calls-failcase"; check "the seat is still created after a failing update" $?
 
 # A WORKING update: it runs on every launch, before the seat is created.
 status=$(run_mac_launcher ok okcase)
@@ -130,8 +149,12 @@ case "$box_command" in
     (*) check "ubuntu box command updates, then prepares the seat" 1 ;;
 esac
 case "$box_command" in
-    (*"failed or timed out"*) check "ubuntu box command carries the warn-and-proceed branch" 0 ;;
-    (*) check "ubuntu box command carries the warn-and-proceed branch" 1 ;;
+    (*"claude update || UPDATE_STATUS="*) check "ubuntu box command keeps the update non-blocking" 0 ;;
+    (*) check "ubuntu box command keeps the update non-blocking" 1 ;;
+esac
+case "$box_command" in
+    (*"UPDATE_STATUS -eq 124"*) check "ubuntu box command reports a timed-out update, by timeout's own status" 0 ;;
+    (*) check "ubuntu box command reports a timed-out update, by timeout's own status" 1 ;;
 esac
 
 # Per-seat tmux servers on the box (2026-08-21): the remote command must probe
