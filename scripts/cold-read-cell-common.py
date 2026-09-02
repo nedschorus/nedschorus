@@ -645,7 +645,20 @@ def run_model_chain(
         try:
             verify_report(program, report)
         except CellRefusal as refusal:
+            # THE MODEL'S OWN WORDS ON THE PATH THAT MOST NEEDS THEM. Exiting 0
+            # having written no report is the ending that explains itself least
+            # and this branch used to keep nothing: the non-zero path above
+            # printed stdout, this one discarded it, and the log came away with
+            # only our three refusal lines. Measured on claude-hunt-floor,
+            # which produced no report on two consecutive grids, 2026-08-31 and
+            # 2026-09-01, and left no trace of the model on either. The same
+            # argv rerun by hand 2026-09-01 succeeded and put 512 bytes on
+            # stdout, so there is an account being thrown away. Printed only --
+            # stdout is the model talking, and the stderr-only rule at
+            # `parse_tokens_used` below stands.
             failed_attempts.append(f"{model}(no-report)")
+            if completed.stdout:
+                print(completed.stdout, file=sys.stderr)
             print(str(refusal), file=sys.stderr)
             continue
         produced_by = model

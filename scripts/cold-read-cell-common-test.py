@@ -99,6 +99,11 @@ WHAT IS PINNED HERE.
     which is why the only token figure recoverable from six grids on
     2026-08-25 came from the one cell that failed.
 
+  - And the runtime's stdout survives a model that exits 0 having written
+    nothing. That path used to discard it, so the grids of 2026-08-31 and
+    2026-09-01 recorded claude-hunt-floor's silence with none of the model's
+    own words to explain it.
+
   - The stray-write detector runs for both runtimes. The cases above drive
     the Claude launcher; the one at the end of the file drives the Codex
     launcher through the same shared call. The fleet's other review
@@ -520,6 +525,29 @@ with tempfile.TemporaryDirectory() as scratch:
           not report.exists(),
           "an unstamped report survived a run the cell called failed")
 
+    # --- The quiet death keeps the model's own account --------------------
+    # A model that exits 0 having written nothing is the ending that explains
+    # itself least, and it was the one keeping no evidence: the non-zero path
+    # printed the runtime's stdout, this one dropped it. claude-hunt-floor
+    # produced no report on the grids of 2026-08-31 and 2026-09-01 and left
+    # three refusal lines and nothing of the model's in either log, while the
+    # same argv rerun by hand put 512 bytes on stdout. What the model said
+    # must reach the log the grid keeps on failure.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "cold-read-records" / "run-h" / "claude-restate-floor.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"stdout": "STUB CHAT: I read the document and then wrote nothing.\n",
+               "exit": 0}},
+        report, "--model", "stub-model-that-talks-then-writes-nothing",
+    )
+    check("a model that exits 0 writing nothing still fails the cell",
+          result.returncode == 1 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the model's own words survive the no-report path",
+          "I read the document and then wrote nothing." in result.stderr,
+          repr(result.stderr))
 
     # --- Failing to look says so, in the words the grid lifts -------------
     # Two ways the check cannot run, and both must be distinguishable from a
