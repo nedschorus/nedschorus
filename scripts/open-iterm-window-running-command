@@ -111,18 +111,41 @@ fi
 # review of this change, 2026-09-02, P2). The named shells below are the ones
 # whose `-l -c 'exec "$@"'` form is POSIX; anything else falls back rather than
 # being guessed at.
+#
+# THE FALLBACK IS ANNOUNCED, because /bin/sh does not read another shell's
+# login files: a fish or csh user whose PATH is set in ~/.config/fish or
+# ~/.cshrc gets /bin/sh's PATH, which may still not hold what they asked to
+# run (second external review round of this change, 2026-09-02, P2). The
+# window then dies the original way. Nobody in this fleet runs such a shell —
+# $SHELL is /bin/zsh on this Mac — so supporting their syntax would be
+# building for a configuration that does not exist here; what is worth having
+# is that the substitution is never silent, since a silent one recreates
+# exactly the "died and said nothing" failure this wrapper was written to end.
 LOGIN_SHELL=${SHELL:-/bin/sh}
+FALLBACK_REASON=
 case $LOGIN_SHELL in
     /*) ;;
-    *) LOGIN_SHELL=/bin/sh ;;
+    *) FALLBACK_REASON="it is not an absolute path" ;;
 esac
-case $LOGIN_SHELL in
-    *[[:space:]]* | *\'* | *\"*) LOGIN_SHELL=/bin/sh ;;
-esac
-case ${LOGIN_SHELL##*/} in
-    sh | bash | zsh | dash | ksh | ksh93 | mksh) ;;
-    *) LOGIN_SHELL=/bin/sh ;;
-esac
+if [ -z "$FALLBACK_REASON" ]; then
+    case $LOGIN_SHELL in
+        *[[:space:]]* | *\'* | *\"*)
+            FALLBACK_REASON="it contains whitespace or quotes, which iTerm2's word-splitting would not deliver as one word"
+            ;;
+    esac
+fi
+if [ -z "$FALLBACK_REASON" ]; then
+    case ${LOGIN_SHELL##*/} in
+        sh | bash | zsh | dash | ksh | ksh93 | mksh) ;;
+        *)
+            FALLBACK_REASON="it is not a POSIX-family shell, so it has no '-l -c \"exec \\\$@\"' form"
+            ;;
+    esac
+fi
+if [ -n "$FALLBACK_REASON" ]; then
+    echo "open-iterm-window-running-command: not using \$SHELL ($LOGIN_SHELL) — $FALLBACK_REASON. Falling back to /bin/sh -l, which does NOT read that shell's login files, so anything on PATH only through them will still not be found." >&2
+    LOGIN_SHELL=/bin/sh
+fi
 
 # `exec "$@"` is a fixed script, not the caller's text: the shell reads its
 # login files and then execs iTerm's argument vector unchanged. The word after

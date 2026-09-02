@@ -126,8 +126,17 @@ for good_shell in ("/bin/sh", "/bin/bash", "/bin/zsh", "/opt/homebrew/bin/bash",
           and f'command "{wrapper_prefix(good_shell)}echo hi"' in result.stdout,
           result.stdout or result.stderr)
 
-for bad_shell, why in (("", "empty"),
-                       ("zsh", "relative"),
+# An empty $SHELL is not a substitution — no shell was named, so /bin/sh is the
+# default rather than a fallback, and a notice there would fire on every call in
+# an environment that simply does not set the variable.
+result = run_opener(["echo hi"], login_shell="")
+check("an empty $SHELL defaults to /bin/sh silently, as no shell was named",
+      result.returncode == 0
+      and f'command "{wrapper_prefix("/bin/sh")}echo hi"' in result.stdout
+      and result.stderr == "",
+      result.stdout or repr(result.stderr))
+
+for bad_shell, why in (("zsh", "relative"),
                        ("/opt/my shell/zsh", "containing whitespace"),
                        ("/opt/it's/zsh", "containing a quote"),
                        # Both are in this Mac's /etc/shells, and both reject
@@ -141,6 +150,14 @@ for bad_shell, why in (("", "empty"),
           result.returncode == 0
           and f'command "{wrapper_prefix("/bin/sh")}echo hi"' in result.stdout,
           result.stdout or result.stderr)
+    check(f"the fallback from a $SHELL {why} is announced, never silent",
+          "not using $SHELL" in result.stderr
+          and "does NOT read that shell's login files" in result.stderr,
+          repr(result.stderr))
+
+result = run_opener(["echo hi"])
+check("a usable $SHELL produces no fallback notice",
+      result.returncode == 0 and result.stderr == "", repr(result.stderr))
 
 result = run_opener(["echo lit$HOME and ; a semicolon"])
 check("no expansion layer is added: $ and ; reach iTerm as written",
