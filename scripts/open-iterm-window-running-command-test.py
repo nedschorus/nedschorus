@@ -118,10 +118,24 @@ check("the wrapper runs the user's own $SHELL as a login shell",
       in result.stdout,
       result.stdout or result.stderr)
 
+for good_shell in ("/bin/sh", "/bin/bash", "/bin/zsh", "/opt/homebrew/bin/bash",
+                   "/bin/dash", "/bin/ksh"):
+    result = run_opener(["echo hi"], login_shell=good_shell)
+    check(f"a POSIX-family $SHELL is used as given ({good_shell})",
+          result.returncode == 0
+          and f'command "{wrapper_prefix(good_shell)}echo hi"' in result.stdout,
+          result.stdout or result.stderr)
+
 for bad_shell, why in (("", "empty"),
                        ("zsh", "relative"),
                        ("/opt/my shell/zsh", "containing whitespace"),
-                       ("/opt/it's/zsh", "containing a quote")):
+                       ("/opt/it's/zsh", "containing a quote"),
+                       # Both are in this Mac's /etc/shells, and both reject
+                       # `-l` and have no `exec "$@"` — a window opened under
+                       # one would die instantly and say nothing.
+                       ("/bin/csh", "that is csh"),
+                       ("/bin/tcsh", "that is tcsh"),
+                       ("/usr/local/bin/fish", "that is fish")):
     result = run_opener(["echo hi"], login_shell=bad_shell)
     check(f"a $SHELL {why} falls back to /bin/sh",
           result.returncode == 0

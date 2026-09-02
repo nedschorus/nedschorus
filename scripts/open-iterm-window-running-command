@@ -103,6 +103,14 @@ fi
 # would have in a terminal; /bin/sh is the fallback when it is unset, and also
 # when it holds anything that iTerm2's word-splitting would not deliver as a
 # single word, since this value is spliced into the command string it parses.
+#
+# It must also be a shell of the POSIX family, and that is not a formality:
+# /bin/csh and /bin/tcsh are in this Mac's /etc/shells, and both reject `-l`
+# and have no `exec "$@"` — a window opened under one would die instantly with
+# nothing said, which is the exact failure this wrapper exists to end (external
+# review of this change, 2026-09-02, P2). The named shells below are the ones
+# whose `-l -c 'exec "$@"'` form is POSIX; anything else falls back rather than
+# being guessed at.
 LOGIN_SHELL=${SHELL:-/bin/sh}
 case $LOGIN_SHELL in
     /*) ;;
@@ -110,6 +118,10 @@ case $LOGIN_SHELL in
 esac
 case $LOGIN_SHELL in
     *[[:space:]]* | *\'* | *\"*) LOGIN_SHELL=/bin/sh ;;
+esac
+case ${LOGIN_SHELL##*/} in
+    sh | bash | zsh | dash | ksh | ksh93 | mksh) ;;
+    *) LOGIN_SHELL=/bin/sh ;;
 esac
 
 # `exec "$@"` is a fixed script, not the caller's text: the shell reads its
