@@ -27,6 +27,17 @@ Anything that fails a check is KEPT, with the failing reason. Worktrees
 outside <repo>/.claude/worktrees/ — agent seat homes, manual checkouts — are
 always kept: their lifecycles belong to their owners, not to this script.
 
+Removing a worktree does not remove the branch it was on, and nothing has
+ever swept a branch whose worktree is already gone — list_worktrees()
+enumerates worktrees, not refs. So the report also carries one line naming
+every local branch that no worktree has checked out and that carries nothing
+origin/main lacks: the refs removable losing nothing. Orphaned refs that DO
+carry commits origin/main lacks are deliberately NOT named — 41 of the 51
+local branches left after 2026-08-31's hand sweep were in that state. Their
+disposal is a judgment rather than a sweep, and printing them at every boot
+teaches a reader to skip the line. The line prints in every mode; --remove
+deletes the refs it names.
+
 Separately from the worktrees themselves, the report ends with one line
 naming dead registrations — the ones `git worktree prune` would remove,
 typically because the worktree's directory is gone, which is what a
@@ -38,18 +49,20 @@ docs/cross-project/fleet-git-worktree-working-model.md).
 Modes:
   (default)    report every worktree, one line each
   --only-done  print only what needs someone's attention — done worktrees,
-               and the dead-registration line when there are any; nothing
-               otherwise (the launchers run this at boot, so a reapable
-               worktree or a dead registration is named at the moment
-               someone is looking)
+               the orphaned-branch-ref line, and the dead-registration line
+               when there are any; nothing otherwise (the launchers run this
+               at boot, so a reapable worktree, an orphaned branch ref or a
+               dead registration is named at the moment someone is looking)
   --remove     re-check and remove the done worktrees; each removal also
                deletes the worktree's fully-merged branch (git branch -d,
-               which refuses anything unmerged). Never --force.
+               which refuses anything unmerged). Never --force. Orphaned
+               branch refs are deleted the same way, and a refusal there is
+               a failure rather than a silence.
 
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
-Exit codes: 0 ok, 1 a removal failed, 2 bad invocation.
+Exit codes: 0 ok, 1 a removal or a ref deletion failed, 2 bad invocation.
 """
 
 import shutil
@@ -123,6 +136,87 @@ def dead_worktree_registrations(repo):
             dead.append((path, reason))
             path = None
     return dead
+
+
+def branch_refs_with_no_worktree_fully_on_main(repo):
+    """Local branch names that no worktree has checked out AND that carry
+    nothing origin/main lacks — the refs removable losing nothing.
+
+    Removing a worktree does not remove the branch it was on. Three mechanisms
+    leave one behind: the Agent tool's worktree isolation, which creates a
+    `worktree-agent-<id>` branch whose worktree is later reaped; a seat home
+    retired by hand; and `git worktree remove` run directly. Counted on
+    2026-08-31 with `git for-each-ref refs/heads/`, BEFORE a hand sweep that
+    same night: 143 local branches, 81 of them landed orphans — every commit
+    already on origin/main, no worktree, and nothing in this project reaping
+    them. Those 81 were deleted by hand, along with 15 stale review refs, and
+    the count of commits reachable from local branches but from no remote did
+    not move (264 before, 264 after), which is what proved the 81 held nothing
+    of their own.
+
+    That is why counting again AFTER the sweep gives a different answer, and
+    why a later reader should not read it as the first count being wrong: 51
+    local branches remain, 41 with no worktree, and the landed-orphan
+    population is momentarily ZERO because the hand sweep just took all of
+    them. It does not stay zero. Each of the 41 becomes a landed ref the
+    moment its work reaches main, and the reaper's own removals are the only
+    thing that deletes a branch today — which is the whole reason this
+    function exists rather than a second hand sweep six weeks from now.
+
+    Orphaned refs that DO carry commits origin/main lacks are deliberately not
+    reported: 41 of the 51 local branches left after the sweep were in that
+    state. They are nobody's to delete on a boot-time report, and naming
+    them every run is noise that teaches a reader to skip the line. Their
+    disposal is a judgment, not a sweep.
+
+    A branch is treated as attached when any worktree — the main checkout
+    included — has it checked out, so a branch in use is never named. A
+    detached worktree contributes no name, which is git's own answer: its
+    porcelain record says `detached` where a branch line would be.
+
+    Containment is git's answer too — a reachability question asked once for
+    every ref, never inferred from a branch's name or from its upstream,
+    which can be configured to a remote branch that no longer exists. Asking
+    per branch with `rev-list` would instead cost one subprocess per branch
+    on a path the launchers run at boot: 51 of them here. Either query
+    failing yields nothing to report, so a repository this script cannot read
+    loses no refs.
+    """
+    listing = run_git(repo, "worktree", "list", "--porcelain")
+    if listing.returncode != 0:
+        return []
+    attached = {
+        line.split("refs/heads/", 1)[1]
+        for line in listing.stdout.splitlines()
+        if line.startswith("branch refs/heads/")
+    }
+    # refs/heads/ scopes the question to local branches, so remote-tracking
+    # refs are never candidates. lstrip=2 rather than :short because :short
+    # answers `heads/<name>` for a branch that a tag of the same name shadows
+    # (verified, git 2.55.0) — a name that matches nothing in `attached` and
+    # that `git branch -d` cannot take, so an in-use branch would be named.
+    landed = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)",
+                     "--merged", "origin/main", "refs/heads/")
+    if landed.returncode != 0:
+        return []
+    return [branch for branch in landed.stdout.splitlines()
+            if branch not in attached]
+
+
+def delete_orphaned_branch_ref(branch, repo):
+    """Delete one orphaned ref. True on success.
+
+    `git branch -d` rather than `-D`, deliberately and for the same reason the
+    worktree path uses it: the containment test above and git's own refusal are
+    two independent answers to the same question, and a ref that only one of
+    them clears is a ref this script does not delete.
+    """
+    deletion = run_git(repo, "branch", "-d", branch)
+    if deletion.returncode != 0:
+        print(f"branch {branch}: deletion FAILED — {deletion.stderr.strip()[:120]}")
+        return False
+    print(f"branch {branch}: deleted (no worktree, nothing beyond origin/main)")
+    return True
 
 
 def worktree_vacancy_keep_reason(worktree):
@@ -259,6 +353,17 @@ def main(argv=None):
         else:
             state = "done" if done else "kept"
             print(f"{worktree.name}: {state} — {reason}")
+
+    orphaned_refs = branch_refs_with_no_worktree_fully_on_main(repo)
+    if orphaned_refs:
+        if remove:
+            for branch in orphaned_refs:
+                if not delete_orphaned_branch_ref(branch, repo):
+                    failures += 1
+        else:
+            print("branch ref(s) with no worktree, nothing beyond origin/main: "
+                  + ", ".join(orphaned_refs)
+                  + " — remove with: scripts/clean-worktrees.py --remove")
 
     dead_registrations = dead_worktree_registrations(repo)
     if dead_registrations:
