@@ -253,7 +253,7 @@ def stray_write_warning(stderr_text):
     that line rather than on the warning it means to read.
     """
     return " ".join(line for line in stderr_text.splitlines()
-                    if "changed files outside its report" in line)
+                    if "files outside its report changed while it ran" in line)
 
 
 def git(repository, *arguments):
@@ -407,6 +407,21 @@ with tempfile.TemporaryDirectory() as scratch:
           TARGET_RELATIVE_PATH in stray_write_warning(result.stderr), repr(result.stderr))
     check("the cell still succeeds — writes are detected, not blocked",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    # The warning says what the snapshot comparison can know and no more. On
+    # 2026-09-02 two cells named a file the commissioning seat was itself
+    # appending to as "the reviewer changed" (nedschorus#244); the check cannot
+    # see who wrote, so the sentence must not say.
+    check("the warning does not name the reviewer as the one who wrote",
+          "the reviewer changed" not in stray_write_warning(result.stderr),
+          repr(result.stderr))
+    check("the warning says the cell cannot tell who wrote the files",
+          "cannot tell whether the reviewer wrote them" in stray_write_warning(result.stderr),
+          repr(result.stderr))
+    check("the warning opens with the cell's own name and the pinned phrase, "
+          "which is what the grid lifts on",
+          any(line.startswith("cold-read-claude-cell: files outside its report changed while it ran")
+              for line in result.stderr.splitlines()),
+          repr(result.stderr))
 
     # A creation was always caught; it is here so the two halves of the
     # detector are pinned side by side and neither can be lost alone.

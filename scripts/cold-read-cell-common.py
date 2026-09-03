@@ -223,15 +223,22 @@ class WriteDetectorUnavailable(Exception):
     """
 
 
-# The phrase both "the check did not run" messages below carry, and the
-# phrase scripts/cold-read-grid.py greps a cell's stderr log for. The grid
-# deletes that log on the success path, so a message it does not lift there
-# is a message nobody ever reads -- and these two are the ones that say the
-# run was never checked, which is the outcome likeliest to be mistaken for a
-# clean one. This is a contract with that file, not a sentence to reword in
-# passing: change it here and in the grid together, and
-# scripts/cold-read-grid-test.py fails if only one of the two moves.
+# THE PHRASES THE GRID LIFTS OUT OF A CELL'S LOG. scripts/cold-read-grid.py
+# deletes a cell's stderr log on the success path, so a status line it does
+# not lift there is a line nobody ever reads. The grid imports these constants
+# rather than copying them, and it matches each one only at the head of a
+# line this program itself began -- `<program>: <phrase>` -- because the log
+# also carries the runtime's own stderr, re-emitted unconditionally below, and
+# the Codex CLI writes the model's text there. On 2026-09-02 a reviewed
+# document quoted a code comment containing "fell back to", and the grid
+# reported two cells as fallen back that had run on the models asked for
+# (nedschorus#244). So every status line below puts its phrase immediately
+# after `{program}: `, and nothing else may. Pinned as constants because each
+# is a contract with the grid, not a sentence to reword in passing;
+# scripts/cold-read-grid-test.py drives each one through a real cell.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
+STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
+FELL_BACK_PHRASE = "fell back to"
 
 
 def path_content_fingerprint(path: pathlib.Path) -> str:
@@ -703,7 +710,7 @@ def run_model_chain(
 
     if failed_attempts:
         print(
-            f"{program}: fell back to {produced_by} after "
+            f"{program}: {FELL_BACK_PHRASE} {produced_by} after "
             + ", ".join(failed_attempts)
             + ". The report's provenance stamp records this.",
             file=sys.stderr,
@@ -820,9 +827,17 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
               "result.", file=sys.stderr)
         return
     if stray:
+        # WHAT THIS CELL CAN KNOW, and no more. The comparison is a snapshot
+        # before the model ran against one after; it sees that a file's content
+        # is different and cannot see who wrote it. The commissioning seat
+        # keeps working while a grid runs, and on 2026-09-02 two cells named
+        # the walk minutes that seat was itself appending to as the reviewer's
+        # write (nedschorus#244). The message therefore says the files changed
+        # and leaves the attribution to the reader, who can tell.
         print(
-            f"{program}: the reviewer changed files outside its report, which "
-            f"it should not have — {', '.join(stray)}. Inspect and revert "
-            "these before triage; any report still stands on its own.",
+            f"{program}: {STRAY_WRITE_PHRASE} — {', '.join(stray)}. This cell "
+            "cannot tell whether the reviewer wrote them or someone else working "
+            "in the checkout did. Inspect before triage and revert only what is "
+            "the reviewer's; any report still stands on its own.",
             file=sys.stderr,
         )
