@@ -4,7 +4,7 @@
 
 | Source revision | Source paths | Content digest | Destination paths | Date | Purpose | Why insufficient | Transformations |
 |---|---|---|---|---|---|---|---|
-| 78ed90f0 | docs/working/next-system-boot-pack/nedschorus-founding-plan.md | git-blob:d391d11c680e | docs/cross-project/nedschorus-founding-plan.md | 2026-07-20 | The founding pair's boot-up plan of record | Founding document — no successor content existed | migration-note paragraph added; one legacy link re-pointed absolute |
+| 78ed90f0 | docs/working/next-system-boot-pack/nedschorus-founding-plan.md | git-blob:d391d11c680e | docs/cross-project/nedschorus-founding-plan.md (removed 2026-09-03; `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`) | 2026-07-20 | The founding pair's boot-up plan of record | Founding document — no successor content existed | migration-note paragraph added; one legacy link re-pointed absolute |
 | 78ed90f0 | docs/working/next-system-boot-pack/fast-handoff-design.md | git-blob:7d4a781b80d1 | docs/cross-project/fast-handoff-design.md | 2026-07-20 | The session-handoff specification | Founding document — no successor content existed | verbatim |
 | 78ed90f0 | docs/working/next-system-boot-pack/comms-bridge-spec.md | git-blob:e2ea26196583 | docs/cross-project/comms-bridge-spec.md | 2026-07-20 | The two-log coordination channel specification | Founding document — no successor content existed | verbatim |
 | 78ed90f0 | docs/working/next-system-boot-pack/boot-pack-manifest.md | git-blob:61401b3a88b4 | docs/cross-project/boot-pack-manifest.md | 2026-07-20 | Historical artifact list from the boot-pack phase | Founding document — no successor content existed | verbatim |

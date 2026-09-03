@@ -15,7 +15,7 @@ Additionally hunt these dimensions: unvalidated assumptions; conflation of what 
 Repository `github.com/nedschorus/nedschorus` at the commit named when you were launched:
 
 - `README.md` — the charter.
-- `docs/cross-project/nedschorus-founding-plan.md` — the boot-up plan and rulings register.
+- `docs/cross-project/nedschorus-founding-plan.md` — the boot-up plan and rulings register (retired 2026-09-03; `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`).
 - `docs/cross-project/fast-handoff-design.md` — the session-handoff specification.
 - `docs/cross-project/git-gatekeeper-design.md` — the check-in gate specification (renamed from fast-pr-to-prod-design 2026-07-24).
 - `docs/cross-project/comms-bridge-spec.md` — the two-log coordination channel.

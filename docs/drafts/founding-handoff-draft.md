@@ -15,7 +15,7 @@ agent — and is the only committed handoff there will ever be; every later one
 is machine-local, written by your own retiring sessions and carried to you by
 the supervisor that launched you.
 
-First action: read docs/cross-project/nedschorus-founding-plan.md in full. It
+First action: read the founding plan, now retired (`git show 615a230:docs/cross-project/nedschorus-founding-plan.md`), in full. It
 is the governing document, and its last step is the one that created you.
 
 Your first build task, ruled 2026-07-21: the git-gatekeeper, per
