@@ -37,6 +37,16 @@ WHAT IS PINNED HERE.
     The rename commit that added the lift verified it by a hand-run probe;
     this case is that probe, kept.
 
+  - The model's echoed words are not the cell's status. The cell re-emits its
+    runtime's stderr into the log the grid lifts from, and the Codex CLI
+    copies the model's own text onto stderr — so on 2026-09-02 a reviewed
+    document that quoted a code comment containing "fell back to" made two
+    cells read as fallen back when both had run on the models asked for
+    (nedschorus#244). The grid now lifts a phrase only from a line the cell
+    program itself began. The case echoes a passage carrying all four lifted
+    phrases while one cell really falls back: the real line is lifted, the
+    echo is not.
+
   - The line that names changed files still reaches the grid's output, and
     the log is still deleted on success. Those are the two halves the fix
     must not trade against each other: lifting more lines is worthless if the
@@ -124,9 +134,16 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # writing its report there — the 2026-08-25 accident, in which a model created
 # a directory one character from the one it was given and wrote a complete
 # review into it. The cell's recovery is what puts the report back.
+# COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT, when set, is text the stub writes
+# to its stderr before doing anything else — the Codex CLI's habit of copying
+# the model's own words onto stderr, which the cell re-emits into the log the
+# grid reads (nedschorus#244).
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
 import os, pathlib, re, sys
 
+echoed_text = os.environ.get("COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT")
+if echoed_text:
+    sys.stderr.write(echoed_text + "\n")
 prompt = ""
 try:
     prompt = sys.stdin.read()
@@ -455,6 +472,46 @@ with tempfile.TemporaryDirectory() as scratch:
           record_directory is not None
           and list(record_directory.glob("*.stderr.log")) == [],
           f"logs left in {record_directory}")
+
+    # --- The model's echoed words are not the cell's status -----------------
+    # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
+    # model's text onto stderr, the cell re-emits that stderr into the log the
+    # grid reads, and a reviewed document that quoted a comment containing
+    # "fell back to" made two cells read as fallen back. Here every runtime
+    # echoes a passage carrying all four lifted phrases mid-line, while ONE
+    # cell really does fall back, so the case discriminates: the cell's own
+    # line is lifted, the echoed passage never is, and nothing else fires.
+    echoed_passage = (
+        "As the document says: the supervisor fell back to its own default, "
+        "then stray writes were not checked for this run, then files outside "
+        "its report changed while it ran, and it recovered a near-miss report."
+    )
+    repository = build_scratch_repository(scratch, "checkout-echoed-phrases")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT": echoed_passage,
+         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    fell_back_lines = [line for line in result.stdout.splitlines()
+                       if line.startswith("FELL BACK:")]
+    check("echoed text carrying the fallback phrase does not read as a fallback: "
+          "exactly the one real fallback is lifted",
+          len(fell_back_lines) == 1 and "claude-fable-5" in fell_back_lines[0],
+          f"lifted lines were {fell_back_lines!r}; stdout={result.stdout!r}")
+    check("the real fallback line is the cell's own, not the echo",
+          fell_back_lines != [] and "cold-read-claude-cell: fell back to" in fell_back_lines[0]
+          and "As the document says" not in fell_back_lines[0],
+          f"lifted lines were {fell_back_lines!r}")
+    check("echoed text carrying the other three phrases lifts nothing",
+          not any(line.startswith(("STRAY WRITE:", "RECOVERED:",
+                                   "WRITE CHECK DID NOT RUN:"))
+                  for line in result.stdout.splitlines()),
+          f"stdout was {result.stdout!r}")
+    check("the echo costs nothing: four reviews land, grid exits 0",
+          result.returncode == 0 and len(saved_lines) == 4,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
 
     # --- A cell that recovered a near-miss says so -------------------------
     # The 2026-08-25 accident, driven through the real cells: every stub

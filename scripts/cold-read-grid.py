@@ -18,6 +18,7 @@ document that no longer exists in the form reviewed.
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import pathlib
 import re
 import subprocess
@@ -31,6 +32,21 @@ CELL_LAUNCHERS = {
     "claude": REPO_ROOT / "scripts" / "cold-read-claude-cell.py",
     "codex": REPO_ROOT / "scripts" / "cold-read-codex-cell.py",
 }
+# The cells' shared module, loaded the way the cells load it, for the status
+# phrases it pins. Imported rather than copied so the grid and the cells
+# cannot drift on the words the grid lifts out of a cell's log.
+_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py")
+)
+cell_common = importlib.util.module_from_spec(_common_spec)
+_common_spec.loader.exec_module(cell_common)
+# The name each cell program prints at the head of every line that is its
+# own -- the PROGRAM constant in each launcher, which equals the launcher's
+# filename stem. A cell's log also carries its runtime's stderr, re-emitted
+# whole, and the Codex CLI writes the model's text there; a line that does not
+# begin with one of these names is the model's, or the runtime's, not the
+# cell's.
+CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # One pass since 2026-08-30 (user-ruled that day): the separate restate
 # pass is cut from the roster. Measured on both labelled 2026-08-26 targets:
 # mining several readers' restatements for disagreement located no defect the
@@ -232,6 +248,20 @@ def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
     return running
 
 
+def cell_status_line(line: str, phrase: str) -> bool:
+    """True when `line` is a cell program's own status line carrying `phrase`.
+
+    The cell writes every line of its own as `<program>: <sentence>`, and the
+    phrases the grid lifts each open that sentence, so the test is that the
+    line begins with a cell program's name, a colon, a space, and the phrase.
+    Anything else in the log -- the runtime's stderr, the model's echoed text
+    -- fails it however many times the phrase appears inside (nedschorus#244).
+    """
+    stripped = line.strip()
+    return any(stripped.startswith(f"{program}: {phrase}")
+               for program in CELL_PROGRAM_NAMES)
+
+
 def wait_for_cells(running: dict) -> list:
     """Poll until every cell finishes; print per-report progress; return the
     list of failed report names."""
@@ -269,9 +299,17 @@ def wait_for_cells(running: dict) -> list:
                 # a failure to look, not a clean result -- otherwise reported
                 # here exactly like a cell that looked and found nothing, and a
                 # whole grid run read as clean when nothing had been checked at
-                # all (nedschorus#167). That second clause matches the phrase the
-                # cell module pins for it as STRAY_WRITE_CHECK_SKIPPED_PHRASE;
-                # keep the two in step.
+                # all (nedschorus#167).
+                #
+                # EACH IS MATCHED ONLY ON A LINE THE CELL ITSELF BEGAN. The cell
+                # re-emits its runtime's stderr into this same log, and the Codex
+                # CLI writes the model's text there -- so on 2026-09-02 a reviewed
+                # document that quoted a code comment containing "fell back to"
+                # made two cells read as fallen back when both had run on the
+                # models asked for (nedschorus#244). A bare substring test cannot
+                # tell the cell's sentence from the model's; the program prefix
+                # can. The phrases come from the cell module, where each is
+                # pinned as a contract with this loop.
                 #
                 # A FALLBACK IS NEVER SILENT (user-ruled 2026-08-25: "I'm ok
                 # with the fable falling back to opus too. I just don't want it
@@ -293,15 +331,15 @@ def wait_for_cells(running: dict) -> list:
                 # it was given, which is worth knowing before trusting the
                 # rest of what it did.
                 for line in stderr_path.read_text(encoding="utf-8").splitlines():
-                    if "changed files outside its report" in line:
+                    if cell_status_line(line, cell_common.STRAY_WRITE_PHRASE):
                         print(f"STRAY WRITE: {line.strip()}", flush=True)
-                    if "stray writes were not checked for this run" in line:
+                    if cell_status_line(line, cell_common.STRAY_WRITE_CHECK_SKIPPED_PHRASE):
                         print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
                               f"{line.strip()}", flush=True)
-                    if "fell back to" in line:
+                    if cell_status_line(line, cell_common.FELL_BACK_PHRASE):
                         print(f"FELL BACK: {report_path.name} — {line.strip()}",
                               flush=True)
-                    if "recovered a near-miss report" in line:
+                    if cell_status_line(line, cell_common.NEAR_MISS_RECOVERY_PHRASE):
                         print(f"RECOVERED: {report_path.name} — {line.strip()}",
                               flush=True)
                 stderr_path.unlink(missing_ok=True)
