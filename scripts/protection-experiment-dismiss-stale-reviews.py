@@ -39,20 +39,35 @@ held by an admin account, a fine-grained token needs
 permission per branch, so an account that can protect the throwaway
 branch can also rewrite main's protection; the restraint therefore lives
 in refuse_if_main below, where it is tested, and not in the credential.
-check_experiment_credential runs BEFORE anything is created, so a
-credential that cannot do the work is refused at startup rather than
-discovered mid-run with a protected branch already on the repository.
+
+The account's role and the token's permission are different things, and
+no read proves the second (PR #228 review round 2, merge-lane's
+measurement: ned-review-merge reports admin=true, reads main's
+protection, and cannot write it). check_experiment_credential runs
+BEFORE anything is created and refuses on what a read can show: an
+account without the admin role, or a classic token whose X-OAuth-Scopes
+header omits `repo`. A fine-grained token's permissions cannot be read
+back at all, so write capability is proven by a write that is safe by
+construction: the run's first two calls create the throwaway branch and
+PUT protection on it, before the clone and before anything else. A 403
+there means the token cannot write protection; it is named as such, the
+run exits 2, and cleanup deletes a branch that nothing protects.
 
 WHERE IT RUNS FROM. The program clones the repository into a temporary
 directory of its own and commits and pushes from there, removing the
 directory when it is done. It never commits into the repository the
 operator happens to be standing in (user-ruled 2026-09-01, PR #228
-review item 2). A fresh clone also sits at origin/main's tip, so a push
-probe can only be refused by branch protection -- which is the thing
-being measured -- and never as a stale non-fast-forward.
+review item 2). The throwaway branch is created from main's tip as
+GitHub reports it and the clone is taken afterwards; main cannot be
+force-pushed, so the clone's tip descends from the branch's base and a
+push probe from the clone is a fast-forward on the clone's side. The
+destination side is guarded by the refusal to start while either
+throwaway branch already exists, so a push probe can only be refused by
+branch protection -- which is the thing being measured -- and never as a
+stale non-fast-forward.
 
 SAFETY. Every write targets a throwaway branch this script creates and
-deletes. It refuses to operate on main by name, and it refuses if the
+deletes. It refuses to operate on main by name, and it refuses if either
 branch it is about to create already exists. Protection settings for the
 throwaway branch are copied from main's live settings so the experiment
 runs against the real shape rather than an invented one. main's own
@@ -69,18 +84,21 @@ checked before it is reported: a call that fails is an error and exits
 nonzero, and a call that reports success without taking effect is also an
 error, because the conclusion this program prints exists only to license a
 change to main's protection (user-ruled 2026-09-02, PR #228 review item
-3). judge_partial_patch_result holds that judgment, alone and pure, so it
-can be tested without a network: see
+3). judge_partial_patch_result holds that judgment for RISK 1 and
+judge_push_probe_result holds it for RISK 2, each alone and pure, and
+judge_run_report turns the two into the exit code and the summary, so all
+three can be tested without a network: see
 scripts/protection-experiment-dismiss-stale-reviews-test.py.
 
 USAGE
   python3 scripts/protection-experiment-dismiss-stale-reviews.py --dry-run
   python3 scripts/protection-experiment-dismiss-stale-reviews.py --run
 
-Exit codes: 0 every measurement completed (findings are in the report,
-which is printed and may still say the PATCH is unsafe); 1 a measurement
-could not be completed and the report says which; 2 bad invocation, a
-safety refusal, or a credential that cannot do the work.
+Exit codes: 0 every measurement completed and every push probe came out
+as expected (findings are in the report, which is printed and may still
+say the PATCH is unsafe); 1 a measurement could not be completed, or a
+push probe contradicted its expectation, and the report says which; 2 bad
+invocation, a safety refusal, or a credential that cannot do the work.
 """
 
 from __future__ import annotations
@@ -92,6 +110,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Callable
 
 REPO_SLUG = "nedschorus/nedschorus"
 REPO_CLONE_URL = "https://github.com/nedschorus/nedschorus.git"
@@ -100,10 +119,21 @@ MAIN_BRANCH = "main"
 # crashed run is recognizable rather than one of a family of random names.
 EXPERIMENT_BRANCH = "protection-experiment-dismiss-stale-reviews"
 FEATURE_BRANCH = "protection-experiment-dismiss-stale-reviews-feature"
+# Every branch this program creates, in the order cleanup removes them. The
+# leftover guard checks all of them, not just the protected one.
+EXPERIMENT_BRANCHES = (EXPERIMENT_BRANCH, FEATURE_BRANCH)
+# RISK 2's probes: (branch, whether the push is expected to be accepted, why).
+PUSH_PROBES = (
+    (FEATURE_BRANCH, True, "unprotected branch"),
+    (EXPERIMENT_BRANCH, False, "protected, reviews required"),
+)
 # The account the ruling names. A different admin account is allowed to run
 # the experiment and is only noted, never refused: the capability check below
 # is the one that decides, because a name is not a permission.
 RULED_EXPERIMENT_ACCOUNT = "ned-review-merge"
+# What GitHub documents for the branch-protection endpoints, by token type.
+CLASSIC_TOKEN_PROTECTION_SCOPE = "repo"
+FINE_GRAINED_PROTECTION_PERMISSION = "Administration: write"
 SCRATCH_CLONE_PREFIX = "protection-experiment-dismiss-stale-reviews-clone-"
 
 # The sibling git-gatekeeper uses thirty seconds for its GitHub calls and the
@@ -116,9 +146,21 @@ PATCH_SEMANTICS_PRESERVED = "count-preserved"
 PATCH_SEMANTICS_CLOBBERED = "count-clobbered"
 PATCH_SEMANTICS_NOT_MEASURED = "not-measured"
 
+PUSH_PROBE_AS_EXPECTED = "as-expected"
+PUSH_PROBE_CONTRADICTED = "contradicted"
+PUSH_PROBE_NOT_MEASURED = "not-measured"
+
 
 class Refusal(Exception):
     """A safety refusal or an impossible measurement. Carries its own fix."""
+
+
+class CredentialRefusal(Refusal):
+    """The credential cannot do the experiment's work.
+
+    Exits 2 rather than 1: nothing was measured because the run could not
+    start in earnest, not because a measurement failed part-way.
+    """
 
 
 def refuse_if_main(branch: str) -> None:
@@ -210,37 +252,162 @@ def api_json(path: str, *, allow_failure: bool = False) -> dict | None:
         raise Refusal(f"{path} did not answer JSON: {error}") from None
 
 
-def check_experiment_credential() -> str:
-    """Refuse at startup if this credential cannot do the experiment's writes.
+def split_headers_and_body(output: str) -> tuple[dict[str, str], str]:
+    """Split `gh api -i` output into lowercased headers and the body text. Pure.
 
-    Two readings, because they answer different questions. The repository
-    permissions say whether the ACCOUNT holds the admin role. Reading main's
-    protection -- which read_main_protection does next, and which is itself an
-    admin-only call -- says whether the TOKEN carries the scope that role
-    needs. An account can be admin while its token is not, so neither reading
-    alone is the check.
-
-    Returns the login, for the report.
+    gh prints the status line, then `Name: value` lines ending in CR LF, a
+    blank line, and the body (measured on this Mac, 2026-09-02). Header names
+    are lowercased because gh canonicalizes them its own way
+    (`X-Oauth-Scopes`) and the caller should not have to know which.
     """
-    identity = api_json("user")
+    lines = output.split("\n")
+    headers: dict[str, str] = {}
+    body_start = len(lines)
+    for index, line in enumerate(lines[1:], start=1):
+        line = line.rstrip("\r")
+        if not line:
+            body_start = index + 1
+            break
+        name, separator, value = line.partition(":")
+        if separator:
+            headers[name.strip().lower()] = value.strip()
+    return headers, "\n".join(lines[body_start:])
+
+
+def api_json_with_headers(path: str) -> tuple[dict[str, str], dict]:
+    """One GET, returning GitHub's response headers alongside the JSON body."""
+    completed = gh(["api", "-i", path])
+    headers, body = split_headers_and_body(completed.stdout)
+    try:
+        return headers, json.loads(body)
+    except json.JSONDecodeError as error:
+        raise Refusal(f"{path} did not answer JSON: {error}") from None
+
+
+def classic_token_scopes(headers: dict[str, str]) -> list[str] | None:
+    """The scopes GitHub reports for a classic token, or None if it reports none. Pure.
+
+    GitHub sends X-OAuth-Scopes for classic and OAuth tokens (measured on
+    this Mac, 2026-09-02, `gh api -i user`). It does not describe a
+    fine-grained token's permissions that way, and GitHub offers no endpoint
+    a token can call to read its own fine-grained permissions back. So an
+    absent header -- or an empty one, read the same way rather than as "a
+    token with no scopes" -- means the token cannot be introspected, not that
+    it lacks anything.
+    """
+    raw = headers.get("x-oauth-scopes")
+    if raw is None:
+        return None
+    scopes = [scope.strip() for scope in raw.split(",") if scope.strip()]
+    return scopes or None
+
+
+def refuse_if_classic_scopes_lack_repo(
+    login: str, classic_scopes: list[str] | None
+) -> None:
+    """A classic token reported without `repo` cannot write protection. Pure.
+
+    Refused before anything is created. None -- GitHub reported no scopes --
+    proves nothing either way and is not refused: for those tokens the write
+    check is the first protection PUT, see protection_write_refusal.
+    """
+    if classic_scopes is None or CLASSIC_TOKEN_PROTECTION_SCOPE in classic_scopes:
+        return
+    raise CredentialRefusal(
+        f"{login}'s token is a classic token whose scopes, as GitHub reports "
+        f"them ({', '.join(classic_scopes)}), do not include "
+        f"`{CLASSIC_TOKEN_PROTECTION_SCOPE}`, the scope GitHub documents for "
+        "the branch-protection endpoints. The account's admin role does not "
+        "substitute: the role belongs to the account, the scope to the token. "
+        f"Re-run under {RULED_EXPERIMENT_ACCOUNT} with a token that carries "
+        f"`{CLASSIC_TOKEN_PROTECTION_SCOPE}` (classic) or "
+        f"{FINE_GRAINED_PROTECTION_PERMISSION} (fine-grained). "
+        "Nothing was created."
+    )
+
+
+def check_experiment_credential() -> tuple[str, list[str] | None]:
+    """Refuse at startup where a READ already shows the credential cannot write.
+
+    What a read proves, and what it cannot (PR #228 review round 2,
+    merge-lane's measurement: ned-review-merge reports admin=true, reads
+    main's protection, and cannot write it -- the role belongs to the
+    account, the permission to the token):
+
+      - the repository's `permissions.admin` says whether the ACCOUNT holds
+        the admin role. Without it no token can write protection: refused.
+      - for a classic token, GitHub's X-OAuth-Scopes header lists the
+        token's scopes; without `repo` it cannot write protection: refused.
+      - a fine-grained token's permissions cannot be read back, and reading
+        main's protection (next, in read_main_protection) proves only read.
+        Write capability is therefore proven by the first protection PUT on
+        the throwaway branch, which main() makes before anything else -- a
+        403 there is a CredentialRefusal, see protection_write_refusal.
+
+    Returns (login, the classic scopes or None), for the report.
+    """
+    headers, identity = api_json_with_headers("user")
     login = (identity or {}).get("login") or "(unknown)"
+    classic_scopes = classic_token_scopes(headers)
     repository = api_json(f"repos/{REPO_SLUG}")
     if repository is None:
-        raise Refusal(
+        raise CredentialRefusal(
             f"could not read {REPO_SLUG} as {login}. The experiment needs a "
             "credential that can reach the repository; authenticate gh and "
             "re-run. Nothing was created."
         )
     if not bool((repository.get("permissions") or {}).get("admin")):
-        raise Refusal(
+        raise CredentialRefusal(
             f"{login} does not hold the admin role on {REPO_SLUG}, and both "
             "endpoints this experiment writes -- PUT branch protection and "
             "PATCH required_pull_request_reviews -- need it. Re-run under "
-            f"{RULED_EXPERIMENT_ACCOUNT}, whose token must carry the `repo` "
-            "scope (classic) or Administration: write (fine-grained). "
+            f"{RULED_EXPERIMENT_ACCOUNT}, whose token must carry the "
+            f"`{CLASSIC_TOKEN_PROTECTION_SCOPE}` scope (classic) or "
+            f"{FINE_GRAINED_PROTECTION_PERMISSION} (fine-grained). "
             "Nothing was created."
         )
-    return login
+    refuse_if_classic_scopes_lack_repo(login, classic_scopes)
+    return login, classic_scopes
+
+
+def credential_startup_lines(
+    login: str, classic_scopes: list[str] | None
+) -> list[str]:
+    """What the startup check proved, worded to claim nothing it did not. Pure.
+
+    The earlier version printed "the token carries the scope the role needs"
+    after two reads, and a token that could read and not write passed it
+    (PR #228 review round 2). Write capability is claimed in one place only:
+    after the protection PUT on the throwaway branch has succeeded.
+    """
+    lines = [
+        f"credential: {login} holds the admin role on {REPO_SLUG}, and main's "
+        "protection reads. That proves the role and a read; it does not "
+        "prove the token can write protection."
+    ]
+    if classic_scopes is None:
+        lines.append(
+            "  GitHub reports no scopes for this token (no X-OAuth-Scopes "
+            "header: a fine-grained or app token), and a fine-grained token's "
+            "permissions cannot be read back. The first protection PUT, on "
+            f"{EXPERIMENT_BRANCH}, is the write check; a 403 there names "
+            f"{FINE_GRAINED_PROTECTION_PERMISSION} as the missing permission."
+        )
+    elif CLASSIC_TOKEN_PROTECTION_SCOPE in classic_scopes:
+        lines.append(
+            "  classic token; GitHub reports its scopes as: "
+            f"{', '.join(classic_scopes)}. `{CLASSIC_TOKEN_PROTECTION_SCOPE}` "
+            "is among them, the scope GitHub documents for the "
+            "branch-protection endpoints. The first protection PUT, on "
+            f"{EXPERIMENT_BRANCH}, is still the write check."
+        )
+    else:
+        lines.append(
+            "  classic token; GitHub reports its scopes as: "
+            f"{', '.join(classic_scopes)}, without "
+            f"`{CLASSIC_TOKEN_PROTECTION_SCOPE}`. It cannot write protection."
+        )
+    return lines
 
 
 def read_main_protection() -> dict:
@@ -253,6 +420,18 @@ def read_main_protection() -> dict:
             "credential that can read branch protection."
         )
     return protection
+
+
+def read_main_tip_sha() -> str:
+    """main's tip as GitHub reports it: the base of the throwaway branch."""
+    reference = api_json(f"repos/{REPO_SLUG}/git/ref/heads/{MAIN_BRANCH}")
+    sha = ((reference or {}).get("object") or {}).get("sha")
+    if not sha:
+        raise Refusal(
+            f"could not read {MAIN_BRANCH}'s tip from GitHub ({reference!r}). "
+            "Nothing was created."
+        )
+    return sha
 
 
 def protection_payload_from(main_protection: dict, *, dismiss_stale: bool) -> dict:
@@ -377,10 +556,37 @@ def clone_scratch_repository() -> str:
         raise Refusal(
             f"cloning {REPO_CLONE_URL} into a scratch directory failed with "
             f"exit {completed.returncode}.\n"
-            f"stderr: {completed.stderr.strip() or '(empty)'}\n"
-            "Nothing was created on the repository."
+            f"stderr: {completed.stderr.strip() or '(empty)'}"
         )
     return directory
+
+
+def protection_write_refusal(branch: str, returncode: int, stderr: str) -> Refusal:
+    """The refusal for a protection PUT that failed. Pure.
+
+    The PUT on the throwaway branch is the credential's write check (PR #228
+    review round 2), so a 403 is classified as the credential's failure: a
+    CredentialRefusal, exit 2, naming the permission. gh's stderr is quoted
+    verbatim because a 403 can also be a secondary rate limit, and the
+    operator must be able to tell the two apart.
+    """
+    detail = stderr.strip() or "(empty)"
+    if "HTTP 403" in detail:
+        return CredentialRefusal(
+            f"GitHub refused to write protection on {branch} (exit "
+            f"{returncode}).\nstderr: {detail}\n"
+            "A 403 here means this token cannot write branch protection, "
+            "whatever role the account holds: it needs "
+            f"`{CLASSIC_TOKEN_PROTECTION_SCOPE}` (classic) or "
+            f"{FINE_GRAINED_PROTECTION_PERMISSION} (fine-grained). Nothing is "
+            f"protected; cleanup below deletes {branch}. Re-run under "
+            f"{RULED_EXPERIMENT_ACCOUNT} with a token that carries the "
+            "permission."
+        )
+    return Refusal(
+        f"applying protection to {branch} failed with exit {returncode}.\n"
+        f"stderr: {detail}"
+    )
 
 
 def put_protection(branch: str, payload: dict) -> None:
@@ -393,9 +599,8 @@ def put_protection(branch: str, payload: dict) -> None:
         input_text=json.dumps(payload),
     )
     if completed.returncode != 0:
-        raise Refusal(
-            f"applying protection to {branch} failed with exit "
-            f"{completed.returncode}.\nstderr: {completed.stderr.strip()}"
+        raise protection_write_refusal(
+            branch, completed.returncode, completed.stderr
         )
 
 
@@ -449,12 +654,17 @@ def patch_reviews_partial(branch: str) -> dict:
         ) from None
 
 
-def push_probe(branch: str, *, expect: str, clone_directory: str) -> dict:
+def push_probe(
+    branch: str, *, expect_accepted: bool, reason: str, clone_directory: str
+) -> dict:
     """Push an empty commit to `branch` and report what actually happened.
 
-    `expect` is recorded in the result rather than asserted, so the report
-    states both what was expected and what occurred. Both git calls run in
-    the scratch clone, never in the operator's own repository.
+    The expectation is recorded in the result twice: `expect_accepted`, the
+    boolean judge_push_probe_result compares against, and `expected`, the
+    prose the report shows. The REASON a push was refused can only be read
+    from `detail`, which is why the judgment lives in a separate function
+    rather than here. Both git calls run in the scratch clone, never in the
+    operator's own repository.
     """
     refuse_if_main(branch)
     committed = run_command(
@@ -475,11 +685,160 @@ def push_probe(branch: str, *, expect: str, clone_directory: str) -> dict:
     combined = (completed.stdout + completed.stderr).strip()
     return {
         "branch": branch,
-        "expected": expect,
+        "expected": f"{'accepted' if expect_accepted else 'refused'} ({reason})",
+        "expect_accepted": expect_accepted,
         "accepted": completed.returncode == 0,
         "gh006": "GH006" in combined,
         "detail": combined[-400:] or "(no output)",
     }
+
+
+def judge_push_probe_result(probe: dict) -> tuple[str, str]:
+    """Decide what one push probe actually showed. Pure: no network, no disk.
+
+    RISK 2's conclusion is two of these, and at 2de34bc nothing made it:
+    push_probe recorded `expected` beside `accepted`, and main() compared
+    them against nothing, so a probe that contradicted its expectation -- or
+    one that never reached branch protection -- exited 0 (PR #228 review
+    round 2, reviewer mac-claude's demonstration: with `git push` failing on
+    `fatal: could not read Username`, both probes came back accepted=False
+    and the run reported RISK 2 measured).
+
+      - refused without GH006 in git's output -> branch protection never
+        ruled on the push (a stale non-fast-forward, a credential git cannot
+        use, a network failure), so nothing was measured. An error.
+      - the outcome contradicts the expectation -> a discrepancy. The run
+        licenses nothing until it is understood, and exits nonzero.
+      - the outcome matches -> a finding, like RISK 1's.
+
+    Returns (outcome, the sentence to print), prefixed like RISK 1's.
+    """
+    branch = probe.get("branch") or "(unknown branch)"
+    expected = probe.get("expected") or "(no expectation recorded)"
+    expect_accepted = probe.get("expect_accepted")
+    accepted = probe.get("accepted")
+    if not isinstance(expect_accepted, bool) or not isinstance(accepted, bool):
+        return (
+            PUSH_PROBE_NOT_MEASURED,
+            f"ERROR: the push probe on {branch} is incomplete "
+            f"(expect_accepted={expect_accepted!r}, accepted={accepted!r}), "
+            "so nothing was measured.",
+        )
+    detail = probe.get("detail") or "(no output)"
+    if accepted:
+        if expect_accepted:
+            return (
+                PUSH_PROBE_AS_EXPECTED,
+                f"FINDING: the push to {branch} was accepted, as expected "
+                f"({expected}).",
+            )
+        return (
+            PUSH_PROBE_CONTRADICTED,
+            f"DISCREPANCY: the push to {branch} was ACCEPTED, but branch "
+            f"protection was expected to refuse it ({expected}). The "
+            "protection this run applied did not stop a direct push, so RISK "
+            "2 was not measured against a protected branch. This run "
+            "licenses nothing.",
+        )
+    if not probe.get("gh006"):
+        return (
+            PUSH_PROBE_NOT_MEASURED,
+            f"ERROR: the push to {branch} was refused, but not by branch "
+            "protection -- git's output carries no GH006 -- so nothing was "
+            f"measured. git said: {detail}. A leftover {branch} from an "
+            "earlier run, or a credential git cannot use, produces this.",
+        )
+    if expect_accepted:
+        return (
+            PUSH_PROBE_CONTRADICTED,
+            f"DISCREPANCY: branch protection refused (GH006) the push to "
+            f"{branch}, which is unprotected and was expected to accept it "
+            f"({expected}). Ordinary pushes ARE affected. This run licenses "
+            f"nothing until that is understood. git said: {detail}",
+        )
+    return (
+        PUSH_PROBE_AS_EXPECTED,
+        f"FINDING: branch protection refused (GH006) the push to {branch}, "
+        f"as expected ({expected}).",
+    )
+
+
+def judge_run_report(report: dict) -> tuple[int, list[str]]:
+    """The exit code and the summary, from the report alone. Pure.
+
+    0 only when RISK 1 produced a finding and every push probe came out as
+    expected. Anything short of that is 1: a measurement that did not
+    complete, or a probe that contradicted its expectation. The summary has
+    one line per risk and per probe, so the last thing an unattended run
+    prints speaks for the whole run and not for RISK 1 alone (PR #228 review
+    round 2). An adverse RISK 1 finding -- the count clobbered -- is still a
+    completed measurement and exits 0, as the exit codes document.
+    """
+    exit_code = 0
+    lines: list[str] = []
+    risk_1 = report.get("risk_1_patch_semantics")
+    if not isinstance(risk_1, dict):
+        lines.append(
+            "RISK 1: not measured -- the run stopped before the partial "
+            "PATCH was judged."
+        )
+        exit_code = 1
+    else:
+        lines.append(f"RISK 1: {risk_1.get('sentence')}")
+        if risk_1.get("outcome") == PATCH_SEMANTICS_NOT_MEASURED:
+            exit_code = 1
+    probes = report.get("risk_2_pushes") or []
+    for probe in probes:
+        sentence = probe.get("sentence") or (
+            f"ERROR: the probe on {probe.get('branch')} was never judged."
+        )
+        lines.append(f"RISK 2: {sentence}")
+        if probe.get("outcome") != PUSH_PROBE_AS_EXPECTED:
+            exit_code = 1
+    if len(probes) < len(PUSH_PROBES):
+        lines.append(
+            f"RISK 2: not measured -- {len(probes)} of {len(PUSH_PROBES)} "
+            "push probes ran."
+        )
+        exit_code = 1
+    return exit_code, lines
+
+
+def branch_exists(branch: str) -> bool:
+    return api_json(
+        f"repos/{REPO_SLUG}/branches/{branch}", allow_failure=True
+    ) is not None
+
+
+def leftover_experiment_branches(exists: Callable[[str], bool]) -> list[str]:
+    """Which of the branches this program creates are already present. Pure
+    over the predicate, which is branch_exists in the program and a lambda in
+    the tests. Every branch is checked, in cleanup's order.
+    """
+    return [branch for branch in EXPERIMENT_BRANCHES if exists(branch)]
+
+
+def leftover_refusal_message(leftover: list[str]) -> str:
+    """Why the run will not start over a leftover, and the fix. Pure.
+
+    Both branches are guarded, not only the protected one (PR #228 review
+    round 2): a FEATURE_BRANCH surviving a cleanup that could not finish sits
+    one commit ahead of main, so this run's push to it would be rejected as a
+    stale non-fast-forward -- a refusal that has nothing to do with branch
+    protection, on the probe that expects acceptance.
+    """
+    lines = [
+        f"already on the repository: {', '.join(leftover)} -- a leftover from "
+        "an interrupted run, or from a cleanup that could not finish. A "
+        "leftover is inspected by a person, not reused: a push to it would be "
+        "a stale non-fast-forward, not a measurement. Remove it by hand, "
+        "protection first (a 404 from the protection delete means it had "
+        "none), then re-run:"
+    ]
+    for branch in leftover:
+        for command in removal_commands(branch):
+            lines.append(f"  {command}")
+    return "\n".join(lines)
 
 
 def removal_commands(branch: str) -> list[str]:
@@ -518,6 +877,15 @@ def cleanup(branches: list[str], protected: set[str]) -> tuple[list[str], list[s
     does not depend on a scratch clone that may not exist by the time it runs.
     Protection is deleted only for the branches this run actually protected,
     so a delete is never issued against nothing (PR #228 review item 7b).
+
+    A branch is unfinished only when it still exists -- when its ref delete
+    failed. A failed protection delete is noted but does not by itself make
+    a leftover: on the credential path, where the PUT was refused, the
+    protection delete is refused the same way (403: it needs the same
+    permission) while the ref delete succeeds, and an earlier version then
+    announced a leftover for a branch that was already gone (PR #228 review
+    round 2). If protection really does stand, the ref delete fails on
+    allow_deletions=false and the branch is reported that way.
     """
     notes: list[str] = []
     unfinished: list[str] = []
@@ -541,7 +909,6 @@ def cleanup(branches: list[str], protected: set[str]) -> tuple[list[str], list[s
                     f"{branch}: protection could NOT be removed "
                     f"(exit {code}): {detail}"
                 )
-                unfinished.append(branch)
         code, detail = cleanup_command(
             ["gh", "api", "-X", "DELETE",
              f"repos/{REPO_SLUG}/git/refs/heads/{branch}"]
@@ -552,8 +919,7 @@ def cleanup(branches: list[str], protected: set[str]) -> tuple[list[str], list[s
             notes.append(
                 f"{branch}: branch could NOT be deleted (exit {code}): {detail}"
             )
-            if branch not in unfinished:
-                unfinished.append(branch)
+            unfinished.append(branch)
     return notes, unfinished
 
 
@@ -562,9 +928,10 @@ def report_unfinished_cleanup(unfinished: list[str]) -> None:
     print(
         "\nTHE LIVE REPOSITORY HAS BEEN LEFT MODIFIED. Cleanup could not "
         f"finish for: {', '.join(unfinished)}.\n"
-        "Each leftover branch still exists on GitHub, and the protection "
-        "copied onto it forbids deleting it, so it must be removed by hand, "
-        "protection first:",
+        "Each leftover branch still exists on GitHub. Remove it by hand, "
+        "protection first -- while the protection copied from main stands it "
+        "forbids deleting the branch; a 404 from the protection delete means "
+        "it has none:",
         file=sys.stderr,
     )
     for branch in unfinished:
@@ -582,14 +949,14 @@ def main() -> int:
     arguments = parser.parse_args()
 
     try:
-        login = check_experiment_credential()
+        login, classic_scopes = check_experiment_credential()
         main_protection = read_main_protection()
     except Refusal as refusal:
         print(f"refused: {refusal}", file=sys.stderr)
         return 2
 
-    print(f"credential: {login}, admin on {REPO_SLUG}, and main's protection "
-          "reads, so the token carries the scope the role needs.")
+    for line in credential_startup_lines(login, classic_scopes):
+        print(line)
     if login.casefold() != RULED_EXPERIMENT_ACCOUNT.casefold():
         print(f"note: the ruled account for this experiment is "
               f"{RULED_EXPERIMENT_ACCOUNT}; this run is {login}.")
@@ -600,37 +967,39 @@ def main() -> int:
 
     if arguments.dry_run:
         print("\nplan, in order:")
-        print("  1. check the credential can write protection (done above)")
-        print("  2. clone the repository into a temporary directory of its "
-              "own, so nothing")
-        print("     is committed into the repository you are standing in")
-        print(f"  3. create {EXPERIMENT_BRANCH} from the clone's tip of main")
+        print("  1. check the credential by reading: admin role, classic-token")
+        print("     scopes where GitHub reports them, main's protection (done above)")
+        print(f"  2. refuse if {EXPERIMENT_BRANCH} or {FEATURE_BRANCH}")
+        print("     already exists")
+        print(f"  3. create {EXPERIMENT_BRANCH} from main's tip as GitHub reports it")
         print("  4. apply main-shaped protection to it, dismiss_stale_reviews=false")
-        print("  5. read required_pull_request_reviews, PATCH naming ONLY")
+        print("     -> this PUT is the credential's WRITE check: a 403 names the")
+        print("        missing permission, exits 2, and leaves only an unprotected")
+        print("        branch, which cleanup deletes")
+        print("  5. clone the repository into a temporary directory of its own, so")
+        print("     nothing is committed into the repository you are standing in")
+        print("  6. read required_pull_request_reviews, PATCH naming ONLY")
         print("     dismiss_stale_reviews=true, then read it back with a FRESH GET")
         print("     -> if required_approving_review_count survives, the partial")
         print("        PATCH is safe; if it changes, the full form is required;")
         print("        if the PATCH did not take effect, nothing was measured")
-        print(f"  6. push from the clone to {FEATURE_BRANCH}, unprotected "
-              "-> expect accepted")
-        print(f"  7. push from the clone to {EXPERIMENT_BRANCH} -> expect refused")
-        print("  8. delete both branches and their protection, and remove the clone")
+        print(f"  7. push from the clone to {FEATURE_BRANCH}, unprotected")
+        print("     -> expect accepted")
+        print(f"  8. push from the clone to {EXPERIMENT_BRANCH}")
+        print("     -> expect refused by branch protection (GH006)")
+        print("     -> a probe that contradicts its expectation, or is refused for")
+        print("        any reason other than protection, exits 1")
+        print("  9. delete both branches and their protection, and remove the clone")
         print("\nnothing was written.")
         return 0
 
     try:
-        existing = api_json(
-            f"repos/{REPO_SLUG}/branches/{EXPERIMENT_BRANCH}", allow_failure=True
-        )
+        leftover = leftover_experiment_branches(branch_exists)
     except Refusal as refusal:
         print(f"refused: {refusal}", file=sys.stderr)
         return 2
-    if existing is not None:
-        print(
-            f"refused: {EXPERIMENT_BRANCH} already exists — it may be a leftover "
-            f"from an interrupted run. Inspect and delete it, then re-run.",
-            file=sys.stderr,
-        )
+    if leftover:
+        print(f"refused: {leftover_refusal_message(leftover)}", file=sys.stderr)
         return 2
 
     report: dict = {"risk_1_patch_semantics": None, "risk_2_pushes": []}
@@ -639,18 +1008,13 @@ def main() -> int:
     clone_directory: str | None = None
     exit_code = 0
     try:
-        # Everything fallible but harmless happens before the first write:
-        # if the clone fails, `created` is still empty and GitHub is untouched.
-        clone_directory = clone_scratch_repository()
-        head = run_command(["git", "rev-parse", "HEAD"], cwd=clone_directory)
-        if head.returncode != 0:
-            raise Refusal(
-                "could not read the scratch clone's tip of main "
-                f"(exit {head.returncode}). Nothing was created."
-            )
+        # The credential's write check comes first, before the clone and
+        # before anything else: the throwaway branch, then protection on it.
+        # A 403 on the PUT leaves an unprotected branch that cleanup deletes
+        # with the push permission every candidate token has.
         gh(["api", "-X", "POST", f"repos/{REPO_SLUG}/git/refs",
             "-f", f"ref=refs/heads/{EXPERIMENT_BRANCH}",
-            "-f", f"sha={head.stdout.strip()}"])
+            "-f", f"sha={read_main_tip_sha()}"])
         created.append(EXPERIMENT_BRANCH)
 
         # Recorded as protected BEFORE the call, not after: a PUT that fails
@@ -662,6 +1026,11 @@ def main() -> int:
             EXPERIMENT_BRANCH,
             protection_payload_from(main_protection, dismiss_stale=False),
         )
+        print(f"\ncredential: the protection PUT on {EXPERIMENT_BRANCH} "
+              f"succeeded, so {login}'s token writes branch protection.")
+
+        clone_directory = clone_scratch_repository()
+
         before = read_review_settings(EXPERIMENT_BRANCH)
         patch_response = patch_reviews_partial(EXPERIMENT_BRANCH)
         # The read-back the plan promises, and a fresh one: the PATCH's own
@@ -681,25 +1050,26 @@ def main() -> int:
         if outcome == PATCH_SEMANTICS_NOT_MEASURED:
             raise Refusal(sentence)
 
-        feature = push_probe(
-            FEATURE_BRANCH,
-            expect="accepted (unprotected branch)",
-            clone_directory=clone_directory,
-        )
-        report["risk_2_pushes"].append(feature)
-        # Only a branch that was actually created is handed to cleanup: a
-        # rejected push leaves nothing on GitHub, and deleting nothing prints
-        # failures that read like cleanup failures.
-        if feature["accepted"]:
-            created.append(FEATURE_BRANCH)
-        report["risk_2_pushes"].append(push_probe(
-            EXPERIMENT_BRANCH,
-            expect="refused (protected, reviews required)",
-            clone_directory=clone_directory,
-        ))
+        for branch, expect_accepted, reason in PUSH_PROBES:
+            probe = push_probe(
+                branch,
+                expect_accepted=expect_accepted,
+                reason=reason,
+                clone_directory=clone_directory,
+            )
+            # Only a branch that was actually created is handed to cleanup: a
+            # rejected push leaves nothing on GitHub, and deleting nothing
+            # prints failures that read like cleanup failures.
+            if probe["accepted"] and branch not in created:
+                created.append(branch)
+            probe["outcome"], probe["sentence"] = judge_push_probe_result(probe)
+            report["risk_2_pushes"].append(probe)
     except KeyboardInterrupt:
         print("\ninterrupted; cleaning up before exiting.", file=sys.stderr)
         exit_code = 1
+    except CredentialRefusal as refusal:
+        print(f"\nrefused: {refusal}", file=sys.stderr)
+        exit_code = 2
     except Refusal as failure:
         print(f"\nmeasurement stopped: {failure}", file=sys.stderr)
         exit_code = 1
@@ -716,10 +1086,9 @@ def main() -> int:
 
     print("\nreport:")
     print(json.dumps(report, indent=2))
-    if exit_code != 0:
-        return exit_code
-    print(f"\n{report['risk_1_patch_semantics']['sentence']}")
-    return 0
+    judged_code, summary = judge_run_report(report)
+    print("\nsummary:", *summary, sep="\n  ")
+    return exit_code or judged_code
 
 
 if __name__ == "__main__":
