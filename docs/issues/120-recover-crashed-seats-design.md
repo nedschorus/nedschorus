@@ -7,8 +7,11 @@ design-as-of: 2026-09-02
 
 What [`scripts/recover-crashed-seats.py`](../../scripts/recover-crashed-seats.py)
 does today, end to end, and the changes ruled for it. Pair document for
-[nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120), which
-carries the issue's own history and close condition.
+[nedschorus#242](https://github.com/nedschorus/nedschorus/issues/242), which
+carries the six changes as its state and next actions. It was written as the
+overview for [nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120),
+the script's original build, which closed completed on 2026-09-02 when its
+close condition was met; the file keeps that number in its name.
 
 A **seat** is a durable named identity — `MD-skills`, `merge-lane` — a directory
 under `~/agents/` and a tmux session of the same name, into which sessions are
@@ -142,8 +145,8 @@ transcript under a fresh supervisor, in its own directory. Verified afterwards:
 each transcript carries the script's crash-recovery opening turn and has advanced
 past the relaunch.
 
-That is [nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120)'s
-stated close condition.
+That was [nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120)'s
+stated close condition, and it closed on it the same day.
 
 **The box's own branch was then proven by a deliberate crash the same day.** The
 non-macOS launch path is different code — it composes the supervisor's tmux
