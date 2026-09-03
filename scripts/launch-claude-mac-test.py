@@ -105,16 +105,21 @@ class MacLaunchSandbox:
                    'done\n'
                    'if [ -n "$pane_command" ]; then sh -c "$pane_command"; fi\n'
                    'exit 0\n')
-        # The supervisor call records its ENVIRONMENT as well as the fact
-        # that it ran.
+        # The supervisor call records its ENVIRONMENT and its argv as well
+        # as the fact that it ran. The extra-arguments hook variable is
+        # recorded too: it must reach the supervisor as ARGUMENTS and never
+        # as an inherited variable (the 2026-09-03 resume leak, below).
         write_stub(self.stubs, "python3",
                    record +
                    'for argument in "$@"; do\n'
                    '  case "$argument" in (*handoff-supervisor.py*)\n'
+                   f'    printf \'%s\\n\' "$@" > "{self.captures}/supervisor-argv.txt"\n'
                    '    { echo "CLAUDE_CODE_TASK_LIST_ID='
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '      echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
-                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}"; } '
+                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
+                   '      echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
+                   '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
                    f'> "{self.captures}/supervisor-environment.txt";;\n'
                    '  esac\n'
                    'done\n'
@@ -130,22 +135,32 @@ class MacLaunchSandbox:
                    '{ echo "CLAUDE_CODE_TASK_LIST_ID='
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '  echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
-                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}"; } '
+                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
+                   '  echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
+                   '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
 
-    def run(self, agents_root, seat_name="seat-t", attach=False):
+    def run(self, agents_root, seat_name="seat-t", attach=False,
+            extra_arguments=None):
+        """Run the launcher in the sandbox. extra_arguments, when given, is
+        placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
+        recover-crashed-seats.py's launch_seat places it — after the strip
+        of ambient LAUNCH_CLAUDE_* values, so the case measures its own."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
+        environment = {
+            **{key: value for key, value in os.environ.items()
+               if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
+                                      "CLAUDE_CODE_"))},
+            "NEDSCHORUS_AGENTS_ROOT": agents_root,
+            "HOME": str(self.home),
+            "SHELL": str(self.stubs / "record-shell"),
+            "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin"}
+        if extra_arguments is not None:
+            environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         return subprocess.run(
             [str(LAUNCHER), *arguments],
             capture_output=True, text=True, check=False,
-            cwd=str(self.workdir),
-            env={**{key: value for key, value in os.environ.items()
-                    if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
-                                           "CLAUDE_CODE_"))},
-                 "NEDSCHORUS_AGENTS_ROOT": agents_root,
-                 "HOME": str(self.home),
-                 "SHELL": str(self.stubs / "record-shell"),
-                 "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin"})
+            cwd=str(self.workdir), env=environment)
 
     def invoked_commands(self):
         path = self.captures / "commands-invoked.txt"
@@ -158,6 +173,11 @@ class MacLaunchSandbox:
 
     def supervisor_environment(self):
         return environment_lines(self.captures / "supervisor-environment.txt")
+
+    def supervisor_argv(self):
+        path = self.captures / "supervisor-argv.txt"
+        return (path.read_text(encoding="utf-8").splitlines()
+                if path.is_file() else [])
 
     def after_exit_environment(self):
         return environment_lines(self.captures / "after-exit-environment.txt")
@@ -318,6 +338,60 @@ def main() -> int:
               and Path(sandbox.after_exit_cwd()).resolve()
               == (sandbox.home / "agents" / "seat-c").resolve(),
               sandbox.after_exit_cwd() or "no shell recorded")
+
+        # --- the extra-arguments hook is CONSUMED, not inherited. Measured
+        # 2026-09-03: recover-crashed-seats.py launched a seat with
+        # LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="--handoff-dir …
+        # --resume-session-id <id>"; the launcher folded that into the
+        # supervisor command and then started the seat's tmux server with
+        # the variable still set, so the server, the supervisor and the
+        # recovered claude session all inherited it. When an agent in that
+        # session ran `launch-claude-mac <other-seat>` from its Bash tool,
+        # the launcher found the inherited value and gave the OTHER seat
+        # `--resume-session-id <the recovering session's id>`: a
+        # `claude --resume` of the first seat's session came up in the
+        # second seat's directory and appended 71+ wrong-cwd records to the
+        # first seat's transcript before it was killed by hand. Two halves,
+        # both required: the arguments still reach the supervisor's argv
+        # (the hook works), and the variable is absent from the supervisor's
+        # environment (the seat cannot pass it on). ---------------------------
+        recovery_extra_arguments = (
+            f"--handoff-dir {root / 'handoffs'} "
+            "--resume-session-id ee460522-0000-4000-8000-000000000000")
+        sandbox = MacLaunchSandbox(root / "hook-consumed-detached")
+        result = sandbox.run("~/agents", seat_name="seat-r",
+                             extra_arguments=recovery_extra_arguments)
+        supervisor_argv = sandbox.supervisor_argv()
+        check("hook (detached): the extra arguments reach the supervisor's argv",
+              result.returncode == 0
+              and "--resume-session-id" in supervisor_argv
+              and supervisor_argv[-1] == "ee460522-0000-4000-8000-000000000000"
+              and "--handoff-dir" in supervisor_argv,
+              (result.returncode, supervisor_argv, result.stderr[:300]))
+        check("hook (detached): the supervisor does NOT inherit the hook variable",
+              sandbox.supervisor_environment().get(
+                  "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS") == "<unset>",
+              sandbox.supervisor_environment())
+
+        sandbox = MacLaunchSandbox(root / "hook-consumed-attached")
+        result = sandbox.run("~/agents", seat_name="seat-s", attach=True,
+                             extra_arguments=recovery_extra_arguments)
+        supervisor_argv = sandbox.supervisor_argv()
+        check("hook (attached): the extra arguments reach the supervisor's argv",
+              result.returncode == 0
+              and "--resume-session-id" in supervisor_argv
+              and supervisor_argv[-1] == "ee460522-0000-4000-8000-000000000000",
+              (result.returncode, supervisor_argv, result.stderr[:300]))
+        check("hook (attached): the supervisor does NOT inherit the hook variable",
+              sandbox.supervisor_environment().get(
+                  "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS") == "<unset>",
+              sandbox.supervisor_environment())
+        # The after-exit shell is where an operator types the next
+        # `launch-claude-mac <other-seat>`; it must not carry it either.
+        check("hook (attached): the after-exit shell does NOT inherit the hook variable",
+              sandbox.after_exit_environment().get(
+                  "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS") == "<unset>",
+              sandbox.after_exit_environment())
 
     print()
     if failures:

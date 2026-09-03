@@ -342,9 +342,17 @@ fi
 # nedschorus#120). An environment variable rather than a flag because the
 # launcher's argument surface is operator-facing and stable, while this is
 # machinery-to-machinery; callers own the quoting of what they pass.
+# The variable is fully consumed here and is unset before the tmux server
+# starts, so the seat's process tree never inherits it. Measured 2026-09-03:
+# a seat recovered with --resume-session-id ran `launch-claude-mac
+# <other-seat>` from its Bash tool, the launcher found the inherited value,
+# and the other seat came up as `claude --resume <the recovering session's
+# id>` in the wrong directory, appending 71+ wrong-cwd records to the first
+# seat's transcript before it was killed by hand.
 if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"
 fi
+unset LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS
 
 # When the supervisor exits, the pane becomes an interactive shell in the
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
