@@ -7,7 +7,7 @@ disposition: complete-and-archive — consumed by the landed CLAUDE.md at the re
 
 Issue: [nedschorus#43](https://github.com/nedschorus/nedschorus/issues/43)
 
-**Consumer:** founding plan step 2 ("Revise CLAUDE.md for them" — [nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § The steps). Until this file, the inputs list lived scattered across the new-vp handoff chain and machine-local session transcripts; no committed consolidation existed.
+**Consumer:** founding plan step 2 ("Revise CLAUDE.md for them" — nedschorus-founding-plan.md (retired; `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`) § The steps). Until this file, the inputs list lived scattered across the new-vp handoff chain and machine-local session transcripts; no committed consolidation existed.
 
 Inputs are numbered in accumulation order — the order the handoff chain recorded them. Verbatim quotes were re-verified against their sources on 2026-08-06 before this file was written.
 
@@ -56,5 +56,5 @@ Provenance: session 4cf7d488; recorded as the seventh input in the outstanding-i
 
 ## Adjacent committed material step 2 consumes (already homed — listed so step 2 does not rediscover it)
 
-- **The settled CLAUDE.md lines** ([nedschorus-founding-plan.md](../cross-project/nedschorus-founding-plan.md) § Standing decisions): the handoff pickup line; the transcript-archive pointer; commit-as-you-go with session id in every commit message; the zero-context-reader writing rule for durable artifacts; the check-in timing rule ([nedschorus#25](https://github.com/nedschorus/nedschorus/issues/25)). These are settled content, not queued inputs.
+- **The settled CLAUDE.md lines** (nedschorus-founding-plan.md (retired; `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`) § Standing decisions): the handoff pickup line; the transcript-archive pointer; commit-as-you-go with session id in every commit message; the zero-context-reader writing rule for durable artifacts; the check-in timing rule ([nedschorus#25](https://github.com/nedschorus/nedschorus/issues/25)). These are settled content, not queued inputs.
 - **The seed draft** ([seed-claude-md-draft.md](../cross-project/seed-claude-md-draft.md)): pre-calibration input to step 2, not the base (founding plan doc table). Step 2's own method line: per sentence — training covers it → cut; training silent → state plainly; training conflicts → NOT/DO override. No rationale, no history, present-tense truth. Line-by-line boss admission.
