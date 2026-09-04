@@ -555,7 +555,7 @@ machine-local and gitignored, deleted once this document was verified on
 main; everything they decided is restated here. This document depends,
 deliberately, on three documents, each canonical for its own subject —
 the gatekeeper design, the seat model, and the AI-native development architecture
-(`docs/cross-project/nedschorus-ai-native-software-development.md`).
+(`docs/wiki/queue/nedschorus-ai-native-software-development-objective.md`).
 
 Streamlined 2026-08-20 on the user's ruling, after the document's
 mechanism prose was three times found stale against the code it

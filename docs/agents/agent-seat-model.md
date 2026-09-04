@@ -31,27 +31,18 @@ The user's reasoning, which this model serves:
 
 `sidebar` is the deliberate exception to the grouping rule: it holds no pile at all and answers whatever is asked, precisely so that off-topic questions never land in a seat whose context they would pollute.
 
-## The seats
+## Which seats exist
 
-Seven are defined. Each row's brief is the authority on what that seat owns.
+**Reduced 2026-09-04 by user ruling.** This section held a roster of seven named seats. None of them was running, and the seats that existed were not in it, so the roster misled every reader who trusted it.
 
-| Seat | What it owns | Brief |
-|---|---|---|
-| `gatekeeper` | the remaining work to activate the git-gatekeeper: the walked-approval evidence format, build slice 6, then the credential work | `gatekeeper-instructions.md` |
-| `sanity-checker` | review quality — the sanity-check instrument: three attack prompts (`docs/agents/sanity-checker-{cut,mechanization,fresh-eyes}-attack-prompt.md`) and their runner (`scripts/sanity-check-attacks.py`, its docstring the operating-rules home); a separate instrument from the cold-read grid, never one of its cells (ruled 2026-08-17) | `sanity-checker-instructions.md` |
-| `skill-builder` | the seven proposed skills queued as issues #17–#23, and the queue-drain procedure that empties the project's queues ([#24](https://github.com/nedschorus/nedschorus/issues/24)) | `skill-builder-instructions.md` |
-| `ghi` | GitHub-issue knowledge and tooling: ghi-info ([#46](https://github.com/nedschorus/nedschorus/issues/46)), run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)), the reference-integrity checker ([#42](https://github.com/nedschorus/nedschorus/issues/42)), memory instrumentation ([#39](https://github.com/nedschorus/nedschorus/issues/39), placed here by cheapest context rather than by the shared doctrine) | `ghi-instructions.md` |
-| `fleet` | session and agent machinery: the launchers, the handoff supervisor, seat isolation | `fleet-instructions.md` |
-| `doctrine` | how the project should work: what it preserves ([#32](https://github.com/nedschorus/nedschorus/issues/32)), instruction delivery ([#30](https://github.com/nedschorus/nedschorus/issues/30)), the research bundles | `doctrine-instructions.md` |
-| `sidebar` | nothing — the spare, for off-topic questions | `sidebar-instructions.md` |
+The seats that exist are the directories under `~/agents` and the briefs under `docs/agents`, and the user chooses which of them run. Two or three at a time is the working pattern and **five is the ceiling the user set**; a fourth is allowed and unusual, and worth pausing over, because it usually means a running seat is finished. Each seat's brief remains the authority on what that seat owns.
 
-**On these being one-word names** (user-ruled 2026-08-13, after a cold read raised it): the project's multi-part naming rule in `CLAUDE.md` is scoped to names likely to be *grepped* — files, directories, functions, globals. A seat name is an **address**, not a search key: it is typed to reach an agent, the way a hostname is. So one word is right here, and a seat named after the system it works on is better than one that is not, because the point of the name is that the user recognises it in a session list weeks later.
+Seven briefs under `docs/agents` still describe seats from the old roster and are stale; retiring or rewriting them is separate work.
+
+
+**On seat names being one word** (user-ruled 2026-08-13, after a cold read raised it): the project's multi-part naming rule in `CLAUDE.md` is scoped to names likely to be *grepped* — files, directories, functions, globals. A seat name is an **address**, not a search key: it is typed to reach an agent, the way a hostname is. So one word is right here, and a seat named after the system it works on is better than one that is not, because the point of the name is that the user recognises it in a session list weeks later.
 
 `gatekeeper` naming the seat that works on the git-gatekeeper is therefore deliberate, not a collision to fix. The program keeps its `git-` prefix everywhere (`scripts/git-gatekeeper.py`, `docs/cross-project/git-gatekeeper-design.md`), and every place a seat name appears carries its own suffix — `gatekeeper-instructions.md`, `~/.claude/handoffs/gatekeeper-handoff.md`, `~/agents/gatekeeper` — so the composed names stay specific even where the root word is common.
-
-## How many run
-
-Two or three at a time is the working pattern; **five is the ceiling the user set**. Four is allowed and unusual — if you find yourself launching a fourth, it is worth asking whether one of the running seats is finished.
 
 ## When a seat's work is done
 
@@ -73,9 +64,13 @@ They are different, and confusing them loses work.
 
 `choirmaster` is the live case: the founding seat, whose work has been redistributed into the seats above. Its 2026-08-12 handoff was archived on 2026-08-13 so a future agent of that name starts fresh, and the user intends to reuse the name for a coordinating seat later. Until he does, no `choirmaster` seat is defined by this model.
 
-## Why there is no master agent
+## Why there is a liaison, and no master
 
-Considered and declined 2026-08-13. A coordinating seat has nothing to do while the user chooses which seats run, and the evidence is `choirmaster` itself: created to direct, it drifted into being an ordinary topic thread. Revisit if seats ever need to hand work to each other without the user in the loop — which today they cannot, since a seat's only channel to another seat is through him.
+**Reopened and replaced 2026-09-04 by user ruling.** This section previously recorded that a coordinating seat was considered and declined on 2026-08-13, on the evidence that `choirmaster`, created to direct, drifted into being an ordinary topic thread. That ruling named its own revisit condition: seats needing to hand work to each other without the user in the loop. Two things have since made the condition live.
+
+First, the condition is now the project's objective rather than a hypothetical. Second, the sentence this section rested on is no longer true: a seat's only channel to another seat was through the user, and cross-session messaging now exists and is in daily use between seats on this machine.
+
+What replaces the declined master is two things, deliberately separate. The **liaison** is a seat and a go-between only, never a doer: every agent the user is not directing reaches him through it, and when it is not running the fallback is a GitHub issue labelled `draft`. The **design-to-main state machine** is a program, not a seat: it routes work between nodes, counts passes and assembles escalations, and it holds no judgement. The 2026-08-13 evidence still stands against the thing it was about — an agent given nothing to do but coordinate drifts into doing — and a liaison given nothing to do but carry drifts nowhere.
 
 ## Filing new work
 
