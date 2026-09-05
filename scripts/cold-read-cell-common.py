@@ -86,9 +86,21 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # day's qualifier): a concise sentence-level restatement, then concise
 # criterion-tagged stumble and coverage findings. It is run singly -- one
 # cell against one walk item -- never by the grid, whose roster is
-# scripts/cold-read-grid.py's own.
-CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify"]
+# scripts/cold-read-grid.py's own. `terminology` (user-ruled 2026-09-05) is
+# the grid's second pass: the document's key-terms against five criteria.
+CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 TIER_CHOICES = ["good", "floor"]
+
+# What --cell may be when --prompt-file is given (user-ruled 2026-09-05): a
+# free label, because a draft prompt is by definition not yet a named pass,
+# and the flag exists so a trial can run through the ordinary launcher.
+# The label becomes the pass token of the report's file name --
+# `<record directory name>--<runtime>-<pass token>-<tier>.md` -- so it is
+# held to the characters every existing token uses: lowercase letters and
+# digits, joined by single hyphens. No leading, trailing or doubled hyphen,
+# because `--` is that name's separator and a reader splitting on it would
+# be misled. Without --prompt-file, --cell is still one of CELL_CHOICES.
+PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 # A cell's own refusals, kept off every code its runtime produces so that a
@@ -143,7 +155,16 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
     parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--cell", required=True, choices=CELL_CHOICES)
+    # Not `choices=`: the set of acceptable values depends on --prompt-file,
+    # which argparse cannot see while validating this one. `validate_cell`
+    # applies the rule once both are parsed, and leaves by the same door
+    # (EXIT_BAD_INVOCATION) argparse's own errors do.
+    parser.add_argument(
+        "--cell", required=True,
+        help=f"the pass to run, one of {', '.join(CELL_CHOICES)}; with "
+             "--prompt-file, any label of lowercase letters and digits joined "
+             "by single hyphens, which names the report",
+    )
     parser.add_argument("--tier", required=True, choices=TIER_CHOICES)
     parser.add_argument(
         "--target", required=True,
@@ -165,7 +186,40 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
              "gpt-5.6-terra at low) runs through this flag; no tier map pins "
              "low.",
     )
+    parser.add_argument(
+        "--prompt-file", metavar="PATH",
+        help="read the prompt template from this file instead of "
+             ".claude/skills/cold-read/prompts/<cell>.md, with the same "
+             "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
+             "repository root unless absolute. --cell is still required and "
+             "still names the report. This is how a draft prompt is trialled "
+             "through the ordinary launcher: on 2026-09-04, 24 trial cells "
+             "exited 64 because the only template a cell would read was the "
+             "one under prompts/. The stamp records the file's path.",
+    )
     return parser
+
+
+def validate_cell(cell: str, prompt_file_argument) -> None:
+    """--cell is a pass name, or under --prompt-file a report-name token.
+
+    Both refusals name their fix. A name outside CELL_CHOICES without
+    --prompt-file says which flag would let it run; a label that cannot be
+    a file-name token says what one looks like.
+    """
+    if not prompt_file_argument:
+        if cell not in CELL_CHOICES:
+            raise CellRefusal(
+                f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "
+                "a cell name outside that list runs only with --prompt-file, "
+                "which names the draft template it reads")
+        return
+    if not PROMPT_FILE_CELL_LABEL_PATTERN.match(cell):
+        raise CellRefusal(
+            f"--cell {cell!r} cannot name a report: with --prompt-file the cell "
+            "name is a free label that becomes a token of the report's file "
+            "name, and must be lowercase letters and digits joined by single "
+            "hyphens, like terminology-v9")
 
 
 def resolve_target(target_argument: str) -> pathlib.Path:
@@ -194,15 +248,37 @@ def resolve_report_path(report_argument: str) -> pathlib.Path:
     return report
 
 
-def compose_prompt(cell: str, target: pathlib.Path, report: pathlib.Path) -> str:
+def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
+    """The --prompt-file path, made absolute the way --target is.
+
+    Refused, not tracebacked, when it names no file: a trial that mistypes
+    the draft's path should read the same as any other bad invocation --
+    exit 64 with the path it looked for -- rather than as a crashed cell.
+    """
+    prompt_file = pathlib.Path(prompt_file_argument)
+    if not prompt_file.is_absolute():
+        prompt_file = REPO_ROOT / prompt_file
+    if not prompt_file.is_file():
+        raise CellRefusal(f"prompt file not found: {prompt_file}")
+    return prompt_file
+
+
+def compose_prompt(
+    cell: str, target: pathlib.Path, report: pathlib.Path, prompt_file=None,
+) -> str:
     """The exact text the model receives.
 
     Both runtimes read the same template, so the two legs cannot drift.
     This function is also what the review harness calls to render a
     prompt for review: reviewing a hand-composed approximation would be
     reviewing a fiction that merely resembles what runs.
+
+    `prompt_file`, when given, is the template to read in place of the
+    cell's own under PROMPTS_DIR; the substitution is the same either way.
+    It is how a draft prompt is trialled through the ordinary launcher (see
+    --prompt-file in `build_argument_parser`).
     """
-    template_path = PROMPTS_DIR / f"{cell}.md"
+    template_path = prompt_file if prompt_file is not None else PROMPTS_DIR / f"{cell}.md"
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
     return (
@@ -497,7 +573,7 @@ def parse_tokens_used(runtime_output: str) -> str:
 def stamp_provenance(
     report: pathlib.Path, *, runtime: str, model: str, effort: str,
     cell: str, tier: str, target_argument: str, duration_s: int,
-    fallback_from: str = "", tokens: str = "",
+    fallback_from: str = "", tokens: str = "", prompt_file_argument: str = "",
 ) -> None:
     """Prepend the provenance line the records convention requires.
 
@@ -517,17 +593,25 @@ def stamp_provenance(
     the cell's cost, not the winning model's. `tokens=` is present only when
     the runtime reported a total; see `parse_tokens_used`.
 
+    `prompt_file=` is present only when the cell ran under --prompt-file, and
+    names the template it read as it was given, so a trial's report says which
+    draft produced it rather than passing as a run of the cell's own prompt.
+
     FIELD ORDER IS DELIBERATE: `target=` stays last because its value is a
     path, and a path with a space in it would swallow whatever followed for
     any reader splitting this line on whitespace. Everything added here goes
-    in front of it.
+    in front of it -- `prompt_file=` included, though its value is a path
+    too: it appears only under a trial flag, so the ordinary stamp keeps one
+    path-valued field and the one rule about it.
     """
     fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
     tokens_note = f"tokens={tokens} " if tokens else ""
+    prompt_file_note = (
+        f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
     stamp = (
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
         f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
-        f"{tokens_note}target={target_argument} -->\n\n"
+        f"{tokens_note}{prompt_file_note}target={target_argument} -->\n\n"
     )
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -535,7 +619,7 @@ def stamp_provenance(
 def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
-    baseline, cell_started_at: float,
+    baseline, cell_started_at: float, prompt_file_argument: str = "",
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
 
@@ -722,6 +806,7 @@ def run_model_chain(
         duration_s=int(time.time() - cell_started_at),
         fallback_from="+".join(failed_attempts),
         tokens=produced_tokens,
+        prompt_file_argument=prompt_file_argument,
     )
     report_stray_writes(program, baseline, report)
     print(f"{program}: report written to {report}", file=sys.stderr)
@@ -764,9 +849,12 @@ def run_cell(
     # subtract from them yet.
     report = None
     try:
+        validate_cell(args.cell, args.prompt_file)
         target = resolve_target(args.target)
         report = resolve_report_path(args.report)
-        prompt = compose_prompt(args.cell, target, report)
+        prompt_file = (
+            resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
+        prompt = compose_prompt(args.cell, target, report, prompt_file)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
@@ -784,6 +872,7 @@ def run_cell(
         report=report, cell=args.cell, tier=args.tier,
         target_argument=args.target, baseline=baseline,
         cell_started_at=cell_started_at,
+        prompt_file_argument=args.prompt_file or "",
     )
 
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Run a full cold-read grid against a document.
 
-One invocation = one review: four cells ({defect-hunt} x {good, floor} x
-{claude, codex}) launched in parallel, every report saved
+One invocation = one review: six cells launched in parallel -- the
+defect-hunt pass in four ({good, floor} x {claude, codex}) and the
+terminology pass in two (good x {claude, codex}) -- every report saved
 into a dated record directory, progress and next-step instructions printed
 for the reviewing agent as reviews land.
 
@@ -47,15 +48,37 @@ _common_spec.loader.exec_module(cell_common)
 # begin with one of these names is the model's, or the runtime's, not the
 # cell's.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
-# One pass since 2026-08-30 (user-ruled that day): the separate restate
-# pass is cut from the roster. Measured on both labelled 2026-08-26 targets:
-# mining several readers' restatements for disagreement located no defect the
-# defect hunt had not already located, so its four cells bought reading time
-# and nothing the triage could use. A restatement is still an author's tool --
-# the restate cell and its prompt remain invocable singly through the cell
-# launchers; what is cut is only this default roster.
-PASSES = ["defect-hunt"]
-TIERS = ["good", "floor"]
+# THE ROSTER: one entry per (pass, tier) the grid launches on EACH runtime,
+# with the effort the grid pins for it -- None leaves the effort to the
+# launcher's own tier map. Six cells in all.
+#
+# The restate pass was cut 2026-08-30 (user-ruled that day). Measured on both
+# labelled 2026-08-26 targets: mining several readers' restatements for
+# disagreement located no defect the defect hunt had not already located, so
+# its four cells bought reading time and nothing the triage could use. A
+# restatement is still an author's tool -- the restate cell and its prompt
+# remain invocable singly through the cell launchers; what is cut is only
+# this default roster.
+#
+# The terminology pass was added 2026-09-05 (user-ruled that day): the
+# document's key-terms against five criteria, on the good tier of both
+# runtimes only, at max effort on both. Measured on the final prompt by the
+# cold-read-research seat (REPORT.md under
+# ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
+# section "Addendum 2026-09-04 late"; machine-local, which is why the numbers
+# are inline here): opus-max flagged 20/15/28 key-terms on three targets and
+# sol-max 44/41/49; no cheaper cell added a criterion-1 catch, so no floor
+# cell runs for this pass; wall clock 16-20 min per cell, inside the
+# defect-hunt strong cells' 18-23. The effort is passed to the launchers
+# explicitly rather than left to their tier maps, which happen to pin max for
+# the good tier today: a later change to either map would otherwise move this
+# pass silently. The defect-hunt cells carry no override, so their pins stay
+# the launchers' own.
+GRID_CELL_ROSTER = (
+    ("defect-hunt", "good", None),
+    ("defect-hunt", "floor", None),
+    ("terminology", "good", "max"),
+)
 
 # Documents this instrument refuses to review, keyed on the genre suffix its
 # filename stem ends in (nedschorus#152). A `-log`, `-report` or `-capture`
@@ -76,13 +99,16 @@ UNREVIEWABLE_TARGET_GENRE_SUFFIXES = ("-log", "-report", "-capture")
 TARGET_CHANGED_MARKER_PREFIX = "<!-- TARGET CHANGED DURING RUN:"
 
 COMPLETION_INSTRUCTIONS = """\
-All four reviews are complete, in {record_dir}, one file per reviewer.
+All six reviews are complete, in {record_dir}, one file per reviewer.
 
 Read every report in full. The defect-hunt reports flag defects with each
 reviewer's own confidence; expect heavy overlap — the same defect found
-independently by several reviewers is one defect.
+independently by several reviewers is one defect. The terminology reports
+list the document's key-terms that fail one of five criteria, with the
+criteria numbers per item and a closing counts line; triage them the same
+way as the defect-hunt reports.
 
-Keep your judgments provisional until you have read all four, as later
+Keep your judgments provisional until you have read all six, as later
 reports may offer more insight than earlier ones. Then formulate your draft
 response: which problems are real, and what you propose to do about each.
 Walk that with the user using the walk-me-through skill, ordered from most
@@ -95,14 +121,15 @@ analysis later (user-ruled 2026-08-25). The findings still belong in the
 reviewed document and the rulings in its governing document; this directory is
 what produced them, not where they live."""
 
-# The closing text when the Opus cell produced no report (user-ruled
-# 2026-09-04: "If opus fails we stop working and wait for it to come back").
-# It replaces COMPLETION_INSTRUCTIONS rather than following it, because a
-# reader told the reviews are complete and then told to stop has been told two
-# things. The reports that did land are kept, unread: a read of this document
-# is the four-cell set, and the set is run again when Opus is back.
+# The closing text when an Opus cell -- the good Claude cell of either pass
+# -- produced no report (user-ruled 2026-09-04: "If opus fails we stop
+# working and wait for it to come back"). It replaces COMPLETION_INSTRUCTIONS
+# rather than following it, because a reader told the reviews are complete
+# and then told to stop has been told two things. The reports that did land
+# are kept, unread: a read of this document is the six-cell set, and the set
+# is run again when Opus is back.
 OPUS_ABSENT_INSTRUCTIONS = """\
-The Opus review did not land, so this is not the review that was asked for.
+An Opus review did not land, so this is not the review that was asked for.
 
 Stop here. Do not triage the reports in {record_dir}, do not rerun the Opus
 cell on another model, and do not start editing the document on the strength
@@ -224,43 +251,58 @@ def mark_reports_target_changed(
     return detail
 
 
+def cell_report_path(
+    record_dir: pathlib.Path, runtime: str, cell_pass: str, tier: str,
+) -> pathlib.Path:
+    """Where one cell's report goes: `<record dir>/<record dir name>--<runtime>-<pass token>-<tier>.md`.
+
+    THE FILE NAME CARRIES THE RUN (user-ruled 2026-08-25). Every file this
+    grid writes into a record directory is prefixed with that directory's own
+    name, so a report says which run produced it wherever it is later found
+    or copied. Before this, all eight of a run's reports were named for the
+    cell alone -- `codex-hunt-floor.md` and seven like it -- and two grids
+    running at once in one checkout (three did that day) each had a file of
+    every one of those names. A cell of the first run that wrote nothing
+    could then have the second run's correctly placed report recovered as its
+    own: the first run holds a review of the wrong document under its stamp,
+    and the second loses the review it produced.
+
+    The pass token is the cell name, except that defect-hunt is `hunt` --
+    the token every record set since 2026-08-25 has carried. One function
+    composes the name so main() can ask which cell a failed report belonged
+    to by the same rule that named it.
+    """
+    pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
+    return record_dir / f"{record_dir.name}--{runtime}-{pass_token}-{tier}.md"
+
+
 def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
-    """Start all four cells in parallel. Returns {report_path: (process,
+    """Start all six cells in parallel. Returns {report_path: (process,
     stderr_path)}. The parent's file handles are closed right after each
     spawn; the child keeps its own copies, so a with-block is the wrong
     shape here."""
     running = {}
     for runtime, launcher in CELL_LAUNCHERS.items():
-        for cell_pass in PASSES:
-            for tier in TIERS:
-                pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
-                # THE FILE NAME CARRIES THE RUN (user-ruled 2026-08-25). Every
-                # file this grid writes into a record directory is prefixed
-                # with that directory's own name, so a report says which run
-                # produced it wherever it is later found or copied. Before
-                # this, all eight of a run's reports were named for the cell
-                # alone -- `codex-hunt-floor.md` and seven like it -- and two
-                # grids running at once in one checkout (three did that day)
-                # each had a file of every one of those names. A cell of the
-                # first run that wrote nothing could then have the second
-                # run's correctly placed report recovered as its own: the
-                # first run holds a review of the wrong document under its
-                # stamp, and the second loses the review it produced.
-                report_path = record_dir / (
-                    f"{record_dir.name}--{runtime}-{pass_token}-{tier}.md")
-                stderr_path = record_dir / (report_path.name + ".stderr.log")
-                # The reviewer writes the report itself; the cell is told
-                # where. Capturing the model's chat text was what lost
-                # findings written before a tool call (measured 2026-08-23),
-                # so nothing here redirects stdout into the report any more.
-                err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
-                process = subprocess.Popen(  # pylint: disable=consider-using-with
-                    [str(launcher), "--cell", cell_pass, "--tier", tier,
-                     "--target", str(target), "--report", str(report_path)],
-                    stdout=err, stderr=err, stdin=subprocess.DEVNULL,
-                )
-                err.close()
-                running[report_path] = (process, stderr_path)
+        for cell_pass, tier, effort in GRID_CELL_ROSTER:
+            report_path = cell_report_path(record_dir, runtime, cell_pass, tier)
+            stderr_path = record_dir / (report_path.name + ".stderr.log")
+            command = [str(launcher), "--cell", cell_pass, "--tier", tier,
+                       "--target", str(target), "--report", str(report_path)]
+            # A roster effort is the grid's pin for that cell, passed on the
+            # command line where the launcher honors it exactly, with no
+            # fallback to its tier map.
+            if effort:
+                command += ["--effort", effort]
+            # The reviewer writes the report itself; the cell is told
+            # where. Capturing the model's chat text was what lost
+            # findings written before a tool call (measured 2026-08-23),
+            # so nothing here redirects stdout into the report any more.
+            err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
+            process = subprocess.Popen(  # pylint: disable=consider-using-with
+                command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
+            )
+            err.close()
+            running[report_path] = (process, stderr_path)
     return running
 
 
@@ -294,7 +336,7 @@ def wait_for_cells(running: dict) -> list:
             # happened: the report is (nedschorus#164). The cell enforces the
             # same rule, and the grid checks again rather than trusting it,
             # because the grid is what tells the reviewing agent below what to
-            # believe — and four "saved" lines over empty files read as four
+            # believe — and six "saved" lines over empty files read as six
             # reviewers finding nothing.
             has_report = (
                 report_path.is_file()
@@ -418,7 +460,7 @@ def main() -> int:
     record_dir = make_record_dir(target)
     reference_integrity_pre_pass(target, record_dir)
 
-    print(f"Launched four reviewers against {target}. Reports appear in "
+    print(f"Launched six reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
     # THE TARGET IS FROZEN FOR THE RUN, and this is how the grid knows whether
@@ -440,21 +482,29 @@ def main() -> int:
     # WHICH CELL FAILED DECIDES WHAT THE READER DOES NEXT (user-ruled
     # 2026-09-04: "opus falling back to fable is not valid. If opus fails we
     # stop working and wait for it to come back. If fable is not available,
-    # just note that and continue"). The two Claude cells are single-model
-    # since that ruling, so a failed Claude cell is that model being
-    # unavailable, and the two models mean opposite things to the read: the
-    # good tier's Opus is the read's deepest seat and a review without it is
-    # not the review that was asked for; the floor tier's Fable is a
-    # when-available addition, because the account's Fable limit is hit often
-    # enough (2026-08-23; four cells on 2026-09-03) that a read which stopped
-    # for it would stop often, and the three cells that remain are the
-    # 2026-09-03 campaign's standing full-tier set plus the Codex floor.
-    # The names are the ones launch_cells composes:
-    # `<record directory name>--<runtime>-<pass token>-<tier>.md`.
-    opus_cell_failed = any(name.endswith("--claude-hunt-good.md") for name in failures)
+    # just note that and continue"). The Claude cells are single-model since
+    # that ruling, so a failed Claude cell is that model being unavailable,
+    # and the two models mean opposite things to the read: the good tier's
+    # Opus is the read's deepest seat -- in BOTH passes, so the good Claude
+    # cell of either pass failing is the Opus-absent case -- and a review
+    # without it is not the review that was asked for; the floor tier's Fable
+    # is a when-available addition, because the account's Fable limit is hit
+    # often enough (2026-08-23; four cells on 2026-09-03) that a read which
+    # stopped for it would stop often, and the five cells that remain are the
+    # 2026-09-03 campaign's standing full-tier set plus the Codex floor and
+    # the two terminology cells. Which cells those are is asked of the roster
+    # by the rule that named the reports, so a stem that happens to contain a
+    # cell-shaped fragment cannot be mistaken for one.
+    opus_report_names = {
+        cell_report_path(record_dir, "claude", cell_pass, tier).name
+        for cell_pass, tier, _effort in GRID_CELL_ROSTER if tier == "good"}
+    fable_report_names = {
+        cell_report_path(record_dir, "claude", cell_pass, tier).name
+        for cell_pass, tier, _effort in GRID_CELL_ROSTER if tier == "floor"}
+    opus_cell_failed = any(name in opus_report_names for name in failures)
     only_fable_cell_failed = (
         failures != [] and not opus_cell_failed
-        and all(name.endswith("--claude-hunt-floor.md") for name in failures))
+        and all(name in fable_report_names for name in failures))
     # A moved target and a settled one call for opposite next actions, so they
     # get different closing text: triage the set, or stop and run it again.
     # An absent Opus review outranks a settled target: there is nothing to
@@ -490,7 +540,8 @@ def main() -> int:
             what_to_do = (
                 "That is the Fable floor cell, a when-available seat: note its "
                 "absence in dispositions.md and continue with the reports that "
-                "landed, which are the Opus, Codex good and Codex floor reviews.")
+                "landed, which are the Opus, Codex good and Codex floor "
+                "defect-hunt reviews and the Opus and Codex terminology reviews.")
         else:
             what_to_do = (
                 "Rerun them singly with the cell launchers before triage, or note "
