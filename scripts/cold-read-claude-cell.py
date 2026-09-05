@@ -76,7 +76,7 @@ PROGRAM = "cold-read-claude-cell"
 # When the account's Fable limit is hit (2026-08-23; four cells on 2026-09-03)
 # the floor cell has no further model to try: it fails, the grid prints its
 # FAILED line, tells the reviewing agent to note the absence and continue
-# with the three reports that landed, and exits 1 (user-ruled 2026-09-04:
+# with the five reports that landed, and exits 1 (user-ruled 2026-09-04:
 # "If fable is not available, just note that and continue"). A Sonnet
 # fallback would make the cell count come out while running a retired
 # reviewer under a floor-tier stamp, which the user ruled worse than a

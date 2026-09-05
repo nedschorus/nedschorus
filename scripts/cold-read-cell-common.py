@@ -86,8 +86,9 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # day's qualifier): a concise sentence-level restatement, then concise
 # criterion-tagged stumble and coverage findings. It is run singly -- one
 # cell against one walk item -- never by the grid, whose roster is
-# scripts/cold-read-grid.py's own.
-CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify"]
+# scripts/cold-read-grid.py's own. `terminology` (user-ruled 2026-09-05) is
+# the grid's second pass: the document's key-terms against five criteria.
+CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 TIER_CHOICES = ["good", "floor"]
 
 
