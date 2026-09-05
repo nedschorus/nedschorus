@@ -95,6 +95,22 @@ analysis later (user-ruled 2026-08-25). The findings still belong in the
 reviewed document and the rulings in its governing document; this directory is
 what produced them, not where they live."""
 
+# The closing text when the Opus cell produced no report (user-ruled
+# 2026-09-04: "If opus fails we stop working and wait for it to come back").
+# It replaces COMPLETION_INSTRUCTIONS rather than following it, because a
+# reader told the reviews are complete and then told to stop has been told two
+# things. The reports that did land are kept, unread: a read of this document
+# is the four-cell set, and the set is run again when Opus is back.
+OPUS_ABSENT_INSTRUCTIONS = """\
+The Opus review did not land, so this is not the review that was asked for.
+
+Stop here. Do not triage the reports in {record_dir}, do not rerun the Opus
+cell on another model, and do not start editing the document on the strength
+of the reviews that did land. Wait for Opus to come back, then run the grid
+again against the same document. Keep {record_dir}: like every record
+directory it is kept, not deleted (user-ruled 2026-08-25), and its FAILED
+line says what the Opus cell reported."""
+
 
 def make_record_dir(target: pathlib.Path) -> pathlib.Path:
     date = datetime.date.today().isoformat()
@@ -320,7 +336,10 @@ def wait_for_cells(running: dict) -> list:
                 # reviewed by the model asked for. The cell's own line already
                 # names the model that produced the report and every model that
                 # failed ahead of it with the reason each failed; the report
-                # name says which cell it was.
+                # name says which cell it was. Since 2026-09-04 every pinned
+                # chain has one model (the user ruled Opus falling back to
+                # Fable invalid), so this line is lifted for a chain a ruling
+                # may pin later and for nothing that runs today.
                 # A RECOVERY IS NEVER SILENT EITHER (user-ruled 2026-08-25),
                 # for the same reason a fallback is not: the cell was one
                 # character from losing a finished 33-finding review that day,
@@ -418,10 +437,32 @@ def main() -> int:
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
 
     print()
+    # WHICH CELL FAILED DECIDES WHAT THE READER DOES NEXT (user-ruled
+    # 2026-09-04: "opus falling back to fable is not valid. If opus fails we
+    # stop working and wait for it to come back. If fable is not available,
+    # just note that and continue"). The two Claude cells are single-model
+    # since that ruling, so a failed Claude cell is that model being
+    # unavailable, and the two models mean opposite things to the read: the
+    # good tier's Opus is the read's deepest seat and a review without it is
+    # not the review that was asked for; the floor tier's Fable is a
+    # when-available addition, because the account's Fable limit is hit often
+    # enough (2026-08-23; four cells on 2026-09-03) that a read which stopped
+    # for it would stop often, and the three cells that remain are the
+    # 2026-09-03 campaign's standing full-tier set plus the Codex floor.
+    # The names are the ones launch_cells composes:
+    # `<record directory name>--<runtime>-<pass token>-<tier>.md`.
+    opus_cell_failed = any(name.endswith("--claude-hunt-good.md") for name in failures)
+    only_fable_cell_failed = (
+        failures != [] and not opus_cell_failed
+        and all(name.endswith("--claude-hunt-floor.md") for name in failures))
     # A moved target and a settled one call for opposite next actions, so they
     # get different closing text: triage the set, or stop and run it again.
+    # An absent Opus review outranks a settled target: there is nothing to
+    # triage until Opus is back, whatever the other cells landed.
     if target_changed:
         print(TARGET_CHANGED_INSTRUCTIONS.format(record_dir=record_dir))
+    elif opus_cell_failed:
+        print(OPUS_ABSENT_INSTRUCTIONS.format(record_dir=record_dir))
     else:
         print(COMPLETION_INSTRUCTIONS.format(record_dir=record_dir))
     if failures:
@@ -430,14 +471,30 @@ def main() -> int:
         # short and the missing cells are worth rerunning singly before triage;
         # on the changed path there is no triage for them to be short for,
         # because the whole set is being replaced. The two conditions are
-        # independent and do land together.
-        what_to_do = (
-            "Rerunning them singly would not help: the set they belong to is "
-            "being replaced by a run against the settled document."
-            if target_changed else
-            "Rerun them singly with the cell launchers before triage, or note "
-            "their absence in dispositions.md."
-        )
+        # independent and do land together. An absent Opus review is its own
+        # case on either path: rerunning singly is what the reader must NOT
+        # do until Opus is back, and an absent Fable review on a settled
+        # target is the one absence the reader continues past.
+        if target_changed:
+            what_to_do = (
+                "Rerunning them singly would not help: the set they belong to is "
+                "being replaced by a run against the settled document."
+                + (" Wait for Opus to come back before that run." if opus_cell_failed
+                   else ""))
+        elif opus_cell_failed:
+            what_to_do = (
+                "Do not rerun the Opus cell on another model and do not triage "
+                "the reports that landed: wait for Opus to come back, then run "
+                "the grid again.")
+        elif only_fable_cell_failed:
+            what_to_do = (
+                "That is the Fable floor cell, a when-available seat: note its "
+                "absence in dispositions.md and continue with the reports that "
+                "landed, which are the Opus, Codex good and Codex floor reviews.")
+        else:
+            what_to_do = (
+                "Rerun them singly with the cell launchers before triage, or note "
+                "their absence in dispositions.md.")
         print(f"\nNOTE: {len(failures)} review(s) failed and are absent from the "
               f"record: {', '.join(failures)}. {what_to_do}")
     # A moved target outranks a failed cell in the exit code: failed cells
