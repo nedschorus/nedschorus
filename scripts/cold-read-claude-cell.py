@@ -45,10 +45,38 @@ _common_spec.loader.exec_module(common)
 PROGRAM = "cold-read-claude-cell"
 
 # Tier -> the Claude models to try, in order. One place to update as models
-# change. User-picked (good = Opus-class, floor = Sonnet-class, re-ruled
-# 2026-08-25; the good tier was Opus-class until 2026-08-17 and Fable-class
-# from then until the 2026-08-25 ruling below); exact ids verified against
-# live subagent transcripts 2026-08-04.
+# change. User-picked (good = Opus-class, floor = Fable-class, ruled
+# 2026-09-04; the good tier was Opus-class until 2026-08-17, Fable-class from
+# then until the 2026-08-25 ruling below, and Opus-class since; the floor was
+# Sonnet-class from 2026-08-25 until the 2026-09-04 ruling); exact ids
+# verified against live subagent transcripts 2026-08-04.
+#
+# WHY THE FLOOR IS FABLE, NOT SONNET (user-ruled 2026-09-04). Sonnet was cut
+# as a reviewer in the 2026-08-29 walk-reviewer model trial ("cut as reviewer
+# (bottom of every ranking)", METHOD.md of that trial under
+# ~/agents/MD-skills/cold-read-records/2026-08-29-walk-reviewer-model-trial/;
+# its REPORT.md measured `sonnet defect-hunt` reproducing 0.14 of its own
+# previous run's findings). The floor pin here was never revisited after that
+# cut, so the grid kept launching a cell the trial had retired. The 2026-09-03
+# tier-roster campaign (REPORT.md under
+# ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
+# machine-local, which is why the numbers are inline here) ran no Sonnet cell
+# at all, on the user's ruling that dead cells are not retried. Its measured
+# second Claude cell is claude-fable-5-1 at max: added to opus-max + sol-max it
+# lifts pairG 0.83 -> 0.89 and 238-round-1 0.87 -> 0.89 at no wall-clock cost
+# (mean 1009 s, under sol-max's 1339 s), and beats fable at high by +63 net
+# unique-and-real findings, positive on all six targets ("Step-rule tally,
+# ALL SIX TARGETS"; "Aggregate over all six targets"). Fable does not beat
+# opus-max on any target, so it is the floor, not the good tier ("THE
+# ANSWERS" section 2). "claude-fable-5" is obsolete (user, 2026-09-04: "fable
+# 5 is now obsolete. 5.1 is current"); the campaign measured claude-fable-5-1.
+#
+# When the account's Fable limit is hit (2026-08-23; four cells on 2026-09-03)
+# the floor cell has no further model to try: it fails, the grid prints its
+# FAILED line, and the run exits 1. That is deliberate. A Sonnet fallback
+# would make the cell count come out while running a retired reviewer under
+# a floor-tier stamp, which the user ruled worse than a visible failure
+# (2026-08-25: "I just don't want it to fail silently").
 #
 # WHY OPUS LEADS THE GOOD TIER (user-ruled 2026-08-25: "If opus is better, we
 # should switch to that."). Measured that day by running the good-tier Claude
@@ -68,6 +96,11 @@ PROGRAM = "cold-read-claude-cell"
 # eight-cell run stops degrading into a manual per-cell rerun. Fable-class is
 # the named fallback because it was this tier's own pin from 2026-08-17 until
 # the swap above, so a fallback run is the grid as it stood the day before.
+# Since 2026-09-04 the fallback and the floor are the same model, so a Fable
+# outage takes the floor cell and leaves the good tier on Opus alone, and an
+# Opus outage moves the good tier onto the floor's model: the read then has
+# two Fable cells at max, both stamped as such, and the grid's FELL BACK line
+# says so.
 #
 # The fallback is never silent, in two places (user-ruled 2026-08-25: "I'm ok
 # with the fable falling back to opus too. I just don't want it to fail
@@ -79,17 +112,24 @@ PROGRAM = "cold-read-claude-cell"
 # would be worse than a failed cell, because the failure is visible and the
 # false stamp is not.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
-    "good": ("claude-opus-5", "claude-fable-5"),
-    "floor": ("claude-sonnet-5",),
+    "good": ("claude-opus-5", "claude-fable-5-1"),
+    "floor": ("claude-fable-5-1",),
 }
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
 # depends on the machine-local default. Accepted levels today:
-# low, medium, high, xhigh, max. "high" for both tiers per the skill's
-# good-at-high-effort ruling; recalibrating is the user's call, here.
+# low, medium, high, xhigh, max. "max" for both tiers (user-ruled
+# 2026-09-04 on the 2026-09-03 tier-roster campaign, REPORT.md path above,
+# "Step-rule tally, ALL SIX TARGETS" and "THE ANSWERS" section 2): opus at max
+# beat opus at high by +70 net unique-and-real findings over two runs and six
+# targets, positive on every target, with the cell's worst-target recall
+# rising 0.56 -> 0.72 and no precision cost (0.18 against 0.20 pooled); fable
+# at max beat fable at high by +63, positive on every target. Time roughly
+# doubles (opus mean 757 -> 1047 s) and stays under the Codex good cell's.
+# Recalibrating is the user's call, here.
 TIER_TO_REASONING_EFFORT = {
-    "good": "high",
-    "floor": "high",
+    "good": "max",
+    "floor": "max",
 }
 
 # The reviewer reads the document and writes one file: its report. Write is

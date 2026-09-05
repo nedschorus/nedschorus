@@ -410,15 +410,19 @@ with tempfile.TemporaryDirectory() as scratch:
     # The two conditions are independent and land together often enough to
     # write down: the closing text follows the target change (do not triage,
     # run the grid again), so the note naming the failed cells must not send
-    # the reader back to a triage that is not happening. The good-tier Claude
-    # cell fails outright here — the stub refuses every model in its chain —
-    # while the floor and Codex cells save their reports and edit the document
-    # under review on the way out.
+    # the reader back to a triage that is not happening. The floor-tier Claude
+    # cell fails outright here — the stub refuses claude-fable-5-1, the
+    # floor's only model, which is what the account's Fable limit does
+    # (2026-08-23; four cells on 2026-09-03) — while the good-tier Claude cell
+    # runs on Opus and the Codex cells are untouched; all three save their
+    # reports and edit the document under review on the way out. Refusing the
+    # good tier's whole chain would take the floor cell with it, since Fable
+    # is both the good tier's fallback and the floor's model (2026-09-04).
     repository = build_scratch_repository(scratch, "checkout-changed-and-failed")
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
-         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5,claude-fable-5"},
+         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1"},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
@@ -443,7 +447,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- A cell that fell back says so ------------------------------------
     # The stub refuses to be claude-opus-5, which leads the Claude good tier.
-    # The good-tier Claude cell therefore falls back to claude-fable-5 and
+    # The good-tier Claude cell therefore falls back to claude-fable-5-1 and
     # produces its report under it; the floor cell and the two Codex cells
     # are untouched, so four reviews still land.
     repository = build_scratch_repository(scratch, "checkout-fell-back")
@@ -462,7 +466,7 @@ with tempfile.TemporaryDirectory() as scratch:
                                             for line in fell_back_lines),
           f"lifted lines were {fell_back_lines!r}")
     check("the line names the model that actually wrote the report",
-          all("claude-fable-5" in line for line in fell_back_lines),
+          all("claude-fable-5-1" in line for line in fell_back_lines),
           f"lifted lines were {fell_back_lines!r}")
     check("a fallback is not a failure: four reviews still land, grid exits 0",
           result.returncode == 0 and len(saved_lines) == 4,
@@ -498,7 +502,7 @@ with tempfile.TemporaryDirectory() as scratch:
                        if line.startswith("FELL BACK:")]
     check("echoed text carrying the fallback phrase does not read as a fallback: "
           "exactly the one real fallback is lifted",
-          len(fell_back_lines) == 1 and "claude-fable-5" in fell_back_lines[0],
+          len(fell_back_lines) == 1 and "claude-fable-5-1" in fell_back_lines[0],
           f"lifted lines were {fell_back_lines!r}; stdout={result.stdout!r}")
     check("the real fallback line is the cell's own, not the echo",
           fell_back_lines != [] and "cold-read-claude-cell: fell back to" in fell_back_lines[0]
