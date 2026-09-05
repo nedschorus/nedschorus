@@ -105,6 +105,14 @@ WHAT IS PINNED HERE.
     2026-09-01 recorded claude-hunt-floor's silence with none of the model's
     own words to explain it.
 
+  - A draft prompt runs through the ordinary launcher. --prompt-file names a
+    template to read in place of the cell's own under prompts/, with the same
+    {TARGET_PATH} and {REPORT_PATH} substitution, and the stamp records the
+    file's path so a trial's report does not pass as a run of the pinned
+    prompt. On 2026-09-04, 24 trial cells exited 64 because no such flag
+    existed. A path naming no file is refused with exit 64 and the path,
+    and a cell run without the flag carries no `prompt_file=` field.
+
   - The stray-write detector runs for both runtimes. The cases above drive
     the Claude launcher; the one at the end of the file drives the Codex
     launcher through the same shared call. The fleet's other review
@@ -164,14 +172,18 @@ CONCURRENT_RUN_REVIEW_TEXT = (
 # post-run check cannot run, "near_miss" reproduces the 2026-08-25 accident
 # (see below), "report_at_records_root" and "concurrent_run_report" are the
 # other two places a report can turn up, "stderr" and "stdout" are the
-# runtime's own words on each stream, and "exit" is the code to exit with.
+# runtime's own words on each stream, "dump_prompt" is a path to write the
+# prompt the stub received to -- the whole of stdin on the Claude leg, which
+# is how a case reads what the cell composed -- and "exit" is the code to
+# exit with.
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
 STUB_MODEL_RUNTIME = """#!/usr/bin/env python3
 import json, os, pathlib, sys
 
+received_prompt = ""
 try:
-    sys.stdin.read()  # the Claude leg feeds the prompt on stdin
+    received_prompt = sys.stdin.read()  # the Claude leg feeds the prompt on stdin
 except OSError:
     pass
 argv = sys.argv
@@ -226,6 +238,8 @@ if "break_git" in step:
 # The two streams the cell treats differently: stderr is the CLI reporting,
 # which is where the Codex token total appears, and stdout is the model
 # talking. A case that needs the difference to matter writes both.
+if "dump_prompt" in step:
+    pathlib.Path(step["dump_prompt"]).write_text(received_prompt, encoding="utf-8")
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
 if "stdout" in step:
@@ -848,6 +862,89 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an effort level the runtimes do not accept is refused, not passed on",
           result.returncode == 64 and not report.is_file(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    # --- A draft prompt runs through the ordinary launcher ----------------
+    # --prompt-file: the template comes from the named file, the substitution
+    # is the pinned one, and the stamp says which file. The stub dumps the
+    # prompt it was fed so the case reads what the cell composed rather than
+    # inferring it. The draft carries a marker no shipped template has, and
+    # both placeholders, so a template read from the wrong place fails here
+    # by content and an unsubstituted placeholder fails by name.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    draft_prompt_relative_path = "docs/drafts/cold-read-cell-common-test-draft-prompt.md"
+    draft_prompt = repository / draft_prompt_relative_path
+    draft_prompt.write_text(
+        "DRAFT PROMPT MARKER. Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+        encoding="utf-8")
+    report = report_path_for(repository, "prompt-file", "claude")
+    received_prompt_path = scratch / "prompt-file-received.txt"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "dump_prompt": str(received_prompt_path)}},
+        report, "--prompt-file", draft_prompt_relative_path,
+    )
+    check("a cell given --prompt-file succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    received_prompt = (received_prompt_path.read_text(encoding="utf-8")
+                       if received_prompt_path.is_file() else "")
+    check("the model receives the draft's text, not the cell's own template",
+          "DRAFT PROMPT MARKER" in received_prompt, repr(received_prompt[:200]))
+    check("{TARGET_PATH} and {REPORT_PATH} are substituted in the draft too",
+          str(repository / TARGET_RELATIVE_PATH) in received_prompt
+          and str(report) in received_prompt
+          and "{TARGET_PATH}" not in received_prompt
+          and "{REPORT_PATH}" not in received_prompt,
+          repr(received_prompt[:300]))
+    stamp = provenance_stamp_of(report)
+    check("the stamp records the prompt file as given",
+          f"prompt_file={draft_prompt_relative_path} " in stamp, repr(stamp))
+    check("target= is still the last field with prompt_file= present",
+          stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # Without the flag the cell reads its own template and stamps no
+    # prompt_file= field: an absent field reads as "the pinned prompt", which
+    # is the truth, and a reader sorting trial reports from real ones sorts
+    # on that field.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "prompt-file-absent", "claude")
+    received_prompt_path = scratch / "prompt-file-absent-received.txt"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "dump_prompt": str(received_prompt_path)}},
+        report,
+    )
+    received_prompt = (received_prompt_path.read_text(encoding="utf-8")
+                       if received_prompt_path.is_file() else "")
+    check("a cell run without --prompt-file reads its own template",
+          result.returncode == 0 and "DRAFT PROMPT MARKER" not in received_prompt
+          and str(report) in received_prompt,
+          f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
+    check("a cell run without --prompt-file stamps no prompt_file= field",
+          "prompt_file=" not in provenance_stamp_of(report),
+          repr(provenance_stamp_of(report)))
+
+    # A path naming no file is a bad invocation, refused before any model
+    # runs, with the path it looked for -- the trial that mistypes its
+    # draft's path reads like every other refusal and not like a crash.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "prompt-file-missing", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, "--prompt-file", "docs/drafts/no-such-draft-prompt.md",
+    )
+    check("a --prompt-file naming no file exits 64 and writes no report",
+          result.returncode == 64 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the refusal names the file it looked for",
+          "prompt file not found" in result.stderr
+          and "no-such-draft-prompt.md" in result.stderr
+          and "Traceback" not in result.stderr,
+          repr(result.stderr))
 
     # --- The stray-write detector runs for the Codex leg too --------------
     # The cases at the top of this file drive the Claude launcher; this one

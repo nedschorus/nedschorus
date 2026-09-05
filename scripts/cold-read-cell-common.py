@@ -165,6 +165,17 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
              "gpt-5.6-terra at low) runs through this flag; no tier map pins "
              "low.",
     )
+    parser.add_argument(
+        "--prompt-file", metavar="PATH",
+        help="read the prompt template from this file instead of "
+             ".claude/skills/cold-read/prompts/<cell>.md, with the same "
+             "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
+             "repository root unless absolute. --cell is still required and "
+             "still names the report. This is how a draft prompt is trialled "
+             "through the ordinary launcher: on 2026-09-04, 24 trial cells "
+             "exited 64 because the only template a cell would read was the "
+             "one under prompts/. The stamp records the file's path.",
+    )
     return parser
 
 
@@ -194,15 +205,37 @@ def resolve_report_path(report_argument: str) -> pathlib.Path:
     return report
 
 
-def compose_prompt(cell: str, target: pathlib.Path, report: pathlib.Path) -> str:
+def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
+    """The --prompt-file path, made absolute the way --target is.
+
+    Refused, not tracebacked, when it names no file: a trial that mistypes
+    the draft's path should read the same as any other bad invocation --
+    exit 64 with the path it looked for -- rather than as a crashed cell.
+    """
+    prompt_file = pathlib.Path(prompt_file_argument)
+    if not prompt_file.is_absolute():
+        prompt_file = REPO_ROOT / prompt_file
+    if not prompt_file.is_file():
+        raise CellRefusal(f"prompt file not found: {prompt_file}")
+    return prompt_file
+
+
+def compose_prompt(
+    cell: str, target: pathlib.Path, report: pathlib.Path, prompt_file=None,
+) -> str:
     """The exact text the model receives.
 
     Both runtimes read the same template, so the two legs cannot drift.
     This function is also what the review harness calls to render a
     prompt for review: reviewing a hand-composed approximation would be
     reviewing a fiction that merely resembles what runs.
+
+    `prompt_file`, when given, is the template to read in place of the
+    cell's own under PROMPTS_DIR; the substitution is the same either way.
+    It is how a draft prompt is trialled through the ordinary launcher (see
+    --prompt-file in `build_argument_parser`).
     """
-    template_path = PROMPTS_DIR / f"{cell}.md"
+    template_path = prompt_file if prompt_file is not None else PROMPTS_DIR / f"{cell}.md"
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
     return (
@@ -497,7 +530,7 @@ def parse_tokens_used(runtime_output: str) -> str:
 def stamp_provenance(
     report: pathlib.Path, *, runtime: str, model: str, effort: str,
     cell: str, tier: str, target_argument: str, duration_s: int,
-    fallback_from: str = "", tokens: str = "",
+    fallback_from: str = "", tokens: str = "", prompt_file_argument: str = "",
 ) -> None:
     """Prepend the provenance line the records convention requires.
 
@@ -517,17 +550,25 @@ def stamp_provenance(
     the cell's cost, not the winning model's. `tokens=` is present only when
     the runtime reported a total; see `parse_tokens_used`.
 
+    `prompt_file=` is present only when the cell ran under --prompt-file, and
+    names the template it read as it was given, so a trial's report says which
+    draft produced it rather than passing as a run of the cell's own prompt.
+
     FIELD ORDER IS DELIBERATE: `target=` stays last because its value is a
     path, and a path with a space in it would swallow whatever followed for
     any reader splitting this line on whitespace. Everything added here goes
-    in front of it.
+    in front of it -- `prompt_file=` included, though its value is a path
+    too: it appears only under a trial flag, so the ordinary stamp keeps one
+    path-valued field and the one rule about it.
     """
     fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
     tokens_note = f"tokens={tokens} " if tokens else ""
+    prompt_file_note = (
+        f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
     stamp = (
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
         f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
-        f"{tokens_note}target={target_argument} -->\n\n"
+        f"{tokens_note}{prompt_file_note}target={target_argument} -->\n\n"
     )
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -535,7 +576,7 @@ def stamp_provenance(
 def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
-    baseline, cell_started_at: float,
+    baseline, cell_started_at: float, prompt_file_argument: str = "",
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
 
@@ -722,6 +763,7 @@ def run_model_chain(
         duration_s=int(time.time() - cell_started_at),
         fallback_from="+".join(failed_attempts),
         tokens=produced_tokens,
+        prompt_file_argument=prompt_file_argument,
     )
     report_stray_writes(program, baseline, report)
     print(f"{program}: report written to {report}", file=sys.stderr)
@@ -766,7 +808,9 @@ def run_cell(
     try:
         target = resolve_target(args.target)
         report = resolve_report_path(args.report)
-        prompt = compose_prompt(args.cell, target, report)
+        prompt_file = (
+            resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
+        prompt = compose_prompt(args.cell, target, report, prompt_file)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
@@ -784,6 +828,7 @@ def run_cell(
         report=report, cell=args.cell, tier=args.tier,
         target_argument=args.target, baseline=baseline,
         cell_started_at=cell_started_at,
+        prompt_file_argument=args.prompt_file or "",
     )
 
 
