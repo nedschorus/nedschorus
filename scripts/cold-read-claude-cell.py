@@ -48,8 +48,10 @@ PROGRAM = "cold-read-claude-cell"
 # change. User-picked (good = Opus-class, floor = Fable-class, ruled
 # 2026-09-04; the good tier was Opus-class until 2026-08-17, Fable-class from
 # then until the 2026-08-25 ruling below, and Opus-class since; the floor was
-# Sonnet-class from 2026-08-25 until the 2026-09-04 ruling); exact ids
-# verified against live subagent transcripts 2026-08-04.
+# Sonnet-class from 2026-08-25 until the 2026-09-04 ruling); the opus id
+# verified against live subagent transcripts 2026-08-04, the fable-5-1 id by
+# the 2026-09-03 campaign's smoke run (its provenance stamp carried the
+# requested model and effort, no fallback).
 #
 # WHY THE FLOOR IS FABLE, NOT SONNET (user-ruled 2026-09-04). Sonnet was cut
 # as a reviewer in the 2026-08-29 walk-reviewer model trial ("cut as reviewer
@@ -63,8 +65,8 @@ PROGRAM = "cold-read-claude-cell"
 # machine-local, which is why the numbers are inline here) ran no Sonnet cell
 # at all, on the user's ruling that dead cells are not retried. Its measured
 # second Claude cell is claude-fable-5-1 at max: added to opus-max + sol-max it
-# lifts pairG 0.83 -> 0.89 and 238-round-1 0.87 -> 0.89 at no wall-clock cost
-# (mean 1009 s, under sol-max's 1339 s), and beats fable at high by +63 net
+# lifts pairG 0.83 -> 0.89 (the other five targets unchanged) at no wall-clock
+# cost (mean 1009 s, under sol-max's 1339 s), and beats fable at high by +63 net
 # unique-and-real findings, positive on all six targets ("Step-rule tally,
 # ALL SIX TARGETS"; "Aggregate over all six targets"). Fable does not beat
 # opus-max on any target, so it is the floor, not the good tier ("THE
