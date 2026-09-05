@@ -27,15 +27,18 @@ WHAT IS PINNED HERE.
     GIT_DIR at a directory that does not exist: eight `saved:` lines, and not
     one word saying nothing had been checked.
 
-  - A cell that fell back to a later model in its chain says so on the
-    grid's output. Until 2026-08-25 a fallback was recorded only in the
-    report's own `fallback_from=` provenance stamp, which nobody sees unless
-    they open that file — and the grid deleted the cell's log, so a report
-    written by the chain's second model was indistinguishable here from one
-    written by the model asked for (user-ruled that day: "I'm ok with the
-    fable falling back to opus too. I just don't want it to fail silently").
-    The rename commit that added the lift verified it by a hand-run probe;
-    this case is that probe, kept.
+  - Which Claude cell failed decides what the closing text tells the reader
+    (user-ruled 2026-09-04: "opus falling back to fable is not valid. If
+    opus fails we stop working and wait for it to come back. If fable is not
+    available, just note that and continue"). An absent Opus review replaces
+    the triage text with a stop-and-wait text and forbids rerunning the cell
+    on another model; an absent Fable review keeps the triage text and the
+    note says to continue with the three reports that landed. Until that
+    ruling the good tier was a chain, Opus then Fable, and the case here was
+    the fallback case: the grid's FELL BACK line (added 2026-08-25, "I just
+    don't want it to fail silently") was verified by a hand-run probe kept
+    as a test. No pinned chain has a second model now, so that line has no
+    positive control through the grid; the lift machinery stays.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
     runtime's stderr into the log the grid lifts from, and the Codex CLI
@@ -445,12 +448,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and "being replaced by a run against the settled document" in note_lines[0],
           f"note lines were {note_lines!r}")
 
-    # --- A cell that fell back says so ------------------------------------
-    # The stub refuses to be claude-opus-5, which leads the Claude good tier.
-    # The good-tier Claude cell therefore falls back to claude-fable-5-1 and
-    # produces its report under it; the floor cell and the two Codex cells
-    # are untouched, so four reviews still land.
-    repository = build_scratch_repository(scratch, "checkout-fell-back")
+    # --- An absent Opus review stops the read -------------------------------
+    # User-ruled 2026-09-04: "opus falling back to fable is not valid. If opus
+    # fails we stop working and wait for it to come back." The stub refuses
+    # to be claude-opus-5, the good tier's only model since that ruling, so
+    # the good-tier Claude cell fails outright and nothing falls back; the
+    # floor cell and the two Codex cells land. Before the ruling this case
+    # was the fallback case: the good tier ran on Fable and four reviews
+    # landed under a FELL BACK line.
+    repository = build_scratch_repository(scratch, "checkout-opus-absent")
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
@@ -459,32 +465,79 @@ with tempfile.TemporaryDirectory() as scratch:
                    if line.startswith("saved:")]
     fell_back_lines = [line for line in result.stdout.splitlines()
                        if line.startswith("FELL BACK:")]
-    check("a cell whose first-choice model failed says so on the grid's output",
-          fell_back_lines != [], f"stdout was {result.stdout!r}")
-    check("the cell that fell back is named",
-          len(fell_back_lines) == 1 and all("claude" in line and "good" in line
-                                            for line in fell_back_lines),
-          f"lifted lines were {fell_back_lines!r}")
-    check("the line names the model that actually wrote the report",
-          all("claude-fable-5-1" in line for line in fell_back_lines),
-          f"lifted lines were {fell_back_lines!r}")
-    check("a fallback is not a failure: four reviews still land, grid exits 0",
-          result.returncode == 0 and len(saved_lines) == 4,
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("an Opus outage is a failed cell, not a fallback: no FELL BACK line",
+          fell_back_lines == [], f"lifted lines were {fell_back_lines!r}")
+    check("the other three reviews still land and the grid exits 1",
+          result.returncode == 1 and len(saved_lines) == 3,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    check("the closing text says to stop and wait for Opus",
+          "Wait for Opus to come back" in result.stdout
+          and "Stop here" in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the closing text does not also say the reviews are complete",
+          "All four reviews are complete" not in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the note names the Opus cell and forbids rerunning it on another model",
+          note_lines != [] and "claude-hunt-good" in note_lines[0]
+          and "wait for Opus to come back" in note_lines[0]
+          and "Do not rerun the Opus cell on another model" in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("the note does not say to rerun the failed cells singly",
+          note_lines != [] and "Rerun them singly" not in note_lines[0],
+          f"note lines were {note_lines!r}")
+
+    # --- An absent Fable review is noted and the read continues -------------
+    # The other half of the same ruling: "If fable is not available, just
+    # note that and continue." The stub refuses claude-fable-5-1, the floor
+    # tier's only model, which is what the account's Fable limit does
+    # (2026-08-23; four cells on 2026-09-03). The Opus and Codex reviews land,
+    # the closing text is the ordinary triage text, and the note says to
+    # continue with the three reports rather than to stop or to rerun.
+    repository = build_scratch_repository(scratch, "checkout-fable-absent")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("a Fable outage loses one review: three land, grid exits 1",
+          result.returncode == 1 and len(saved_lines) == 3,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    check("the closing text is the triage text, not the stop text",
+          "All four reviews are complete" in result.stdout
+          and "Stop here" not in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the note names the Fable cell and says to continue",
+          note_lines != [] and "claude-hunt-floor" in note_lines[0]
+          and "note its absence in dispositions.md and continue" in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("the note does not say to rerun singly or to wait for Opus",
+          note_lines != [] and "Rerun them singly" not in note_lines[0]
+          and "Opus to come back" not in note_lines[0],
+          f"note lines were {note_lines!r}")
     record_directory = record_directory_of(repository)
-    check("the stderr logs are deleted once the fallback line has been lifted",
+    check("the failed cell's stderr log is kept and the landed cells' logs are deleted",
           record_directory is not None
-          and list(record_directory.glob("*.stderr.log")) == [],
-          f"logs left in {record_directory}")
+          and [path.name for path in record_directory.glob("*.stderr.log")]
+          == [f"{record_directory.name}--claude-hunt-floor.md.stderr.log"],
+          f"logs in {record_directory}: "
+          f"{sorted(path.name for path in record_directory.glob('*.stderr.log')) if record_directory else None}")
 
     # --- The model's echoed words are not the cell's status -----------------
     # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
     # model's text onto stderr, the cell re-emits that stderr into the log the
     # grid reads, and a reviewed document that quoted a comment containing
     # "fell back to" made two cells read as fallen back. Here every runtime
-    # echoes a passage carrying all four lifted phrases mid-line, while ONE
-    # cell really does fall back, so the case discriminates: the cell's own
-    # line is lifted, the echoed passage never is, and nothing else fires.
+    # echoes a passage carrying all four lifted phrases mid-line, and nothing
+    # is lifted. This case used to carry its own positive control, one cell
+    # that really fell back; since the 2026-09-04 ruling no pinned chain has
+    # a second model, so the positive control for the program-prefix matcher
+    # is the stray-write case above, where a real STRAY WRITE line is lifted
+    # through the same `cell_status_line` test.
     echoed_passage = (
         "As the document says: the supervisor fell back to its own default, "
         "then stray writes were not checked for this run, then files outside "
@@ -493,23 +546,12 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-echoed-phrases")
     result = run_grid(
         repository, stubs,
-        {"COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT": echoed_passage,
-         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
+        {"COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT": echoed_passage},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
-    fell_back_lines = [line for line in result.stdout.splitlines()
-                       if line.startswith("FELL BACK:")]
-    check("echoed text carrying the fallback phrase does not read as a fallback: "
-          "exactly the one real fallback is lifted",
-          len(fell_back_lines) == 1 and "claude-fable-5-1" in fell_back_lines[0],
-          f"lifted lines were {fell_back_lines!r}; stdout={result.stdout!r}")
-    check("the real fallback line is the cell's own, not the echo",
-          fell_back_lines != [] and "cold-read-claude-cell: fell back to" in fell_back_lines[0]
-          and "As the document says" not in fell_back_lines[0],
-          f"lifted lines were {fell_back_lines!r}")
-    check("echoed text carrying the other three phrases lifts nothing",
-          not any(line.startswith(("STRAY WRITE:", "RECOVERED:",
+    check("echoed text carrying the four lifted phrases lifts nothing",
+          not any(line.startswith(("FELL BACK:", "STRAY WRITE:", "RECOVERED:",
                                    "WRITE CHECK DID NOT RUN:"))
                   for line in result.stdout.splitlines()),
           f"stdout was {result.stdout!r}")

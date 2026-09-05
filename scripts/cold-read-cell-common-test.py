@@ -49,11 +49,12 @@ WHAT IS PINNED HERE.
     dirty, so status is never clean, and a change to an already-dirty file
     was exactly what went unreported.
 
-  - A model that writes a report and then fails does not lend its text to
-    the next model in the chain. The report path is the chain's only state
-    variable and the loop clears it before each attempt; without that, a
-    later model that exits 0 having written nothing is credited with its
-    predecessor's findings, under a provenance stamp naming the wrong model.
+  - The good tier's one model failing is the cell failing, with nothing tried
+    in its place (user-ruled 2026-09-04: "opus falling back to fable is not
+    valid"). Until that ruling the good tier was a chain and the case pinned
+    that a model which wrote a report and then failed did not lend its text
+    to the next model; the loop's reset before each attempt still exists and
+    the last-model case below still exercises it.
 
   - Failing to look does not read as looking and finding nothing. When the
     baseline could not be taken, or `git status` could not answer afterwards,
@@ -494,29 +495,34 @@ with tempfile.TemporaryDirectory() as scratch:
           visible_report_relative_path not in stray_write_warning(result.stderr),
           repr(result.stderr))
 
-    # --- The chain does not lend one model's text to another ---------------
-    # The first model writes a report and then fails; the second exits 0
-    # having written nothing. Without the reset at the top of the loop the
-    # second is credited with the first's findings and stamped as their
-    # author. Both must fail, and the cell must say so.
+    # --- The good tier has one model and its failure is the cell's ----------
+    # User-ruled 2026-09-04: "opus falling back to fable is not valid. If opus
+    # fails we stop working and wait for it to come back." Until then the
+    # good tier was a chain, Opus then Fable, and the case that sat here
+    # drove both: the first model wrote a report and then failed, the second
+    # exited 0 having written nothing, and the check was that the second was
+    # not credited with the first's findings. No pinned chain has a second
+    # model now, so that hazard has no vehicle through the tiers; the reset
+    # at the top of the loop stays, and the last-model case below is what
+    # exercises it. What this case pins instead is the ruling: the good tier
+    # refused is the cell failed, with no other model tried.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = repository / "cold-read-records" / "run-d" / "claude-restate-good.md"
     result = run_claude_cell(
         repository, stubs,
-        {"claude-fable-5-1": {"report": "STUB REVIEW: findings the first model wrote\n",
-                              "exit": 1},
-         "claude-opus-5": {"exit": 0}},
+        {"claude-opus-5": {"exit": 1},
+         "*": {"report": "STUB REVIEW: findings a fallback would have written\n"}},
         report, "--tier", "good",
     )
-    check("a chain whose models all fail to produce a report exits 1",
+    check("an Opus failure fails the good-tier cell",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("a model that writes then fails does not lend its text to the next model",
-          not report.exists(),
-          "the first model's report survived into the second model's attempt")
-    check("the failed chain names both attempts",
-          "claude-fable-5-1" in result.stderr and "claude-opus-5" in result.stderr,
-          repr(result.stderr))
+    check("no other model is tried in Opus's place",
+          not report.exists() and "claude-fable-5-1" not in result.stderr
+          and "fell back to" not in result.stderr,
+          f"stderr={result.stderr!r}")
+    check("the failure names the one attempt",
+          "claude-opus-5(exit1)" in result.stderr, repr(result.stderr))
 
     # --- The last model's report does not outlive its failure -------------
     # The credit exhaustion of 2026-08-23 in one case: a model writes its
