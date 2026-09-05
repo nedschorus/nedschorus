@@ -504,8 +504,8 @@ with tempfile.TemporaryDirectory() as scratch:
     report = repository / "cold-read-records" / "run-d" / "claude-restate-good.md"
     result = run_claude_cell(
         repository, stubs,
-        {"claude-fable-5": {"report": "STUB REVIEW: findings the first model wrote\n",
-                            "exit": 1},
+        {"claude-fable-5-1": {"report": "STUB REVIEW: findings the first model wrote\n",
+                              "exit": 1},
          "claude-opus-5": {"exit": 0}},
         report, "--tier", "good",
     )
@@ -515,7 +515,7 @@ with tempfile.TemporaryDirectory() as scratch:
           not report.exists(),
           "the first model's report survived into the second model's attempt")
     check("the failed chain names both attempts",
-          "claude-fable-5" in result.stderr and "claude-opus-5" in result.stderr,
+          "claude-fable-5-1" in result.stderr and "claude-opus-5" in result.stderr,
           repr(result.stderr))
 
     # --- The last model's report does not outlive its failure -------------
@@ -817,7 +817,7 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     check("a cell given no --effort runs at the tier map's level",
           result.returncode == 0
-          and "effort=high" in provenance_stamp_of(report),
+          and "effort=max" in provenance_stamp_of(report),
           f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")
 
     shutil.rmtree(repository)
