@@ -178,6 +178,21 @@ with tempfile.TemporaryDirectory() as scratch:
               not report.exists(),
               "a report survived a run that produced no review")
 
+    # --- A --cell outside the list, without --prompt-file, is a refusal ----
+    # The check left argparse (it depends on --prompt-file, which argparse
+    # cannot see while validating --cell) and must still exit by the same
+    # door, before codex runs.
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "terminology-v9", "--tier", "good",
+                      "--target", str(target))
+    check("a --cell outside the list without --prompt-file exits 64",
+          result.returncode == 64 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("that refusal names the flag that would let the name run",
+          "runs only with --prompt-file" in result.stderr
+          and "Traceback" not in result.stderr, repr(result.stderr))
+
     # --- A --prompt-file naming no file is the cell's refusal --------------
     # The stub writes the report the moment it is launched, so an absent
     # report proves codex was never run.

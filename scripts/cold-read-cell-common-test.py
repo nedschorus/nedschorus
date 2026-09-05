@@ -113,6 +113,14 @@ WHAT IS PINNED HERE.
     existed. A path naming no file is refused with exit 64 and the path,
     and a cell run without the flag carries no `prompt_file=` field.
 
+  - With --prompt-file, --cell is a free label (user-ruled 2026-09-05): a
+    draft prompt is not yet a named pass, so a novel name runs and is
+    stamped as the cell. The label becomes a token of the report's file
+    name, so it is held to lowercase letters and digits joined by single
+    hyphens and anything else exits 64. Without --prompt-file a novel name
+    still exits 64: the validation moved out of argparse, and this pins
+    that it did not move out of the cell.
+
   - The stray-write detector runs for both runtimes. The cases above drive
     the Claude launcher; the one at the end of the file drives the Codex
     launcher through the same shared call. The fleet's other review
@@ -322,7 +330,7 @@ def dirty_the_target(repository):
 
 
 def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
-                      runtime="claude", environment_overrides=None):
+                      runtime="claude", environment_overrides=None, cell="restate"):
     """One cell launcher, run against a stub standing in for its runtime.
 
     The stub is installed under the runtime's own name, because that is how
@@ -343,7 +351,7 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / f"cold-read-{runtime}-cell.py"),
-         "--cell", "restate", "--tier", "floor",
+         "--cell", cell, "--tier", "floor",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
         capture_output=True, text=True, check=False, env=environment,
@@ -351,10 +359,10 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
 
 
 def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
-                    environment_overrides=None):
+                    environment_overrides=None, cell="restate"):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="claude",
-                             environment_overrides=environment_overrides)
+                             environment_overrides=environment_overrides, cell=cell)
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
@@ -945,6 +953,71 @@ with tempfile.TemporaryDirectory() as scratch:
           and "no-such-draft-prompt.md" in result.stderr
           and "Traceback" not in result.stderr,
           repr(result.stderr))
+
+    # --- With --prompt-file, --cell is a free label -----------------------
+    # A draft is not yet a named pass, so a novel name runs and the stamp
+    # says which cell it was; the report name carries it too.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    draft_prompt = repository / draft_prompt_relative_path
+    draft_prompt.write_text(
+        "DRAFT PROMPT MARKER. Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+        encoding="utf-8")
+    report = report_path_for(repository, "novel-cell", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, "--prompt-file", draft_prompt_relative_path, cell="terminology-v9",
+    )
+    check("a novel --cell name runs under --prompt-file",
+          result.returncode == 0 and report.is_file(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the stamp names the novel cell",
+          " cell=terminology-v9 " in provenance_stamp_of(report),
+          repr(provenance_stamp_of(report)))
+
+    # Without --prompt-file the same name is refused: the check left argparse
+    # so it could depend on the flag, and must not have left the cell.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "novel-cell-no-flag", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, cell="terminology-v9",
+    )
+    check("a novel --cell name without --prompt-file exits 64 and writes no report",
+          result.returncode == 64 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("that refusal lists the names allowed and the flag that would let it run",
+          "--cell must be one of" in result.stderr
+          and "terminology" in result.stderr
+          and "runs only with --prompt-file" in result.stderr
+          and "Traceback" not in result.stderr,
+          repr(result.stderr))
+
+    # A label that cannot be a report-name token is refused, however the
+    # draft is named: the label goes into the file name and `--` is that
+    # name's separator. (A label opening with a hyphen is not among these:
+    # argparse reads it as an option and refuses it first, exit 64 as well,
+    # so it never reaches the cell's own check.)
+    for unsafe_label in ("Terminology V9", "draft--v9", "../escape", "trailing-"):
+        shutil.rmtree(repository)
+        repository = build_scratch_repository(scratch)
+        draft_prompt = repository / draft_prompt_relative_path
+        draft_prompt.write_text("Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+                                encoding="utf-8")
+        report = report_path_for(repository, "unsafe-cell", "claude")
+        result = run_claude_cell(
+            repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+            report, "--prompt-file", draft_prompt_relative_path, cell=unsafe_label,
+        )
+        check(f"an unsafe --cell label {unsafe_label!r} exits 64 under --prompt-file",
+              result.returncode == 64 and not report.exists(),
+              f"exit {result.returncode}; stderr={result.stderr!r}")
+        check(f"the refusal of {unsafe_label!r} says what a label must look like",
+              "cannot name a report" in result.stderr
+              and "lowercase letters and digits joined by single hyphens" in result.stderr
+              and "Traceback" not in result.stderr,
+              repr(result.stderr))
 
     # --- The stray-write detector runs for the Codex leg too --------------
     # The cases at the top of this file drive the Claude launcher; this one

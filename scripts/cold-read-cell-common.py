@@ -91,6 +91,17 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 TIER_CHOICES = ["good", "floor"]
 
+# What --cell may be when --prompt-file is given (user-ruled 2026-09-05): a
+# free label, because a draft prompt is by definition not yet a named pass,
+# and the flag exists so a trial can run through the ordinary launcher.
+# The label becomes the pass token of the report's file name --
+# `<record directory name>--<runtime>-<pass token>-<tier>.md` -- so it is
+# held to the characters every existing token uses: lowercase letters and
+# digits, joined by single hyphens. No leading, trailing or doubled hyphen,
+# because `--` is that name's separator and a reader splitting on it would
+# be misled. Without --prompt-file, --cell is still one of CELL_CHOICES.
+PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
 
 # A cell's own refusals, kept off every code its runtime produces so that a
 # code coming out of a cell stays readable as whose it is. sysexits.h's
@@ -144,7 +155,16 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
     parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--cell", required=True, choices=CELL_CHOICES)
+    # Not `choices=`: the set of acceptable values depends on --prompt-file,
+    # which argparse cannot see while validating this one. `validate_cell`
+    # applies the rule once both are parsed, and leaves by the same door
+    # (EXIT_BAD_INVOCATION) argparse's own errors do.
+    parser.add_argument(
+        "--cell", required=True,
+        help=f"the pass to run, one of {', '.join(CELL_CHOICES)}; with "
+             "--prompt-file, any label of lowercase letters and digits joined "
+             "by single hyphens, which names the report",
+    )
     parser.add_argument("--tier", required=True, choices=TIER_CHOICES)
     parser.add_argument(
         "--target", required=True,
@@ -178,6 +198,28 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
              "one under prompts/. The stamp records the file's path.",
     )
     return parser
+
+
+def validate_cell(cell: str, prompt_file_argument) -> None:
+    """--cell is a pass name, or under --prompt-file a report-name token.
+
+    Both refusals name their fix. A name outside CELL_CHOICES without
+    --prompt-file says which flag would let it run; a label that cannot be
+    a file-name token says what one looks like.
+    """
+    if not prompt_file_argument:
+        if cell not in CELL_CHOICES:
+            raise CellRefusal(
+                f"--cell must be one of {', '.join(CELL_CHOICES)} (got {cell!r}); "
+                "a cell name outside that list runs only with --prompt-file, "
+                "which names the draft template it reads")
+        return
+    if not PROMPT_FILE_CELL_LABEL_PATTERN.match(cell):
+        raise CellRefusal(
+            f"--cell {cell!r} cannot name a report: with --prompt-file the cell "
+            "name is a free label that becomes a token of the report's file "
+            "name, and must be lowercase letters and digits joined by single "
+            "hyphens, like terminology-v9")
 
 
 def resolve_target(target_argument: str) -> pathlib.Path:
@@ -807,6 +849,7 @@ def run_cell(
     # subtract from them yet.
     report = None
     try:
+        validate_cell(args.cell, args.prompt_file)
         target = resolve_target(args.target)
         report = resolve_report_path(args.report)
         prompt_file = (
