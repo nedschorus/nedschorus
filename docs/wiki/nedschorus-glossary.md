@@ -1,4 +1,4 @@
-# Project vocabulary glossary
+# nedschorus glossary
 
 A list of the approved phrases and terms of this project, in alphabetical order. Generic SDLC vocabulary is deliberately absent. [do not include links as this will force the agents to read them].  Include key-terms that all or most agents might need. Do not include terms that will be rarely needed. Skills that fresh agents need to know to understand docs and workflows should be listed here too, since they will not have loaded them, they will not understand those phrases.
 
