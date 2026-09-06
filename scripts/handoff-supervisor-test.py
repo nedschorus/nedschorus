@@ -1191,22 +1191,22 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
         prompt = plan.compose("branch sync: composer-branch is 2 commit(s) behind main")
     except (TypeError, AttributeError):
         prompt = ""
-    check("the reincarnation promptcarries no queue status",
+    check("the reincarnation prompt carries no queue status",
           "Queue status" not in prompt and "queues —" not in prompt, prompt)
-    check("the reincarnation promptcarries no task-count line",
+    check("the reincarnation prompt carries no task-count line",
           "task(s) are visible" not in prompt, prompt)
-    check("the reincarnation promptcarries no launch-clock sentence",
+    check("the reincarnation prompt carries no launch-clock sentence",
           "The clock read" not in prompt and "never from estimate" not in prompt, prompt)
-    check("the reincarnation promptstamps the written-at and defers the gap to `date`",
+    check("the reincarnation prompt stamps the written-at and defers the gap to `date`",
           "written at 20" in prompt
           and "Calculate from `date` how long ago that was" in prompt, prompt)
-    check("the reincarnation promptcarries the branch-state line the plan was composed with",
+    check("the reincarnation prompt carries the branch-state line the plan was composed with",
           "branch sync: composer-branch is 2 commit(s) behind main — if behind, "
           "catch up with origin/main before your first substantive action;"
           in prompt, prompt)
-    check("the reincarnation promptpoints at the predecessor's subagent transcripts",
+    check("the reincarnation prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
-    check("the reincarnation promptstill ignites from the next step",
+    check("the reincarnation prompt still ignites from the next step",
           "keep composing" in prompt, prompt)
 
 
