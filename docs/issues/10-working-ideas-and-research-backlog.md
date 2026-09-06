@@ -89,7 +89,7 @@ rule); this is the summary, updated 2026-07-26 to the ruled state:
 - Provenance: Markdown provenance lives in git commit history; GitHub-issue
   provenance is a footer line in the body or a revision comment; frontmatter
   fields exist only where a named consumer uses them.
-- Repository control is the git-gatekeeper program holding the one push
+- Repository control is the main-gatekeeper program holding the one push
   credential — every agent invokes it directly. The single-admitting-AGENT
   concept is retired (walk item 15 ruling; the earlier line here saying "one
   admitting agent" predated it).
@@ -749,7 +749,7 @@ conclusions are:
   public-links policy): links are judged on usefulness and reliability only;
   nothing is omitted from public artifacts on provenance grounds.
 - First bounded task — RESOLVED 2026-07-25 (walk item 15): the
-  git-gatekeeper build slice (git-gatekeeper-design.md § Build slice), boot
+  main-gatekeeper build slice (main-gatekeeper-design.md § Build slice), boot
   test first. Bounded, code-heavy, tests the founding skills and workflow end
   to end, imports no predecessor subsystem (the gatekeeper is authored
   natively; legacy contact is read-only reference under the rewrite policy).

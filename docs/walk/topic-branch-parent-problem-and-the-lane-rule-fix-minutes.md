@@ -38,10 +38,10 @@ a seat has a branch named after it — stated in handoff-supervisor.py's own
 docstring, that an agent's home sits on its own branch only because git refuses
 one branch in two working copies.
 
-## Rider answered during item 1 — does the git-gatekeeper fix this or worsen it?
+## Rider answered during item 1 — does the main-gatekeeper fix this or worsen it?
 
 Fixes it, by construction, for ordinary changes. Per
-docs/cross-project/git-gatekeeper-design.md: "Ordinary changes use no branches
+docs/cross-project/main-gatekeeper-design.md: "Ordinary changes use no branches
 and no pull requests", and the gate builds its candidate in its own private
 workspace starting from main at the computed base, taking only declared paths
 from the caller's working copy. Where the caller stands is irrelevant.
@@ -105,7 +105,7 @@ written against a component nothing tracks.
 a topic starts from current main; the procedure lives in the skill. No walked
 approval is needed and none was taken — `.walk-approved` was not written.
 
-**Does this conflict with the git-gatekeeper plan?** No. A correction was
+**Does this conflict with the main-gatekeeper plan?** No. A correction was
 required here: the answer is NOT that pull requests largely disappear at
 activation. The activation shape the user ruled 2026-08-29 ("14-b is fine. Can
 we test it?") is that the GATE OPENS A PULL REQUEST rather than pushing to main,

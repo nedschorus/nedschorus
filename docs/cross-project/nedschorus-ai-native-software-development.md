@@ -31,7 +31,7 @@ Every downstream agent also inspects its inputs. A coder has a uniquely concrete
 
 The workflow has backward edges, but it does not require a sophisticated graph engine. It needs a small durable controller, explicit artifact versions, bounded node contracts, and clear routing rules. The intelligence belongs mainly in the node prompts and reviews; the controller should remain boring, inspectable software.
 
-Nedschorus already contains several strong foundations: fresh-context cold reads, handoff and transcript preservation, a tested Git gatekeeper, per-seat recovery, watchers, GitHub Issue/Markdown conventions, and Codex/Claude launchers. Its proposed design, test-plan, implementation, review, diagnosis, and unified-agent skills closely match this architecture, but most have not yet been built. A persistent master is also not currently implemented; one Nedschorus document explicitly declined it, so adopting it now requires a recorded design change rather than treating it as existing behavior.
+Nedschorus already contains several strong foundations: fresh-context cold reads, handoff and transcript preservation, a tested main-gatekeeper, per-seat recovery, watchers, GitHub Issue/Markdown conventions, and Codex/Claude launchers. Its proposed design, test-plan, implementation, review, diagnosis, and unified-agent skills closely match this architecture, but most have not yet been built. A persistent master is also not currently implemented; one Nedschorus document explicitly declined it, so adopting it now requires a recorded design change rather than treating it as existing behavior.
 
 ## 1. The high concept
 
@@ -217,7 +217,7 @@ The outer result may expose convenient named outcomes such as:
 - `RETRY_OPERATIONAL`
 - `FAILED_SYSTEM`
 
-This follows a useful pattern already present in the Nedschorus Git gatekeeper: return a named outcome together with facts, a human summary, and a concrete `next_action`.
+This follows a useful pattern already present in the Nedschorus main-gatekeeper: return a named outcome together with facts, a human summary, and a concrete `next_action`.
 
 ### When a nit may be repaired silently
 
@@ -468,7 +468,7 @@ There is no need for one universal state enum. Each component should own the sma
 | Artifact | `candidate`, `accepted`, `superseded`, `stale`, `diagnostic_only`, `rejected` |
 | Deployment | `planned`, `deploying`, `healthy`, `degraded`, `rolled_back`, `failed` |
 
-Nedschorus offers a good concrete precedent in its [Git gatekeeper design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/git-gatekeeper-design.md): `SCREENING → WORKING → PUSHING → CHECKED-IN` or `REFUSED`, with externally visible outcomes such as `checked-in`, `in-progress`, `abandoned`, and `unknown`. These are deliberately specific to the gatekeeper. The new controller should reuse the pattern—explicit states, durable effects, idempotent recovery, facts, and next action—without copying the gatekeeper’s state names into unrelated nodes.
+Nedschorus offers a good concrete precedent in its [main-gatekeeper design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/main-gatekeeper-design.md): `SCREENING → WORKING → PUSHING → CHECKED-IN` or `REFUSED`, with externally visible outcomes such as `checked-in`, `in-progress`, `abandoned`, and `unknown`. These are deliberately specific to the gatekeeper. The new controller should reuse the pattern—explicit states, durable effects, idempotent recovery, facts, and next action—without copying the gatekeeper’s state names into unrelated nodes.
 
 ## 11. Policy delivery, trust, and permissions
 
@@ -584,7 +584,7 @@ The following is a repository-and-GHI snapshot, not a statement that every propo
 | --- | --- | --- |
 | [Fresh-context cold-read grid](https://github.com/nedschorus/nedschorus/blob/main/scripts/cold-read-grid.py) and Claude/Codex cells | **Built** | Keep. It is the clearest existing implementation of independent, zero-context artifact review. Extend its result records into the common node schema. |
 | Handoff writer, supervisor, threshold hook, and transcript extraction | **Built** | Keep. Generalize the [existing handoff design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/fast-handoff-design.md) from session continuity into per-work-item master checkpoints; do not call it semantic compaction when it is primarily handoff plus transcript preservation. |
-| [Git gatekeeper](https://github.com/nedschorus/nedschorus/blob/main/scripts/git-gatekeeper.py) and extensive test suite | **Built, but the final live gate is constrained/dormant** | Keep its explicit state machine, idempotent digest, atomic-push concurrency, refusal messages, and recovery semantics. Activate only when the repository’s branch-protection and review policy are reconciled. |
+| [main-gatekeeper](https://github.com/nedschorus/nedschorus/blob/main/scripts/main-gatekeeper.py) and extensive test suite | **Built, but the final live gate is constrained/dormant** | Keep its explicit state machine, idempotent digest, atomic-push concurrency, refusal messages, and recovery semantics. Activate only when the repository’s branch-protection and review policy are reconciled. |
 | Branch protection and PR lane | **Built/active infrastructure** | Keep as the current single gate to `main`. Required checks are useful now; a merge queue is optional later. |
 | [Per-seat crash recovery](https://github.com/nedschorus/nedschorus/blob/main/scripts/recover-crashed-seats.py) | **Initial version built; improvements planned** | Complete issues [#242](https://github.com/nedschorus/nedschorus/issues/242) and [#116](https://github.com/nedschorus/nedschorus/issues/116). Add durable execution identity and verified restart before increasing autonomy. |
 | Agent-dialog and pull-request watchers | **Built** | Reuse as evidence collectors and liveness signals. Put the watchers under an external supervisor. |
@@ -703,7 +703,7 @@ These are the present architectural decisions established by the human direction
 11. **Observability is part of design and testing.** Each change defines the evidence needed to distinguish important failure hypotheses, with explicit privacy and retention limits.
 12. **Complexity is earned:** manual → human-invoked script → automation. Add machinery only for a demonstrated consumer or failure.
 13. **Behavior belongs in deterministic code when it can be expressed safely there.** Prompts handle judgment and unenumerated inputs; code handles permissions, state transitions, counters, validation, repeatable transforms, and promotion.
-14. **There is one gate to `main`.** The git-gatekeeper is the permanent check-in path. The interim pull-request lane in `CLAUDE.md` remains current until that gate is active.
+14. **There is one gate to `main`.** The main-gatekeeper is the permanent check-in path. The interim pull-request lane in `CLAUDE.md` remains current until that gate is active.
 15. **Durable artifacts are written for an independent reader.** A reader with the repository, applicable project instructions, and the artifact should not need the conversation that created it.
 16. **The old `nedlern` system is legacy reference, not an inherited specification.** When work deliberately reuses it, touched features are classified as `preserve-feature`, `update-feature`, `remove-feature`, or `consider-feature`; unexamined behavior is not preserved by default.
 17. **Public sources are judged by usefulness and reliability.** Unofficial material may inform a decision but never becomes a runtime contract merely by being quoted.

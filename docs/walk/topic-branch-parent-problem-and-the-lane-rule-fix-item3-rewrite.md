@@ -26,11 +26,11 @@ fast-forward normally succeeds; a refusal means something is on that branch that
 should not be — stop and look. An open pull request does not affect it: a
 topic's commits live on the topic's own branch, never on the seat's.
 
-How much this governs. While the git-gatekeeper is dormant, every change reaches
+How much this governs. While the main-gatekeeper is dormant, every change reaches
 main this way, so the rule covers all of them. Once the gate runs it builds each
 change in its own private workspace from main, and most changes need no branch
 at all. One pull-request lane survives permanently: the gate refuses to check in
-its own source, `scripts/git-gatekeeper.py`, which must still reach main.
+its own source, `scripts/main-gatekeeper.py`, which must still reach main.
 
 The rule states the intent; it does not enforce it. The enforcement — a script
 that performs the sequence, and a check at `gh pr create` that refuses a branch
