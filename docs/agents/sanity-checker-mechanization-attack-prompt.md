@@ -73,6 +73,6 @@ Try to refute each finding yourself before reporting it; report only the survivo
 
 ## Worked examples from this project's ruled history
 
-**Accepted:** agents were instructed to pass `--base` (a 40-character commit id) to the check-in gate (`scripts/git-gatekeeper.py check-in`, the project's program that validates and lands changes); now the program computes it itself, from git. The same exact fact, delivered a better way — reliability moved from agent habit into mechanism. The fact was derivable; only how it reached the gate was open to change.
+**Accepted:** agents were instructed to pass `--base` (a 40-character commit id) to the check-in gate (`scripts/main-gatekeeper.py check-in`, the project's program that validates and lands changes); now the program computes it itself, from git. The same exact fact, delivered a better way — reliability moved from agent habit into mechanism. The fact was derivable; only how it reached the gate was open to change.
 
 **Rejected:** having the launcher pre-search the reviewed documents for recorded-ruling stamps and hand every reviewer the list, so none could be missed. A mechanism answering no observed failure: in the live runs every reviewer caught the stamps unaided, and a reviewer handed the list might stop watching for stamps in documents the list did not cover. The guard exists to make a mechanism pay for itself; this one had nothing to pay for.

@@ -17,7 +17,7 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 - `README.md` — the charter.
 - `docs/cross-project/nedschorus-founding-plan.md` — the boot-up plan and rulings register (retired 2026-09-03; `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`).
 - `docs/cross-project/fast-handoff-design.md` — the session-handoff specification.
-- `docs/cross-project/git-gatekeeper-design.md` — the check-in gate specification (renamed from fast-pr-to-prod-design 2026-07-24).
+- `docs/cross-project/main-gatekeeper-design.md` — the check-in gate specification (renamed from fast-pr-to-prod-design 2026-07-24).
 - `docs/cross-project/comms-bridge-spec.md` — the two-log coordination channel.
 - `docs/issues/4-open-source-publishing-community-strategy.md` — the publishing strategy.
 - `entry-manifest.md` — the import ledger (empty is its correct current state).
@@ -25,7 +25,7 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 
 ## Fixed rulings — do not relitigate
 
-The following are boss-ruled and out of scope as findings: the single-writer git-gatekeeper; the earned-complexity ladder; python-liberal/python-light; the zero-context-reader rule; the three committed homes and the ban on `docs/working/`; the legacy-with-entry-checkpoint doctrine; the two-log bridge with no message broker or mailbox substrate; the naked-drafter handoff procedure with session-agent correction; the two-account layout (machine account sole pusher, human admin with no push path).
+The following are boss-ruled and out of scope as findings: the single-writer main-gatekeeper; the earned-complexity ladder; python-liberal/python-light; the zero-context-reader rule; the three committed homes and the ban on `docs/working/`; the legacy-with-entry-checkpoint doctrine; the two-log bridge with no message broker or mailbox substrate; the naked-drafter handoff procedure with session-agent correction; the two-account layout (machine account sole pusher, human admin with no push path).
 
 If you believe one of these rulings is itself defective, say so in a clearly separated section titled RULING CHALLENGE, with the failure scenario — do not weave it through ordinary findings.
 

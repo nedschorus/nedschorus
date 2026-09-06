@@ -25,7 +25,7 @@ Briefs are not uniform. Most state a pile of work with its issues and pull reque
 
 **Two rules before you touch anything.**
 
-*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Today the user's Mac-side agent — his own agent, not one of these seats — reviews and merges. `CLAUDE.md` records this as an **interim** lane: the permanent path is the git-gatekeeper (`scripts/git-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
+*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Today the user's Mac-side agent — his own agent, not one of these seats — reviews and merges. `CLAUDE.md` records this as an **interim** lane: the permanent path is the main-gatekeeper (`scripts/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
 
 *Instruction-class files.* `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and anything under `.claude/` change only with the user's **walked approval** — his approval given item by item through a walk, not one yes to a bundle, recorded by quoting his words into `.walk-approved` at the repository root. `.claude/hooks/instruction-file-guard.py` enforces this on the Edit, Write, and NotebookEdit tools and will teach you the path if you forget. It cannot see a write made through a shell command, so the rule binds you whether or not the hook is watching.
 

@@ -118,13 +118,13 @@ A second code node is proposed in issue #238 but not designed: a check at pull-r
 
 ## Value across gatekeeper activation
 
-While the git-gatekeeper is dormant, agent-created topic branches are the ordinary way this fleet's work reaches main. One historical exception is on record: the gatekeeper's first live check-in landed commit `b24e376` on 2026-08-18, user-authorized, before main's protection was measured to require a review. The gate has been dormant since, and the interim lane in `CLAUDE.md` — branch, pull request, merge-lane review — governs every agent change.
+While the main-gatekeeper is dormant, agent-created topic branches are the ordinary way this fleet's work reaches main. One historical exception is on record: the gatekeeper's first live check-in landed commit `b24e376` on 2026-08-18, user-authorized, before main's protection was measured to require a review. The gate has been dormant since, and the interim lane in `CLAUDE.md` — branch, pull request, merge-lane review — governs every agent change.
 
-After activation the script has a narrower use. Per `docs/cross-project/git-gatekeeper-design.md`, the gate builds each change in its own private workspace from main, so a caller creates no branch for an ordinary change; the gate opens the pull request, which means it creates that pull request's source branch itself. Two cases still need an agent-created topic branch: the gate's own source, since the gate refuses check-ins touching `scripts/git-gatekeeper.py` (`gatekeeper-source-refused`) for as long as that refusal stands, and stacked work, which the gate's build-from-main shape does not serve either.
+After activation the script has a narrower use. Per `docs/cross-project/main-gatekeeper-design.md`, the gate builds each change in its own private workspace from main, so a caller creates no branch for an ordinary change; the gate opens the pull request, which means it creates that pull request's source branch itself. Two cases still need an agent-created topic branch: the gate's own source, since the gate refuses check-ins touching `scripts/main-gatekeeper.py` (`gatekeeper-source-refused`) for as long as that refusal stands, and stacked work, which the gate's build-from-main shape does not serve either.
 
 ## Testing
 
-`scripts/start-topic-branch-test.py`, beside the script. Each case builds its own throwaway fixture — a bare repository as `origin` plus a clone — and runs the script as a subprocess, in the manner of `scripts/git-gatekeeper-test.py`. Nothing further about the structure of the new test file is required here.
+`scripts/start-topic-branch-test.py`, beside the script. Each case builds its own throwaway fixture — a bare repository as `origin` plus a clone — and runs the script as a subprocess, in the manner of `scripts/main-gatekeeper-test.py`. Nothing further about the structure of the new test file is required here.
 
 **The central case.** `origin/main` is at commit M; the caller stands on a topic branch whose tip is a different commit T. Run the script. Assert exit 0, the success line on stdout naming the new branch and M's full sha, and that the new branch's tip is M and not T. The tips must differ or the assertion proves nothing about base selection.
 

@@ -42,8 +42,8 @@ The skill also needs `needs-feasibility-evidence`, `needs-human-decision`,
 ### Outer item 5 — `write-test-plan`
 
 Highest-value missing packaged capability and the leading first dogfood
-candidate for the already-designed git-gatekeeper build. The complete proposed
-contract is below. Its read-only git-gatekeeper application returned
+candidate for the already-designed main-gatekeeper build. The complete proposed
+contract is below. Its read-only main-gatekeeper application returned
 `needs-design-clarification`, identifying nine missing executable/test
 bindings rather than inventing commands. Recent benchmarks reinforce that
 generated tests need executed fail-to-pass, fault-detection, preservation, and
@@ -99,5 +99,5 @@ human.
 
 Keep the five founding skills. Do not add the whole candidate lifecycle. Select
 one candidate from the first real task's missing decision. On the current
-git-gatekeeper task, `write-test-plan` has the strongest fit; it should be one
+main-gatekeeper task, `write-test-plan` has the strongest fit; it should be one
 `SKILL.md` with manual evaluation, no helper framework.

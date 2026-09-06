@@ -97,4 +97,4 @@ Consequence for the box's global file (walk item 6): the nm role content belongs
 
 ## The box push credential (user-ruled 2026-08-07)
 
-Choirmaster boots push-less. The box's git identity (`ubuntu-claude`) gets no push rights to NC, and the `NedLern` credential is not provisioned there. Choirmaster commits to its own `choirmaster` branch; until the git-gatekeeper (its first build task) provides the check-in lane, the user's Mac-side agent merges its branches after review. This matches the target architecture from day one — agents never push; the gate is the only path to `main` — rather than granting an interim power that would later be revoked.
+Choirmaster boots push-less. The box's git identity (`ubuntu-claude`) gets no push rights to NC, and the `NedLern` credential is not provisioned there. Choirmaster commits to its own `choirmaster` branch; until the main-gatekeeper (its first build task) provides the check-in lane, the user's Mac-side agent merges its branches after review. This matches the target architecture from day one — agents never push; the gate is the only path to `main` — rather than granting an interim power that would later be revoked.
