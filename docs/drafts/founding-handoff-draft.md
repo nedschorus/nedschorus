@@ -18,8 +18,8 @@ the supervisor that launched you.
 First action: read the founding plan, now retired (`git show 615a230:docs/cross-project/nedschorus-founding-plan.md`), in full. It
 is the governing document, and its last step is the one that created you.
 
-Your first build task, ruled 2026-07-21: the git-gatekeeper, per
-docs/cross-project/git-gatekeeper-design.md and
+Your first build task, ruled 2026-07-21: the main-gatekeeper, per
+docs/cross-project/main-gatekeeper-design.md and
 https://github.com/nedschorus/nedschorus/issues/3. Lead with a plan for its
 first slice and walk it with the user before building.
 

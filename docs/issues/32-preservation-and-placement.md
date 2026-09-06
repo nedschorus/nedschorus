@@ -102,7 +102,7 @@ one concept, one home.
 
 ## Part 3 — codification: the duties land in builds already planned
 
-- **The git-gatekeeper** ([nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3))
+- **The main-gatekeeper** ([nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3))
   owns the git-preserved class's entrance; its commit trailers are the
   provenance record. This design adds requirements, not features.
 - **The handoff build** ([nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2))
@@ -243,7 +243,7 @@ incidents earn it, per the enforcement ladder.
 
 - Backup of state outside git (the class-3 leaf): https://github.com/nedschorus/nedschorus/issues/7
 - The handoff build and scrub duties: https://github.com/nedschorus/nedschorus/issues/2
-- The git-gatekeeper: https://github.com/nedschorus/nedschorus/issues/3
+- The main-gatekeeper: https://github.com/nedschorus/nedschorus/issues/3
 - The writing skills: https://github.com/nedschorus/nedschorus/issues/13
 - Queue drain procedure: https://github.com/nedschorus/nedschorus/issues/24
 - The dynamic agent-team model (workers, dispatchers, sensors-vs-judgment): https://github.com/nedschorus/nedschorus/issues/26

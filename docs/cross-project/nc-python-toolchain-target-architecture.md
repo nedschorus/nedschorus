@@ -2,7 +2,7 @@
 
 v3, 2026-07-30. Supersedes v2 after a five-reviewer round-2 panel (archived: `nc-review2-cops.md`, Fable-2 report, three cvp console reviews). v3 makes one governing change — an explicit threat model — and under it re-triages every round-2 finding: accident-class findings are fixed in the sections below; deception-class findings move to §A (detected, not prevented). The document is deliberately sized to be walkable in one session; complexity beyond that budget requires a new ruling, not a bigger document.
 
-**Reading note (2026-07-31 finalization review):** the check engine's settled name is `nc-checkin-quality-gate` (package `nc_checkin_quality_gate`), applied throughout below. Where §7 describes index-based local evaluation (`git write-tree` on the invoking worktree), the plan's model supersedes for the built system: evaluation happens in the git-gatekeeper's candidate workspace ([git-gatekeeper-design.md](git-gatekeeper-design.md)); §7's CI merge-tree tier is unchanged. On any other conflict, [the plan](nc-python-toolchain-plan.md) wins — this document is the survey, not the road.
+**Reading note (2026-07-31 finalization review):** the check engine's settled name is `nc-checkin-quality-gate` (package `nc_checkin_quality_gate`), applied throughout below. Where §7 describes index-based local evaluation (`git write-tree` on the invoking worktree), the plan's model supersedes for the built system: evaluation happens in the main-gatekeeper's candidate workspace ([main-gatekeeper-design.md](main-gatekeeper-design.md)); §7's CI merge-tree tier is unchanged. On any other conflict, [the plan](nc-python-toolchain-plan.md) wins — this document is the survey, not the road.
 
 ## T. Threat model (governing ruling)
 

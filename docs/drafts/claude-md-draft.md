@@ -59,7 +59,7 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 
 18. ~~The boss — the one human operator; every walk, admission, and ruling in these files means him.~~
     *admission 2026-08-06 → CUT, with a TERMINOLOGY RULING (boss): use the standard term — "user", not "boss" — in NC instruction files. Follow-up: mechanical boss→user sweep over the landed NC skills and queued instruction docs, executed at this walk's close under this ruling.*
-19. ~~Check-in — getting a change onto main. Through the git-gatekeeper once built; by plain commit and push until then.~~
+19. ~~Check-in — getting a change onto main. Through the main-gatekeeper once built; by plain commit and push until then.~~
     *admission 2026-08-06 → CUT: the check-in process itself will teach the agent (the gatekeeper's runtime output is the instruction surface, per code-over-prompts).*
 20. ~~GHI — a GitHub issue on nedschorus. The MD-GHI pair — an issue carrying the walkable state plus a `docs/issues/<n>-<slug>.md` document carrying the substance.~~
     *admission 2026-08-06 → CUT: training covers it. Canary (cold `claude -p`, no project context, 2026-08-06): read GHI as "GitHub Issue" and MD-GHI pair as "a Markdown document paired with its corresponding GitHub Issue that tracks the work" — both correct unprompted.*

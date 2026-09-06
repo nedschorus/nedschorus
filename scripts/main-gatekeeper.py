@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The single program through which every change reaches main in nedschorus.
 
-Specification: docs/cross-project/git-gatekeeper-design.md (canonical).
+Specification: docs/cross-project/main-gatekeeper-design.md (canonical).
 Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
-docs/issues/3-git-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
+docs/issues/3-main-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
 Slices 1 to 5 of five are built (slice 5's CLAUDE.md workflow lines land
 separately, walked with the user). For each request the program does exactly
@@ -71,7 +71,7 @@ The workspace exists only while a request is in flight and is swept on both
 endings, so a refusal leaves the repository and the disk untouched.
 
 Usage:
-  git-gatekeeper.py check-in --files <path>... --message <text>
+  main-gatekeeper.py check-in --files <path>... --message <text>
                     --issue none|<n> --agent <runtime/model>
                     (--import none | --import-commit <40-hex>
                      --import-source <path> --import-dest <path>)
@@ -94,7 +94,7 @@ import time
 from pathlib import Path
 
 WORKSPACE_ROOT_NAME = "nedschorus-gatekeeper"
-CANDIDATE_BRANCH = "git-gatekeeper-candidate"
+CANDIDATE_BRANCH = "main-gatekeeper-candidate"
 MAIN_BRANCH = "main"
 
 FULL_COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
@@ -112,7 +112,7 @@ UNSAFE_PATH_MARKER = "->"
 # itself would be reviewing the code performing the review. Both disappear if the
 # path simply never comes through this door: it reaches main by pull request,
 # reviewed before merge.
-GATEKEEPER_SOURCE_PATH = "scripts/git-gatekeeper.py"
+GATEKEEPER_SOURCE_PATH = "scripts/main-gatekeeper.py"
 
 # The integration loop is bounded rather than open: refusing beats spinning.
 MAX_INTEGRATION_ROUNDS = 5
@@ -236,10 +236,10 @@ def screen_gatekeeper_source_path(path: str) -> None:
     the point. The next action names the lane that does admit it.
     """
     # Case-folded, deliberately (merge-lane review of PR #92, 2026-08-18).
-    # A case-sensitive comparison let `scripts/Git-Gatekeeper.py` through every
+    # A case-sensitive comparison let `scripts/Main-Gatekeeper.py` through every
     # screen and land as a distinct file on main; on a case-insensitive checkout
     # — every Mac clone — an ordinary pull then writes that file over
-    # `scripts/git-gatekeeper.py` on disk. That is exactly the self-replacement
+    # `scripts/main-gatekeeper.py` on disk. That is exactly the self-replacement
     # this refusal exists to prevent, defeated by one character. Over-refusing a
     # differently-cased path costs nothing: there is one such file, and no
     # legitimate check-in needs a case variant of it.
@@ -743,7 +743,7 @@ def prepare_clone(workspace: Path, remote: str) -> Path:
             f"could not read main from {remote!r}: {cloned.stderr.strip() or 'no stderr'}",
             "Resubmit once the remote is reachable; this failure is safe to retry.",
         )
-    run_git(["config", "user.name", "nedschorus-git-gatekeeper"], cwd=clone)
+    run_git(["config", "user.name", "nedschorus-main-gatekeeper"], cwd=clone)
     run_git(["config", "user.email", "gatekeeper@nedschorus.invalid"], cwd=clone)
     return clone
 
@@ -1134,7 +1134,7 @@ def require_digest(arguments, command: str) -> str:
     if not digest:
         raise Refusal(
             "malformed-field", f"{command} needs the request digest",
-            f"Resubmit as: git-gatekeeper.py {command} <digest> — the digest is "
+            f"Resubmit as: main-gatekeeper.py {command} <digest> — the digest is "
             "in the reply of the submission being asked about.",
         )
     return digest
@@ -1287,7 +1287,7 @@ def status_query(arguments) -> int:
             return emit({"outcome": "refused", "error": "workspace-io-error",
                          "facts": "the retained refusal record could not be read; "
                                   "it is left in place",
-                         "next_action": f"Ask again with: git-gatekeeper.py status "
+                         "next_action": f"Ask again with: main-gatekeeper.py status "
                                         f"{digest} — if it stays unreadable, resubmit "
                                         "the work; resubmitting is always safe.",
                          "digest": digest,
@@ -1648,7 +1648,7 @@ def check_in(arguments) -> int:
             # looked; this one now says where it came from.
             return emit({
                 "outcome": "accepted", "digest": digest,
-                "next_action": f"Collect the outcome with: git-gatekeeper.py "
+                "next_action": f"Collect the outcome with: main-gatekeeper.py "
                                f"status {digest} — run it on {submitting_host}, "
                                f"the host this request was submitted from; its "
                                f"workspace, worker and refusal record live "
@@ -1696,7 +1696,7 @@ class TeachingArgumentParser(argparse.ArgumentParser):
         raise Refusal(
             "malformed-field", f"the command line is malformed: {message}",
             "Resubmit with a corrected invocation; the request grammar is in the "
-            "specification (docs/cross-project/git-gatekeeper-design.md). "
+            "specification (docs/cross-project/main-gatekeeper-design.md). "
             "(--help is deliberately not cited here: it prints usage text, "
             "not the JSON every other invocation returns.)",
         )
@@ -1704,7 +1704,7 @@ class TeachingArgumentParser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = TeachingArgumentParser(
-        prog="git-gatekeeper.py", description="The single check-in gate for nedschorus.",
+        prog="main-gatekeeper.py", description="The single check-in gate for nedschorus.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 

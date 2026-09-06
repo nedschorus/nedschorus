@@ -490,7 +490,7 @@ def run_branch_protection_audit() -> str:
     named finding, and a broken audit must never break a handoff."""
     if os.environ.get("HANDOFF_SKIP_PROTECTION_AUDIT"):
         return "branch-protection audit: skipped (HANDOFF_SKIP_PROTECTION_AUDIT set)"
-    gatekeeper_path = Path(__file__).with_name("git-gatekeeper.py")
+    gatekeeper_path = Path(__file__).with_name("main-gatekeeper.py")
     if not gatekeeper_path.is_file():
         return "branch-protection audit: audit-failed — no gatekeeper beside this script"
     try:

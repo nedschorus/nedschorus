@@ -9,8 +9,8 @@ take their repository root from their own location on disk, so a copy is a
 grid whose record directories and whose `git status` are the scratch tree's
 and never this checkout's. And the stubs are the models: each finds the
 report path in the prompt it was handed — the Claude leg on stdin, the Codex
-leg as an argument — writes a line to it and exits 0, so four cells complete
-in seconds without a model call. A real grid run is four reviews and half an
+leg as an argument — writes a line to it and exits 0, so six cells complete
+in seconds without a model call. A real grid run is six reviews and half an
 hour; these cases are about what the grid says, not about what a reviewer
 finds.
 
@@ -27,15 +27,27 @@ WHAT IS PINNED HERE.
     GIT_DIR at a directory that does not exist: eight `saved:` lines, and not
     one word saying nothing had been checked.
 
-  - A cell that fell back to a later model in its chain says so on the
-    grid's output. Until 2026-08-25 a fallback was recorded only in the
-    report's own `fallback_from=` provenance stamp, which nobody sees unless
-    they open that file — and the grid deleted the cell's log, so a report
-    written by the chain's second model was indistinguishable here from one
-    written by the model asked for (user-ruled that day: "I'm ok with the
-    fable falling back to opus too. I just don't want it to fail silently").
-    The rename commit that added the lift verified it by a hand-run probe;
-    this case is that probe, kept.
+  - Which Claude cell failed decides what the closing text tells the reader
+    (user-ruled 2026-09-04: "opus falling back to fable is not valid. If
+    opus fails we stop working and wait for it to come back. If fable is not
+    available, just note that and continue"). An absent Opus review replaces
+    the triage text with a stop-and-wait text and forbids rerunning the cell
+    on another model; an absent Fable review keeps the triage text and the
+    note says to continue with the three reports that landed. Until that
+    ruling the good tier was a chain, Opus then Fable, and the case here was
+    the fallback case: the grid's FELL BACK line (added 2026-08-25, "I just
+    don't want it to fail silently") was verified by a hand-run probe kept
+    as a test. No pinned chain has a second model now, so that line has no
+    positive control through the grid; the lift machinery stays.
+
+  - The read is six cells: the defect-hunt pass on both tiers of both
+    runtimes, and the terminology pass (user-ruled 2026-09-05) on the good
+    tier of both. The Opus-absent case is the good Claude cell of EITHER
+    pass: the cases below fail the terminology Opus cell alone and get the
+    stop-and-wait text, and fail the terminology Codex cell alone and get
+    the triage text, so the second pass is neither exempt from the ruling
+    nor able to trip it from the wrong runtime. The terminology cells run at
+    the effort the grid pins, which the stub reads off its own command line.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
     runtime's stderr into the log the grid lifts from, and the Codex CLI
@@ -127,8 +139,14 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # of model ids the stub refuses to be: launched as one of them it writes
 # nothing and exits 1, which is what sends a cell down its chain to the next
 # model. Naming one model makes a cell fall back; naming a cell's whole chain
-# makes the cell fail outright, which is the only way this suite can produce a
-# failed cell.
+# makes the cell fail outright. Since the second pass, one model serves two
+# cells (Opus is the good Claude cell of both passes), so
+# COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT, when set, fails
+# exactly the cells whose report name contains it -- the way to fail one
+# pass's cell and not the other's.
+# COLD_READ_GRID_TEST_STUB_EFFORT_LOG, when set, is a file the stub appends
+# one line to per launch: the report name it found and the effort on its
+# command line, so a case can check what effort each cell was launched at.
 # COLD_READ_GRID_TEST_STUB_NEAR_MISS_CHARACTER, when set, is the character the
 # stub puts in place of the last one of the record directory's name before
 # writing its report there — the 2026-08-25 accident, in which a model created
@@ -159,6 +177,20 @@ if match is None:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
     sys.exit(3)
 given = pathlib.Path(match.group(0))
+failing_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT")
+if failing_fragment and failing_fragment in given.name:
+    sys.stderr.write("stub runtime: this cell is refused by report name\n")
+    sys.exit(1)
+effort_log = os.environ.get("COLD_READ_GRID_TEST_STUB_EFFORT_LOG")
+if effort_log:
+    effort = ""
+    for index, argument in enumerate(sys.argv):
+        if argument == "--effort" and index + 1 < len(sys.argv):
+            effort = sys.argv[index + 1]
+        elif argument.startswith("model_reasoning_effort="):
+            effort = argument.split("=", 1)[1]
+    with open(effort_log, "a", encoding="utf-8") as handle:
+        handle.write(f"{given.name} {effort}\n")
 near_miss_character = os.environ.get("COLD_READ_GRID_TEST_STUB_NEAR_MISS_CHARACTER")
 if near_miss_character:
     given = (given.parent.parent / (given.parent.name[:-1] + near_miss_character)
@@ -272,9 +304,9 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in not_checked_lines),
           f"lifted lines were {not_checked_lines!r}")
     check("every cell that could not be checked is named",
-          len(not_checked_lines) == 4, f"{len(not_checked_lines)} of 4: {not_checked_lines!r}")
-    check("the four reviews still land and the grid still exits 0",
-          result.returncode == 0 and len(saved_lines) == 4,
+          len(not_checked_lines) == 6, f"{len(not_checked_lines)} of 6: {not_checked_lines!r}")
+    check("the six reviews still land and the grid still exits 0",
+          result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     record_directory = record_directory_of(repository)
     check("the stderr logs are still deleted once their lines have been lifted",
@@ -290,7 +322,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # What the reviewer edits here is the document under review, so this one
     # run trips both guards at once and the two are checked together: the
     # stray write is named, and the target is reported as having changed
-    # under the reviewers. The run therefore exits 3, not 0 — a set of four
+    # under the reviewers. The run therefore exits 3, not 0 — a set of six
     # reports describing text that no longer exists is the condition a caller
     # most needs to branch on, and it outranks the fact that every cell
     # succeeded. The case after this one keeps the plain stray-write path
@@ -311,8 +343,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f"lifted lines were {stray_lines!r}")
     check("a run whose check did run is not also reported as unchecked",
           "WRITE CHECK DID NOT RUN" not in result.stdout, repr(result.stdout))
-    check("the four reviews land, and a target edited under them exits 3",
-          result.returncode == 3 and len(saved_lines) == 4,
+    check("the six reviews land, and a target edited under them exits 3",
+          result.returncode == 3 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid says the target changed, on its own output, in one line",
           result.stdout.count("TARGET CHANGED DURING RUN:") == 1, repr(result.stdout))
@@ -332,7 +364,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # A moved target and a settled one call for opposite next actions, so the
     # exit-3 path must not close with the instructions to triage the set.
     check("a moved target does not get the closing instructions to triage",
-          "All four reviews are complete" not in result.stdout, repr(result.stdout))
+          "All six reviews are complete" not in result.stdout, repr(result.stdout))
     check("a moved target is told to stop editing and run the grid again",
           "Stop editing the document" in result.stdout
           and "Do not triage this set" in result.stdout, repr(result.stdout))
@@ -342,11 +374,11 @@ with tempfile.TemporaryDirectory() as scratch:
           and list(record_directory.glob("*.stderr.log")) == [],
           f"logs left in {record_directory}")
     # The reports are marked, never deleted: each still records truthfully
-    # what one reviewer read, which is evidence. Four cell reports plus the
+    # what one reviewer read, which is evidence. Six cell reports plus the
     # reference-integrity pre-pass.
     reports = sorted(record_directory.glob("*.md"))
     check("every report in the set is still on disk — they are evidence",
-          len(reports) == 5, [report.name for report in reports])
+          len(reports) == 7, [report.name for report in reports])
     check("every report in the set carries the marker",
           all("<!-- TARGET CHANGED DURING RUN:" in report.read_text(encoding="utf-8")
               for report in reports),
@@ -397,33 +429,44 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a reviewer that strayed into another file is reported too",
           stray_lines != [] and all(stray_relative_path in line for line in stray_lines),
           f"lifted lines were {stray_lines!r}")
-    check("a stray write outside the target is not a failure: four reviews, exit 0",
-          result.returncode == 0 and len(saved_lines) == 4,
+    check("a stray write outside the target is not a failure: six reviews, exit 0",
+          result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("a target nobody edited is not reported as changed",
           "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
     check("a settled target still gets the closing instructions to triage",
-          "All four reviews are complete" in result.stdout
+          "All six reviews are complete" in result.stdout
           and "Stop editing the document" not in result.stdout, repr(result.stdout))
+    # Line breaks collapsed first: the closing text is wrapped, and a check
+    # that missed the sentence because of where its line ended would fail for
+    # the wrong reason.
+    closing_text = " ".join(result.stdout.split())
+    check("the closing text says what the terminology reports are and how to triage them",
+          "The terminology reports list the document's key-terms that fail one of "
+          "five criteria, with the criteria numbers per item and a closing counts "
+          "line; triage them the same way as the defect-hunt reports." in closing_text,
+          repr(result.stdout))
 
     # --- A target that moved while a cell also failed -----------------------
     # The two conditions are independent and land together often enough to
     # write down: the closing text follows the target change (do not triage,
     # run the grid again), so the note naming the failed cells must not send
-    # the reader back to a triage that is not happening. The good-tier Claude
-    # cell fails outright here — the stub refuses every model in its chain —
-    # while the floor and Codex cells save their reports and edit the document
-    # under review on the way out.
+    # the reader back to a triage that is not happening. The floor-tier Claude
+    # cell fails outright here — the stub refuses claude-fable-5-1, the
+    # floor's only model, which is what the account's Fable limit does
+    # (2026-08-23; four cells on 2026-09-03) — while the good-tier Claude
+    # cells run on Opus and the Codex cells are untouched; all five save their
+    # reports and edit the document under review on the way out.
     repository = build_scratch_repository(scratch, "checkout-changed-and-failed")
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
-         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5,claude-fable-5"},
+         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1"},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
-    check("a run can lose a cell and its target at once: three saved, exit 3",
-          result.returncode == 3 and len(saved_lines) == 3,
+    check("a run can lose a cell and its target at once: five saved, exit 3",
+          result.returncode == 3 and len(saved_lines) == 5,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     # Read the NOTE line itself rather than the whole output: the per-cell
     # STRAY WRITE line also says "before triage", and it is emitted while the
@@ -441,12 +484,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and "being replaced by a run against the settled document" in note_lines[0],
           f"note lines were {note_lines!r}")
 
-    # --- A cell that fell back says so ------------------------------------
-    # The stub refuses to be claude-opus-5, which leads the Claude good tier.
-    # The good-tier Claude cell therefore falls back to claude-fable-5 and
-    # produces its report under it; the floor cell and the two Codex cells
-    # are untouched, so four reviews still land.
-    repository = build_scratch_repository(scratch, "checkout-fell-back")
+    # --- An absent Opus review stops the read -------------------------------
+    # User-ruled 2026-09-04: "opus falling back to fable is not valid. If opus
+    # fails we stop working and wait for it to come back." The stub refuses
+    # to be claude-opus-5, the good tier's only model since that ruling, so
+    # both good-tier Claude cells -- defect-hunt and terminology -- fail
+    # outright and nothing falls back; the floor cell and the three Codex
+    # cells land. Before the ruling this case was the fallback case: the good
+    # tier ran on Fable and four reviews landed under a FELL BACK line.
+    repository = build_scratch_repository(scratch, "checkout-opus-absent")
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
@@ -455,32 +501,172 @@ with tempfile.TemporaryDirectory() as scratch:
                    if line.startswith("saved:")]
     fell_back_lines = [line for line in result.stdout.splitlines()
                        if line.startswith("FELL BACK:")]
-    check("a cell whose first-choice model failed says so on the grid's output",
-          fell_back_lines != [], f"stdout was {result.stdout!r}")
-    check("the cell that fell back is named",
-          len(fell_back_lines) == 1 and all("claude" in line and "good" in line
-                                            for line in fell_back_lines),
-          f"lifted lines were {fell_back_lines!r}")
-    check("the line names the model that actually wrote the report",
-          all("claude-fable-5" in line for line in fell_back_lines),
-          f"lifted lines were {fell_back_lines!r}")
-    check("a fallback is not a failure: four reviews still land, grid exits 0",
-          result.returncode == 0 and len(saved_lines) == 4,
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("an Opus outage is a failed cell, not a fallback: no FELL BACK line",
+          fell_back_lines == [], f"lifted lines were {fell_back_lines!r}")
+    check("the other four reviews still land and the grid exits 1",
+          result.returncode == 1 and len(saved_lines) == 4,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    check("the closing text says to stop and wait for Opus",
+          "Wait for Opus to come back" in result.stdout
+          and "Stop here" in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the closing text does not also say the reviews are complete",
+          "All six reviews are complete" not in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the note names both Opus cells and forbids rerunning them on another model",
+          note_lines != [] and "claude-hunt-good" in note_lines[0]
+          and "claude-terminology-good" in note_lines[0]
+          and "wait for Opus to come back" in note_lines[0]
+          and "Do not rerun the Opus cell on another model" in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("the note does not say to rerun the failed cells singly",
+          note_lines != [] and "Rerun them singly" not in note_lines[0],
+          f"note lines were {note_lines!r}")
+
+    # --- The terminology pass's Opus cell alone is the Opus-absent case ------
+    # The good Claude cell of EITHER pass failing is the case the ruling
+    # names. Refusing the model would fail both passes' cells at once, so the
+    # stub refuses by report name: only the terminology Opus cell fails, the
+    # defect-hunt Opus cell lands, and the closing text is still the
+    # stop-and-wait text.
+    repository = build_scratch_repository(scratch, "checkout-terminology-opus-absent")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT":
+         "--claude-terminology-good.md"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("losing only the terminology Opus cell: five land, grid exits 1",
+          result.returncode == 1 and len(saved_lines) == 5
+          and any(line.endswith("--claude-hunt-good.md") for line in saved_lines),
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    check("the terminology Opus cell alone still gets the stop-and-wait text",
+          "Wait for Opus to come back" in result.stdout
+          and "Stop here" in result.stdout
+          and "All six reviews are complete" not in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the note names the terminology Opus cell and forbids another model",
+          note_lines != [] and "claude-terminology-good" in note_lines[0]
+          and "Do not rerun the Opus cell on another model" in note_lines[0],
+          f"note lines were {note_lines!r}")
+
+    # --- The terminology pass's Codex cell alone is an ordinary absence ------
+    # The other runtime's good cell is not Opus: its absence keeps the triage
+    # text and gets the generic rerun-or-note text, not the Fable text either
+    # (it is not the floor cell), so the Opus-absent case is pinned to the
+    # Claude good cells and to nothing else in the second pass.
+    repository = build_scratch_repository(scratch, "checkout-terminology-codex-absent")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT":
+         "--codex-terminology-good.md"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("losing only the terminology Codex cell: five land, grid exits 1",
+          result.returncode == 1 and len(saved_lines) == 5,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    check("a missing terminology Codex cell keeps the triage text",
+          "All six reviews are complete" in result.stdout
+          and "Stop here" not in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("its note is the generic one: rerun singly or note the absence",
+          note_lines != [] and "codex-terminology-good" in note_lines[0]
+          and "Rerun them singly" in note_lines[0]
+          and "Opus to come back" not in note_lines[0]
+          and "Fable floor cell" not in note_lines[0],
+          f"note lines were {note_lines!r}")
+
+    # --- The terminology cells run at the effort the grid pins ---------------
+    # max on both runtimes (user-ruled 2026-09-05, measured on the final
+    # prompt: opus-max 20/15/28 flags on three targets, sol-max 44/41/49).
+    # The grid passes it explicitly; the defect-hunt cells carry no override
+    # and run at their launchers' own pins, which this case does not restate.
+    repository = build_scratch_repository(scratch, "checkout-terminology-effort")
+    effort_log = scratch / "terminology-effort.log"
+    result = run_grid(
+        repository, stubs, {"COLD_READ_GRID_TEST_STUB_EFFORT_LOG": str(effort_log)},
+    )
+    effort_by_report = dict(
+        line.split(" ", 1) for line in
+        (effort_log.read_text(encoding="utf-8").splitlines() if effort_log.is_file() else [])
+        if " " in line)
+    terminology_efforts = {name: effort for name, effort in effort_by_report.items()
+                           if "-terminology-" in name}
+    check("both terminology cells are launched at max",
+          result.returncode == 0 and len(terminology_efforts) == 2
+          and set(terminology_efforts.values()) == {"max"},
+          f"exit {result.returncode}; efforts={effort_by_report!r}")
     record_directory = record_directory_of(repository)
-    check("the stderr logs are deleted once the fallback line has been lifted",
+    terminology_stamps = [
+        path.read_text(encoding="utf-8").splitlines()[0]
+        for path in sorted(record_directory.glob("*-terminology-good.md"))] if record_directory else []
+    check("both terminology stamps record effort=max and cell=terminology",
+          len(terminology_stamps) == 2
+          and all("effort=max" in stamp and "cell=terminology" in stamp
+                  for stamp in terminology_stamps),
+          repr(terminology_stamps))
+
+    # --- An absent Fable review is noted and the read continues -------------
+    # The other half of the same ruling: "If fable is not available, just
+    # note that and continue." The stub refuses claude-fable-5-1, the floor
+    # tier's only model, which is what the account's Fable limit does
+    # (2026-08-23; four cells on 2026-09-03). The Opus and Codex reviews land,
+    # the closing text is the ordinary triage text, and the note says to
+    # continue with the five reports rather than to stop or to rerun.
+    repository = build_scratch_repository(scratch, "checkout-fable-absent")
+    result = run_grid(
+        repository, stubs,
+        {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1"},
+    )
+    saved_lines = [line for line in result.stdout.splitlines()
+                   if line.startswith("saved:")]
+    note_lines = [line for line in result.stdout.splitlines()
+                  if line.startswith("NOTE: ")]
+    check("a Fable outage loses one review: five land, grid exits 1",
+          result.returncode == 1 and len(saved_lines) == 5,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    check("the closing text is the triage text, not the stop text",
+          "All six reviews are complete" in result.stdout
+          and "Stop here" not in result.stdout,
+          f"stdout was {result.stdout!r}")
+    check("the note names the Fable cell and says to continue",
+          note_lines != [] and "claude-hunt-floor" in note_lines[0]
+          and "note its absence in dispositions.md and continue" in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("the note names the terminology reviews among those that landed",
+          note_lines != [] and "the Opus and Codex terminology reviews" in note_lines[0],
+          f"note lines were {note_lines!r}")
+    check("the note does not say to rerun singly or to wait for Opus",
+          note_lines != [] and "Rerun them singly" not in note_lines[0]
+          and "Opus to come back" not in note_lines[0],
+          f"note lines were {note_lines!r}")
+    record_directory = record_directory_of(repository)
+    check("the failed cell's stderr log is kept and the landed cells' logs are deleted",
           record_directory is not None
-          and list(record_directory.glob("*.stderr.log")) == [],
-          f"logs left in {record_directory}")
+          and [path.name for path in record_directory.glob("*.stderr.log")]
+          == [f"{record_directory.name}--claude-hunt-floor.md.stderr.log"],
+          f"logs in {record_directory}: "
+          f"{sorted(path.name for path in record_directory.glob('*.stderr.log')) if record_directory else None}")
 
     # --- The model's echoed words are not the cell's status -----------------
     # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
     # model's text onto stderr, the cell re-emits that stderr into the log the
     # grid reads, and a reviewed document that quoted a comment containing
     # "fell back to" made two cells read as fallen back. Here every runtime
-    # echoes a passage carrying all four lifted phrases mid-line, while ONE
-    # cell really does fall back, so the case discriminates: the cell's own
-    # line is lifted, the echoed passage never is, and nothing else fires.
+    # echoes a passage carrying all four lifted phrases mid-line, and nothing
+    # is lifted. This case used to carry its own positive control, one cell
+    # that really fell back; since the 2026-09-04 ruling no pinned chain has
+    # a second model, so the positive control for the program-prefix matcher
+    # is the stray-write case above, where a real STRAY WRITE line is lifted
+    # through the same `cell_status_line` test.
     echoed_passage = (
         "As the document says: the supervisor fell back to its own default, "
         "then stray writes were not checked for this run, then files outside "
@@ -489,28 +675,17 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-echoed-phrases")
     result = run_grid(
         repository, stubs,
-        {"COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT": echoed_passage,
-         "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
+        {"COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT": echoed_passage},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
-    fell_back_lines = [line for line in result.stdout.splitlines()
-                       if line.startswith("FELL BACK:")]
-    check("echoed text carrying the fallback phrase does not read as a fallback: "
-          "exactly the one real fallback is lifted",
-          len(fell_back_lines) == 1 and "claude-fable-5" in fell_back_lines[0],
-          f"lifted lines were {fell_back_lines!r}; stdout={result.stdout!r}")
-    check("the real fallback line is the cell's own, not the echo",
-          fell_back_lines != [] and "cold-read-claude-cell: fell back to" in fell_back_lines[0]
-          and "As the document says" not in fell_back_lines[0],
-          f"lifted lines were {fell_back_lines!r}")
-    check("echoed text carrying the other three phrases lifts nothing",
-          not any(line.startswith(("STRAY WRITE:", "RECOVERED:",
+    check("echoed text carrying the four lifted phrases lifts nothing",
+          not any(line.startswith(("FELL BACK:", "STRAY WRITE:", "RECOVERED:",
                                    "WRITE CHECK DID NOT RUN:"))
                   for line in result.stdout.splitlines()),
           f"stdout was {result.stdout!r}")
-    check("the echo costs nothing: four reviews land, grid exits 0",
-          result.returncode == 0 and len(saved_lines) == 4,
+    check("the echo costs nothing: six reviews land, grid exits 0",
+          result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
 
     # --- A cell that recovered a near-miss says so -------------------------
@@ -530,10 +705,10 @@ with tempfile.TemporaryDirectory() as scratch:
     recovered_lines = [line for line in result.stdout.splitlines()
                        if line.startswith("RECOVERED:")]
     check("a run whose cells recovered a near-miss still succeeds",
-          result.returncode == 0 and len(saved_lines) == 4,
+          result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the grid prints RECOVERED: for each cell that recovered a report",
-          len(recovered_lines) == 4, f"lifted lines were {recovered_lines!r}")
+          len(recovered_lines) == 6, f"lifted lines were {recovered_lines!r}")
     # Two directories now: the one the grid made and the one the stubs
     # invented. The grid's is the one holding the reference-integrity
     # pre-pass, which no stub ever writes — the invented one's name differs by
@@ -553,7 +728,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"lifted lines were {recovered_lines!r}")
     check("the recovered reports are back in the directory the grid made",
           len(grid_record_directories) == 1
-          and len(list(grid_record_directories[0].glob("*.md"))) == 5,
+          and len(list(grid_record_directories[0].glob("*.md"))) == 7,
           [directory.name for directory in record_directories])
     check("the reports are moved out of the mistyped directory, not copied",
           all(list(directory.glob("*.md")) == [] for directory in record_directories
@@ -595,7 +770,7 @@ with tempfile.TemporaryDirectory() as scratch:
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
     check("a name ending in no genre suffix is not refused",
-          result.returncode == 0 and len(saved_lines) == 4,
+          result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stderr={result.stderr!r}")
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
@@ -621,9 +796,9 @@ with tempfile.TemporaryDirectory() as scratch:
         [f"{record_directory.name}--reference-check.md"]
         + [f"{record_directory.name}--{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
-           for pass_token in ("hunt",)
-           for tier in ("good", "floor")])
-    check("the set holds the four cells plus the reference-integrity pre-pass",
+           for pass_token, tier in (("hunt", "good"), ("hunt", "floor"),
+                                    ("terminology", "good"))])
+    check("the set holds the six cells plus the reference-integrity pre-pass",
           written_names == expected_names, written_names)
 
 print()

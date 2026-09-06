@@ -38,7 +38,7 @@ Verified 2026-08-13.
 | Auto-memory | `/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory/` | — |
 | Legacy reference system | `/home/nedlern/Projects/nedlern` | **absent on this box** |
 
-The legacy checkout's absence is expected and safe: the git-gatekeeper's `--import` machinery refuses `import-invalid` ("not a readable git repository") until one exists, which is a named refusal rather than a failure. Clone it only when an import is actually needed.
+The legacy checkout's absence is expected and safe: the main-gatekeeper's `--import` machinery refuses `import-invalid` ("not a readable git repository") until one exists, which is a named refusal rather than a failure. Clone it only when an import is actually needed.
 
 ## Mac — user `el`
 

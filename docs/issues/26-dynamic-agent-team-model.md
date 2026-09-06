@@ -52,7 +52,7 @@ The complete role-class set, growing only when a real task exposes a gap (same o
 - **domain-experts** — on-tap knowledge agents, guardians of their domains.
 - **project managers** — the boss's interface and continuity (boss has also called these project-leaders; "project manager" is the standard SDLC term — final name at first pilot).
 
-Mapping notes: the **git-gatekeeper is deliberately a program, not a team member** (gatekeepers stay mechanical); today's **choirmaster** is a worker and project manager bundled — the model unbundles that when the team grows.
+Mapping notes: the **main-gatekeeper is deliberately a program, not a team member** (gatekeepers stay mechanical); today's **choirmaster** is a worker and project manager bundled — the model unbundles that when the team grows.
 
 ## Research (pending; this document amends on arrival)
 
@@ -66,7 +66,7 @@ Reports land as `nc-queue/` notes; comparing them is itself a live trial of the 
 ## Open
 
 1. Monitor-tool idle-wake verification probe (gates warm-idle experts; MEASURED-when-run).
-2. First pilot: one sparring pair on one real task — scoped to bounded verifiable artifacts, the regime the pairing evidence supports (PairCoder-class results); candidate: the step-7 git-gatekeeper build. **Pilot discipline for every team pattern (CDX leg, boss-approved):** mandatory baselines — same-budget single agent and best-of-N; preregistered correlation and unique-catch metrics; explicit stop rules; rollback when coordination cost exceeds verified marginal value.
+2. First pilot: one sparring pair on one real task — scoped to bounded verifiable artifacts, the regime the pairing evidence supports (PairCoder-class results); candidate: the step-7 main-gatekeeper build. **Pilot discipline for every team pattern (CDX leg, boss-approved):** mandatory baselines — same-budget single agent and best-of-N; preregistered correlation and unique-catch metrics; explicit stop rules; rollback when coordination cost exceeds verified marginal value.
 3. Spy stream-filter composition (exact message types in/out) — decided at pilot, not before.
 4. Whether spies run as subagents of the primary or free-standing — decided at pilot.
 5. Step granularity for planned work — RULED 2026-08-03 (opened and settled same day; pilot keeps only validation): **cleanly separated phases are worth their price, by default** — a sequence of focused agents under a continuous supervising or shadowing thread. The boundary's value is specific: every context load is a fresh agent's chance to sanity-check what it was handed, and the worst observed failure class is exactly its absence — a later phase accepting a hopeless or poorly-defined task from its precursor unquestioned. The incoming agent's first duty at context load is to challenge its brief (the [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41) question-instead-of-answer contract is this check made mechanical). Trivial steps are not steps — fold anything too small to earn its boundary. One uniform step class: no simple-steps/complex-steps taxonomy — uniform phases are more controllable and automatable. Pilot validates the default; it does not reopen it without evidence.

@@ -40,7 +40,7 @@ The most important design choice is not the sequence of boxes. It is the refusal
 
 If you are an agent reading this to learn what the project is doing: the standing decisions below are what you must not contradict, and the rest of this file is the reasoning around them rather than a second set of rules. The notes describe one way a piece of this might work, and a design that departs from them is fine if it says why.
 
-Two things about how work lands, because getting them backwards wastes a day. Every change reaches `main` through a single door, but that door today is the pull-request lane described in `CLAUDE.md`, not the git-gatekeeper: the gate is built and dormant, and standing decision 14 says the interim lane stands until it is active. And every design and test plan is prose the user reads before it lands, so a design that has not been through him is not finished.
+Two things about how work lands, because getting them backwards wastes a day. Every change reaches `main` through a single door, but that door today is the pull-request lane described in `CLAUDE.md`, not the main-gatekeeper: the gate is built and dormant, and standing decision 14 says the interim lane stands until it is active. And every design and test plan is prose the user reads before it lands, so a design that has not been through him is not finished.
 
 If something here seems wrong, stale, or at odds with what the repository actually does, report it rather than working around it. An agent the user is directing raises it in its own session. An agent he is not directing reaches him through the liaison, or by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
 
@@ -56,7 +56,7 @@ The literature does not point toward a larger society of autonomous agents. It p
 
 ## Vocabulary
 
-Terms of art used here are collected in `docs/wiki/queue/213-project-vocabulary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. That page is itself in a queue and has not been drained, so it is a good place to look and not yet an authority; where it and this document disagree, this document wins until the page lands. Where a term already has a name in this project, that name is used rather than a new one.
+Terms of art used here are collected in the project's glossary, `docs/wiki/project-vocabulary-glossary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. Where a term already has a name in this project, that name is used rather than a new one.
 
 ## What every node receives and returns
 
@@ -125,7 +125,7 @@ Build status, the external components worth using, a minimal implementation arch
 11. **Observability is part of design and testing.** Each change defines the evidence needed to distinguish important failure hypotheses, with explicit privacy and retention limits.
 12. **Complexity is earned:** manual, then human-invoked script, then automation. Add machinery only for a demonstrated consumer or failure.
 13. **Rules come in two buckets and three tiers.** Input rules say what we ask a node to do; output rules say what we check when it is finished. Each can be handled by code, which is fast and reliable; by an AI, which is slower and less reliable but still useful; or by a human, who is slowest, scarce, cannot be parallelized, and is high on judgement and low on precision. Put a rule at the cheapest tier that can carry it. A producing node may build code, a prompt, or a combination, and which it chose is part of its output.
-14. **There is one gate to `main`.** The git-gatekeeper is the permanent check-in path. The interim pull-request lane in `CLAUDE.md` remains current until that gate is active.
+14. **There is one gate to `main`.** The main-gatekeeper is the permanent check-in path. The interim pull-request lane in `CLAUDE.md` remains current until that gate is active.
 15. **Durable outputs are written for an independent reader.** A reader with the repository, applicable project instructions, and the output should not need the conversation that created it.
 16. **The old `nedlern` system is legacy reference, not an inherited specification.** When work deliberately reuses it, touched features are classified as `preserve-feature`, `update-feature`, `remove-feature`, or `consider-feature`; unexamined behavior is not preserved by default.
 17. **Public sources are judged by usefulness and reliability.** Unofficial material may inform a decision but never becomes a runtime contract merely by being quoted.

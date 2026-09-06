@@ -49,8 +49,8 @@ passing review.
 - **Walked approval** — the user's approval given item by item, not one
   yes to a bundle (`docs/agents/agent-seat-model.md` § The words this
   model uses).
-- **The gatekeeper** — `scripts/git-gatekeeper.py`, the permanent single
-  door to main; specification `docs/cross-project/git-gatekeeper-design.md`
+- **The gatekeeper** — `scripts/main-gatekeeper.py`, the permanent single
+  door to main; specification `docs/cross-project/main-gatekeeper-design.md`
   (canonical for everything gate-related, including credential ruling C2:
   the credential able to push main belongs to a dedicated system user,
   reached only through a controlled, logged door). Dormant until its
@@ -308,7 +308,7 @@ test established that a refused push leaves NO trace in the activity log
 — a quiet log means nothing got through, never that nobody tried. The
 gate's own program path was proven end to end 2026-08-18 (commit b24e376;
 record at
-`docs/cross-project/git-gatekeeper-first-live-check-in-record.md`) while
+`docs/cross-project/main-gatekeeper-first-live-check-in-record.md`) while
 the gate stays dormant for daily work.
 
 **R13. The interim lane — built-live (process); retired when the gate

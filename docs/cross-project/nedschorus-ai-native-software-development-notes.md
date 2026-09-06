@@ -153,7 +153,7 @@ The outer result may expose convenient named outcomes such as:
 - `RETRY_OPERATIONAL`
 - `FAILED_SYSTEM`
 
-This follows a useful pattern already present in the Nedschorus Git gatekeeper: return a named outcome together with facts, a human summary, and a concrete `next_action`.
+This follows a useful pattern already present in the Nedschorus main-gatekeeper: return a named outcome together with facts, a human summary, and a concrete `next_action`.
 
 ### When a nit may be repaired silently
 
@@ -403,7 +403,7 @@ There is no need for one universal state enum. Each component should own the sma
 | Output | `candidate`, `accepted`, `superseded`, `stale`, `diagnostic_only`, `rejected` |
 | Deployment | `planned`, `deploying`, `healthy`, `degraded`, `rolled_back`, `failed` |
 
-Nedschorus offers a good concrete precedent in its [Git gatekeeper design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/git-gatekeeper-design.md): `SCREENING → WORKING → PUSHING → CHECKED-IN` or `REFUSED`, with externally visible outcomes such as `checked-in`, `in-progress`, `abandoned`, and `unknown`. These are deliberately specific to the gatekeeper. The new controller should reuse the pattern—explicit states, durable effects, idempotent recovery, facts, and next action—without copying the gatekeeper’s state names into unrelated nodes.
+Nedschorus offers a good concrete precedent in its [main-gatekeeper design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/main-gatekeeper-design.md): `SCREENING → WORKING → PUSHING → CHECKED-IN` or `REFUSED`, with externally visible outcomes such as `checked-in`, `in-progress`, `abandoned`, and `unknown`. These are deliberately specific to the gatekeeper. The new controller should reuse the pattern—explicit states, durable effects, idempotent recovery, facts, and next action—without copying the gatekeeper’s state names into unrelated nodes.
 
 ## 11. Policy delivery, trust, and permissions
 
@@ -519,7 +519,7 @@ The following is a repository-and-GHI snapshot, not a statement that every propo
 | --- | --- | --- |
 | [Fresh-context cold-read grid](https://github.com/nedschorus/nedschorus/blob/main/scripts/cold-read-grid.py) and Claude/Codex cells | **Built** | Keep. It is the clearest existing implementation of independent, zero-context output review. Extend its result records into the common node schema. |
 | Handoff writer, supervisor, threshold hook, and transcript extraction | **Built** | Keep. Generalize the [existing handoff design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/fast-handoff-design.md) from session continuity into per-work-item state machine checkpoints; do not call it semantic compaction when it is primarily handoff plus transcript preservation. |
-| [Git gatekeeper](https://github.com/nedschorus/nedschorus/blob/main/scripts/git-gatekeeper.py) and extensive test suite | **Built, but the final live gate is constrained/dormant** | Keep its explicit state machine, idempotent digest, atomic-push concurrency, refusal messages, and recovery semantics. Activate only when the repository’s branch-protection and review policy are reconciled. |
+| [main-gatekeeper](https://github.com/nedschorus/nedschorus/blob/main/scripts/main-gatekeeper.py) and extensive test suite | **Built, but the final live gate is constrained/dormant** | Keep its explicit state machine, idempotent digest, atomic-push concurrency, refusal messages, and recovery semantics. Activate only when the repository’s branch-protection and review policy are reconciled. |
 | Branch protection and PR lane | **Built/active infrastructure** | Keep as the current single gate to `main`. Required checks are useful now; a merge queue is optional later. |
 | [Per-seat crash recovery](https://github.com/nedschorus/nedschorus/blob/main/scripts/recover-crashed-seats.py) | **Initial version built; improvements planned** | Complete issues [#242](https://github.com/nedschorus/nedschorus/issues/242) and [#116](https://github.com/nedschorus/nedschorus/issues/116). Add durable execution identity and verified restart before increasing autonomy. |
 | Agent-dialog and pull-request watchers | **Built** | Reuse as evidence collectors and liveness signals. Put the watchers under an external supervisor. |

@@ -28,7 +28,11 @@ So what is pinned here is the seam from both sides: a caller's bad invocation
 comes back as 64 and never launches codex; a codex that fails comes back as
 1, with its own code visible on stderr and no report left behind; and a codex
 that succeeds comes back as 0 with the report written to --report and nothing
-at all on stdout.
+at all on stdout. --prompt-file, added so a draft prompt can be trialled
+through this launcher (24 trial cells exited 64 on 2026-09-04 for lack of
+it), joins the seam on both sides: a path naming no file is the cell's own
+refusal, 64 before codex runs, and a file that exists runs the cell to 0
+with the file's path in the stamp.
 
 The argparse cases are in the set deliberately, not for completeness:
 argparse's own default is also 2, so moving only the hand-written checks
@@ -173,6 +177,54 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"a codex that exits {codex_exit_code} leaves no report behind",
               not report.exists(),
               "a report survived a run that produced no review")
+
+    # --- A --cell outside the list, without --prompt-file, is a refusal ----
+    # The check left argparse (it depends on --prompt-file, which argparse
+    # cannot see while validating --cell) and must still exit by the same
+    # door, before codex runs.
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "terminology-v9", "--tier", "good",
+                      "--target", str(target))
+    check("a --cell outside the list without --prompt-file exits 64",
+          result.returncode == 64 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("that refusal names the flag that would let the name run",
+          "runs only with --prompt-file" in result.stderr
+          and "Traceback" not in result.stderr, repr(result.stderr))
+
+    # --- A --prompt-file naming no file is the cell's refusal --------------
+    # The stub writes the report the moment it is launched, so an absent
+    # report proves codex was never run.
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "restate", "--tier", "good", "--target", str(target),
+                      "--prompt-file", str(scratch / "no-such-draft-prompt.md"))
+    check("a --prompt-file naming no file exits 64",
+          result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a --prompt-file naming no file says so on stderr, with the path",
+          "prompt file not found" in result.stderr
+          and "no-such-draft-prompt.md" in result.stderr, repr(result.stderr))
+    check("a --prompt-file naming no file does not raise",
+          "Traceback" not in result.stderr, repr(result.stderr))
+    check("a --prompt-file naming no file never launches codex",
+          not report.exists(), "the stub codex ran and wrote the report")
+
+    # --- A --prompt-file that exists runs the cell and is stamped ----------
+    draft_prompt = scratch / "a-draft-prompt.md"
+    draft_prompt.write_text("Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+                            encoding="utf-8")
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
+                      "--cell", "restate", "--tier", "good", "--target", str(target),
+                      "--prompt-file", str(draft_prompt))
+    check("a cell given a --prompt-file that exists exits 0",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
+    check("the stamp of a --prompt-file run names the file",
+          report_text.startswith("<!-- provenance: runtime=codex")
+          and f"prompt_file={draft_prompt} " in report_text.splitlines()[0],
+          repr(report_text[:300]))
 
     # --- The successful path, which must keep working ----------------------
     report.unlink(missing_ok=True)

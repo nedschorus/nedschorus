@@ -13,7 +13,7 @@ used to demonstrate PR #228's second-round defect.
 The protection fixture is a real capture. It is
 `gh api repos/nedschorus/nedschorus/branches/main/protection` read on
 2026-09-02, trimmed to the fields the payload builder reads, in the same
-spirit as the git-gatekeeper's --protection-file seam: a captured reply
+spirit as the main-gatekeeper's --protection-file seam: a captured reply
 replaces the fetch, and nothing else is replaced. The header fixture is
 likewise a real capture of `gh api -i user` on this Mac, 2026-09-02, with
 the scope list trimmed and the body reduced to the login.

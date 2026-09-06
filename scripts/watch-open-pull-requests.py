@@ -2,7 +2,7 @@
 """Watch a repository's open pull requests, one stdout line per event.
 
 The merge-lane seat — the Mac-side agent that reviews and merges every pull
-request into main until the git-gatekeeper activates — needs to know when a
+request into main until the main-gatekeeper activates — needs to know when a
 pull request opens and when one gets new commits, because both restart the
 clock it holds a pull request against (see "Why faster detection would not
 help" below). Until this script it watched by hand: a shell polling loop

@@ -94,6 +94,17 @@ PROGRAM = "cold-read-codex-cell"
 # The version-prefixed ids are the accepted form (user's direction
 # 2026-08-11, live-verified the same day: the bare names "sol"/"luna" are
 # rejected by the CLI).
+#
+# Both pins were re-measured by the 2026-09-03 tier-roster campaign
+# (REPORT.md under
+# ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
+# machine-local, which is why the numbers are inline here; sections "Step-rule
+# tally, ALL SIX TARGETS", "Aggregate over all six targets" and "Addendum
+# 2026-09-04"). Sol keeps the good tier: it is in every top cell set, and
+# gpt-6-astra at max did not beat it (net -19 unique-and-real over two designs
+# and two runs). Luna keeps the floor: added to opus at max plus sol at max it
+# lifts 238-round-1 0.89 -> 0.94 and 120-design 0.94 -> 0.97 at no wall-clock
+# cost (mean 665 s, under sol's).
 TIER_TO_CODEX_MODEL_CHAIN = {
     "good": ("gpt-5.6-sol",),
     "floor": ("gpt-5.6-luna",),
@@ -101,9 +112,17 @@ TIER_TO_CODEX_MODEL_CHAIN = {
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
 # depends on the machine-local ~/.codex/config.toml default. xhigh for both
-# tiers by user calibration 2026-08-03 ("xhigh is OK for codex").
+# tiers by user calibration 2026-08-03 ("xhigh is OK for codex"); the good
+# tier raised to max on the 2026-09-03 campaign (user-ruled 2026-09-04):
+# sol at max beat sol at xhigh by +46 net unique-and-real findings over two
+# runs and six targets, positive on five and level on the sixth, with no
+# precision cost. It is the campaign's slowest cell (mean 1339 s against
+# 788 s at xhigh) and so bounds the whole read's wall clock. The floor stays
+# at xhigh because luna is the one model the step does not help: max was +8
+# net but positive on only three of six targets, under the campaign's rule;
+# high was -25 net.
 TIER_TO_REASONING_EFFORT = {
-    "good": "xhigh",
+    "good": "max",
     "floor": "xhigh",
 }
 
