@@ -24,7 +24,7 @@ Reviewers must not call an uncertain possible defect a nit: any failure scenario
 
 1. [question] "It is logged for the weekly maintenance pass and not fixed during review." Does this logging rule override the referenced `CLAUDE.md` instruction that findings about all `docs/` prose are not reported at all?
 
-2. [question] "The document is frozen from round two on" What makes a document frozen, and which review round is round two when the document is encountered by a zero-context reviewer?
+2. [question] "The document is frozen from round two on" What makes a document frozen, and which review round is round two when the document is encountered by a fresh reviewer?
 
 3. [question] "the weekly maintenance pass" What is the maintenance pass, and where or how is a deferred prose finding logged for it?
 

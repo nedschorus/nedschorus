@@ -6,7 +6,7 @@ design-as-of: 2026-09-02
 # Crash recovery for seats — `recover-crashed-seats.py` (overview)
 
 What [`scripts/recover-crashed-seats.py`](../../scripts/recover-crashed-seats.py)
-does today, end to end, and the changes ruled for it. Pair document for
+does today, end to end, and the changes ruled for it. GHI-MD for
 [nedschorus#242](https://github.com/nedschorus/nedschorus/issues/242), which
 carries the six changes as its state and next actions. It was written as the
 overview for [nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120),
@@ -16,7 +16,7 @@ close condition was met; the file keeps that number in its name.
 A **seat** is a durable named identity — `MD-skills`, `merge-lane` — a directory
 under `~/agents/` and a tmux session of the same name, into which sessions are
 minted one after another; the seat outlives any one session. A **supervisor**
-watches it: it launches each session, recycles it on each handoff, and exits when
+watches it: it launches each session, reincarnates it on each handoff, and exits when
 the agent stops without handing off. A **handoff** is the file a session writes
 when it passes its work to a successor; it carries a **restart-counter**, which
 the supervisor compares with the last counter it consumed to tell a new handoff
@@ -337,7 +337,7 @@ first-launch path, and the launchers inherit it without change of their own.
 
 **The problem.** The tool leaves a recovered seat headless. The launcher is
 called with a hardcoded `--no-attach`, so the seat lives in tmux with no window
-on it. It is still supervised and still recycles — the supervisor runs inside the
+on it. It is still supervised and still reincarnates — the supervisor runs inside the
 tmux session — but nothing is visible.
 
 The user's requirement, 2026-09-02: a restarted session must be interactive and

@@ -10,7 +10,7 @@ Queued for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45) (
 
 **Why this shape:** `EnterWorktree` already relocates a running session correctly, so capability is not the gap — the trigger is. A SessionStart warning was considered and judged weaker: it advises, where the PreToolUse form blocks. The project already runs this exact pattern in `.claude/hooks/instruction-file-guard.py`.
 
-**Cost/caveat:** needs an entry in `.claude/settings.json` (instruction-class, so it lands through the user's walk), and a PreToolUse hook runs for every session on the machine, so a defect in it is felt everywhere.
+**Cost/caveat:** needs an entry in `.claude/settings.json` (an agent-instructions file, so it lands through the user's walk), and a PreToolUse hook runs for every session on the machine, so a defect in it is felt everywhere.
 
 ## 2. A `--directory` flag for the launchers
 
@@ -22,7 +22,7 @@ Weakened, though not eliminated, by a fact discovered the same day: `claude atta
 
 Several sessions pushing to one shared agent branch produced the `Merge remote-tracking branch 'origin/choirmaster' into choirmaster` commits in that branch's history, and a non-fast-forward rejection that cost a rebase mid-task. One branch per session removes the class: git already refuses one branch in two worktrees, so the discipline only has to cover which branch a session pushes.
 
-Instruction-class text, so it lands through the user's walk.
+Agent-instructions text, so it lands through the user's walk.
 
 ## 4. Cold-read the fleet paths reference
 
@@ -57,7 +57,7 @@ Not riders, but hard-won and easy to lose:
 
 ## Cloud sessions and `claude --teleport` (read from the 2.1.232 binary, 2026-08-14)
 
-A cloud session — one running on Anthropic's infrastructure rather than on the box or the Mac — has no filesystem of either machine: no `~/.claude`, no seat worktree, no `/mnt/backup`. It reaches a project by **cloning a git repository**, which makes git the only channel that can deliver anything to it. That is a design constraint rather than a preference, and it is the strongest argument for the shared machinery living in a real repository rather than only in machine-local installs.
+A cloud session — one running on Anthropic's infrastructure rather than on the box or the Mac — has no filesystem of either machine: no `~/.claude`, no seat worktree, no `/mnt/backup`. It reaches a project by **cloning a git repository**, which makes git the only channel that can deliver anything to it. That is a design constraint rather than a preference, and it is the strongest argument for the shared machinery living in a real repository rather than only in installs on one machine.
 
 `claude --teleport` moves a session between the cloud and a local CLI, in both directions (`teleportToRemote` exists alongside the resume path). Three constraints are enforced, each visible as its own error:
 

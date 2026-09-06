@@ -22,7 +22,7 @@ The cops record's own objective names "obsolete guards, compatibility paths, and
 >
 > **Potential improvement 3 — patch-cycle tripwire at three, escalating to design AND goal.** Three review-fail-patch cycles on one change → stop patching; mandatory reconsideration of the design or of the goal itself (edge-case explosion; intractable or NP-complete as specified). The threshold exists twice in the ratified record (decision 23; diagnose-failure's three-failed-fixes rule); the additions are the goal-level escalation and making the cycle count visible in the attempt record so the tripwire can trip. Landing: rider on the diagnose-failure candidate GHI.
 >
-> Status: potential improvements — direction ruled, not yet a plan. **Durable home: [nedschorus#35](https://github.com/nedschorus/nedschorus/issues/35)** (user-approved 2026-07-29) — the full record including the complete-capture addendum lives there; these marks remain as the walk ledger. The user's standing design hope, recorded: with better modularity and more careful design, almost everything should be testable; hard-to-test is itself a design smell, feeding improvement 3.
+> Status: potential improvements — direction ruled, not yet a plan. **Durable home: [nedschorus#35](https://github.com/nedschorus/nedschorus/issues/35)** (user-approved 2026-07-29) — the full record including the complete-capture addendum lives there; these marks remain as the walk minutes. The user's standing design hope, recorded: with better modularity and more careful design, almost everything should be testable; hard-to-test is itself a design smell, feeding improvement 3.
 
 > **Complete capture — the discussion's full yield beyond the three improvements** (added 2026-07-29 after a user completeness audit of the first mark):
 >
@@ -55,14 +55,14 @@ The nine candidates are decision skills. The user's 2026-07-05 ten (property-har
 
 The user's standing complaint: agent-written tests are ~95% useless because agents write tests from the implementation, producing tautologies. The write-test-plan contract's mechanical check — **every planned check states its expected red witness** (the exact reason it fails before the fix or against a deliberately bad implementation) — is the structural counter: a tautological test cannot state one. Two riders for the walk:
 
-- Enforcement idea: hand test-writing (the implement-with-evidence half) to a zero-context one-shot agent given the contract/design and error catalog but **not** the implementation. An agent that never saw the implementation cannot mirror it. This uses the existing kleenex instrument; no new machinery.
+- Enforcement idea: hand test-writing (the implement-with-evidence half) to a fresh one-shot agent given the contract/design and error catalog but **not** the implementation. An agent that never saw the implementation cannot mirror it. This uses the existing kleenex instrument; no new machinery.
 - The cops dogfood run of the contract against the main-gatekeeper spec returned `needs-design-clarification` with nine concrete missing interface bindings rather than inventing tests — evidence the contract refuses correctly. Those nine bindings are on the critical path of the step-7 task.
 
 ## 5. Question for the user — the app-skill pile and routing dilution
 
 The Claude Code app sessions currently carry ~60+ skills from installed marketplace plugins (engineering, design, productivity, anthropic-skills, cowork-plugin-management bundles from claude-plugins-official) plus app built-ins. None are NC skills; the NC repo has zero built skills yet. The skill-creation deep-dive (§5, archived 2026-07-22) established that every added skill dilutes every other skill's claim on routing attention, and the description budget shortens under pressure. When NC's own five founding skills boot, they will compete with that pile for triggering. Proposed ruling candidate: NC project sessions run lean — disable or not-install non-essential plugins in the NC project scope (keep what is actually used: e.g. code-review, skill-creator as reference), so NC skill routing is measured against a quiet field, not a noisy one. Needs a user decision on which app skills, if any, earn a place in NC sessions.
 
-## 6a. Agent-native testing walk (user + session, 2026-07-29 → ) — ledger
+## 6a. Agent-native testing walk (user + session, 2026-07-29 → ) — walk minutes
 
 Subject: the user's thesis that agents are not humans and testing need not be limited to human-oriented techniques (examples: per-LOC expected-execution-frequency posits diffed against perf analysis; tests positing which lines they exercise, verified by scripted execution). Walk of the session's analysis, 6 items. Marks land here.
 
@@ -79,7 +79,7 @@ Subject: the user's thesis that agents are not humans and testing need not be li
 
 > *Section merged from the Mac-app session's branch copy (final at f7cc0ef) by new-vp session b6241858; that branch's §2/§3 body rewrites are superseded by this file's marks and nedschorus#35.*
 
-## 6b. Gatekeeper-bindings walk (outer item 3c, restructured 2026-07-30) — ledger
+## 6b. Gatekeeper-bindings walk (outer item 3c, restructured 2026-07-30) — walk minutes
 
 **Stale-spec catch (fleet flank, confirmed):** the nine dogfood gaps were derived 2026-07-23 against `fast-pr-to-prod-design.md` (2026-07-22, superseded). Re-validated against main's canonical `docs/cross-project/main-gatekeeper-design.md` (2026-07-24). Casualties and survivors — all nine rows:
 
@@ -118,7 +118,7 @@ Plus two bindings the dogfood never saw (it read the old design): the `--no-wait
 
 ---
 
-## Walk order (ledger, opened 2026-07-28, new-vp session b6241858)
+## Walk order (walk minutes, opened 2026-07-28, new-vp session b6241858)
 
 This walk also covers pair [nedschorus#32](https://github.com/nedschorus/nedschorus/issues/32)'s three open questions; those resolutions are additionally marked in `docs/issues/32-preservation-and-placement.md` as they land. Recovery anchor after any interruption: the first unmarked item below.
 
@@ -128,8 +128,8 @@ This walk also covers pair [nedschorus#32](https://github.com/nedschorus/nedscho
 4. §4 — riders to #18 and the step-7 record (note §6.3)
 5. §5 — app-skill policy for NC sessions (note §6.4)
 6. Pair #32 Q1 — memory placement
-   *processed 2026-07-31 → resolved: machine-local decision-queue store, drained by the user (batched check-in of kept survivors per drain); instrumentation per [nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39); full ruling in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142).*
+   *processed 2026-07-31 → resolved: an uncommitted decision-queue store on the machine, drained by the user (batched check-in of kept survivors per drain); instrumentation per [nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39); full ruling in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142).*
 7. Pair #32 Q2 — log extracts at boundaries (owned by the bridge specification; only the placement-consumer stance is decidable here)
    *processed 2026-07-31 → resolved: no bridge-log extracts collected until a data-driven consumer exists (bridge spec open item 1 marked resolved); if ever, handoff-riders in `handoff/` under the new handoff retention rule (tree holds newest two triples, user-ruled same walk, landed in `fast-handoff-design.md`); full text in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142).*
 8. Pair #32 Q3 — shared-store writes by temporary workers
-   *processed 2026-07-31 → resolved: NO RULE — "temporary" does not discriminate (roles persist, sessions die, the ruled writer/fixer model makes doing-agents short-lived by design), the feared problem is unobserved, and every durable artifact class already lands on a review surface by construction; full text in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142). WALK LEDGER COMPLETE — all eight items processed.*
+   *processed 2026-07-31 → resolved: NO RULE — "temporary" does not discriminate (roles persist, sessions die, the ruled writer/fixer model makes doing-agents short-lived by design), the feared problem is unobserved, and every durable artifact class already lands on a review surface by construction; full text in `docs/issues/32-preservation-and-placement.md` § Open questions (new-vp session b7c09142). WALK MINUTES COMPLETE — all eight items processed.*

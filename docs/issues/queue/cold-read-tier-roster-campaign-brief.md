@@ -18,9 +18,9 @@ Every cell's processing time is reported beside its findings. Speed and quality 
 
 ## What is already known (do not re-measure)
 
-From today's independent deduplication of three grid rounds on one design document (reboot-test, `cold-read-records/2026-09-02-238-topic-branch-creation-script-design*/dispositions.md` and the dedup agents' tables recorded in the walk minutes `docs/walk/review-stopping-rule-findings-sorted-by-what-they-change-minutes.md`):
+From today's independent deduplication of three cold-read rounds on one design document (reboot-test, `cold-read-records/2026-09-02-238-topic-branch-creation-script-design*/dispositions.md` and the dedup agents' tables recorded in the walk minutes `docs/walk/review-stopping-rule-findings-sorted-by-what-they-change-minutes.md`):
 
-- Unique defects per cell over three rounds: claude-opus-5 high 34; gpt-5.6-sol xhigh 24; gpt-5.6-luna xhigh 21; claude-sonnet-5 high 1; gemini-3.6-flash 1 (trivial). Sonnet is the grid's one dead cell. No two-cell subset held coverage (lost 10–26%); the three non-sonnet cells matched the grid minus one unsure cluster.
+- Unique defects per cell over three rounds: claude-opus-5 high 34; gpt-5.6-sol xhigh 24; gpt-5.6-luna xhigh 21; claude-sonnet-5 high 1; gemini-3.6-flash 1 (trivial). Sonnet is the cold-read run's one dead cell. No two-cell subset held coverage (lost 10–26%); the three non-sonnet cells matched the full cold-read run minus one unsure cluster.
 - Gemini 3.6 Flash: 19 findings, all real, 1 new and trivial, strict subset of opus each round, 77–111 s. Consistent with the 2026-08-30 ruling that Gemini stays benched. Do not include it.
 - Median durations across all 197 recorded reports on this machine: opus high 706 s; sol xhigh 490 s; luna xhigh 559 s; sonnet high 345 s; terra low (fast-clarify) about 60 s.
 

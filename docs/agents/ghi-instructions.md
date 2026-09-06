@@ -1,8 +1,8 @@
 # `ghi` — seat instructions
 
-Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, walked approval, handoff.
 
-Your pile is **GitHub-issue knowledge and the tooling around it**. "GHI" is this project's shorthand for a GitHub issue. Most of the pile shares one doctrine — how the project decides what becomes an issue, what goes in a pair document, and what waits in a queue — and one design document, `docs/issues/46-ghi-info-agent-design.md`. One item, [#39](https://github.com/nedschorus/nedschorus/issues/39), does not: it is memory instrumentation, and it sits here under the seat model's cheapest-context rule rather than under the shared doctrine, because it is hook work of the same shape and too small for a seat of its own. Do not use the doctrine as a test of what belongs to you; use this list.
+Your work is **GitHub-issue knowledge and the tooling around it**. "GHI" is this project's shorthand for a GitHub issue. Most of this seat's work shares one doctrine — how the project decides what becomes an issue, what goes in a GHI-MD, and what waits in a queue — and one design document, `docs/issues/46-ghi-info-agent-design.md`. One item, [#39](https://github.com/nedschorus/nedschorus/issues/39), does not: it is memory instrumentation, and it sits here under the seat model's cheapest-context rule rather than under the shared doctrine, because it is hook work of the same shape and too small for a seat of its own. Do not use the doctrine as a test of what belongs to you; use this list.
 
 **Your work is done when** all four issues below carry their current state in their own bodies, and specifically: [#46](https://github.com/nedschorus/nedschorus/issues/46) records either a built first slice or the written reason it should wait; [#41](https://github.com/nedschorus/nedschorus/issues/41) and [#42](https://github.com/nedschorus/nedschorus/issues/42) each record a design or a decision to rule them out. State goes in the issue body, written through `ghi-write` — not in this file, not in a handoff alone. Then write a handoff and stop.
 
@@ -33,7 +33,7 @@ Two rulings to know before touching it:
 
 The `ghi-write` skill (`.claude/skills/ghi-write/`) is live and governs issue writes: filing, editing a body, commenting, closing, and the `draft` label that carries queue membership. Read the skill for the current list rather than trusting this sentence; other GitHub write operations it does not name — assigning, milestones — are simply outside it. Note that the skill tells callers to ask ghi-info first, through `scripts/ghi-info-ask.py`, and to fall back when that ask fails. **That fallback is the current state of the world: `scripts/ghi-info-ask.py` does not exist yet.** Building it, and the agent behind it, is the main build above.
 
-`ghi-write` is yours to change, but it lives under `.claude/`, which makes it instruction-class: it changes only with the user's walked approval, recorded by quoting his words into `.walk-approved` and enforced by `.claude/hooks/instruction-file-guard.py`. Ownership here means you propose and draft the change; it does not mean you commit one unwalked.
+`ghi-write` is yours to change, but it lives under `.claude/`, which makes it an agent-instructions file: it changes only with the user's walked approval, recorded by quoting his words into `.walk-approved` and enforced by `.claude/hooks/instruction-file-guard.py`. Ownership here means you propose and draft the change; it does not mean you commit one unwalked.
 
 ## The companions
 
@@ -43,7 +43,7 @@ The `ghi-write` skill (`.claude/skills/ghi-write/`) is live and governs issue wr
 
 ## The doctrine you work inside
 
-Issues carry state; pair documents (`docs/issues/<n>-<slug>.md`) carry substance; queue documents (`docs/issues/queue/`) hold material whose fate is undecided. Edits revise an issue body in place; a comment is only for the event kinds `ghi-write` names — an instance outcome or a challenge to a ruling — and completion is neither, being a body edit plus a close with its reason. The memory-versus-task rule is in `CLAUDE.md` at the repository root; read it there rather than from a shorter copy here. The routing rules live in `docs/cross-project/nedschorus-ai-native-software-development.md` § Project organization.
+Issues carry state; GHI-MDs (`docs/issues/<n>-<slug>.md`) carry substance; queue documents (`docs/issues/queue/`) hold material whose fate is undecided. Edits revise an issue body in place; a comment is only for the event kinds `ghi-write` names — an instance outcome or a challenge to a ruling — and completion is neither, being a body edit plus a close with its reason. The memory-versus-task rule is in `CLAUDE.md` at the repository root; read it there rather than from a shorter copy here. The routing rules live in `docs/cross-project/nedschorus-ai-native-software-development.md` § Project organization.
 
 ## Boundaries
 
@@ -51,4 +51,4 @@ The launcher (`scripts/launch-claude-ubuntu`) and the supervisor (`scripts/hando
 
 ## First action
 
-Read the three documents in the reading order above. Then report to the user what ghi-info's first build slice should be, and specifically whether run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)) must come first — ghi-info is defined as headlessly invokable, so the answer decides the order of the whole pile. Propose; do not start building until he rules.
+Read the three documents in the reading order above. Then report to the user what ghi-info's first build slice should be, and specifically whether run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)) must come first — ghi-info is defined as headlessly invokable, so the answer decides the order of this seat's whole work. Propose; do not start building until he rules.

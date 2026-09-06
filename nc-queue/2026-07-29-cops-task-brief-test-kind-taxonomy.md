@@ -45,4 +45,4 @@ Not an encyclopedia and not organization-scale CI design. Reuse your existing su
 
 ## Deliverable
 
-One Markdown file in your session-artifacts convention (`cops/tasks/sessions/`), keyed to [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18), written for a zero-context reader. The user will walk it; its accepted content feeds the `write-test-plan` skill when that skill is built.
+One Markdown file in your session-artifacts convention (`cops/tasks/sessions/`), keyed to [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18), written for a fresh reader. The user will walk it; its accepted content feeds the `write-test-plan` skill when that skill is built.

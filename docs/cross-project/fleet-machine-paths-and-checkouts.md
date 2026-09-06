@@ -13,7 +13,7 @@ The user-level instruction file on the box (`/home/nedlern/.claude/CLAUDE.md`) c
 
 The user works at a **Mac**. Agent sessions run on **`ned-box`**, an Ubuntu machine on the same LAN, reached as `ssh nedlern@ned-box`. Each machine has its own clone of nedschorus, its own Claude credentials, and its own agent state. Nothing but git branches crosses between them, and only when pushed — worktrees, handoff files, locks, and credentials are per-machine and never travel.
 
-The box is the default home for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. The Mac is also the review-and-merge seat: branch protection admits only `NedLern`, so merges to `main` happen from the Mac.
+The box is the default home for agent work: more memory, CPU and bandwidth, and it does not compete with the machine the user is sitting at. The Mac runs agents only when the work needs to be where the user is — its browser session, its keychain, its GUI, or files that exist only there. The Mac is also where merge-lane runs: branch protection admits only `NedLern`, so merges to `main` happen from the Mac.
 
 ## Three kinds of checkout, one repository
 

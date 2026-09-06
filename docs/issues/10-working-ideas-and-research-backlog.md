@@ -103,7 +103,7 @@ Retired as a section 2026-07-26 (user-ruled): the walk behavior is specified
 by the walk-me-through skill itself — its frontmatter and code are the
 documentation, and a separate prose description would only drift. Cross-runtime
 scenario tests are deferred to NC step-1 (inner-walk item 2 ruling, pair #9
-ledger). The bullets formerly here are recoverable from git history.
+walk minutes). The bullets formerly here are recoverable from git history.
 
 ## Candidate publishing modules
 
@@ -335,8 +335,8 @@ Recoverable from git history.
 
 DISPERSED 2026-07-25 (walk item 17 cluster 1, user-ruled). Five entries were
 already landed doctrine and are recorded as such: durable walkthrough
-decisions (the walk-ledger rule), self-contained end-of-turn messages and
-contextful recommendations (the zero-context-reader rule), no bare
+decisions (the walk-minutes rule), self-contained end-of-turn messages and
+contextful recommendations (the fresh-reader rule), no bare
 issue-numbers/filenames/references (clickable handles), no fake choices
 (the menu-ban), and explain-material-subtleties-completely in design
 reviews. One entry cut as superseded: "maintain a concise, current

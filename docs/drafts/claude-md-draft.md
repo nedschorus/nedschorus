@@ -51,8 +51,8 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 ## Sessions
 
 16. ~~Session start: read the handoff named by your launch prompt and take its next step.~~
-    *admission 2026-08-06 → CUT: the pickup duty is the launch prompt's job (the ignition prompt names the handoff path); no floor line needed.*
-17. ~~Session end: write the handoff and check it in. Machine-local transcripts under `~/.claude/projects/` hold what handoffs do not; the handoff points there when needed.~~
+    *admission 2026-08-06 → CUT: the pickup duty is the launch prompt's job (the initial agent instructions name the handoff path); no floor line needed.*
+17. ~~Session end: write the handoff and check it in. Uncommitted transcripts under `~/.claude/projects/` hold what handoffs do not; the handoff points there when needed.~~
     *admission 2026-08-06 → CUT: this is the handoff skill's content (the fast-handoff design already carries the transcript pointer as the extract's need-more line); lands with that build.*
 
 ## Definitions
@@ -61,11 +61,11 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
     *admission 2026-08-06 → CUT, with a TERMINOLOGY RULING (user): use the standard term — "user", not "boss" — in NC instruction files. Follow-up: mechanical boss→user sweep over the landed NC skills and queued instruction docs, executed at this walk's close under this ruling.*
 19. ~~Check-in — getting a change onto main. Through the main-gatekeeper once built; by plain commit and push until then.~~
     *admission 2026-08-06 → CUT: the check-in process itself will teach the agent (the gatekeeper's runtime output is the instruction surface, per code-over-prompts).*
-20. ~~GHI — a GitHub issue on nedschorus. The MD-GHI pair — an issue carrying the walkable state plus a `docs/issues/<n>-<slug>.md` document carrying the substance.~~
+20. ~~GHI — a GitHub issue on nedschorus. The GHI-MD — an issue carrying the walkable state plus a `docs/issues/<n>-<slug>.md` document carrying the substance.~~
     *admission 2026-08-06 → CUT: training covers it. Canary (cold `claude -p`, no project context, 2026-08-06): read GHI as "GitHub Issue" and MD-GHI pair as "a Markdown document paired with its corresponding GitHub Issue that tracks the work" — both correct unprompted.*
 21. ~~A walk — presenting material to the user one item at a time, per `.claude/skills/walk-me-through/SKILL.md`.~~
     *admission 2026-08-06 → CUT: invoking the walk skill itself teaches the term.*
 
 ---
 
-ADMISSION COMPLETE 2026-08-06: 21 lines walked; five survive (3, 10, 11, 12, 13); the assembled floor is [claude-md-admitted.md](claude-md-admitted.md), which gets a cold read (the grid's first full run) and then lands as `/CLAUDE.md`.
+ADMISSION COMPLETE 2026-08-06: 21 lines walked; five survive (3, 10, 11, 12, 13); the assembled floor is [claude-md-admitted.md](claude-md-admitted.md), which gets a cold read (the first full cold-read run) and then lands as `/CLAUDE.md`.

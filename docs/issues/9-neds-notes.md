@@ -96,8 +96,8 @@ NedsChorus rather than copied wholesale from either legacy file.
 
 processed 2026-07-22 → user-ruled during the founding walk: the legacy system's two
 walk skills are being updated NOW with two behaviors from this section — the
-walked-document-as-ledger rule (each item's disposition marked in place before
-advancing; a walk with no document gets a ledger file first) and the re-plan
+walked-document-as-minutes rule (each item's disposition marked in place before
+advancing; a walk with no document gets a minutes file first) and the re-plan
 rule (a ruling that changes later items revises the remaining walk and reports
 the changed count or sequence) — legacy PR link to be edited in here when it
 opens. The six scenario tests above are deferred to the NC step-1 walk-me
@@ -249,9 +249,9 @@ Sources worth adapting or investigating:
   reliability only (public-links policy, founding plan § Standing decisions);
   the leaked-source archives stay, treated like every other source.
 
-## Combined walk ledger (pairs #9 + #10) — the walk-state of record
+## Combined walk minutes (pairs #9 + #10) — the walk-state of record
 
-Per the walked-document-as-ledger rule (user-approved 2026-07-22; legacy PR
+Per the walked-document-as-minutes rule (user-approved 2026-07-22; legacy PR
 [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162)). The
 anchor after any interruption is the first unmarked item.
 
@@ -423,7 +423,7 @@ Outer walk, 17 items:
     append-type log files at a logical breakpoint (session end / next
     session start) — re-homed to nedschorus#25 same day (user: Standing
     decisions cover the boot-up phase ONLY; post-boot needs are GHIs —
-    short ones issue-only, long ones MD-GHI pairs; possible NEXT WALK
+    short ones issue-only, long ones GHI-MDs; possible NEXT WALK
     topic flagged by the user: applying that scope rule across the
     Standing-decisions section); destined for CLAUDE.md at step 2;
     (r) "ceremony" retired from the
@@ -434,7 +434,7 @@ Outer walk, 17 items:
     ANCHOR = item 16.
 16. Agent organization / lifecycle roles — processed 2026-07-25 → the user
     REPLACED the captured org-chart possibility with the dynamic
-    agent-team model, designed live in-walk; captured as the MD-GHI pair
+    agent-team model, designed live in-walk; captured as the GHI-MD
     nedschorus#26 (docs/issues/26-dynamic-agent-team-model.md); pair-#10
     § org structure superseded to a pointer. Core: context engineering as
     the goal; every agent overseen all the time by differently-contexted

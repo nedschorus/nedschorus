@@ -31,7 +31,7 @@ User-commissioned full read of the 14-skill repo (clone in session scratchpad; t
 ## Declined, with reasons
 
 - **Baseline-fail-first amendment: DROPPED at user walk (2026-07-31)** — the verbatim failure record already exists automatically in the baseline run's transcript jsonl; skills history lives in git; and NC has no scenarios yet — the amendment was make-work. Checklist amendment reverted (delta to land).
-- `brainstorming` / `writing-plans` / `executing-plans` — covered by define-work/design-change plans; the plans-for-a-junior-engineer framing conflicts with NC's zero-context-reader rule only in register, not substance; nothing new to take.
+- `brainstorming` / `writing-plans` / `executing-plans` — covered by define-work/design-change plans; the plans-for-a-junior-engineer framing conflicts with NC's fresh-reader rule only in register, not substance; nothing new to take.
 - `using-git-worktrees`, `dispatching-parallel-agents`, `finishing-a-development-branch`, `using-superpowers` — harness mechanics NC re-derives; dispatch hygiene is already superseded by the ruled one-shot/interrogation protocol.
 - The verification skill's Iron-Law register and rationalization tables — kernels taken above; the enforcement-by-shouting model is the documented anti-pattern.
 

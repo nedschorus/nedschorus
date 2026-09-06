@@ -4,7 +4,7 @@
 the system prompt of every session the handoff supervisor launches, through
 `claude --append-system-prompt-file`. Editing it changes how every seat on every
 machine behaves, from that seat's next launch. It is committed for exactly that
-reason: a machine-local override file would not be versioned, would not be
+reason: an uncommitted per-machine override file would not be versioned, would not be
 reviewed, would not be restored by a checkout, and would drift between the Mac
 and the Ubuntu box with nothing to notice.
 

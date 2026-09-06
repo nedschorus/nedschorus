@@ -30,7 +30,7 @@ git would have started the new branch from wherever the working copy was
 standing — which was topic one. The second pull request would then have
 contained topic one's commits as well as its own.
 
-Nobody would have been told. The merge lane would have received a pull request
+Nobody would have been told. Merge-lane would have received a pull request
 holding two topics while its description described one. If topic one had been
 rejected or reworked, its rejected code would have travelled into main inside
 the second pull request.
@@ -98,5 +98,5 @@ One boundary worth stating: deleting merged topic branches needs no rule. Pull
 request 233 landed tooling that reports them at every launch, with the command
 to remove them.
 
-`CLAUDE.md` is instruction-class, so this is a proposal. Approving it here is
+`CLAUDE.md` is an agent-instructions file, so this is a proposal. Approving it here is
 the walked approval that would let me make the edit.

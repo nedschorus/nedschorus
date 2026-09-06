@@ -99,7 +99,7 @@ logic in the launcher.
 ## Item 3 of 11: Three causes of a wedged session were fixed upstream
 
 We have an open issue about a session that stops making progress and never
-recovers: nothing notices, because the only recycle trigger is context growth
+recovers: nothing notices, because the only reincarnation trigger is context growth
 and a stalled session never reaches it. The issue is
 [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27), and the
 analysis lives in
@@ -372,7 +372,7 @@ First, there is still no stall or wedge detector. Issue
 [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27) stands
 exactly as written. Three specific causes were removed, as covered earlier in
 this walk, but the class remains, and the structural gap is unchanged: the
-recycle trigger is a `Stop` hook, `Stop` fires when a turn ends, and a session
+reincarnation trigger is a `Stop` hook, `Stop` fires when a turn ends, and a session
 that never ends a turn never fires it.
 
 Second, nothing changed about push notifications reaching you. The macOS `say`

@@ -12,7 +12,7 @@ form, user-set: this graduates into a wiki page with subpages when matured.
 ### Class 1: git-preserved (free — preservation is a side effect of normal work)
 
 Files on main; check-ins (commits, whose provenance trailers are the single
-import record); pair documents; wiki pages; queued MDs; handoffs and their
+import record); GHI-MDs; wiki pages; queued MDs; handoffs and their
 task exports. Git keeps the versions of tracked files, so deleting
 committed content here is recoverable rather than lost — a struck file remains one command away in
 history. This class is the reference standard: the further a class sits from
@@ -30,7 +30,7 @@ class: when the legacy system is decommissioned, ARCHIVE its repository
 rather than delete it — archiving costs nothing and keeps every issue and URL
 readable.
 
-### Class 3: machine-local (the only class where preservation takes real decisions)
+### Class 3: on one machine only, never committed (the only class where preservation takes real decisions)
 
 Session transcripts (the logs — also the re-creation substrate: much else is
 recoverable from them, which lowers what needs preserving elsewhere);
@@ -82,10 +82,10 @@ Aggressive dropping is maintenance, not negligence.
 ## Part 2 — what goes where
 
 One rule: **state whose value outlives a session belongs in the repository,
-moved there at a natural boundary; machine-local holds live working state;
+moved there at a natural boundary; the machine itself, outside git, holds live working state;
 the global scope stays empty.** Per member: tasks — already placed by the
 approved handoff design (export to files, check in at each handoff); memories
-— machine-local decision-queue store, drained by the user (resolved below,
+— an uncommitted decision-queue store on one machine, drained by the user (resolved below,
 2026-07-31); transcripts — full logs stay local (size), boundary
 extracts are the bridge specification's open question, not re-decided here;
 databases — live data stays live, the accepted Time-Machine residue;
@@ -167,7 +167,7 @@ incidents earn it, per the enforcement ladder.
 ## Open questions (state carried on the issue)
 
 1. **Memory placement — RESOLVED (user-walked 2026-07-31, fleet-side walk
-   item 6):** the memory store is **machine-local working state, not
+   item 6):** the memory store is **uncommitted working state on one machine, not
    repository content** — a decision queue under the artifact-lifecycle
    rule, one store per project shared across all worktrees (per-worktree
    stores would fragment one fact into drifting copies).
@@ -230,7 +230,7 @@ incidents earn it, per the enforcement ladder.
    `Gatekeeper-agent` trailer), GHIs visible and walkable, memory writes
    echoed ([nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39))
    and drain-reviewed (Q1 above), tasks carried by handoffs and counted at
-   the scrub. The unreviewed residue is machine-local working state, which
+   the scrub. The unreviewed residue is uncommitted working state, which
    dies with its session or drains. Part 4's ownership discipline (a
    worker returns its deliverable to its dispatcher) stands as a
    description of practice, not a mandate; memories arising from direct

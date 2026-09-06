@@ -34,11 +34,11 @@ main through the program.** Everything that does not serve that goes later.
 
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
-| 1 **BUILT 2026-08-08** | Synchronous check-in end to end: screening → candidate → commit → push | T1, T2, T3, T9 | the manual merge lane, on the happy path |
+| 1 **BUILT 2026-08-08** | Synchronous check-in end to end: screening → candidate → commit → push | T1, T2, T3, T9 | the PR process, merged by hand, on the happy path |
 | 2 **BUILT 2026-08-08** | The entry checkpoint: `--import` (the `imports` query was built here, then deleted by user ruling 2026-08-10 — `git log --grep` is the view) | T11 (T10 retired) | hand-recorded legacy imports |
 | 3 **BUILT 2026-08-09** | Concurrency: loser integrates over newer commits, real conflict refuses, retry cap | T4, T5, T6 | slice 1's `main-moved` refusal |
 | 4 **BUILT 2026-08-12** | Worker lifecycle: `--no-wait`, detached worker, `status`, `cancel`, crash recovery, the expiry sweep | T7, T8 | slice 1's `unbuilt-option` refusal |
-| 5 **BUILT 2026-08-12** | Enforcement surfaces: branch-protection audit (`audit` subcommand + the session-recycle ride in the fast-handoff writer), repo git config pins, the CLAUDE.md workflow line (user-walked 2026-08-12) (trailer-absence audit deleted, user-ruled 2026-08-10) | B3c | the founding-window "boss watches every landing" guard |
+| 5 **BUILT 2026-08-12** | Enforcement surfaces: branch-protection audit (`audit` subcommand + the session-reincarnation ride in the fast-handoff writer), repo git config pins, the CLAUDE.md workflow line (user-walked 2026-08-12) (trailer-absence audit deleted, user-ruled 2026-08-10) | B3c | the founding-window "boss watches every landing" guard |
 
 Not in any of the five, and deliberately so: the review-evidence check for
 the instruction-file class
@@ -162,7 +162,7 @@ floor — this box runs Python 3.14.4 and git 2.53.0).
 **The alternative boundary, considered and not chosen:** slice 1 could stop
 after screening and the digest — the whole pure core, no git writes, fully
 testable, roughly half the code. It was rejected because it delivers no
-check-in: the program would exist and the manual merge lane would still be
+check-in: the program would exist and the PR process, merged by hand, would still be
 the only way to main. The smaller slice is the fallback if slice 1 as
 scoped proves too large to land in one reviewable change.
 
@@ -643,7 +643,7 @@ remains in git history at `4cadb46`.
   so, and wrote its identity-guard case to assert that the worker's stamp
   *beats* the placeholder — pinning the happy-path outcome of the very
   race the ruling deleted. It committed that batch noting it was behind
-  schedule and reached its context-recycle threshold three items later.
+  schedule and reached its context-reincarnation threshold three items later.
 - APPLIED 2026-08-12 (`cb582d6`) — **Version floors are met by upgrading
   hosts, not by lowering the floors.** The suite asserts Python ≥ 3.12 and
   git ≥ 2.40. A stock macOS host meets neither: its system `python3` is

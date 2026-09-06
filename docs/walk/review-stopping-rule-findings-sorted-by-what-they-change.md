@@ -42,7 +42,7 @@ A contract finding is one that changes what the script promises its caller — a
 
 Concrete example from today. The design for the topic-branch script promised that `git merge --ff-only origin/main` would refuse when a seat's branch — a seat being one long-lived agent's home worktree — carried stray commits, and called that the safety net. Measured in a throwaway repository: when the branch is strictly ahead of main, that command prints "Already up to date", exits 0, and the stray commit rides into the next topic branch. The safety net was not one. That is a contract finding — the script would not have done what it promised.
 
-A contract finding changes both documents: the code design, because what it describes is wrong, and the test design, because the test cases derive from the contract. It is the only kind of finding that can restart the loop from the top, and it is the kind that should. It is also the one kind that earns a design a fresh cold read — the zero-context review the project runs on any document of lasting value — because the design's promise moved, so its text must be read again.
+A contract finding changes both documents: the code design, because what it describes is wrong, and the test design, because the test cases derive from the contract. It is the only kind of finding that can restart the loop from the top, and it is the kind that should. It is also the one kind that earns a design a fresh cold read — the fresh-reader review the project runs on any document of lasting value — because the design's promise moved, so its text must be read again.
 
 Recommendation: a contract finding reopens both designs and earns one cold read. Y, N, or D.
 

@@ -6,7 +6,7 @@ User-designed 2026-07-25 (outer walk item 16); supersedes the org-chart possibil
 
 ## The goal: context engineering
 
-Provide every agent exactly the context it needs, without burdening or interrupting it with extraneous context or tasks. Every design choice below serves that goal, and it continues NC's existing discipline (zero-context-reader artifacts, handoffs, progressive skill disclosure, self-contained gatekeeper requests).
+Provide every agent exactly the context it needs, without burdening or interrupting it with extraneous context or tasks. Every design choice below serves that goal, and it continues NC's existing discipline (fresh-reader artifacts, handoffs, progressive skill disclosure, self-contained gatekeeper requests).
 
 ## The standing principle: every agent needs oversight, all the time
 

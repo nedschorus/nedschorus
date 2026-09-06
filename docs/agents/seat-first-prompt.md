@@ -16,17 +16,17 @@ If either check fails — not a checkout, empty output, or a branch that is not 
 **Step 3 — read your instructions, in this order,** from inside your checkout:
 
 1. `docs/agents/<seat>-instructions.md`, with `<seat>` exactly as Step 1 gave it — your brief. If that exact file does not exist, stop and ask the user; do not adopt a neighbouring seat's brief, because that would mean adopting the wrong work.
-2. `docs/agents/agent-seat-model.md` — how seats work, and the definitions of the words your brief uses: pile, walked approval, instruction-class, slice, the C-numbers.
+2. `docs/agents/agent-seat-model.md` — how seats work, and the definitions of the words your brief uses: walked approval, slice, the C-numbers.
 3. `CLAUDE.md` at the repository root — the project's standing rules.
 
-Briefs are not uniform. Most state a pile of work with its issues and pull requests, what to read, boundaries against other seats, and a first action; `sidebar` deliberately has almost none of that, because its job is answering off-topic questions and owning nothing. Read yours for what it says rather than for what this paragraph predicts.
+Briefs are not uniform. Most state the seat's work with its issues and pull requests, what to read, boundaries against other seats, and a first action; `sidebar` deliberately has almost none of that, because its job is answering off-topic questions and owning nothing. Read yours for what it says rather than for what this paragraph predicts.
 
 **Step 4 — do what your brief's "First action" says**, exactly as written. Most briefs begin by reading, verifying, and reporting to the user rather than building — but your brief governs, not this sentence.
 
 **Two rules before you touch anything.**
 
-*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Today the user's Mac-side agent — his own agent, not one of these seats — reviews and merges. `CLAUDE.md` records this as an **interim** lane: the permanent path is the main-gatekeeper (`scripts/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
+*Reaching main.* Commit to your own branch and push it; never push to `main` yourself. Today the user's Mac-side agent — his own agent, not one of these seats — reviews and merges. `CLAUDE.md` records this as the **interim** PR process: the permanent path is the main-gatekeeper (`scripts/main-gatekeeper.py check-in`), dormant until its credential work lands. If `CLAUDE.md` and this file ever disagree about how changes reach main, `CLAUDE.md` is right and this file is stale.
 
-*Instruction-class files.* `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and anything under `.claude/` change only with the user's **walked approval** — his approval given item by item through a walk, not one yes to a bundle, recorded by quoting his words into `.walk-approved` at the repository root. `.claude/hooks/instruction-file-guard.py` enforces this on the Edit, Write, and NotebookEdit tools and will teach you the path if you forget. It cannot see a write made through a shell command, so the rule binds you whether or not the hook is watching.
+*Agent-instructions files.* `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and anything under `.claude/` change only with the user's **walked approval** — his approval given item by item through a walk, not one yes to a bundle, recorded by quoting his words into `.walk-approved` at the repository root. `.claude/hooks/instruction-file-guard.py` enforces this on the Edit, Write, and NotebookEdit tools and will teach you the path if you forget. It cannot see a write made through a shell command, so the rule binds you whether or not the hook is watching.
 
 **If something you need is unreachable** — `gh` unauthenticated, the network down, a cited file missing — report it to the user as a launch defect rather than working around it silently. Several briefs send you to GitHub issues and pull requests, and a seat that quietly improvises around a broken credential produces work nobody can trust.

@@ -53,7 +53,7 @@ holds `ned-review-merge`.
 
 So a clean run here supports two claims and no others: the PATCH is safe, and
 pushes are unaffected. It does not show that dismissal works, and it does not
-show that the lane can recover once an approval is dismissed — which is the
+show that the PR process can recover once an approval is dismissed — which is the
 operational risk, since with admin enforcement on there is no override.
 
 ## Why this is safe to run
@@ -74,6 +74,6 @@ the failing command, per the defect class recorded at
 
 A pass does not license changing main by itself. It licenses the *first* half:
 that the mechanism of the change is understood and reversible. The second half —
-what happens to the lane when an approval is dismissed mid-review — is the
+what happens to the PR process when an approval is dismissed mid-review — is the
 merge-lane exercise, and the decision to enable the setting on main is the
 user's, not this document's.
