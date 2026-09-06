@@ -1,7 +1,7 @@
 # nedschorus
 
 - Use standard SDLC terms.
-- If you run into unexplained terms, this project's glossary is `docs/wiki/project-vocabulary-glossary.md`.
+- If you run into unexplained terms, this project's glossary is `docs/wiki/nedschorus-glossary.md`.
 - The user is the project's one human operator and the only person who rules; older documents call him "the boss".
 - The project runs on two machines, each with its own clone: the user's Mac, and ned-box, an Ubuntu machine on the same LAN reached as `ssh nedlern@ned-box`, where the agent seats run.
 - When creating or inventing names, for directories, file names, globals, functions, classes, scripts, section headings, and other names likely to be grepped, use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
