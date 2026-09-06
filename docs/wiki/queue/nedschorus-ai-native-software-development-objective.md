@@ -56,7 +56,7 @@ The literature does not point toward a larger society of autonomous agents. It p
 
 ## Vocabulary
 
-Terms of art used here are collected in the project's glossary, `docs/wiki/project-vocabulary-glossary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. Where a term already has a name in this project, that name is used rather than a new one.
+Terms of art used here are collected in the project's glossary, `docs/wiki/nedschorus-glossary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. Where a term already has a name in this project, that name is used rather than a new one.
 
 ## What every node receives and returns
 
