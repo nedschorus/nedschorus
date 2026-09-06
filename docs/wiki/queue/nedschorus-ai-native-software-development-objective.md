@@ -68,7 +68,7 @@ The rule underneath both: nothing that matters exists only in an agent's chat me
 
 ## The pipeline
 
-The forward order is fixed: define the work, create and review a design, write and review an implementation, write and review a test plan, write and review tests, integrate, build and test, deploy, and triage what production reports. Fixed means no agent invents the order while working. It does not mean the only direction is forward: a node that cannot proceed routes backward, separate work items run in parallel, and some steps that share a governing design can run beside each other rather than in the listed order. Each node has one job and one point of view.
+The forward order is fixed: define the work, create and review a design and its contract, write and review an implementation, write and review a test plan, write and review tests, integrate, build and test, deploy, and triage what production reports. Fixed means no agent invents the order while working. It does not mean the only direction is forward: a node that cannot proceed routes backward, separate work items run in parallel, and some steps that share a governing design can run beside each other rather than in the listed order. Each node has one job and one point of view. The contract is the design's companion file, written by the design's author in the same conversation, carrying the detail the implementation and the tests need that the design does not; after the fan-out a fresh agent corrects it from a reviewer's notes, and it reaches the user only when it has failed review twice.
 
 ## Review and root-cause routing
 
