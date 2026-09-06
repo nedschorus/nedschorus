@@ -2,7 +2,7 @@ Issue: https://github.com/nedschorus/nedschorus/issues/9
 
 ## Admission note (new-vp, 2026-07-21)
 
-Authored by cops during the boss's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair #4, the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line.
+Authored by cops during the user's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair #4, the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line.
 
 # Ned's Notes: NedsChorus Engineering Methods and Sources
 
@@ -94,7 +94,7 @@ The NedsChorus skill should preserve this proven interaction pattern and the
 decisions recorded here, but its packaging should be rebuilt and reviewed for
 NedsChorus rather than copied wholesale from either legacy file.
 
-processed 2026-07-22 → boss-ruled during the founding walk: the legacy system's two
+processed 2026-07-22 → user-ruled during the founding walk: the legacy system's two
 walk skills are being updated NOW with two behaviors from this section — the
 walked-document-as-ledger rule (each item's disposition marked in place before
 advancing; a walk with no document gets a ledger file first) and the re-plan
@@ -127,7 +127,7 @@ Sources worth adapting:
 This is probably the most NedsChorus-specific candidate. Start with one bounded
 end-to-end slice, not "rewrite Nedlern." Classify the legacy features the slice
 touches per the rewrite policy's four classes — `preserve-feature`,
-`update-feature`, `remove-feature`, `consider-feature` (boss-ruled 2026-07-24,
+`update-feature`, `remove-feature`, `consider-feature` (user-ruled 2026-07-24,
 walk item 13, superseding the earlier MUST PRESERVE / INTENTIONAL CHANGE /
 OLD BUG / UNRESOLVED set; policy of record: founding plan § Standing
 decisions).
@@ -218,7 +218,7 @@ Sources worth adapting or investigating:
 
 - [Piebald's versioned Claude Code prompt extraction](https://github.com/Piebald-AI/claude-code-system-prompts): the best focused non-official source found for comparing shipped Claude Code prompt and tool-description changes across versions. Use for version archaeology and hypothesis generation, never as a supported contract or executable dependency.
 - [Asgeirtj's cross-vendor prompt archive](https://github.com/asgeirtj/system_prompts_leaks): useful for broad historical comparison. Provenance varies by file, so any derived claim needs the model, surface, version/date, extraction method, and confidence recorded.
-- [DonutShinobu Claude Code fork](https://github.com/DonutShinobu/claude-code-fork) and [Tanbiralam Claude Code mirror](https://github.com/tanbiralam/claude-code): duplicate, stale snapshots of the same material — superseded by Piebald's versioned archive for nearly all purposes; kept for the research trail. (Reframed per the public-links policy, boss-ruled 2026-07-24, walk item 14: sources are judged on usefulness and reliability only — the earlier do-not-cite-publicly quarantine framing is retired.)
+- [DonutShinobu Claude Code fork](https://github.com/DonutShinobu/claude-code-fork) and [Tanbiralam Claude Code mirror](https://github.com/tanbiralam/claude-code): duplicate, stale snapshots of the same material — superseded by Piebald's versioned archive for nearly all purposes; kept for the research trail. (Reframed per the public-links policy, user-ruled 2026-07-24, walk item 14: sources are judged on usefulness and reliability only — the earlier do-not-cite-publicly quarantine framing is retired.)
 
 ## Deliberately excluded from the shortlist
 
@@ -251,7 +251,7 @@ Sources worth adapting or investigating:
 
 ## Combined walk ledger (pairs #9 + #10) — the walk-state of record
 
-Per the walked-document-as-ledger rule (boss-approved 2026-07-22; legacy PR
+Per the walked-document-as-ledger rule (user-approved 2026-07-22; legacy PR
 [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162)). The
 anchor after any interruption is the first unmarked item.
 
@@ -276,11 +276,11 @@ Outer walk, 17 items:
 1. Foundations — processed 2026-07-22 → the seven principles are search
    scaffolding or duplicate doctrine EXCEPT 5 (skill interface contract) and 6
    (five adversarial test classes), which are scoped, not retired: they bind
-   agent-facing skills and the agent-side halves of boss-facing skills;
-   boss-supervised interaction behavior iterates live. Not landed as doctrine —
+   agent-facing skills and the agent-side halves of user-facing skills;
+   user-supervised interaction behavior iterates live. Not landed as doctrine —
    the material rides the skill-creation deep-dive queue note into item 11.
-2. `define-work` — processed 2026-07-24 → boss ruled GHI-NOT-BUILD ("at best
-   it's worth a GHI in nc"); files with the batch below. RE-PLAN (boss-directed,
+2. `define-work` — processed 2026-07-24 → the user ruled GHI-NOT-BUILD ("at best
+   it's worth a GHI in nc"); files with the batch below. RE-PLAN (user-directed,
    same ruling): items 3–10 collapse from full evidence presentations to
    rapid-fire summary dispositions — GHI-or-cut per item off the summaries MD
    (session ad0a3708, `/tmp/nc-candidate-skills-walk-summaries-2026-07-24.md`;
@@ -294,7 +294,7 @@ Outer walk, 17 items:
 8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
 9. `review-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#22.
 10. `eval-agent-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#23.
-11. Skill-creator review — processed 2026-07-24 → boss approved
+11. Skill-creator review — processed 2026-07-24 → the user approved
     read-for-ideas-only with two landing amendments he drove: the creation
     doctrine lands NOT in the founding plan but as NC's first landed-reference
     MD, `docs/reference/skill-authoring-checklist.md` (five nuggets + cops's
@@ -306,7 +306,7 @@ Outer walk, 17 items:
     (b) standalone reference MD, per above; (c) description-tuning machinery
     excluded with its evidence bar recorded in the checklist.
 12. Boot-set roll-up (ruling) — processed 2026-07-24 → both parts landed
-    (session 23789ca5; re-presented verbatim per the handoff, boss word:
+    (session 23789ca5; re-presented verbatim per the handoff, the user's word:
     "approved"). (a) Boot-set rule recorded: boot set = the five founding
     skills only; candidates join one at a time when a real task exposes the
     missing decision; first expected pull = write-test-plan (nedschorus#18)
@@ -331,20 +331,20 @@ Outer walk, 17 items:
     open question 9 RESOLVED. The pieces, in ruling order: (a) terminology —
     main-gatekeeper (component class: gatekeeper), legacy (never "quarry"),
     NC is not-a-rebuild (cherry-pick framing) — executed repo-wide at
-    2997cc0; (b) boss-simplified classification vocabulary: preserve-feature
+    2997cc0; (b) user-simplified classification vocabulary: preserve-feature
     (feature contract, probably not implementation; named + test-pinned) /
     update-feature (divergence recorded) / remove-feature (reason recorded;
     absorbs old-bug) / consider-feature (blocks nothing; re-decided when
     work depends on it); (c) classification is per cherry-pick, never a
     global inventory; records live in the slice plan's classification table
     or the entry-manifest line; (d) consider-features outliving their slice
-    go to legacy-feature-queue/ (boss catch reversing my GHI proposal: GHIs
+    go to legacy-feature-queue/ (user catch reversing my GHI proposal: GHIs
     are for things WANTED; queues hold the not-yet-decided) — one file per
     feature, date-in-filename, standard four-outcome drain where deciding IS
     the drain, no TTL; (e) default: unexamined is never preserved.
     nedschorus#16 re-worded to the new vocabulary; shortlist §2 and
     Still-under-review updated in this doc. ANCHOR = item 14.
-14. Public-links ruling — processed 2026-07-24 → boss REVERSED my quarantine
+14. Public-links ruling — processed 2026-07-24 → the user REVERSED my quarantine
     recommendation (session 23789ca5): links in this public repository are
     judged on usefulness and reliability only; no provenance-based class
     ("treat them like everything else"). The leaked archives stay linked —
@@ -356,27 +356,27 @@ Outer walk, 17 items:
     3 resolved: the note is public as committed, nothing omitted.
     ANCHOR = item 15.
 15. First bounded test task (ruling) — processed 2026-07-25 → CONFIRMED
-    (boss word "approved", session 23789ca5): first bounded test task =
+    (the user's word "approved", session 23789ca5): first bounded test task =
     the main-gatekeeper build slice (main-gatekeeper-design.md § Build
     slice: check-in / status / cancel / imports + tests T1–T12 + the
     CLAUDE.md workflow lines), boot test first per founding-plan step 7;
     resolves pair-#10 question 4. The item expanded mid-walk into the
-    boss-directed full-process design walk recorded below
+    user-directed full-process design walk recorded below
     ("we need to specify what this python program does, its inputs and
     outputs, its state machine, errors"; mission-critical: near-perfect
     autonomous operation). Rulings already banked mid-item, to fold into
     the specification as the walk confirms them: (a) honest singleton
     restatement — branch protection restricts the ACCOUNT, not processes;
-    (b) check-ins parallel by default, serialize on conflict (boss);
+    (b) check-ins parallel by default, serialize on conflict (user);
     (c) CLAUDE.md is documentation, never enforcement — never depend on it
-    (boss verbatim: python scripts don't read it; different machines may
+    (user verbatim: python scripts don't read it; different machines may
     carry different copies); mechanical enforcement = the dedicated
     gatekeeper-identity rung; (d) trivial head movement must not block or
     invalidate a pending check-in — revalidation scoped to what actually
-    changed (boss's head-churn concern); (e) callers choose synchronous or
+    changed (the user's head-churn concern); (e) callers choose synchronous or
     asynchronous invocation — form errors always refuse synchronously at
     submit; (f) the program is the ONLY gate — every agent invokes it
-    directly; choirmaster has no relay/doorman role (boss: "we came up with
+    directly; choirmaster has no relay/doorman role (user: "we came up with
     the gatekeeper concept but did not remove the old concept" — the
     single-writer-AGENT concept is retired; the single writer is the
     program + its credential); (g) request identity is a content digest
@@ -386,7 +386,7 @@ Outer walk, 17 items:
     entry-manifest.md append-a-row rule is retired (a shared append file
     would also make any two parallel imports always conflict); the
     browsable view becomes a derived query; (i) simplicity cuts,
-    boss-approved: no review-evidence field or check until a class is
+    user-approved: no review-evidence field or check until a class is
     actually gated; no naming-hygiene check until a real subsystem set
     exists; no separate audit log (session transcripts + git history are
     the records — the invocation is an ordinary tool call; status = a
@@ -409,22 +409,22 @@ Outer walk, 17 items:
     too-late-already-checked-in / unknown-request; revert (an ordinary
     check-in undoing a prior one) is the post-push remedy; (o) the spec's
     scope ends at MAIN — deploying to production is a separate DevOps/CI
-    concern (boss); file renamed fast-pr-to-prod-design.md →
+    concern (user); file renamed fast-pr-to-prod-design.md →
     main-gatekeeper-design.md (component-named; NC has no pull requests).
     SPEC FOLDED: full rewrite of main-gatekeeper-design.md + README
     principles 5/6 + actors + entry-manifest retired-to-historical +
     comms-bridge promotion-transport retired + founding-plan pointers.
-    Later rulings, continued: (p) S2 RESOLVED (boss-approved 2026-07-24):
+    Later rulings, continued: (p) S2 RESOLVED (user-approved 2026-07-24):
     handoff.py submits its files through check-in like any requester —
     files written to disk first, so a session boundary is never blocked by
     a failed submission; the local-commit + next-push-catch-up rule is
     superseded in fast-handoff-design.md; (q) check-in timing:
     infrequently-updated files check in immediately after update;
     append-type log files at a logical breakpoint (session end / next
-    session start) — re-homed to nedschorus#25 same day (boss: Standing
+    session start) — re-homed to nedschorus#25 same day (user: Standing
     decisions cover the boot-up phase ONLY; post-boot needs are GHIs —
     short ones issue-only, long ones MD-GHI pairs; possible NEXT WALK
-    topic flagged by the boss: applying that scope rule across the
+    topic flagged by the user: applying that scope rule across the
     Standing-decisions section); destined for CLAUDE.md at step 2;
     (r) "ceremony" retired from the
     vocabulary (AI jargon) — plain "writing a handoff" / "the write
@@ -432,7 +432,7 @@ Outer walk, 17 items:
     founding plan, gatekeeper spec, nc-queue README, package-review doc.
     CLOSED 2026-07-25: spec read and first task confirmed.
     ANCHOR = item 16.
-16. Agent organization / lifecycle roles — processed 2026-07-25 → the boss
+16. Agent organization / lifecycle roles — processed 2026-07-25 → the user
     REPLACED the captured org-chart possibility with the dynamic
     agent-team model, designed live in-walk; captured as the MD-GHI pair
     nedschorus#26 (docs/issues/26-dynamic-agent-team-model.md); pair-#10
@@ -447,7 +447,7 @@ Outer walk, 17 items:
     commissioned (cvp 1696104:39 + independent Claude deep-research);
     pair #26 amends on their arrival. CIRCLE-BACK COMPLETE 2026-07-25:
     both legs landed (nc-queue notes), independently converging on the
-    skeptical core; three reconciliation amendments boss-approved (pilot
+    skeptical core; three reconciliation amendments user-approved (pilot
     discipline with mandatory baselines/stop rules; intent stream =
     sensor never gate, escalated experts get artifacts + provenance;
     first sparring pilot scoped to bounded verifiable artifacts);
@@ -456,21 +456,21 @@ Outer walk, 17 items:
     agents/subagents, guardians, spies, sparring-partners,
     domain-experts, project managers — grows only on exposed need.
     Item 16 CLOSED. ANCHOR = item 17 (expanded to a six-cluster
-    sub-walk per the boss; anchor = cluster 1, communications).
+    sub-walk per the user; anchor = cluster 1, communications).
 17. Operational backlogs — expanded 2026-07-25 into a six-cluster sub-walk
-    (boss: the condensed form said too little). Cluster 1 (communications)
+    (user: the condensed form said too little). Cluster 1 (communications)
     processed 2026-07-25 → five entries recognized as already-landed
     doctrine; the communications-fix-plan entry CUT as superseded
-    (stateless-pile class); boss ruled the four open decisions ALL capture
+    (stateless-pile class); the user ruled the four open decisions ALL capture
     to GHIs: notification mechanism → sentence on nedschorus#26;
     API-vs-MCP + addressing levels → sentence on nedschorus#1 + bridge
     spec § Open; console-insertion + stuck/waiting detection → NEW
     nedschorus#27. Pair-#10 § Communications rewritten as the dispersal
     record. Cluster 2 (status and monitoring) processed
-    2026-07-25 → boss META-RULING captured to the artifact-lifecycle rule:
+    2026-07-25 → user META-RULING captured to the artifact-lifecycle rule:
     a committed doc is NOT an attention surface; task-shaped items get
     GHIs even when small (lean bundles fine); agent task lists are
-    boss-invisible until a review method exists. Dispositions: spy design
+    user-invisible until a review method exists. Dispositions: spy design
     inputs + idle-catch-up direction → #26 sentence; second-wake
     investigation + session-state verification → #27 sentence; research
     bundle (recaps, introspection tools, denoised artifacts, test-project
@@ -484,8 +484,8 @@ Outer walk, 17 items:
     memory-entries-point-at-wiki-pages); the bad-words entry's two unknowns
     appended to [nedschorus#14](https://github.com/nedschorus/nedschorus/issues/14);
     grep-before-naming rides the bundle to the step-2 CLAUDE.md rewrite;
-    the "Claude demotion / why 10" entry CUT (boss: undefinable — "no idea
-    what this is about"). SAME-TURN boss scrub of pair #10 beyond the
+    the "Claude demotion / why 10" entry CUT (user: undefinable — "no idea
+    what this is about"). SAME-TURN user scrub of pair #10 beyond the
     cluster structure, executed (commit 7e5d9f8): candidate→draft relabel
     (a candidate is not a draft; draft is the ruled status word) across
     legend and headings; publishing marketing removed (strategy stays in
@@ -499,12 +499,12 @@ Outer walk, 17 items:
     artifact-lifecycle state (draft label, queue directories, provenance =
     commit history / issue footer, gatekeeper-not-admitting-agent).
     Cluster 4 (git/GitHub/review) processed 2026-07-27, walked per-entry
-    at the boss's direction (ten entries, each ruled individually): two
+    at the user's direction (ten entries, each ruled individually): two
     sentences captured (one-coherent-change-set-per-check-in →
     [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3);
     reply-incapable-sender terminal-state requirement →
     [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1));
-    check-in composition ANSWERED by boss ruling (lifecycle bundling is
+    check-in composition ANSWERED by user ruling (lifecycle bundling is
     unrealistic — artifacts land when produced per nedschorus#25, a
     coherent change set carries its tests); three entries recognized as
     already ruled or landed (review phases = item-15 cut; trailer
@@ -512,13 +512,13 @@ Outer walk, 17 items:
     Codex-review research — re-arises at gate-a-class; the
     GitHub-issue-tool guard — admitting-agent model retired; mutual-review
     routing — legacy defect already captured; the supported-API preference
-    — boss: a truism). MID-CLUSTER, boss-directed: nedlern#1972 moved to
+    — user: a truism). MID-CLUSTER, user-directed: nedlern#1972 moved to
     [nedschorus#30](https://github.com/nedschorus/nedschorus/issues/30)
     (close-onto-pointer; design + scan carried; scan later marked PENDING
-    boss review under his nothing-enters-NC-without-my-review ruling —
+    user review under his nothing-enters-NC-without-my-review ruling —
     it crossed on agent judgment beyond his named scope, escalated by
     wiki, provenance header corrected). Cluster 5 (wiki and memory) processed 2026-07-27, walked per-entry
-    (ten entries as seven items): the boss's two-concern frame ruled and
+    (ten entries as seven items): the user's two-concern frame ruled and
     written into pair #10 § Draft document and directory structure —
     placement rules + the many-parts overview rule, his sentence
     verbatim: "A system with many parts needs one current overview that
@@ -528,19 +528,19 @@ Outer walk, 17 items:
     (candidate domain-expert duty: overview currency, never exclusive
     control); scrub-duty enumeration → [nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2)
     (the build enumerates task/memory disposal, queue-depth reporting,
-    nc-queue expiry, trailer-absence audit — surfaced by the boss's
+    nc-queue expiry, trailer-absence audit — surfaced by the user's
     question whether any one artifact collects maintenance duties; none
     did); two landed (artifact-lifecycle promote path; no-junk-drawer
     machinery); one already dispersed ([nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
     item 9); two cut (wiki-to-skill linking → step-3 wiki walk;
     org-vs-artifact distinction → structural). Cluster 6 (execution models) processed 2026-07-27 → both source
     sections ("Ways to run prompts in code"; "Turn and hook order to
-    verify") were already removed by the boss's 2026-07-26 scrub as bad
+    verify") were already removed by the user's 2026-07-26 scrub as bad
     summaries; closure confirmed with nothing left to walk. **ITEM 17
     CLOSED. THE OUTER WALK IS COMPLETE — all 17 items carry processed
     marks.** What pair #10 retains after the walk, deliberately: the four
     draft sections plus the reusable-specification pattern (draft status,
-    awaiting review under the boss's nothing-enters-NC-without-my-review
+    awaiting review under the user's nothing-enters-NC-without-my-review
     ruling) and the graded research/source notes; every backlog section
     is a dispersal record.
 

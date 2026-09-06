@@ -20,7 +20,7 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 
 ## The actors
 
-- **The boss** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
+- **The user** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
 - **choirmaster** — the primary agent (Claude runtime); the main-gatekeeper's most frequent requester.
 - **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; checks its work in through the main-gatekeeper like every agent, and never pushes.
 
@@ -28,7 +28,7 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 
 Three agent lifetimes, used deliberately:
 
-- **Sustained agents** (choirmaster, the companion): live indefinitely. Choirmaster lives as a chain of sessions whose continuity is the handoff system — a numbered handoff file plus the session's committed transcript, written at each session's end and read automatically at the next session's start — so a session's end costs minutes, not context. The companion's continuity is its own runtime's persistent session: Codex auto-compaction plus resume by session id — it needs no handoff system (boss-ruled 2026-07-21).
+- **Sustained agents** (choirmaster, the companion): live indefinitely. Choirmaster lives as a chain of sessions whose continuity is the handoff system — a numbered handoff file plus the session's committed transcript, written at each session's end and read automatically at the next session's start — so a session's end costs minutes, not context. The companion's continuity is its own runtime's persistent session: Codex auto-compaction plus resume by session id — it needs no handoff system (user-ruled 2026-07-21).
 - **Task-scoped agents**: spawned for one bounded, multi-step task (a promotion job, a dogfood run) with exactly the context that task needs; they end with the task.
 - **One-shot agents** ("kleenex"): a single call, then discarded — a zero-context drafter, a review pass, a probe. Their empty context is the point: they are the system's test instrument for zero-context readability and its guard against context contamination.
 
@@ -40,11 +40,11 @@ Three agent lifetimes, used deliberately:
 | `docs/issues/<n>-<slug>.md` | Working documents, one per GitHub issue, disposed when the issue closes. |
 | `docs/cross-project/` | Artifacts both systems read, including the founding documents and specifications. |
 | `handoff/` | Numbered session handoffs and their transcripts. |
-| `nc-queue/` | Boss-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
-| `docs/wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and pair-bound documents awaiting the boss's drain (promote / edit / demote / drop). |
+| `nc-queue/` | User-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
+| `docs/wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and pair-bound documents awaiting the user's drain (promote / edit / demote / drop). |
 | `legacy-feature-queue/` | Undecided legacy features (consider-feature class, rewrite policy) awaiting decision; deciding is the drain. |
 | `entry-manifest.md` | The ledger of everything imported from the legacy system. |
-| Issues labeled `draft` | Draft issues awaiting the boss's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the boss's admission takes effect without it. |
+| Issues labeled `draft` | Draft issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
 ## Status
 

@@ -12,7 +12,7 @@ the builder.
 [`docs/cross-project/main-gatekeeper-design.md`](../cross-project/main-gatekeeper-design.md)
 (design-as-of 2026-07-24) states the contract; the build bindings in
 [`docs/issues/queue/3-gatekeeper-build-bindings.md`](queue/3-gatekeeper-build-bindings.md)
-(boss-walked 2026-07-30) supplement it with B1–B6. This plan only says what
+(user-walked 2026-07-30) supplement it with B1–B6. This plan only says what
 gets built in what order, and answers questions those two documents leave
 open. Where this plan and the specification appear to disagree, the
 specification wins and this plan is wrong.
@@ -911,7 +911,7 @@ automatic integration (clean re-application, the usual case) and `conflict`
    specifies `nc-checkin-quality-gate` — gitleaks plus `ruff check`,
    `ruff format --check`, `mypy` and `pytest`, run full-repo on every
    check-in, refusing with the tool's structured output nested in the
-   gatekeeper's refusal (boss-ruled 2026-07-31). This plan never mentions
+   gatekeeper's refusal (user-ruled 2026-07-31). This plan never mentions
    it. Neither does the specification, nor the build bindings: `git grep -icE
    'ruff|mypy|pytest|gitleaks|nc-checkin-quality-gate|check battery' main --`
    over `docs/issues/3-main-gatekeeper-build-slice-plan.md`,

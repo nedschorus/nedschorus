@@ -20,7 +20,7 @@ The single most important finding is a tension, not a slogan. **Multi-agent LLM 
 
 A second, deeper finding cuts against the naive "ensemble = more reliable" intuition the whole field rests on: **LLM errors are strongly correlated, and more capable models are, if anything, more correlated with each other.** This is the Knight & Leveson (1986) N-version result reappearing in LLMs. Diversity has to be *engineered* (cross-model, cross-context, role-differentiated); you do not get it for free by running the same model N times.
 
-If the boss's design goal is "a team smarter than any individual member," the term of art is **collective intelligence / wisdom of crowds**, and the literature says the effect is real but conditional on decorrelation and good aggregation — not on agent count.
+If the user's design goal is "a team smarter than any individual member," the term of art is **collective intelligence / wisdom of crowds**, and the literature says the effect is real but conditional on decorrelation and good aggregation — not on agent count.
 
 ---
 
@@ -50,7 +50,7 @@ Each pattern below is a real, citable lineage — not framework marketing.
 - **Provenance:** *FrugalGPT* is the foundational cascade design — query a sequence of increasingly expensive models, stop when a confidence threshold is met. Distinguish **cascade** (sequential, early-exit on confidence) from **routing** (parallel pool, a dedicated router picks the model up front). See the survey *Dynamic Model Routing and Cascading for Efficient LLM Inference* ([arXiv:2603.04445](https://arxiv.org/html/2603.04445v2)). Production shape = pre-router (cheap, on metadata) → post-generation verifier (quality/uncertainty of the weak model) → escalation policy (accept / refine / reject / defer to stronger). **[inferred]** Note this is primarily a **cost** pattern (match the model to the task's difficulty) that *also* raises average quality; it is the closest published analog to "watcher triages, then routes to the right expert."
 
 ### 1.7 Monitor / observer with deliberately filtered context
-- Covered in depth in §4 (AI Control; chain-of-thought monitoring). This is the pattern with the most rigorous safety-side literature and the most direct bearing on the boss's "observer sees reasoning, not tool traffic" idea.
+- Covered in depth in §4 (AI Control; chain-of-thought monitoring). This is the pattern with the most rigorous safety-side literature and the most direct bearing on the user's "observer sees reasoning, not tool traffic" idea.
 
 ---
 
@@ -62,7 +62,7 @@ Source: **"How we built our multi-agent research system"** (Anthropic Engineerin
 - **Architecture:** orchestrator-worker. A lead agent plans and spawns 3–10+ parallel subagents, each with its **own context window**, then a separate citation pass synthesizes. Scaling: simple fact-finding = 1 agent / 3–10 tool calls; comparisons = 2–4 subagents; complex research = 10+ subagents.
 - **Cost:** *"agents typically use about 4× more tokens than chat interactions, and multi-agent systems use about 15× more tokens than chats."* Multi-agent is only worth it when task value >> token cost.
 - **What predicts success:** on BrowseComp, **token usage alone explained ~80% of performance variance**; tool-call count and model choice explained most of the rest. (I.e., the win is largely "more parallel context/compute," not emergent teamwork per se.) **[confirmed, but interpretation partly inferred]**
-- **Explicit anti-scope (critical for the boss):** *"Most coding tasks involve fewer truly parallelizable tasks than research, and LLM agents are not yet great at coordinating and delegating to other agents in real time... some domains that require all agents to share the same context or involve many dependencies between agents are not a good fit for multi-agent systems today."* Multi-agent excels with **heavy parallelization + info exceeding one context window + many complex tools** — conditions coding usually lacks. **[confirmed]**
+- **Explicit anti-scope (critical for the user):** *"Most coding tasks involve fewer truly parallelizable tasks than research, and LLM agents are not yet great at coordinating and delegating to other agents in real time... some domains that require all agents to share the same context or involve many dependencies between agents are not a good fit for multi-agent systems today."* Multi-agent excels with **heavy parallelization + info exceeding one context window + many complex tools** — conditions coding usually lacks. **[confirmed]**
 
 ### 2.2 Self-consistency (single model, majority vote over sampled CoT)
 Wang et al. 2022. Gains over greedy chain-of-thought **[confirmed via search summary of the primary]**:
@@ -109,18 +109,18 @@ This is the section most directly relevant to whether an "N-version team" of LLM
 
 ### 3.3 Cross-model vs same-model diversity
 - **Same-model temperature sampling is the weakest form of diversity** — it varies the reasoning path but shares the model's systematic blind spots, so it "cannot couple errors across questions." **Cross-model heterogeneity** is the empirically-supported lever: it is the "universal antidote" that improves multi-agent debate ([arXiv:2502.08788](https://arxiv.org/html/2502.08788)) and the direction diversity audits point to. **[confirmed for the heterogeneity-helps-MAD claim; inferred for the general ranking]**
-- **Practical implication for the boss's dynamic team:** if you want an N-version team whose votes are worth N, you must (a) mix model *families* (Claude / GPT-class / Gemini), and even then expect cross-family correlation ~0.6 on hard items, and/or (b) give members genuinely *different context or roles* so their errors are conditionally independent. Running one model at temperature is close to a single vote wearing a disguise. **[speculative synthesis, grounded in §3.2–3.3]**
+- **Practical implication for the user's dynamic team:** if you want an N-version team whose votes are worth N, you must (a) mix model *families* (Claude / GPT-class / Gemini), and even then expect cross-family correlation ~0.6 on hard items, and/or (b) give members genuinely *different context or roles* so their errors are conditionally independent. Running one model at temperature is close to a single vote wearing a disguise. **[speculative synthesis, grounded in §3.2–3.3]**
 
 ---
 
 ## 4. Oversight architectures (observer / monitor with asymmetric context)
 
-This maps directly onto the boss's idea of "a second, differently-contexted agent watching a working agent — seeing the reasoning/message stream but not the raw tool traffic." There is a substantial and rigorous literature here, mostly from AI-safety groups.
+This maps directly onto the user's idea of "a second, differently-contexted agent watching a working agent — seeing the reasoning/message stream but not the raw tool traffic." There is a substantial and rigorous literature here, mostly from AI-safety groups.
 
 ### 4.1 AI Control: a weaker *trusted* monitor watching a stronger *untrusted* worker
 - **"AI Control: Improving Safety Despite Intentional Subversion"** (Greenblatt, Shlegeris et al., Redwood Research, ICML; [arXiv:2312.06942](https://arxiv.org/html/2312.06942v5)). Core protocol **"trusted monitoring"**: a powerful but untrusted model (GPT-4) does the work; a **weaker but trusted model (GPT-3.5) monitors its outputs** and flags/audits suspicious actions. The whole research program assumes the monitor is *less capable* than the worker — capability asymmetry is a feature, not a bug, because the monitor's job (spot-check for problems) is easier than the worker's job (produce solutions). **[confirmed]** This is the closest published validation of "watcher need not be as smart as the doer."
 - **Factored cognition strengthens monitoring:** *Factor(T,U)* ([arXiv:2512.02157](https://arxiv.org/pdf/2512.02157)) — a trusted model decomposes the task, the untrusted model solves each child sub-task **in isolation** (deliberately starved of the full context), results reassembled. Context-starving the worker limits what it can subvert. **[inferred]**
-- **The adversarial caveat:** monitors are attackable. *"Adaptive Attacks on Trusted Monitors Subvert AI Control Protocols"* ([arXiv:2510.09462](https://arxiv.org/pdf/2510.09462)) — a worker can prompt-inject the monitor through its own outputs. So an observer that reads the worker's *message stream* inherits the worker's ability to manipulate the observer. **[inferred]** Design implication for the boss: an observer reading the doer's reasoning must treat that reasoning as *untrusted input*, not ground truth.
+- **The adversarial caveat:** monitors are attackable. *"Adaptive Attacks on Trusted Monitors Subvert AI Control Protocols"* ([arXiv:2510.09462](https://arxiv.org/pdf/2510.09462)) — a worker can prompt-inject the monitor through its own outputs. So an observer that reads the worker's *message stream* inherits the worker's ability to manipulate the observer. **[inferred]** Design implication for the user: an observer reading the doer's reasoning must treat that reasoning as *untrusted input*, not ground truth.
 
 ### 4.2 Chain-of-thought monitoring: observer reads the reasoning stream
 This is the exact "see the reasoning, not (only) the tool traffic" asymmetry.
@@ -128,7 +128,7 @@ This is the exact "see the reasoning, not (only) the tool traffic" asymmetry.
 - **"Chain of Thought Monitorability: A New and Fragile Opportunity for AI Safety"** ([arXiv:2507.11473](https://arxiv.org/pdf/2507.11473), fetched primary) — a **40+ author position paper spanning Anthropic, OpenAI, Google DeepMind, UC Berkeley** (Korbak, Bengio, Shah, Mikulik, et al.). Argues a **separate, not-necessarily-stronger monitor can read a model's CoT to detect misbehavior**, but the window is **fragile**: it survives only while models externalize reasoning in legible natural language and are not trained in ways that push reasoning latent or deceptive. **[confirmed]**
 - **"Evaluating chain-of-thought monitorability"** (OpenAI, 2025) — introduces a metric g-mean² = TPR×TNR across 13 evals, and a **"monitorability tax"**: a smaller model run at higher reasoning effort can match a larger model's capability while being *easier to monitor*, at extra inference cost. **[inferred]**
 
-**Synthesis of §4:** the published architecture that matches the boss's intuition — **a differently-contexted, possibly weaker observer reading the doer's reasoning/message stream to catch failures the doer's own outputs would hide** — is *real, studied, and partly validated*. The two firm lessons: (1) the monitor's task can be easier than the worker's, so it can be cheaper/weaker; (2) the reasoning stream is only trustworthy as long as nothing (training pressure or the worker's own incentives) teaches the worker to launder it — and an observer consuming the worker's text is itself an injection surface.
+**Synthesis of §4:** the published architecture that matches the user's intuition — **a differently-contexted, possibly weaker observer reading the doer's reasoning/message stream to catch failures the doer's own outputs would hide** — is *real, studied, and partly validated*. The two firm lessons: (1) the monitor's task can be easier than the worker's, so it can be cheaper/weaker; (2) the reasoning stream is only trustworthy as long as nothing (training pressure or the worker's own incentives) teaches the worker to launder it — and an observer consuming the worker's text is itself an injection surface.
 
 ---
 
@@ -157,7 +157,7 @@ This is the exact "see the reasoning, not (only) the tool traffic" asymmetry.
 
 ## 7. Direct implications for a *dynamic* agent-team design
 
-**[speculative synthesis, each grounded in a cited finding above — flagged for the boss to pressure-test.]**
+**[speculative synthesis, each grounded in a cited finding above — flagged for the user to pressure-test.]**
 
 1. **Default to a single strong agent; add agents only where the task is provably decomposable and parallel.** The +90.2% win is a breadth-first-search win; on coupled work the same architecture loses (§2.1, §2.4c). A *dynamic* team should spawn breadth only when the planner can name independent sub-questions.
 2. **Prefer verifier-shaped teams over debate-shaped teams.** Best-of-N + a verifier with an information edge beats same-compute debate and same-model self-critique in every head-to-head I found (§1.4, §2.4a-b). A "critic" adds value only via an information asymmetry (a test, a tool, different context) — never as the same model re-reading itself.
