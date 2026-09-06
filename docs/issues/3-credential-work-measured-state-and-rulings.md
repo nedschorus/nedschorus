@@ -1,6 +1,6 @@
 # Credential work — measured state and rulings, 2026-08-18
 
-Issue: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3) · Specification: [`git-gatekeeper-design.md`](../cross-project/git-gatekeeper-design.md) (normative; it has carried these measurements' consequences since commit `cfaa323`, same day — this document is the evidence record behind them and the journal of the rulings)
+Issue: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3) · Specification: [`main-gatekeeper-design.md`](../cross-project/main-gatekeeper-design.md) (normative; it has carried these measurements' consequences since commit `cfaa323`, same day — this document is the evidence record behind them and the journal of the rulings)
 
 A day of live measurement — both machines read directly, one controlled experiment — plus the user's rulings on what the measurements mean. Written because these facts existed only in one conversation and two relay files, and this project's standing rule is durable artifacts for a reader with zero context. Sources: live reads at the merge-lane seat (Mac), live reads at the gatekeeper seat (box), the fence experiment below, and user rulings in the gatekeeper seat session of 2026-08-18.
 

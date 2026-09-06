@@ -136,7 +136,7 @@ CLASSIC_TOKEN_PROTECTION_SCOPE = "repo"
 FINE_GRAINED_PROTECTION_PERMISSION = "Administration: write"
 SCRATCH_CLONE_PREFIX = "protection-experiment-dismiss-stale-reviews-clone-"
 
-# The sibling git-gatekeeper uses thirty seconds for its GitHub calls and the
+# The sibling main-gatekeeper uses thirty seconds for its GitHub calls and the
 # same named refusal; this file's runner is a copy of that one and keeps it.
 # A clone is the one call that legitimately runs longer.
 COMMAND_TIMEOUT_SECONDS = 30
@@ -187,7 +187,7 @@ def run_command(
 ) -> subprocess.CompletedProcess:
     """The one place an external command is run. stderr is captured, never sunk.
 
-    Three behaviours the git-gatekeeper's copy of this function has and an
+    Three behaviours the main-gatekeeper's copy of this function has and an
     earlier version of this one lost (PR #228 review item 6):
 
       - a wall-clock limit, so a run cannot hang forever. Output is captured

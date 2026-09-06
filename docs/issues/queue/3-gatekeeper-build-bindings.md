@@ -1,6 +1,6 @@
-# Build bindings for pair #3 (git-gatekeeper) — boss-walked 2026-07-30
+# Build bindings for pair #3 (main-gatekeeper) — boss-walked 2026-07-30
 
-Queued for the boss's drain (promote / edit / demote / drop). Destination: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3), rider on the canonical spec `docs/cross-project/git-gatekeeper-design.md` (design-as-of 2026-07-24). Source walk: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §6b (12-step bindings walk, complete). These bindings supplement the spec; nothing here contradicts it except two explicitly-marked amendments (B4d, and the audit-outcome rule in B3c).
+Queued for the boss's drain (promote / edit / demote / drop). Destination: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3), rider on the canonical spec `docs/cross-project/main-gatekeeper-design.md` (design-as-of 2026-07-24). Source walk: `nc-queue/2026-07-28-sdlc-skill-set-coverage-and-app-skill-pile.md` §6b (12-step bindings walk, complete). These bindings supplement the spec; nothing here contradicts it except two explicitly-marked amendments (B4d, and the audit-outcome rule in B3c).
 
 **Provenance note:** the nine `needs-design-clarification` gaps from the 2026-07-23 COPS dogfood were re-validated against the 2026-07-24 spec: six died by construction (atomicity, locking, reconciliation, external side effects, dormant gate, side-effect ordering), and the four bindings below are the survivors plus two gaps the dogfood never saw (§6b casualty table has the full record).
 

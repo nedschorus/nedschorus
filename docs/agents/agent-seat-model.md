@@ -16,7 +16,7 @@ Defined here because the briefs use them as if established, and an agent reading
 - **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the repository root, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
 - **Instruction-class** — files that tell agents how to behave: `CLAUDE.md`, `~/agents/<seat>/CLAUDE.local.md`, anything under `.claude/`. They change only with walked approval.
 - **Slice** — one numbered increment of a build plan, built and landed on its own.
-- **C-numbers** (`C1`, `C3`, `C7`…) — identifiers of the git-gatekeeper's credential rulings, defined in `docs/cross-project/git-gatekeeper-design.md` § The credential and enforcement. Meaningful only inside that document.
+- **C-numbers** (`C1`, `C3`, `C7`…) — identifiers of the main-gatekeeper's credential rulings, defined in `docs/cross-project/main-gatekeeper-design.md` § The credential and enforcement. Meaningful only inside that document.
 
 ## The grouping rule
 
@@ -37,7 +37,7 @@ Seven are defined. Each row's brief is the authority on what that seat owns.
 
 | Seat | What it owns | Brief |
 |---|---|---|
-| `gatekeeper` | the remaining work to activate the git-gatekeeper: the walked-approval evidence format, build slice 6, then the credential work | `gatekeeper-instructions.md` |
+| `gatekeeper` | the remaining work to activate the main-gatekeeper: the walked-approval evidence format, build slice 6, then the credential work | `gatekeeper-instructions.md` |
 | `sanity-checker` | review quality — the sanity-check instrument: three attack prompts (`docs/agents/sanity-checker-{cut,mechanization,fresh-eyes}-attack-prompt.md`) and their runner (`scripts/sanity-check-attacks.py`, its docstring the operating-rules home); a separate instrument from the cold-read grid, never one of its cells (ruled 2026-08-17) | `sanity-checker-instructions.md` |
 | `skill-builder` | the seven proposed skills queued as issues #17–#23, and the queue-drain procedure that empties the project's queues ([#24](https://github.com/nedschorus/nedschorus/issues/24)) | `skill-builder-instructions.md` |
 | `ghi` | GitHub-issue knowledge and tooling: ghi-info ([#46](https://github.com/nedschorus/nedschorus/issues/46)), run-agent ([#41](https://github.com/nedschorus/nedschorus/issues/41)), the reference-integrity checker ([#42](https://github.com/nedschorus/nedschorus/issues/42)), memory instrumentation ([#39](https://github.com/nedschorus/nedschorus/issues/39), placed here by cheapest context rather than by the shared doctrine) | `ghi-instructions.md` |
@@ -47,7 +47,7 @@ Seven are defined. Each row's brief is the authority on what that seat owns.
 
 **On these being one-word names** (user-ruled 2026-08-13, after a cold read raised it): the project's multi-part naming rule in `CLAUDE.md` is scoped to names likely to be *grepped* — files, directories, functions, globals. A seat name is an **address**, not a search key: it is typed to reach an agent, the way a hostname is. So one word is right here, and a seat named after the system it works on is better than one that is not, because the point of the name is that the user recognises it in a session list weeks later.
 
-`gatekeeper` naming the seat that works on the git-gatekeeper is therefore deliberate, not a collision to fix. The program keeps its `git-` prefix everywhere (`scripts/git-gatekeeper.py`, `docs/cross-project/git-gatekeeper-design.md`), and every place a seat name appears carries its own suffix — `gatekeeper-instructions.md`, `~/.claude/handoffs/gatekeeper-handoff.md`, `~/agents/gatekeeper` — so the composed names stay specific even where the root word is common.
+`gatekeeper` naming the seat that works on the main-gatekeeper is therefore deliberate, not a collision to fix. The program keeps its `main-` prefix everywhere (`scripts/main-gatekeeper.py`, `docs/cross-project/main-gatekeeper-design.md`), and every place a seat name appears carries its own suffix — `gatekeeper-instructions.md`, `~/.claude/handoffs/gatekeeper-handoff.md`, `~/agents/gatekeeper` — so the composed names stay specific even where the root word is common.
 
 ## How many run
 

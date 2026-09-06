@@ -7,11 +7,11 @@ design-as-of: 2026-08-07
 
 **SUPERSEDED 2026-08-07, user-ruled at walk item 1: neither reads nor writes are gated.** The problem is not unmediated access — it is that an agent about to file or edit an issue does not know which related issues it should have read, and that issues are written carelessly. A gate answers neither. What replaces it: a dedicated agent holding this project's issues in context, asked "which issues should I read?" and answering on exit ([ghi-info-agent-plan-draft.md](ghi-info-agent-plan-draft.md)); the careful-writing half stays with the `ghi-write` skill. This file is kept as the record of the rejected direction — the verified hook mechanics in § Why this cannot be a credential gate remain accurate and reusable if enforcement is ever wanted.
 
-How agents work with GitHub issues in nedschorus: one program for every issue write, and the `ghi-write` skill for the judgment the program cannot make. Modelled on [git-gatekeeper-design.md](../cross-project/git-gatekeeper-design.md), which is the specification for the same shape on the git side.
+How agents work with GitHub issues in nedschorus: one program for every issue write, and the `ghi-write` skill for the judgment the program cannot make. Modelled on [main-gatekeeper-design.md](../cross-project/main-gatekeeper-design.md), which is the specification for the same shape on the git side.
 
 **Scope reading, stated for correction:** "all GHI access" is taken here as all issue *writes*. Reads stay direct — `gh issue view` and `gh issue list` are how searching works, and gating them would make the search-first rule expensive to obey. If the intent was reads too, this plan changes at § The job.
 
-This is a design, not a build commitment. `scripts/git-gatekeeper.py` is itself designed and not yet built; nothing here schedules against it.
+This is a design, not a build commitment. `scripts/main-gatekeeper.py` is itself designed and not yet built; nothing here schedules against it.
 
 ## Walk order (opened 2026-08-07, new-vp session 3a11d08f)
 
@@ -45,7 +45,7 @@ There is no verb that revises through a comment. The failure the commission name
 
 ## Why this cannot be a credential gate
 
-The git gate's guarantee rests on branch protection: one credential can push, so the program holding it is the only door. Issues have no server-side counterpart — as git-gatekeeper-design.md records, the repository is public, so opening and commenting need no repository permission. The gate is therefore enforced by three weaker legs, and the threat model stays cooperative — the same honest-singleton framing the git design uses, not an external-attacker analysis:
+The git gate's guarantee rests on branch protection: one credential can push, so the program holding it is the only door. Issues have no server-side counterpart — as main-gatekeeper-design.md records, the repository is public, so opening and commenting need no repository permission. The gate is therefore enforced by three weaker legs, and the threat model stays cooperative — the same honest-singleton framing the git design uses, not an external-attacker analysis:
 
 1. **Pre-tool hooks in both runtimes** deny raw issue writes and name the gate in the refusal. In Claude Code this is a `PreToolUse` hook: `matcher` filters by tool name, the `if` field filters arguments with permission-rule syntax (`Bash(gh issue *)`), and the hook returns `hookSpecificOutput.permissionDecision: "deny"` with a `permissionDecisionReason` the agent reads (verified 2026-08-07, https://code.claude.com/docs/en/hooks). Codex has pre-tool hooks as well; its field names are verified at build, not assumed here. Hook coverage is pattern enumeration — `gh issue`, `gh api` against the issues endpoint, and any MCP GitHub tool — and each path missed is a silent hole.
 2. **The dedicated-identity rung**, as on the git side: agent sessions hold no issue-write credential, and the gate holds the only one. Whether this closes fully on a public repository is verified at build — an agent holding any GitHub account can comment on a public issue, so this rung may bound the residual rather than remove it.

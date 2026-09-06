@@ -288,7 +288,7 @@ Outer walk, 17 items:
    nedschorus in one batch, each pointing at the nc-queue evidence. Filed as nedschorus#15.
 3. `plan-rewrite-slice` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#16.
 4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#17.
-5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading git-gatekeeper-task dogfood).
+5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading main-gatekeeper-task dogfood).
 6. `attack-artifact` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#19, framed as the d-review comparison question.
 7. `implement-with-evidence` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#20.
 8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
@@ -310,7 +310,7 @@ Outer walk, 17 items:
     "approved"). (a) Boot-set rule recorded: boot set = the five founding
     skills only; candidates join one at a time when a real task exposes the
     missing decision; first expected pull = write-test-plan (nedschorus#18)
-    at the step-7 git-gatekeeper task. Founding-plan open question 8 RESOLVED
+    at the step-7 main-gatekeeper task. Founding-plan open question 8 RESOLVED
     (commit fa54e52); pair-#9 tracking question 1 marked resolved.
     (b) Artifact-lifecycle ruling APPROVED and executed (commit 4b20892):
     every artifact final-at-home or in a destination-rooted queue with one
@@ -323,13 +323,13 @@ Outer walk, 17 items:
     label created on GitHub; three-state rule superseded by the
     artifact-lifecycle rule (founding plan § Project organization + #13);
     founding-plan open question 5 (gated classes) substantially resolved —
-    landing-class residual stays in git-gatekeeper-design § Open. Drain
+    landing-class residual stays in main-gatekeeper-design § Open. Drain
     procedure stays tracked on nedschorus#24 (scrub reporting runs as
     discipline until the NC handoff skill builds it). ANCHOR = item 13.
 13. Rewrite policy (ruling) — processed 2026-07-24 → POLICY APPROVED
     (session 23789ca5); text of record: founding plan § Standing decisions;
     open question 9 RESOLVED. The pieces, in ruling order: (a) terminology —
-    git-gatekeeper (component class: gatekeeper), legacy (never "quarry"),
+    main-gatekeeper (component class: gatekeeper), legacy (never "quarry"),
     NC is not-a-rebuild (cherry-pick framing) — executed repo-wide at
     2997cc0; (b) boss-simplified classification vocabulary: preserve-feature
     (feature contract, probably not implementation; named + test-pinned) /
@@ -357,7 +357,7 @@ Outer walk, 17 items:
     ANCHOR = item 15.
 15. First bounded test task (ruling) — processed 2026-07-25 → CONFIRMED
     (boss word "approved", session 23789ca5): first bounded test task =
-    the git-gatekeeper build slice (git-gatekeeper-design.md § Build
+    the main-gatekeeper build slice (main-gatekeeper-design.md § Build
     slice: check-in / status / cancel / imports + tests T1–T12 + the
     CLAUDE.md workflow lines), boot test first per founding-plan step 7;
     resolves pair-#10 question 4. The item expanded mid-walk into the
@@ -410,8 +410,8 @@ Outer walk, 17 items:
     check-in undoing a prior one) is the post-push remedy; (o) the spec's
     scope ends at MAIN — deploying to production is a separate DevOps/CI
     concern (boss); file renamed fast-pr-to-prod-design.md →
-    git-gatekeeper-design.md (component-named; NC has no pull requests).
-    SPEC FOLDED: full rewrite of git-gatekeeper-design.md + README
+    main-gatekeeper-design.md (component-named; NC has no pull requests).
+    SPEC FOLDED: full rewrite of main-gatekeeper-design.md + README
     principles 5/6 + actors + entry-manifest retired-to-historical +
     comms-bridge promotion-transport retired + founding-plan pointers.
     Later rulings, continued: (p) S2 RESOLVED (boss-approved 2026-07-24):

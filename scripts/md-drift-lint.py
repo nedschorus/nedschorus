@@ -122,7 +122,7 @@ def resolve(token: str, md_path: Path, repo_root: Path):
     A leading "/" is read as repo-root-relative, never filesystem-absolute
     (fixed 2026-08-14). Treating it as filesystem-absolute produced standing
     false positives on correct content: the design's intended install path
-    `/usr/local/lib/nedschorus-gatekeeper/git-gatekeeper.py` is deliberately
+    `/usr/local/lib/nedschorus-gatekeeper/main-gatekeeper.py` is deliberately
     absent from this machine, and `/CLAUDE.md` means the repo's own file. A
     linter that always complains about the central design document is one
     every reader learns to skim past.
