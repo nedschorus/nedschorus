@@ -74,7 +74,7 @@ Named endings, three-part teaching form: `unknown-issue`, `missing-title`, `miss
 
 ## What stays judgment
 
-The gate takes the checkable half. `ghi-write` keeps what no program can decide: routing by state (queue, GHI, MD-GHI pair, or bare MD), and the zero-context-reader three-test check.
+The gate takes the checkable half. `ghi-write` keeps what no program can decide: routing by state (queue, GHI, GHI-MD, or bare MD), and the fresh-reader three-test check.
 
 **Consequence for the paused `ghi-write` walk** ([ghi-write-skill-draft.md](ghi-write-skill-draft.md), item 2): with the gate and its hooks in place, an agent about to write an issue is stopped by the hook whether or not the skill triggered, so undertriggering on the write path stops mattering. The residual undertriggering risk sits entirely on the routing trigger, which no hook can reach because no tool call exists at that moment.
 

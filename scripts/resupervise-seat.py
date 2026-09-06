@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Put a supervisor back on a seat whose agent is running unsupervised.
 
-An agent session recycles itself only when a supervisor is watching it: the
+An agent session reincarnates itself only when a supervisor is watching it: the
 supervisor waits for the handoff file, kills the spent session, and starts the
 successor on the same terminal. A session started any other way -- `claude` or
-`claude --continue` typed by hand -- has no supervisor, so it can never recycle,
+`claude --continue` typed by hand -- has no supervisor, so it can never reincarnate,
 and one that began supervised can lose its supervisor while it keeps running
 (observed 2026-08-18: two Mac seats ran unsupervised for about 25 hours).
 
@@ -35,7 +35,7 @@ WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
      path, live since 2026-08-14).
 
 The successor is a fresh session carrying the retiring one's handoff and dialog
-extract -- the ordinary recycle, not a continuation of the running process.
+extract -- the ordinary reincarnation, not a continuation of the running process.
 Step 4 ends the running session if it is still alive, which is the point: its
 work is in the handoff. What it does cost is anything the agent did AFTER
 writing that handoff, since the writer tells an unsupervised agent to keep
@@ -131,7 +131,7 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
         return False, counter, (
             f"the handoff at {handoff_path} (restart-counter {counter}) was already consumed "
             f"by a supervisor (it recorded {consumed}). Nothing is waiting; ask the agent to "
-            "hand off again if it needs recycling."
+            "hand off again if it needs reincarnating."
         )
 
     if fields.get("dont-restart"):
@@ -246,7 +246,7 @@ def resupervise_box_seat(arguments) -> int:
     operator unchanged: nothing is re-judged on this side.
     """
     remote_arguments = ["--prepare-only", "--machine", "ubuntu"]
-    # The override flags are machine-local paths — for a box seat, box-local —
+    # The override flags are paths on one machine — for a box seat, box-local —
     # so they travel verbatim (unexpanded, box expands its own ~) and only
     # when the operator gave them; the defaults stay each machine's own.
     # shlex.quote, because the joined string is parsed once by the box's
@@ -323,11 +323,11 @@ def main(argv=None) -> int:
         help="which launcher seats the successor (default: mac)",
     )
     # Both defaults are empty so a box seat can tell "operator gave a value"
-    # from "use the machine's own default": these are machine-local paths, and
+    # from "use the machine's own default": these are paths on one machine, and
     # forwarding a Mac-expanded default to the box would name a Mac directory
     # on a machine where it means nothing.
     parser.add_argument("--handoff-dir", default="",
-                        help="machine-local handoff directory "
+                        help="handoff directory on this machine only, not committed "
                              "(default ~/.claude/handoffs)")
     parser.add_argument("--agents-root", default="",
                         help="where seat directories live "
@@ -368,7 +368,7 @@ def main(argv=None) -> int:
     if alive:
         return refuse(
             f"{arguments.name} already has a supervisor watching it ({explanation}). "
-            "Nothing to recover -- it will recycle on its own handoff."
+            "Nothing to recover -- it will reincarnate on its own handoff."
         )
 
     waiting, counter, note = handoff_is_waiting(handoff_path, state_path)
@@ -461,7 +461,7 @@ def main(argv=None) -> int:
     print(f"resupervise-seat: running {launcher.name} {arguments.name} -- the supervisor "
           "will ignite from the waiting handoff")
     # exec, not a child: this terminal becomes the successor's seat, and a
-    # supervisor with no terminal refuses to recycle at all
+    # supervisor with no terminal refuses to reincarnate at all
     # (handoff-supervisor.py, ruled 2026-08-14). Replacing this process hands
     # the terminal over cleanly and leaves no python waiting behind the seat.
     # Flush first: exec discards whatever python still holds in its buffer, and

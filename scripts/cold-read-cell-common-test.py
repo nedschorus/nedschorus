@@ -82,7 +82,7 @@ WHAT IS PINNED HERE.
     carries the run (user-ruled 2026-08-25): the grid writes
     `<record directory name>--<runtime>-<pass>-<tier>.md`, so an exact-name
     match belongs to this run and to no other. The case that proves the point
-    is the concurrent one: a second grid's report for the same cell, written
+    is the concurrent one: a second cold-read run's report for the same cell, written
     while this attempt ran, is NOT this attempt's report, and the cell fails
     rather than taking it.
 
@@ -97,11 +97,11 @@ WHAT IS PINNED HERE.
 
   - The runtime's stderr survives a successful run. It used to be passed
     straight through to the log scripts/cold-read-grid.py deletes on success,
-    which is why the only token figure recoverable from six grids on
+    which is why the only token figure recoverable from six cold-read runs on
     2026-08-25 came from the one cell that failed.
 
   - And the runtime's stdout survives a model that exits 0 having written
-    nothing. That path used to discard it, so the grids of 2026-08-31 and
+    nothing. That path used to discard it, so the cold-read runs of 2026-08-31 and
     2026-09-01 recorded claude-hunt-floor's silence with none of the model's
     own words to explain it.
 
@@ -223,7 +223,7 @@ for replacement_character in step.get("near_miss", []):
 # The right file name in the wrong place, twice over. Flat in the root of the
 # records tree, the name still says which run wrote it, so it is recoverable.
 # In another run's record directory under that run's own name, it is a second
-# grid's finished review of some other document, and taking it would stamp
+# cold-read run's finished review of some other document, and taking it would stamp
 # this run's provenance onto the wrong text while leaving that run with
 # nothing.
 if step.get("report_at_records_root"):
@@ -572,7 +572,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # A model that exits 0 having written nothing is the ending that explains
     # itself least, and it was the one keeping no evidence: the non-zero path
     # printed the runtime's stdout, this one dropped it. claude-hunt-floor
-    # produced no report on the grids of 2026-08-31 and 2026-09-01 and left
+    # produced no report on the cold-read runs of 2026-08-31 and 2026-09-01 and left
     # three refusal lines and nothing of the model's in either log, while the
     # same argv rerun by hand put 512 bytes on stdout. What the model said
     # must reach the log the grid keeps on failure.
@@ -721,7 +721,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "two files now hold one review")
 
     # THE CASE THE RUN-NAMED FILE EXISTS FOR (user-ruled 2026-08-25). A second
-    # grid, running at the same time in the same checkout, writes its own
+    # cold-read run, going on at the same time in the same checkout, writes its own
     # report for the same cell while this attempt runs. Under the old bare
     # names both files were `codex-hunt-floor.md`, and this cell could recover
     # the other run's correctly placed report: this run would then hold a
@@ -777,7 +777,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # The Codex CLI ends a run with its token total on stderr. The regression
     # underneath this one: stderr used to be passed straight to a log the
-    # grid deletes on success, so across six grids that day the only
+    # grid deletes on success, so across six cold-read runs that day the only
     # recoverable token figure came from the single cell that FAILED.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)

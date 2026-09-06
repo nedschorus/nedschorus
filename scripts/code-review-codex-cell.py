@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run Codex's built-in code review over a git range, pinned and captured.
 
-One cell of the merge lane's review: `codex exec review` is Codex's own
+One cell of merge-lane's review: `codex exec review` is Codex's own
 diff reviewer (finding rubric, P0-P3 priorities, changed-line locations).
 This wrapper exists so invoking it is a committed, reviewable program
 rather than a shell line in one seat's transcript, and so the pins that

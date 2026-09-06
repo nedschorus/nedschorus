@@ -147,7 +147,7 @@ built precedent.
 philosophy — code-prompt-code, and the fuller framing that everything is a
 state machine whose nodes are code or prompts, each type covering the other's
 weakness, either able to invoke the other. Searched: the term is used in commit
-4add26d and in ledgers, is listed as undefined in #213's vocabulary sweep item
+4add26d and in walk minutes, is listed as undefined in #213's vocabulary sweep item
 14, and no philosophy document exists anywhere in the project.
 
 **Filed 2026-09-02, closing the walk's captures:**
@@ -175,10 +175,10 @@ above were unwritten, and they were reconstructed from the resumed transcript.
 Position on resume: item 3 ruled as recorded, awaiting the user's word on
 whether to file the pull-request skill's issue through `ghi-write`.
 
-## Session recycle 2026-09-02
+## Session reincarnation 2026-09-02
 
-The session was recycled and resumed at item 2, which remains presented and
-unruled; a recycle is not the user's word, so item 3 was not presented on it.
+The session was reincarnated and resumed at item 2, which remains presented and
+unruled; a reincarnation is not the user's word, so item 3 was not presented on it.
 Item 3's text was corrected in the walk document before presenting, as this
 minutes file directed: it now carries the gatekeeper narrowing, names the seat's
 home and branch, and drops the claim that the handoff supervisor keeps the seat's
@@ -189,4 +189,4 @@ the walk's fast-clarify cold read
 its remaining questions are edge cases of the proposed rule itself, left for the
 user to rule on rather than answered with added qualifiers.
 
-No work was in flight at the recycle.
+No work was in flight at the reincarnation.

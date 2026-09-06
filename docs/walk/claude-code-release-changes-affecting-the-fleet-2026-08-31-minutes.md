@@ -281,7 +281,7 @@ these landing rather than as a new fault.
 
 processed 2026-09-01 → accepted, no action. Nothing in the window addressed the
 three standing problems: no stall or wedge detector (nedschorus#27 unchanged,
-its structural gap intact — the recycle trigger is a Stop hook and a session
+its structural gap intact — the reincarnation trigger is a Stop hook and a session
 that never ends a turn never fires it), no change to push notifications
 reaching the user (`say` remains the only channel), and no change to the memory
 read path. Yielded no capture: the item exists to record an absence.

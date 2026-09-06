@@ -28,8 +28,8 @@ two GitHub accounts: GitHub forbids a pull request's author from
 approving it, and this script runs as one account. That half is exercised
 separately with the merge-lane seat, which holds `ned-review-merge`. A
 clean run here says the PATCH is safe and pushes are unaffected. It says
-nothing about whether dismissal works, and nothing about whether the lane
-can recover from a dismissal.
+nothing about whether dismissal works, and nothing about whether the PR
+process can recover from a dismissal.
 
 THE CREDENTIAL. The experiment runs under `ned-review-merge`, unattended
 (user-ruled 2026-09-01, PR #228 review item 1). Both endpoints it writes

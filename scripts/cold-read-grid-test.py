@@ -92,7 +92,7 @@ WHAT IS PINNED HERE.
     and `<record directory name>--reference-check.md` for the pre-pass. Before
     that prefix, all eight of a run's reports were named for the cell alone,
     so a report on its own said nothing about which run produced it, and two
-    grids running at once in one checkout each held a file of every one of
+    cold-read runs going at once in one checkout each held a file of every one of
     those eight names. The cases below assert the prefix on every file in the
     set, so a report that loses it fails here rather than in a record nobody
     can place.

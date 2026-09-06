@@ -26,7 +26,7 @@ The reviewer receives the design, code, and coder's nits file, never an issues f
 
 ### Item 5.1 of 7: The reviewer's back edges — contract and implementation findings
 
-A contract finding changes the caller promise, goes to the originator, restarts the process with both designs reopened, and earns one zero-context cold read of the revised design. An implementation finding changes only how the existing promise is met, so only code changes and the open loop receives another round because tests must run again.
+A contract finding changes the caller promise, goes to the originator, restarts the process with both designs reopened, and earns one cold read of the revised design. An implementation finding changes only how the existing promise is met, so only code changes and the open loop receives another round because tests must run again.
 
 ### Item 5.2 of 7: The reviewer's back edges — prose findings and nits
 

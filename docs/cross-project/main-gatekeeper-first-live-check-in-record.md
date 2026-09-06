@@ -15,10 +15,10 @@ construction, trailer stamping, and the push — ran for real.
 
 **When and under what authority.** 2026-08-18, at the merge-lane seat, on the
 user's explicit instruction in that seat's own session. The project's standing
-rule is that agents do not push to `main`; the interim lane routes work through
+rule is that agents do not push to `main`; the PR process routes work through
 pull requests reviewed at the merge-lane seat. This commit is a deliberate,
 authorized exception for the purpose of testing the gate, not a change of that
-rule. The gate remains dormant, and the interim lane continues.
+rule. The gate remains dormant, and the PR process continues.
 
 **What to expect on this commit.** It reaches `main` as a direct push rather
 than through a pull request, because pushing straight to `main` is what the gate

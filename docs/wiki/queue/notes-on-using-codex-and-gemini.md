@@ -3,7 +3,7 @@
 Written 2026-09-04 by the cold-read-research seat after a day of running both as
 cold-read cells. Every item here was measured, not read from docs, unless it
 says otherwise. Queued for the wiki at the user's word (2026-09-04); the measurements it cites
-are in the cold-read-research checkout's machine-local record
+are in the cold-read-research checkout's uncommitted record
 `cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the seats run in.
 
 The one rule that saved the most time: **when a runtime's behaviour is not

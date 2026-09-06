@@ -18,14 +18,14 @@
 # named <name> when it exists and creates it when it does not, so a closed
 # terminal window never orphans an agent — type the same command to reconnect.
 # Inside the session runs the handoff supervisor, which launches the claude
-# session, recycles it on every handoff, and exits when its agent stops without
+# session, reincarnates it on every handoff, and exits when its agent stops without
 # handing off. On an ATTACHED launch the pane then drops into an interactive
 # shell in the agent's directory (surviving a Ctrl-C aimed at the supervisor),
 # so the seat can be resumed in place with `claude --continue` and no hunting
 # for the right cd (user-ruled 2026-08-17) — the tmux session closes when that
 # shell exits. That shell offers the SUPERVISED relaunch first and states what
 # `claude --continue` costs: it resumes the dialog with no supervisor, so the
-# seat can never recycle. The old ordering advertised --continue first, and on
+# seat can never reincarnate. The old ordering advertised --continue first, and on
 # 2026-08-18 two seats ran unsupervised for about 25 hours because it was the
 # only listed option that worked (nedschorus#45). A seat born with --no-attach keeps the old close-on-exit
 # behavior instead, even if attached later: its pane command is fixed at
@@ -207,7 +207,7 @@ settings.setdefault("projects", {}).setdefault(target, {})["hasTrustDialogAccept
 json.dump(settings, open(path, "w"), indent=2)' "$AGENT_DIRECTORY"
 
 # The agent's home must be a CHECKOUT before the session starts, not after:
-# project settings — status line, the recycle Stop hook, the instruction-file
+# project settings — status line, the reincarnation Stop hook, the instruction-file
 # guard — are read from .claude/ inside the working directory at session
 # start, so an agent booted into a bare directory runs with none of them, and
 # fixing its own home later cannot retrofit the session it is already in.
@@ -266,7 +266,7 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # Task-list persistence across seat generations. The harness keys its native
 # task store by CLAUDE_CODE_TASK_LIST_ID when that is set, and by the session
 # id otherwise, so a seat left to the default gets a NEW empty list every
-# time the supervisor recycles it. Binding the id to the seat's NAME makes
+# time the supervisor reincarnates it. Binding the id to the seat's NAME makes
 # every generation of that seat open the same list — the same store, not a
 # copy of it, so nothing has to be migrated at a handoff. Ported from the
 # legacy system, which has run it since nedlern#1257
@@ -311,10 +311,10 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # because reading them as interchangeable is what hid the supervisor's stale
 # accounting for a review round: the PIN alone does nothing, while ENABLE
 # alone gives a seat working task tools on a session-keyed store, whose
-# records the supervisor's pre-seed then carries across recycles
+# records the supervisor's pre-seed then carries across reincarnations
 # (handoff-supervisor.py, preseed_tasks). The pin is what makes the list the
 # SEAT's — one store every generation opens, rather than a fresh directory
-# each recycle has to copy into.
+# each reincarnation has to copy into.
 # One-time migration (user-ruled 2026-08-29): a store filled under the old
 # unprefixed '<name>-tasks' id is renamed to the prefixed id at launch, so a
 # relaunched seat keeps its list and the stale name dies loudly (no
@@ -358,7 +358,7 @@ unset LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
 # seat is relaunched in place, with no hunt for the right cd. The options are
 # printed supervised-first, because `claude --continue` starts no supervisor
-# and its seat can never recycle (nedschorus#45). The tmux session — and so the window — now outlives the
+# and its seat can never reincarnate (nedschorus#45). The tmux session — and so the window — now outlives the
 # supervisor and closes when this shell exits. Re-running the launcher on
 # such a session ATTACHES to that shell (new-session -A ignores the command
 # for an existing name); the printed options cover it. The leading trap lets
@@ -374,7 +374,7 @@ AFTER_EXIT_COMMAND="echo; \
 echo \"launch-claude-mac: the $AGENT_NAME supervisor exited; this shell is in the seat's directory\"; \
 echo \"  fresh supervised seat:  exit, then launch-claude-mac $AGENT_NAME\"; \
 echo \"  resume this dialog:     claude --continue — starts NO supervisor, so that\"; \
-echo \"                          seat can never recycle until it is recovered\"; \
+echo \"                          seat can never reincarnate until it is recovered\"; \
 cd '$QUOTED_AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
 # The chained set-option calls tell the terminal the session name, so the

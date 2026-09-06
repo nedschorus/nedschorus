@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one Claude cell of a cold-read grid against a document.
+"""Run one Claude cell of a cold-read run against a document.
 
 One invocation = one cell — the twin of the Codex cell launcher
 (scripts/cold-read-codex-cell.py). Everything the two do apart from
@@ -62,7 +62,7 @@ PROGRAM = "cold-read-claude-cell"
 # cut, so the grid kept launching a cell the trial had retired. The 2026-09-03
 # tier-roster campaign (REPORT.md under
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
-# machine-local, which is why the numbers are inline here) ran no Sonnet cell
+# on that machine only and not committed, which is why the numbers are inline here) ran no Sonnet cell
 # at all, on the user's ruling that dead cells are not retried. Its measured
 # second Claude cell is claude-fable-5-1 at max: added to opus-max + sol-max it
 # lifts pairG 0.83 -> 0.89 (the other five targets unchanged) at no wall-clock
@@ -85,15 +85,15 @@ PROGRAM = "cold-read-claude-cell"
 # WHY OPUS LEADS THE GOOD TIER (user-ruled 2026-08-25: "If opus is better, we
 # should switch to that."). Measured that day by running the good-tier Claude
 # slot both ways over the same documents: Opus produced 44 findings against
-# Fable's 24 on one document, and 38 against 21 on the other. Whole-grid
+# Fable's 24 on one document, and 38 against 21 on the other. Whole-run
 # coverage was unchanged — the other seven cells found what they found either
-# way — so what the swap buys is depth in this one slot, not a wider grid.
+# way — so what the swap buys is depth in this one slot, not a wider cell roster.
 #
 # WHY THE GOOD TIER HAS NO FALLBACK (user-ruled 2026-09-04: "opus falling
 # back to fable is not valid. If opus fails we stop working and wait for it to
 # come back"). From 2026-08-23 to 2026-09-04 the good tier was a chain,
 # Opus then Fable, so the Fable credit exhaustion of 2026-08-23 (two cells of
-# eight lost) would not degrade a grid run into a manual per-cell rerun. The
+# eight lost) would not degrade a cold-read run into a manual per-cell rerun. The
 # 2026-09-04 ruling reverses that trade: an Opus outage is a reason to stop
 # the read, not to run it on a different model, because a review stamped as
 # the good tier must be the good tier's model. The grid's closing text says
@@ -113,7 +113,7 @@ TIER_TO_CLAUDE_MODEL_CHAIN = {
 }
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
-# depends on the machine-local default. Accepted levels today:
+# depends on the machine's own default. Accepted levels today:
 # low, medium, high, xhigh, max. "max" for both tiers (user-ruled
 # 2026-09-04 on the 2026-09-03 tier-roster campaign, REPORT.md path above,
 # "Step-rule tally, ALL SIX TARGETS" and "THE ANSWERS" section 2): opus at max

@@ -65,7 +65,7 @@ CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # runtimes only, at max effort on both. Measured on the final prompt by the
 # cold-read-research seat (REPORT.md under
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
-# section "Addendum 2026-09-04 late"; machine-local, which is why the numbers
+# section "Addendum 2026-09-04 late"; on that machine only and not committed, which is why the numbers
 # are inline here): opus-max flagged 20/15/28 key-terms on three targets and
 # sol-max 44/41/49; no cheaper cell added a criterion-1 catch, so no floor
 # cell runs for this pass; wall clock 16-20 min per cell, inside the
@@ -114,7 +114,7 @@ response: which problems are real, and what you propose to do about each.
 Walk that with the user using the walk-me-through skill, ordered from most
 important to least. The walk's anchor is {record_dir}/dispositions.md.
 
-These records are machine-local and gitignored (user-ruled 2026-08-14): never
+These records stay on this machine and are gitignored (user-ruled 2026-08-14): never
 commit them. Leave {record_dir} in place once the work it served has landed —
 these records are kept, not deleted: like other logs they are useful for
 analysis later (user-ruled 2026-08-25). The findings still belong in the
@@ -260,7 +260,7 @@ def cell_report_path(
     grid writes into a record directory is prefixed with that directory's own
     name, so a report says which run produced it wherever it is later found
     or copied. Before this, all eight of a run's reports were named for the
-    cell alone -- `codex-hunt-floor.md` and seven like it -- and two grids
+    cell alone -- `codex-hunt-floor.md` and seven like it -- and two cold-read runs
     running at once in one checkout (three did that day) each had a file of
     every one of those names. A cell of the first run that wrote nothing
     could then have the second run's correctly placed report recovered as its

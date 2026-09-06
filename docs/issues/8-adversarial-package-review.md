@@ -25,11 +25,11 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 
 ## Fixed rulings — do not relitigate
 
-The following are boss-ruled and out of scope as findings: the single-writer main-gatekeeper; the earned-complexity ladder; python-liberal/python-light; the zero-context-reader rule; the three committed homes and the ban on `docs/working/`; the legacy-with-entry-checkpoint doctrine; the two-log bridge with no message broker or mailbox substrate; the naked-drafter handoff procedure with session-agent correction; the two-account layout (machine account sole pusher, human admin with no push path).
+The following are user-ruled and out of scope as findings: the single-writer main-gatekeeper; the earned-complexity ladder; python-liberal/python-light; the fresh-reader rule; the three committed homes and the ban on `docs/working/`; the legacy-with-entry-checkpoint doctrine; the two-log bridge with no message broker or mailbox substrate; the naked-drafter handoff procedure with session-agent correction; the two-account layout (machine account sole pusher, human admin with no push path).
 
 If you believe one of these rulings is itself defective, say so in a clearly separated section titled RULING CHALLENGE, with the failure scenario — do not weave it through ordinary findings.
 
-The same bar applies to every `Accepted residual (boss-ruled <date>)` block you encounter inside a package document: it records an objection already raised, ruled on, and accepted, with its reasoning and a reopening trigger. Do not re-file it as an ordinary finding. Attack it only if you hold new evidence matching its stated trigger, and then only in the RULING CHALLENGE section.
+The same bar applies to every `Accepted residual (user-ruled <date>)` block you encounter inside a package document: it records an objection already raised, ruled on, and accepted, with its reasoning and a reopening trigger. Do not re-file it as an ordinary finding. Attack it only if you hold new evidence matching its stated trigger, and then only in the RULING CHALLENGE section.
 
 ## Protocol
 

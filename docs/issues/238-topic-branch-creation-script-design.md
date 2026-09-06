@@ -118,7 +118,7 @@ A second code node is proposed in issue #238 but not designed: a check at pull-r
 
 ## Value across gatekeeper activation
 
-While the main-gatekeeper is dormant, agent-created topic branches are the ordinary way this fleet's work reaches main. One historical exception is on record: the gatekeeper's first live check-in landed commit `b24e376` on 2026-08-18, user-authorized, before main's protection was measured to require a review. The gate has been dormant since, and the interim lane in `CLAUDE.md` — branch, pull request, merge-lane review — governs every agent change.
+While the main-gatekeeper is dormant, agent-created topic branches are the ordinary way this fleet's work reaches main. One historical exception is on record: the gatekeeper's first live check-in landed commit `b24e376` on 2026-08-18, user-authorized, before main's protection was measured to require a review. The gate has been dormant since, and the PR process in `CLAUDE.md` — branch, pull request, merge-lane review — governs every agent change.
 
 After activation the script has a narrower use. Per `docs/cross-project/main-gatekeeper-design.md`, the gate builds each change in its own private workspace from main, so a caller creates no branch for an ordinary change; the gate opens the pull request, which means it creates that pull request's source branch itself. Two cases still need an agent-created topic branch: the gate's own source, since the gate refuses check-ins touching `scripts/main-gatekeeper.py` (`gatekeeper-source-refused`) for as long as that refusal stands, and stacked work, which the gate's build-from-main shape does not serve either.
 

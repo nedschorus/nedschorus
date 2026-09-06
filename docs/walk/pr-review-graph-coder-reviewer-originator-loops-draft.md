@@ -14,7 +14,7 @@ Five roles and a handful of files. The roles are agents; in this fleet each roun
 - **The coder** builds the component from the design.
 - **The test coder** builds the tests from a separate test design. The user ruled that the test design is its own document and that the coder does not write it.
 - **The code reviewer** and **the test reviewer** read the design and the code, or the test design and the tests, and report findings under the project's review-scope rule in `CLAUDE.md`: code is reviewed adversarially, operative prose is taken as settled, other prose is not reported.
-- **The merge-lane seat** merges. The graph runs inside the existing lane, not beside it.
+- **The merge-lane seat** merges. The graph runs inside the existing PR process, not beside it.
 
 The files, named for the component X and the agent that wrote them:
 
@@ -84,7 +84,7 @@ Recommendation: the reviewer receives the design, the code, and the nits file. Y
 
 A reviewer's finding goes back along one of four edges, sorted by what it changes.
 
-**A contract finding** changes what the code promises its caller. It is item 2's test applied by the reviewer instead of the coder, and it takes the same path: the reviewer writes it to the originator, the loop restarts from the top, and the revised design earns one cold read — the zero-context review the project runs on any document of lasting value — because its promise moved, so its text must be read again. Both designs reopen, the code design because what it describes is wrong and the test design because the test cases derive from the contract. Who reads that cold read is being measured by a separate campaign and is not decided here.
+**A contract finding** changes what the code promises its caller. It is item 2's test applied by the reviewer instead of the coder, and it takes the same path: the reviewer writes it to the originator, the loop restarts from the top, and the revised design earns one cold read — the fresh-reader review the project runs on any document of lasting value — because its promise moved, so its text must be read again. Both designs reopen, the code design because what it describes is wrong and the test design because the test cases derive from the contract. Who reads that cold read is being measured by a separate campaign and is not decided here.
 
 **An implementation finding** changes how the contract is met without changing what it promises. Same exit codes, same output, same refusals, a different way of getting there. Example: the design says the script refuses on a ref-path collision. The reviewer points out the code checks this by parsing `git branch --list` output, which is fragile, when `git for-each-ref refs/heads/` is the reliable form. The caller sees no difference. The code changes and nothing else: neither design moves, because neither design said how the check should be written. The loop stays open one more round, because a line changed and the tests must run again.
 

@@ -1,8 +1,8 @@
 # `skill-builder` — seat instructions
 
-Read [the seat model](agent-seat-model.md) first: it defines the words used here — pile, seat, walked approval, instruction-class, handoff.
+Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, walked approval, handoff.
 
-Your pile is **the queue of proposed skills** — seven, each filed as an issue — together with [#24](https://github.com/nedschorus/nedschorus/issues/24), the queue-drain procedure. #24 is not an eighth skill: it is the process by which this queue and the project's others get emptied, so it governs how you work the other seven rather than being one of them.
+Your work is **the queue of proposed skills** — seven, each filed as an issue — together with [#24](https://github.com/nedschorus/nedschorus/issues/24), the queue-drain procedure. #24 is not an eighth skill: it is the process by which this queue and the project's others get emptied, so it governs how you work the other seven rather than being one of them.
 
 They belong together because most share a shape and one authoring standard, so the later builds cost far less than the first. Two do not, and knowing which is which saves a wasted session: **#19 (`attack-artifact`) is filed as an open comparison question rather than a settled design** — the work there is to answer whether it should exist and in what form, not to build it — and **#17 (`design-change`) describes a read-only skill**, which changes what "done" looks like but not the build process.
 
@@ -26,21 +26,21 @@ An item's **state** — whether it is unstarted, in progress, built, or ruled ou
 | [#19](https://github.com/nedschorus/nedschorus/issues/19) | `attack-artifact` | isolated adversarial review; filed as a comparison question rather than a settled design |
 | [#17](https://github.com/nedschorus/nedschorus/issues/17) | `design-change` | read-only, evidence-grounded design producing one recommendation and honest exits |
 
-[#24](https://github.com/nedschorus/nedschorus/issues/24) is the **queue-drain procedure** — how the project empties its wiki queue, its pair queue, and its `draft`-labelled issue queue. It governs how this pile is worked, so read it before picking a skill.
+[#24](https://github.com/nedschorus/nedschorus/issues/24) is the **queue-drain procedure** — how the project empties its wiki queue, its GHI-MD queue, and its `draft`-labelled issue queue. It governs how this seat's work is done, so read it before picking a skill.
 
 ## How skills are built here
 
 Three rules have caught previous builds:
 
-1. **A skill is instruction-class**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
+1. **A skill is an agent-instructions file**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
-3. **Zero-context readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets a cold read before it lands, which is `scripts/cold-read-grid.py`.
+3. **Fresh-reader readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets a cold read before it lands, which is `scripts/cold-read-grid.py`.
 
 Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, cold-read the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
 
 ## Boundaries
 
-The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the cold-read grid. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
+The `sanity-checker` seat owns review methodology — how reviews are delivered and whether new reviewers join the cold-read run. If a skill you are building would change that, say so to the user rather than deciding it here; seats cannot hand work to each other directly, so routing is his.
 
 Using the review machinery on your own draft is ordinary work, not a boundary crossing. Changing how it behaves is.
 

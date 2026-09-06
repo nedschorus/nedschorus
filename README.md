@@ -13,14 +13,14 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 1. **Re-derive from the requirement; never inherit machinery by default.** Ask what is needed and no more; the old system's mechanisms are reference. Anything deliberately taken from them crosses the entry checkpoint (principle 6) — importing is a chosen act, never a migration habit.
 2. **Complexity is earned, step by step:** manual → script the human runs → automation. Each step admitted on evidence, by the human.
 3. **Behavior belongs in code wherever it can be expressed there** — testable, versionable, inert until called. Prose is for judgment only. When it is a choice between python and a prompt, python; between bash and python, python — bash only for one-liners not worth a file.
-4. **Durable artifacts are written for a zero-context reader** — an agent with repository access, the project instructions, and the document itself, but no conversation history — and tested by handing them to exactly such an agent.
+4. **Durable artifacts are written for a fresh reader** — an agent with repository access, the project instructions, and the document itself, but no conversation history — and tested by handing them to exactly such an agent.
 5. **One gate to main.** The main-gatekeeper program holds the project's only push-capable credential; every check-in, by any agent, goes through it, and every mechanical check runs there from day one. Agents — all of them — edit in their own working copies, invoke the gatekeeper directly, and never push themselves.
 6. **The old system is legacy:** read-only reference, freely read. Content that enters this repository from it is an import, recorded in the importing commit itself (the gatekeeper's import trailer, browsable via its `imports` query); the mechanism is defined once, in the main-gatekeeper specification ([main-gatekeeper-design.md](docs/cross-project/main-gatekeeper-design.md)).
 7. **Present-tense truth.** Documents state what is; git history holds what was. The built system is the source of truth — a design page carries the date on which it described that truth, and newer code and open issues may have advanced past it.
 
 ## The actors
 
-- **The boss** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
+- **The user** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
 - **choirmaster** — the primary agent (Claude runtime); the main-gatekeeper's most frequent requester.
 - **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; checks its work in through the main-gatekeeper like every agent, and never pushes.
 
@@ -28,9 +28,9 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 
 Three agent lifetimes, used deliberately:
 
-- **Sustained agents** (choirmaster, the companion): live indefinitely. Choirmaster lives as a chain of sessions whose continuity is the handoff system — a numbered handoff file plus the session's committed transcript, written at each session's end and read automatically at the next session's start — so a session's end costs minutes, not context. The companion's continuity is its own runtime's persistent session: Codex auto-compaction plus resume by session id — it needs no handoff system (boss-ruled 2026-07-21).
+- **Sustained agents** (choirmaster, the companion): live indefinitely. Choirmaster lives as a chain of sessions whose continuity is the handoff system — a numbered handoff file plus the session's committed transcript, written at each session's end and read automatically at the next session's start — so a session's end costs minutes, not context. The companion's continuity is its own runtime's persistent session: Codex auto-compaction plus resume by session id — it needs no handoff system (user-ruled 2026-07-21).
 - **Task-scoped agents**: spawned for one bounded, multi-step task (a promotion job, a dogfood run) with exactly the context that task needs; they end with the task.
-- **One-shot agents** ("kleenex"): a single call, then discarded — a zero-context drafter, a review pass, a probe. Their empty context is the point: they are the system's test instrument for zero-context readability and its guard against context contamination.
+- **One-shot agents** ("kleenex"): a single call, then discarded — a fresh drafter, a review pass, a probe. Their empty context is the point: they are the system's test instrument for fresh-reader readability and its guard against context contamination.
 
 ## Where things live
 
@@ -40,11 +40,11 @@ Three agent lifetimes, used deliberately:
 | `docs/issues/<n>-<slug>.md` | Working documents, one per GitHub issue, disposed when the issue closes. |
 | `docs/cross-project/` | Artifacts both systems read, including the founding documents and specifications. |
 | `handoff/` | Numbered session handoffs and their transcripts. |
-| `nc-queue/` | Boss-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
-| `docs/wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and pair-bound documents awaiting the boss's drain (promote / edit / demote / drop). |
+| `nc-queue/` | User-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
+| `docs/wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and GHI-MD-bound documents awaiting the user's drain (promote / edit / demote / drop). |
 | `legacy-feature-queue/` | Undecided legacy features (consider-feature class, rewrite policy) awaiting decision; deciding is the drain. |
 | `entry-manifest.md` | The ledger of everything imported from the legacy system. |
-| Issues labeled `draft` | Draft issues awaiting the boss's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the boss's admission takes effect without it. |
+| Issues labeled `draft` | Draft issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
 ## Status
 

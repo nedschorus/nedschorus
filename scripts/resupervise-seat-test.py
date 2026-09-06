@@ -89,7 +89,7 @@ def run_no_handoff_cases(workspace: Path):
 def run_already_consumed_case(workspace: Path):
     """A handoff a supervisor already acted on is not a waiting handoff.
 
-    Proceeding here would kill a session that had recycled normally -- the
+    Proceeding here would kill a session that had reincarnated normally -- the
     handoff on disk is the PREVIOUS cycle's, and the agent running now never
     asked to be retired.
     """
