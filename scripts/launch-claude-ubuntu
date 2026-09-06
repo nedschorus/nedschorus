@@ -17,14 +17,14 @@
 # to the session named <name> when it exists and creates it when it does not,
 # so a closed iTerm2 window never orphans an agent — type the same command to
 # reconnect. Inside the session runs the handoff supervisor, which launches
-# the claude session, recycles it on every handoff, and exits when its agent
+# the claude session, reincarnates it on every handoff, and exits when its agent
 # stops without handing off. On an ATTACHED launch the pane then drops into
 # an interactive shell in the agent's directory (surviving a Ctrl-C aimed at
 # the supervisor), so the seat can be resumed in place with
 # `claude --continue` and no hunting for the right cd (user-ruled 2026-08-17)
 # — the tmux session closes when that shell exits. That shell offers the
 # SUPERVISED relaunch first and states what `claude --continue` costs: it
-# resumes the dialog with no supervisor, so the seat can never recycle. The
+# resumes the dialog with no supervisor, so the seat can never reincarnate. The
 # old ordering advertised --continue first, and on 2026-08-18 two seats ran
 # unsupervised for about 25 hours because it was the only listed option that
 # worked (nedschorus#45). A seat born with
@@ -190,7 +190,7 @@ python3 \$HOME/Projects/nedschorus/scripts/handoff-supervisor.py \
 # A first-prompt file (box-side path) seeds only the FIRST session — used for
 # the founding boot, where the committed handoff is the prompt. The supervisor
 # reads the file itself, so its content never rides through shell quoting.
-# After the first recycle the ordinary ignition prompt takes over.
+# After the first reincarnation the ordinary initial agent instructions take over.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_remote_double_quote_context "$(escape_single_quotes "$FIRST_PROMPT_FILE")")'"
 fi
@@ -252,7 +252,7 @@ d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True;
 json.dump(d,open(p,\"w\"),indent=2)' \"$AGENT_DIRECTORY_REMOTE\""
 
 # The agent's home must be a CHECKOUT before the session starts, not after.
-# Project settings — the status line, the recycle Stop hook, the
+# Project settings — the status line, the reincarnation Stop hook, the
 # instruction-file guard — are read from .claude/ inside the working
 # directory at session start, so an agent booted into a bare directory runs
 # with none of them, and fixing its own home later cannot retrofit the
@@ -303,7 +303,7 @@ if ! tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null \
 # agent's directory rather than closing (user-ruled 2026-08-17): a stopped
 # seat is relaunched in place, with no hunt for the right cd. The options are
 # printed supervised-first, because `claude --continue` starts no supervisor
-# and its seat can never recycle (nedschorus#45). The tmux session now outlives the supervisor and closes when
+# and its seat can never reincarnate (nedschorus#45). The tmux session now outlives the supervisor and closes when
 # that shell exits. Re-running the launcher on such a session ATTACHES to
 # that shell (new-session -A ignores the command for an existing name); the
 # printed options cover it. The leading trap lets the wrapper survive a
@@ -328,7 +328,7 @@ AFTER_EXIT_COMMAND="echo; \
 echo 'launch-claude-ubuntu: the $AGENT_NAME supervisor exited; this shell is in the seat directory'; \
 echo '  fresh supervised seat:  exit, then (from the Mac) launch-claude-ubuntu $AGENT_NAME'; \
 echo '  resume this dialog:     claude --continue — starts NO supervisor, so that'; \
-echo '                          seat can never recycle until it is recovered'; \
+echo '                          seat can never reincarnate until it is recovered'; \
 cd \\\"$AFTER_EXIT_ROOT/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
 
 # The chained set-option calls tell an iTerm2 tab the session name

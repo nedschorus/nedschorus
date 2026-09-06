@@ -11,8 +11,8 @@ transcript. That loop was never reviewed, never tested, and died with the
 session that typed it; each retyping was a fresh chance to get it wrong,
 and the commonest way to get it wrong is silent (see "Announcing
 blindness"). Where that account comes from, since it matters for judging
-it: the merge seat's own record of its practice, which lives in
-machine-local session transcripts a reader of main cannot open — this
+it: merge-lane's own record of its practice, which lives in
+session transcripts on one machine, which a reader of main cannot open — this
 paragraph is the durable statement of it, not a summary of one.
 This is the same move as scripts/watch-agent-dialogs.py made
 for seat transcripts — one durable watcher replacing per-session
@@ -33,7 +33,7 @@ a comment — none of them are events here. NEW-HEAD is named for what is
 actually measured, a head sha that differs from the one seen last: an
 ordinary push produces it, and so does a force-push or a rebase, which
 move the head to a commit that may contain no new work at all. Both matter
-to the merge seat for the same reason — its hold clock restarts from the
+to merge-lane for the same reason — its hold clock restarts from the
 most recent push, whatever the push did.
 
 Titles are folded to one line (newlines become " ¶ ") and truncated; the
@@ -164,17 +164,17 @@ are rated at 5,000 requests an hour and neither is near it. Were a
 credential unable to run this query, the first poll would fail loudly
 rather than quietly — see "Announcing blindness".
 
-Why faster detection would not help. The merge seat holds every pull
+Why faster detection would not help. Merge-lane holds every pull
 request about five minutes from its most recent push, so an automated
 reviewer that publishes no status check has time to post its findings.
-The rule lives in the merge seat's CLAUDE.local.md, under a heading that
+The rule lives in merge-lane's CLAUDE.local.md, under a heading that
 still reads "Do not merge a pull request less than about three minutes
 old": three was the original figure, written after two merges that beat
 the reviewer by 62 and 240 seconds, and the same section now records that
 figure as measured insufficient — the slowest observed response was 243
 seconds, which a three-minute hold would have merged straight past. Five
 minutes is the current floor, and the number is restated here rather than
-only cited because that file is machine-local to one seat and a reader of
+only cited because that file is not committed, lives with one seat, and a reader of
 this repository cannot open it. A 60-second poll therefore detects a pull request well
 inside a window that is already being waited out on purpose; spending
 requests to detect it in 5 seconds would move nothing that happens

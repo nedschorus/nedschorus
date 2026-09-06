@@ -116,7 +116,7 @@ PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # Both cells use it, though only the Codex leg had the collision -- the
 # `claude` CLI was probed the same day and exits 1, not 2, on an unrecognized
 # option. One contract for both legs is worth more than a code that differs
-# per runtime for a reason nobody reading a grid's output can see, and this
+# per runtime for a reason nobody reading a cold-read run's output can see, and this
 # module exists precisely so the two legs cannot differ in anything but the
 # invocation.
 EXIT_BAD_INVOCATION = 64
@@ -403,7 +403,7 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
 
     Without a baseline this reported every already-dirty path as the
     reviewer's doing. A cold read's ordinary subject is a draft that has not
-    landed, so the ordinary run starts dirty and every cell of a grid would
+    landed, so the ordinary run starts dirty and every cell of a cold-read run would
     accuse the reviewer of changes it never made. A detector that cries wolf
     on the common case is one its readers learn to skip.
 
@@ -445,7 +445,7 @@ def recover_near_miss_report(
     grid writes into a record directory carries the run's own name:
     `2026-08-25-ghi-write-SKILL--codex-hunt-floor.md` is written by one run and
     by no other. Before that prefix existed, every run's Codex defect-hunt cell
-    on the floor tier wrote `codex-hunt-floor.md`, so two grids running at once
+    on the floor tier wrote `codex-hunt-floor.md`, so two cold-read runs going at once
     in one checkout each had a file of that name -- and a cell of the first run
     that wrote nothing could pick up the second run's correctly placed report,
     move it under the first run's stamp, and leave the second run without the
@@ -523,7 +523,7 @@ def verify_report(program: str, report: pathlib.Path) -> None:
     """Enforce: a report exists iff the run succeeded.
 
     An absent or blank report is a review that did not happen. The blank
-    file is removed so that no later reader -- and no grid that checks only
+    file is removed so that no later reader -- and no cold-read run that checks only
     for a file -- can read a stub as a completed review.
     """
     if not report.is_file():
@@ -586,7 +586,7 @@ def stamp_provenance(
     that ruling the stamp recorded every input to the run -- runtime, model,
     effort, cell, tier, target -- and nothing about the run itself, so a
     record set answered "what was asked for" and could not answer "what did
-    this cost". Measured that day: across six grids the only recoverable token
+    this cost". Measured that day: across six cold-read runs the only recoverable token
     figure came from the single cell that FAILED, because failure is the one
     path that kept the runtime's output. `duration_s=` is wall seconds for the
     whole cell including any failed attempts ahead of the one that worked --
@@ -695,7 +695,7 @@ def run_model_chain(
         # tests for. stderr joined it 2026-08-25: it had been passed straight
         # through to the log, which the grid DELETES on success, and it is the
         # only channel carrying the Codex CLI's token total -- so across six
-        # grids that day the one recoverable token figure came from the one
+        # cold-read runs that day the one recoverable token figure came from the one
         # cell that failed. Capturing costs the live stream, which nothing
         # watches: the grid redirects this into a file it reads only after the
         # process exits. Re-emitting happens before any branch below, so every
@@ -741,7 +741,7 @@ def run_model_chain(
             # and this branch used to keep nothing: the non-zero path above
             # printed stdout, this one discarded it, and the log came away with
             # only our three refusal lines. Measured on claude-hunt-floor,
-            # which produced no report on two consecutive grids, 2026-08-31 and
+            # which produced no report on two consecutive cold-read runs, 2026-08-31 and
             # 2026-09-01, and left no trace of the model on either. The same
             # argv rerun by hand 2026-09-01 succeeded and put 512 bytes on
             # stdout, so there is an account being thrown away. Printed only --
@@ -827,7 +827,7 @@ def run_cell(
     # The cell's clock starts here, before anything else this program does,
     # so `duration_s=` in the stamp is the cost of the whole cell -- every
     # failed attempt in the chain included -- rather than of the attempt that
-    # happened to succeed. A reader budgeting a grid wants what the cell cost
+    # happened to succeed. A reader budgeting a cold-read run wants what the cell cost
     # him, not what its last model cost.
     cell_started_at = time.time()
     parser = build_argument_parser(description, model_help)
@@ -919,7 +919,7 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
         # WHAT THIS CELL CAN KNOW, and no more. The comparison is a snapshot
         # before the model ran against one after; it sees that a file's content
         # is different and cannot see who wrote it. The commissioning seat
-        # keeps working while a grid runs, and on 2026-09-02 two cells named
+        # keeps working while a cold-read run is in progress, and on 2026-09-02 two cells named
         # the walk minutes that seat was itself appending to as the reviewer's
         # write (nedschorus#244). The message therefore says the files changed
         # and leaves the attribution to the reader, who can tell.

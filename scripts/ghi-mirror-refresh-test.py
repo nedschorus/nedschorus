@@ -140,7 +140,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # PR #143 review, P3: GitHub's search index is eventually consistent, so
     # the cutoff is rewound a little before searching — otherwise an issue
     # stamped BEFORE the newest returned one, but indexed after it, is
-    # stepped over and never re-fetched until a recycle.
+    # stepped over and never re-fetched until a reincarnation.
     check("the delta cutoff is rewound by the overlap window, not used raw",
           mirror.overlapped_cutoff("2026-08-23T02:43:21Z") == "2026-08-23T02:41:21Z",
           mirror.overlapped_cutoff("2026-08-23T02:43:21Z"))

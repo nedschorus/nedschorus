@@ -268,7 +268,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and "igniting from seat-a-dialog-0007.md" in report,
           (report, workspace.launches))
     prompt_text = workspace.launches[0][2].read_text(encoding="utf-8")
-    check("the recovery ignition prompt names the extract, the crash, and #120",
+    check("the recovery's initial agent instructions name the extract, the crash, and #120",
           "seat-a-dialog-0007.md" in prompt_text and "died without a handoff" in prompt_text
           and "nedschorus#120" in prompt_text, prompt_text)
 
@@ -359,7 +359,7 @@ with tempfile.TemporaryDirectory() as temporary:
           workspace.launches and workspace.launches[0][2] is not None,
           workspace.launches)
     resume_prompt = workspace.launches[0][2].read_text(encoding="utf-8")
-    check("F2: the resume prompt says crash-not-recycle and re-verify, not ask-for-work",
+    check("F2: the resume prompt says crash-not-reincarnation and re-verify, not ask-for-work",
           "died without writing a handoff" in resume_prompt
           and "Re-verify" in resume_prompt
           and "No handoff exists yet" not in resume_prompt, resume_prompt)
@@ -507,7 +507,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("P1: an underscore-named seat's intact transcript is found and resumed",
           verdict == "resume" and detail[0] == "underscore-real", (verdict, detail))
 
-    # Round 3 P2: a recycled successor that crashed AFTER doing real work is
+    # Round 3 P2: a reincarnated successor that crashed AFTER doing real work is
     # resumed, not skipped for its handed-off parent; one that died before
     # doing anything is skipped. Both under 100KB — turns decide, not bytes.
     # The opener is the post-2026-08-30 shape the supervisor now composes —
@@ -529,7 +529,7 @@ with tempfile.TemporaryDirectory() as temporary:
     write_transcript(workspace.project_directory(), "generation-4-crashed",
                      ignition_opener, records=9)  # 8 assistant turns: real work
     verdict, detail = workspace.assess()
-    check("P2: a crashed recycled successor WITH real work is resumed, not its parent",
+    check("P2: a crashed reincarnated successor WITH real work is resumed, not its parent",
           verdict == "resume" and detail[0] == "generation-4-crashed",
           (verdict, detail))
 
@@ -540,7 +540,7 @@ with tempfile.TemporaryDirectory() as temporary:
     write_transcript(workspace.project_directory(), "generation-4-stillborn",
                      ignition_opener, records=1)  # no assistant turns at all
     verdict, detail = workspace.assess()
-    check("P2: a recycled successor that died before working is skipped for its parent",
+    check("P2: a reincarnated successor that died before working is skipped for its parent",
           verdict == "resume" and detail[0] == "generation-3-handed-off",
           (verdict, detail))
 
@@ -579,7 +579,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # --- PR #131 review round 4 --------------------------------------------
 
     # Round 4 finding 1: the turn gate covers EVERY marker, not only the
-    # recycle opener — the reviewer measured markers 1 and 2 skipping real
+    # reincarnation opener — the reviewer measured markers 1 and 2 skipping real
     # work on size alone. Same shape as the accepted round-3 P2 cases: small
     # transcript, 8 text-bearing assistant turns, beside an older parent.
     workspace = Workspace(root / "r14")

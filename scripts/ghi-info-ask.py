@@ -16,7 +16,7 @@ skill's fallback ladder, not to treat exit 1 as fatal.
 
 Seat and machine: ghi-info lives ONLY on the Ubuntu box, at
 $NEDSCHORUS_AGENTS_ROOT/ghi-info (default ~/agents/ghi-info) — its mirror,
-session id, and recycle counters all live in that one checkout, per the
+session id, and reincarnation counters all live in that one checkout, per the
 design's "wrapper state ... lives there." This script is the SAME file on
 both machines (it is checked into the repo, so every checkout — Mac or box
 — carries an identical copy): on the Mac it notices no seat directory
@@ -40,8 +40,8 @@ ask by design.
 Session lifecycle (design § The ghi-info session): no process outlives one
 ask. Every call is a fresh `claude -p`, resumed by session id read from
 `.ghi-info-state.json` in the seat directory, cold-started when no session
-is stored or a recycle trigger fires (closes-since-birth, the stale-match
-rate, or transcript size — the named constants below). Recycling means: one
+is stored or a reincarnation trigger fires (closes-since-birth, the stale-match
+rate, or transcript size — the named constants below). Reincarnation means: one
 FULL mirror rebuild (not the routine per-ask delta), then the cold-start
 prompt as its own turn, then the actual question as a second turn on that
 same fresh session — both prompts are verbatim from the design's § Prompts,
@@ -122,7 +122,7 @@ ASK_TIMEOUT_SECONDS = int(os.environ.get("GHI_INFO_ASK_TIMEOUT_SECONDS", "300"))
 # ghi-write skill's fallback ladder.
 SSH_TIMEOUT_SECONDS = ASK_TIMEOUT_SECONDS + 120
 
-# Recycle-trigger constants (design § Verify at build's Constants list).
+# Reincarnation-trigger constants (design § Verify at build's Constants list).
 CLOSES_SINCE_BIRTH_THRESHOLD = 20
 STALE_MATCH_WINDOW = 10
 STALE_MATCH_THRESHOLD = 2
@@ -291,7 +291,7 @@ def transcript_size_bytes(seat_dir: Path, session_id: str, projects_root: Path):
 
 
 def should_recycle(state: dict, seat_dir: Path, projects_root: Path):
-    """(bool, reason) — the three numeric recycle triggers. Whether there is
+    """(bool, reason) — the three numeric reincarnation triggers. Whether there is
     a session AT ALL is the caller's separate, prior check."""
     closes = state.get("closes_since_birth", 0)
     if closes >= CLOSES_SINCE_BIRTH_THRESHOLD:
@@ -406,7 +406,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     """
 
     # Steps 1-2 interleave, because which refresh is owed depends on
-    # whether this ask resumes or cold-starts, and the recycle decision
+    # whether this ask resumes or cold-starts, and the reincarnation decision
     # in turn depends on what the delta saw close.
     #
     # With no session to resume (first ever ask, or a contended lock),
@@ -427,8 +427,8 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         cache = mirror_refresh.read_cache(mirror_dir / mirror_refresh.CACHE_FILE_NAME)
         # Counts a changed issue that is currently closed. An already-
         # closed issue touched again (a late comment) counts once more,
-        # which only makes recycling more eager — the direction the
-        # design asks for ("Recycling errs eager").
+        # which only makes reincarnation more eager — the direction the
+        # design asks for ("Reincarnation errs eager").
         new_closures = sum(
             1 for number in changed
             if cache.get("issues", {}).get(str(number), {}).get("state") == "CLOSED"
@@ -440,10 +440,10 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
 
     if cold_starting:
         if recycle_reason:
-            # A recycle silently replacing the session would leave the
+            # A reincarnation silently replacing the session would leave the
             # next investigator no way to tell a fresh answer from a
             # resumed one; the trigger that fired is the useful part.
-            print(f"ghi-info-ask: recycling the session — {recycle_reason}",
+            print(f"ghi-info-ask: reincarnating the session — {recycle_reason}",
                   file=sys.stderr)
         full_result, error = mirror_refresh.refresh(mirror_dir, repo, full=True)
         if full_result is None:

@@ -263,7 +263,7 @@ def run_liveness_report_cases(workspace: Path):
 
 
 def run_console_identity_case(workspace: Path):
-    """The adopt-and-recycle path is gone (removed 2026-08-14): a session with
+    """The adopt-and-reincarnate path is gone (removed 2026-08-14): a session with
     a full environment identity gets exactly the same answer as one without —
     handoff written, nobody watching, relaunch by hand. The identity that once
     triggered a doomed detached supervisor must trigger nothing."""
@@ -620,7 +620,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
               FIXTURE_MONITOR_TASK in entry["agent_id"] for entry in roster),
           str(list(by_id)))
 
-    # The last event is what separates a subagent the recycle kills from one
+    # The last event is what separates a subagent the reincarnation kills from one
     # that already ended, so the derivation must still get it right.
     check("a subagent that spawned, was resumed and completed reports its completion",
           by_id[FIXTURE_IDLE_AGENT]["last_event"] == "completed",
@@ -649,7 +649,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
 
     # The still-working filter (ruled 2026-08-29). Of the three spawned, two
     # completed — junk to the successor — and only the silent one, which the
-    # recycle itself would kill mid-job, is handoff material.
+    # reincarnation itself would kill mid-job, is handoff material.
     still_working = writer.still_working_subagent_entries(roster)
     check("only a subagent still working at write time is handoff material",
           [entry["agent_id"] for entry in still_working] == [FIXTURE_SILENT_AGENT],
@@ -657,7 +657,7 @@ def run_spawned_subagent_roster_cases(workspace: Path):
 
     # A resume AFTER a terminal notification puts the subagent back to work:
     # same-session resume is the proven route (probed 2026-08-29), and a
-    # resumed subagent the recycle kills is exactly what the successor must
+    # resumed subagent the reincarnation kills is exactly what the successor must
     # re-commission. This pins `resumed` in the whitelist.
     resumed_after_completion_path = workspace / "roster-resumed-after-completion.jsonl"
     resumed_after_completion_path.write_text(
