@@ -1061,7 +1061,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     # Dropping either allowed account is drift, and it is the drift this audit
     # was blind to between 2026-08-19 and 2026-08-22: the design gained the
-    # merge seat's account, the expectation here did not, and the audit reported
+    # merge-lane's account, the expectation here did not, and the audit reported
     # protection-wrong against correct settings while telling the user to
     # "restore" them — an instruction to remove the account that had just been
     # added deliberately. Both directions are pinned so a one-account

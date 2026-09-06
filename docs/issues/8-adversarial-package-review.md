@@ -29,7 +29,7 @@ The following are user-ruled and out of scope as findings: the single-writer mai
 
 If you believe one of these rulings is itself defective, say so in a clearly separated section titled RULING CHALLENGE, with the failure scenario — do not weave it through ordinary findings.
 
-The same bar applies to every `Accepted residual (boss-ruled <date>)` block you encounter inside a package document: it records an objection already raised, ruled on, and accepted, with its reasoning and a reopening trigger. Do not re-file it as an ordinary finding. Attack it only if you hold new evidence matching its stated trigger, and then only in the RULING CHALLENGE section.
+The same bar applies to every `Accepted residual (user-ruled <date>)` block you encounter inside a package document: it records an objection already raised, ruled on, and accepted, with its reasoning and a reopening trigger. Do not re-file it as an ordinary finding. Attack it only if you hold new evidence matching its stated trigger, and then only in the RULING CHALLENGE section.
 
 ## Protocol
 
