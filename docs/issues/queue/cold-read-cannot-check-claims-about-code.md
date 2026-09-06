@@ -72,7 +72,7 @@ belongs:
   rather than accidental — the md-review skill would state that code claims
   are not checked and must be verified by a code-reading reviewer before
   merge. Cheaper, and it matches what actually happened, but it depends on
-  a reviewer that is not part of the skill and on the merge seat reading
+  a reviewer that is not part of the skill and on merge-lane reading
   inline comments before merging.
 
 Either way, one process change is already in force at the git-infra and

@@ -251,7 +251,7 @@ with tempfile.TemporaryDirectory() as workspace:
           abs(hook.context_used_percentage_from_transcript(str(partial)) - 40.0) < 0.01)
 
     # --- Which subagents are still in flight -------------------------------
-    # A recycle kills the session's in-process subagents with it (2026-08-27),
+    # A reincarnation kills the session's in-process subagents with it (2026-08-27),
     # so the hook has to know which of them are running before it fires.
     one_running = transcript_of(workspace, "one-subagent-running.jsonl", [
         usage_record(100_000, cache_read=450_000),

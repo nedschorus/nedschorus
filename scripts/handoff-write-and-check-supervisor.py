@@ -6,7 +6,7 @@ docs/cross-project/fast-handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
 restart counter, derives the roster of subagents still working — the ones the
-recycle is about to kill mid-job — formats and writes the file, then checks
+reincarnation is about to kill mid-job — formats and writes the file, then checks
 whether a supervisor is actually watching and tells the agent what that means
 for it.
 
@@ -144,7 +144,7 @@ def next_restart_counter(handoff_path: Path, state_path: Path) -> int:
     The previous handoff file is the ordinary source, but it can be missing,
     malformed, or older than what the supervisor has already consumed. Taking
     the higher of the two is what keeps this from writing a counter the
-    supervisor will ignore — a silent failure to recycle, with a handoff on
+    supervisor will ignore — a silent failure to reincarnate, with a handoff on
     disk and nothing acting on it.
     """
     from_file = supervisor.counter_from(supervisor.parse_handoff_file(handoff_path)) \
@@ -290,12 +290,12 @@ def spawned_subagent_roster(transcript_path: Path) -> list:
     **One generation of memory, deliberately.** The roster a session writes
     holds the subagents THAT session spawned. Nothing a predecessor recorded
     is carried into it, so an entry a successor reads, judges can wait, and
-    defers is absent from the roster its own recycle writes — and the orphan
+    defers is absent from the roster its own reincarnation writes — and the orphan
     drops back to prose, which is the failure this field exists to remove.
-    Carrying unresolved entries across recycles is a larger change and is not
+    Carrying unresolved entries across reincarnations is a larger change and is not
     attempted here; the scope is stated so that a reader does not assume a
     persistence the code does not provide. A deferred subagent that still
-    matters belongs in `next-step`, which does survive the next recycle.
+    matters belongs in `next-step`, which does survive the next reincarnation.
     """
     roster = []
     by_agent_id = {}
@@ -374,7 +374,7 @@ def still_working_subagent_entries(roster) -> list:
     """The roster entries whose subagent was still working at write time.
 
     Still working means the last event is a spawn or a resume — no terminal
-    notification arrived after it. These are the subagents the recycle
+    notification arrived after it. These are the subagents the reincarnation
     itself kills, the only ones the handoff records (user-ruled 2026-08-29);
     see STILL_WORKING_SUBAGENT_LAST_EVENTS for the whitelist's polarity.
     """
@@ -388,7 +388,7 @@ def spawned_subagent_field_lines(roster) -> list:
     Each line carries the agent id and the job description, nothing else:
     every recorded entry is still working by construction, so a last-event
     field would say nothing, and spawn time is a transcript look-up (the
-    ignition prompt is tuned like a CLAUDE.md file — only what the successor
+    initial agent instructions are tuned like a CLAUDE.md file — only what the successor
     needs at its start, user-ruled 2026-08-29).
     """
     lines = []
@@ -473,20 +473,20 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
     os.replace(temporary_path, handoff_path)
 
 
-# The adopt-and-recycle path once lived here: with no supervisor watching, this
+# The adopt-and-reincarnate path once lived here: with no supervisor watching, this
 # script started a detached one that adopted the running session, killed it, and
 # relaunched. Removed 2026-08-14 after its second observed failure: a successor
 # inherits the supervisor's stdio, and a detached supervisor's console is a log
 # file, so every successor it launched died at its first need for input — the
 # desktop-app case observed 2026-08-11, the terminal-console case 2026-08-14.
-# Only a seat-owning supervisor (a tmux pane via the launchers) can recycle;
+# Only a seat-owning supervisor (a tmux pane via the launchers) can reincarnate;
 # every other seat hands off by the user relaunching and pointing the fresh
 # session at the handoff file.
 
 
 def run_branch_protection_audit() -> str:
     """Slice 5's ruled anchor (2026-08-12): the branch-protection audit rides
-    each session recycle. One line, never blocking — an unreadable wall is a
+    each session reincarnation. One line, never blocking — an unreadable wall is a
     named finding, and a broken audit must never break a handoff."""
     if os.environ.get("HANDOFF_SKIP_PROTECTION_AUDIT"):
         return "branch-protection audit: skipped (HANDOFF_SKIP_PROTECTION_AUDIT set)"
@@ -529,7 +529,7 @@ def main(argv=None) -> int:
         "--dont-restart", action="store_true",
         help="ask the supervisor to confirm before relaunching, instead of relaunching automatically",
     )
-    parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="machine-local handoff directory")
+    parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="handoff directory on this machine only, not committed")
     arguments = parser.parse_args(argv)
 
     next_step_path = Path(arguments.next_step_file).expanduser()
@@ -625,7 +625,7 @@ def main(argv=None) -> int:
     machine = "ubuntu" if sys.platform.startswith("linux") else "mac"
     print(
         f"handoff-write-and-check-supervisor: {explanation} — and this seat has no supervisor to "
-        f"recycle it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
+        f"reincarnate it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
         "Tell the user: to seat a supervised successor, run "
         f"`scripts/resupervise-seat.py {agent} --machine {machine}` — it clears this seat's stale "
         "tmux session and relaunches, and the supervisor ignites from the handoff. Relaunching "

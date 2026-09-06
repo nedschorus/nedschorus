@@ -7,7 +7,7 @@ dropped-by: new-vp (archived 2026-07-27 by the queue audit; outputs verified bef
 
 # Candidate-skill source evidence — walk input for outer items 2–10
 
-Produced during the boss's AFK window (2026-07-22 evening) by six parallel research agents commissioned by new-vp; every source named in pair #9's shortlist was read in full. Evidence caveats are stated per candidate: most sources were fetched raw/curl-verbatim; the two anthropic.com engineering articles were readable only through a fetch summarizer (quotes from them are high-confidence but not curl-confirmed). Raw agent reports live in the commissioning session only; this note is the durable extract and the walk input. Recommendations are new-vp positions, un-ruled.
+Produced during the user's AFK window (2026-07-22 evening) by six parallel research agents commissioned by new-vp; every source named in pair #9's shortlist was read in full. Evidence caveats are stated per candidate: most sources were fetched raw/curl-verbatim; the two anthropic.com engineering articles were readable only through a fetch summarizer (quotes from them are high-confidence but not curl-confirmed). Raw agent reports live in the commissioning session only; this note is the durable extract and the walk input. Recommendations are new-vp positions, un-ruled.
 
 Recurring cross-candidate findings, worth one walk minute up front:
 

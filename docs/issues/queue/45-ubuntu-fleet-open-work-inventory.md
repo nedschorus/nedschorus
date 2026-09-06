@@ -22,11 +22,11 @@ The fastest way to catch up.
 | [#55](https://github.com/nedschorus/nedschorus/pull/55) | `claude/gatekeeper-audit-account-case-and-rulings-fold` | audit compares account names case-insensitively; #49 review rulings folded into the slice plan | a third stream |
 | [#57](https://github.com/nedschorus/nedschorus/pull/57) | `launch-claude-machine-named-launchers` | machine-named launchers + Mac twin, fleet paths reference, supervisor branch sync, session riders | gatekeeper-walk-fork |
 
-All five are open and awaiting the Mac-side review-and-merge seat. They do not conflict: different files, different branches.
+All five are open and awaiting merge-lane. They do not conflict: different files, different branches.
 
 ## 2. Decisions waiting on the user
 
-1. **The sanity-checker grid seat** — whether the sanity-checker joins the cold-read grid as three stance attacks (cut, mechanization, fresh-eyes) across Fable and gpt-5.6-sol at xhigh. Evidence is in `git show db917b5:md-review-records/2026-08-12-attack-split-experiment/scorecard.md` and PR #53; the split beat the unsplit baseline. Job `ea663864` has been blocked on this ruling.
+1. **The sanity-checker grid seat** — whether the sanity-checker joins the cold-read run as three stance attacks (cut, mechanization, fresh-eyes) across Fable and gpt-5.6-sol at xhigh. Evidence is in `git show db917b5:md-review-records/2026-08-12-attack-split-experiment/scorecard.md` and PR #53; the split beat the unsplit baseline. Job `ea663864` has been blocked on this ruling.
 2. **Which comes first** — that grid-seat walk, or triage of the novel findings below. This is the question `ea663864` asked and never got answered.
 3. **The gatekeeper's remaining road**, all user-gated: the walked-approval evidence format, then build slice 6 (the review-evidence check), then the credential work. Until then the gate stays dormant.
 
@@ -37,7 +37,7 @@ Surfaced beyond both ground-truth sets, never presented, each needing verificati
 - The gatekeeper spec's "when a test suite exists, the tests run here" never fired, though the suite now exists — so the gate runs no checks today.
 - No gate-edits-the-gate guard.
 - A writer-stamps-the-pin proposal, to stop agents hand-writing 40-character SHAs.
-- The wedged-but-light session: stalls below the recycle threshold with no watchdog.
+- The wedged-but-light session: stalls below the reincarnation threshold with no watchdog.
 
 ## 4. Open issues, grouped
 
@@ -71,7 +71,7 @@ All 35 transcripts over 30 KB were read for their titles, not just the ones alre
 - `29d66917` (3.67 MB, last written 2026-08-13 20:30) — *"Draft code review prompt for reliability improvement."* Substantial drafting work in `~/agents/choirmaster`, no live session, mentioned in no handoff. Its natural home is whichever seat takes the review-and-skills work.
 - A second project entirely: **nedsmessenger**, under `~/.claude/projects/-home-nedlern-agent-nedsmessenger/`, five sessions from 2026-08-03/04 totalling ~4 MB — *"Reorganize GitHub repos and GitHub Apps"* (1.15 MB), *"Create Samba links for Typora file access"* (1.38 MB), *"Review backup alert system improvements"* (1.13 MB), *"Merge PR #37 and resolve branch conflicts with main"*, and a test-message thread. Untouched for ten days. Whether that project is still live is the user's call; it is not nedschorus work and would want its own seat if revived.
 
-**Everything else is accounted for.** The remaining transcripts fall into three groups, none needing an owner: predecessor generations of the two live streams (`5a7d955e`, `d9eda3ec`, `49e0a3cf`, `574972e0`, `1caf1c51`, `ccc79ae5`, plus the gatekeeper worktree's own `b2912831`, `27862506`, `0550ed74`); **cold-read and experiment cells** whose findings already live in `git show db917b5:md-review-records/` (`3766ca30`, `84a8a260`, `946596c0`, `0f34ff59` from the 2026-08-09 grid; `832f3b95`, `9cd26c95`, `0e711797`, `99a2f1a4` from the sanity-checker draft review; `8d89bd09`, `83e22b1a`, `849436bf`, `9aae839c`, `cd59239a`, `82f21e87` from the 2026-08-12 attack-split experiment); and two box-maintenance sessions from July (`bab1c2b3` security audit, `c75a8d63` upgrade).
+**Everything else is accounted for.** The remaining transcripts fall into three groups, none needing an owner: predecessor generations of the two live streams (`5a7d955e`, `d9eda3ec`, `49e0a3cf`, `574972e0`, `1caf1c51`, `ccc79ae5`, plus the gatekeeper worktree's own `b2912831`, `27862506`, `0550ed74`); **cold-read and experiment cells** whose findings already live in `git show db917b5:md-review-records/` (`3766ca30`, `84a8a260`, `946596c0`, `0f34ff59` from the 2026-08-09 cold-read run; `832f3b95`, `9cd26c95`, `0e711797`, `99a2f1a4` from the sanity-checker draft review; `8d89bd09`, `83e22b1a`, `849436bf`, `9aae839c`, `cd59239a`, `82f21e87` from the 2026-08-12 attack-split experiment); and two box-maintenance sessions from July (`bab1c2b3` security audit, `c75a8d63` upgrade).
 
 Preserved handoffs and dialog extracts, all under `~/.claude/handoffs/`: the choirmaster and gatekeeper-walk-fork handoffs plus their numbered generations, and matching `-dialog-` files carrying each session's conversation tail.
 
@@ -86,7 +86,7 @@ Either way, a handoff written by a *forked* session describes that session's sta
 
 ## 6a. Seats launched 2026-08-13, and how
 
-`gatekeeper` and `sanity-checker` are running on the box, each in `~/agents/<seat>` on its own branch, reading the reviewed versions of their briefs. Both were verified to start correctly: branch confirmed, status line present (which is the tell that project settings loaded, and therefore that the recycle hook and the instruction-file guard loaded too).
+`gatekeeper` and `sanity-checker` are running on the box, each in `~/agents/<seat>` on its own branch, reading the reviewed versions of their briefs. Both were verified to start correctly: branch confirmed, status line present (which is the tell that project settings loaded, and therefore that the reincarnation hook and the instruction-file guard loaded too).
 
 They were **not** launched by the documented recipe, because that recipe cannot work yet: it reads `docs/agents/seat-first-prompt.md` from the box's checkout of main, and that file is still in PR #58 along with every cold-read correction to the briefs. Launching from main would have booted both seats into the pre-review documents — the ones carrying twenty to thirty findings each.
 

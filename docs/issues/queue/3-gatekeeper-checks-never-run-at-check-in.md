@@ -8,7 +8,7 @@ Surfaced by the attack-split validation experiment of 2026-08-12 (`md-review-rec
 
 `docs/cross-project/main-gatekeeper-design.md:98` states the growth point of the check set:
 
-> In v1 the check set *is* construction itself, so guarantee 2 binds the checks that exist — construction — to the exact pushed bytes; it gains content as checks are added. That is the growth point, not a hole: **when a test suite exists, the tests run here**; when the boss gates an artifact class, its review-evidence check runs here.
+> In v1 the check set *is* construction itself, so guarantee 2 binds the checks that exist — construction — to the exact pushed bytes; it gains content as checks are added. That is the growth point, not a hole: **when a test suite exists, the tests run here**; when the user gates an artifact class, its review-evidence check runs here.
 
 The condition is now met and the consequent is not built. Seven test suites exist in `scripts/`: `main-gatekeeper-test.py`, `handoff-supervisor-test.py`, `handoff-write-and-check-supervisor-test.py`, `handoff-context-threshold-hook-test.py`, `handoff-extract-conversation-test.py`, `md-drift-lint-test.py`, `session-statusline-command-test.py`. None is wired into the check-in path.
 

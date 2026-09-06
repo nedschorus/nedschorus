@@ -41,7 +41,7 @@ dead-worker leftovers). Slice 5 (built 2026-08-12): the branch-protection
 audit — `audit` reads main's live protection via gh and answers B3c's three
 outcomes, protection-ok / protection-wrong (facts naming every differing
 setting) / audit-failed (gh missing, unauthenticated, API error — a loud
-finding, never a silent skip); it rides each session recycle via the
+finding, never a silent skip); it rides each session reincarnation via the
 fast-handoff writer. Exit code 2 stays reserved for a defect in this
 program; the parser layer refuses malformed command lines as JSON, exit 1.
 
@@ -1377,7 +1377,7 @@ def cancel_request(arguments) -> int:
 # --- The branch-protection audit (slice 5) ----------------------------------
 # B3c: three named outcomes — protection-ok / protection-wrong / audit-failed
 # — failing loudly as its own outcome, never a silent skip into green. Rides
-# each session recycle (ruled 2026-08-12) via the fast-handoff writer.
+# each session reincarnation (ruled 2026-08-12) via the fast-handoff writer.
 
 # The contract the audit checks (spec § The credential and enforcement, LIVE
 # since 2026-07-21). The C3 amendment moves the pusher to the dedicated
@@ -1387,8 +1387,8 @@ def cancel_request(arguments) -> int:
 # § The credential and enforcement (amended 2026-08-19): the user's own account
 # and the merge-lane seat's, which was added so a merge is approved under an
 # identity other than the author's. Both must be listed — an allow-list naming
-# the user alone would close the merge seat's lane, and one naming the merge
-# seat alone would close the pull-request lane the gatekeeper's own source
+# the user alone would close merge-lane's PR process, and one naming merge-lane
+# alone would close the pull-request lane the gatekeeper's own source
 # depends on.
 #
 # Spelled the human-readable way; GitHub stores canonical logins lowercase

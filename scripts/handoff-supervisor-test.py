@@ -186,7 +186,7 @@ def run_exit_handoff_cases(workspace: Path):
 
 
 def run_adoption_cases(workspace: Path):
-    """Adopting a running session is what lets a hand-started agent recycle:
+    """Adopting a running session is what lets a hand-started agent reincarnate:
     a supervisor normally owns only the process it launched itself."""
     # Not a context manager: the point is a process this test does NOT own a
     # handle to in the supervisor, which is what adoption exists for.
@@ -349,9 +349,9 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
           "next-step-verbatim-unterminated" not in fields, str(sorted(fields)))
 
     prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), fields)
-    check("the ignition prompt carries the block's line breaks",
+    check("the initial agent instructions carry the block's line breaks",
           "FIRST ACTION: run it.\n\nTHEN: fix the locale case." in prompt, repr(prompt))
-    check("the ignition prompt prefers the verbatim block over the collapsed line",
+    check("the initial agent instructions prefer the verbatim block over the collapsed line",
           "run it. THEN: fix" not in prompt, repr(prompt))
 
     # An unterminated block is damaged: the collapsed line is always present,
@@ -447,7 +447,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
 
 
 def run_launch_and_retention_cases(workspace: Path, recent: str):
-    # --- Ignition prompt --------------------------------------------------
+    # --- Initial agent instructions (the ignition prompt) -----------------
     prompt = supervisor.build_ignition_prompt(
         Path("/tmp/dialog-0002.md"),
         {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
@@ -523,7 +523,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           "affected test suites, and explain the situation to the user if you "
           "cannot." in synced_prompt,
           synced_prompt[:1100])
-    check("the superseded 2026-08-30 catch-up wording is gone from the ignition prompt",
+    check("the superseded 2026-08-30 catch-up wording is gone from the initial agent instructions",
           "when safe" not in synced_prompt
           and "if you can't resolve them" not in synced_prompt,
           synced_prompt[:1100])
@@ -538,9 +538,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # The task-count line was CUT (user-ruled 2026-08-30: the task list is a
     # standing tool; the count line is junk). Pinned behaviorally — the OLD
     # supervisor put "Confirm N task(s) are visible to you" into every
-    # ignition prompt unconditionally — and structurally below, where neither
+    # initial agent instructions unconditionally — and structurally below, where neither
     # the builder nor the plan accepts a count any more.
-    check("the task-count line is cut from the ignition prompt",
+    check("the task-count line is cut from the initial agent instructions",
           "task(s) are visible" not in prompt and "Confirm" not in prompt, prompt)
     check("build_ignition_prompt no longer takes a task count",
           "task_count" not in inspect.signature(supervisor.build_ignition_prompt).parameters,
@@ -558,7 +558,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # pinned structurally — nothing can thread a queue status into the
     # prompt, because neither the builder nor the plan accepts one — and
     # behaviorally in run_recycle_prompt_composition_cases below, where the
-    # OLD supervisor put the line into every recycle prompt unconditionally.
+    # OLD supervisor put the line into every reincarnation prompt unconditionally.
     check("build_ignition_prompt no longer takes a queue status",
           "queue_status" not in inspect.signature(supervisor.build_ignition_prompt).parameters,
           str(inspect.signature(supervisor.build_ignition_prompt)))
@@ -572,10 +572,10 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # every time stamp from `date`, never from estimate") on the rendered
     # mock, 2026-08-30: the `date` discipline now rides only the opener's
     # "Calculate from `date`". Pinned behaviorally — the pre-revision
-    # supervisor put the sentence into every ignition prompt — and
+    # supervisor put the sentence into every set of initial agent instructions — and
     # structurally: neither the builder nor the plan threads a launch time
     # any more, and the sentence's helper is gone from the module.
-    check("the launch-clock sentence is cut from the ignition prompt",
+    check("the launch-clock sentence is cut from the initial agent instructions",
           "The clock read" not in prompt and "never from estimate" not in prompt,
           prompt)
     check("build_ignition_prompt no longer takes a launch time",
@@ -639,13 +639,13 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         check("pre-seed leaves the source intact", task_record_count(retiring) == 2)
         check("pre-seed of a taskless session copies nothing", supervisor.preseed_tasks("never-existed", "x") == 0)
 
-        # --- Recycle under a PINNED list (nedschorus#141) -----------------
+        # --- Reincarnation under a PINNED list (nedschorus#141) -----------
         # The seat's generations share one launcher-pinned store, so a
-        # recycle copies nothing and the seat's records survive untouched.
+        # reincarnation copies nothing and the seat's records survive untouched.
         # (The ignition count-check this block once guarded — "Confirm 0
         # task(s) are visible to you" over a list holding N — was cut with
         # the task-count line, user-ruled 2026-08-30.) Shaped like a real
-        # recycle: tasks already in the seat's store, a fresh successor id,
+        # reincarnation: tasks already in the seat's store, a fresh successor id,
         # nothing copied.
         pinned_id = "handoff-supervisor-test-pin-tasks"
         os.environ["CLAUDE_CODE_TASK_LIST_ID"] = pinned_id
@@ -688,7 +688,7 @@ def run_preseed_canaries() -> None:
 
     Canary 1: a fresh session launched with the seat's pinned list id reads
     task records that were on disk before it booted — the successor half of
-    a recycle, which is how the fleet carries tasks since nedschorus#141.
+    a reincarnation, which is how the fleet carries tasks since nedschorus#141.
     Canary 2: a task that session creates allocates above the existing ids,
     leaving the earlier records untouched.
 
@@ -842,7 +842,7 @@ def run_branch_sync_cases(workspace: Path):
 
 
 def run_no_seat_recycle_refusal_case(workspace: Path):
-    """A handoff arriving at a supervisor with no terminal must not recycle:
+    """A handoff arriving at a supervisor with no terminal must not reincarnate:
     the successor would inherit this stdio and die at its first need for
     input (observed 2026-08-14 — an adopted console session was killed and
     its successor reported into a log file). The session stays up and the
@@ -916,7 +916,7 @@ def run_boot_ignition_case(workspace: Path):
     check("the boot says it is igniting from the unconsumed handoff",
           "igniting from an unconsumed handoff" in result.stdout, result.stdout[-400:])
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
-    check("the ignition prompt carries the handoff's next step",
+    check("the initial agent instructions carry the handoff's next step",
           "resume the audit" in launched, launched[:200])
     # The boot-recovery path builds its own prompt: no dialog extract exists,
     # so the next-step and the repository are the successor's whole context.
@@ -927,13 +927,13 @@ def run_boot_ignition_case(workspace: Path):
     # end-to-end proof that the report produced at the launch site reaches
     # the launched prompt: the workspace is what it is, so only the stable
     # "branch sync:" prefix of the report is pinned, never one variant.
-    check("the launch-clock sentence is cut from the boot-recovery ignition prompt",
+    check("the launch-clock sentence is cut from the boot-recovery initial agent instructions",
           launched and "The clock read" not in launched
           and "never from estimate" not in launched,
           launched[:400])
-    check("the boot-recovery ignition prompt carries the sync's own report",
+    check("the boot-recovery initial agent instructions carry the sync's own report",
           "branch sync:" in launched, launched[:400])
-    check("the boot-recovery ignition prompt carries the branch-state instruction, exactly",
+    check("the boot-recovery initial agent instructions carry the branch-state instruction, exactly",
           " — if behind, catch up with origin/main before your first "
           "substantive action; resolve conflicts you can verify, run the "
           "affected test suites, and explain the situation to the user if you "
@@ -1026,9 +1026,9 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     Ruled 2026-08-23 (record the subagents, do not wait for them), narrowed
     2026-08-29, reworded in the user's second round (ruled 2026-08-30 on a
     rendered mock): the writer records only subagents still working at write
-    time, so every roster entry the supervisor reads is one the recycle
+    time, so every roster entry the supervisor reads is one the reincarnation
     itself killed. The prompt says re-commission, never restart or resume,
-    because resume-by-id across a recycle is impossible — probed 2026-08-29:
+    because resume-by-id across a reincarnation is impossible — probed 2026-08-29:
     SendMessage to a predecessor's subagent id returns "No transcript found"
     (the resolver is session-scoped) although the transcript survives at
     <predecessor-session-dir>/subagents/agent-<id>.jsonl.
@@ -1045,7 +1045,7 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     predecessor_directory = Path("/tmp/projects/-fixture-seat/0000-session-id")
     prompt = supervisor.build_ignition_prompt(
         Path("/tmp/d.md"), roster_fields, predecessor_directory)
-    check("ignition counts the subagents still working at the recycle",
+    check("ignition counts the subagents still working at the reincarnation",
           "had 2 subagent(s) still working when it ended" in prompt, prompt)
     check("ignition names each subagent and what it was doing",
           "afixture0cutoff01" in prompt and "Fix ignored-path write blind spot" in prompt
@@ -1122,12 +1122,12 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
 
 
 def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
-    """carry_over_to_successor, with the extractor stubbed: what the recycle
+    """carry_over_to_successor, with the extractor stubbed: what the reincarnation
     actually prints to the console, and what it actually puts in the prompt.
 
     Two rulings of 2026-08-29 meet here. The queue-status line is CUT from
-    the ignition prompt but the console print STAYS — before this change the
-    supervisor threaded queue status into every recycle prompt
+    the initial agent instructions but the console print STAYS — before this change the
+    supervisor threaded queue status into every reincarnation prompt
     unconditionally (queue_status_line always returns a truthy string), so
     the prompt assertion below fails against that code. And the plan now
     carries the predecessor's session directory, composed from the retiring
@@ -1173,7 +1173,7 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
             os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
 
     printed = console.getvalue()
-    check("a recycle still prints the queue status to its own console",
+    check("a reincarnation still prints the queue status to its own console",
           "handoff-supervisor: queues — nc-queue: 1, oldest 2026-07-30-stale-item.md" in printed,
           printed)
     check("the plan names the predecessor's session directory, composed from its id",
@@ -1191,22 +1191,22 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
         prompt = plan.compose("branch sync: composer-branch is 2 commit(s) behind main")
     except (TypeError, AttributeError):
         prompt = ""
-    check("the recycle prompt carries no queue status",
+    check("the reincarnation prompt carries no queue status",
           "Queue status" not in prompt and "queues —" not in prompt, prompt)
-    check("the recycle prompt carries no task-count line",
+    check("the reincarnation prompt carries no task-count line",
           "task(s) are visible" not in prompt, prompt)
-    check("the recycle prompt carries no launch-clock sentence",
+    check("the reincarnation prompt carries no launch-clock sentence",
           "The clock read" not in prompt and "never from estimate" not in prompt, prompt)
-    check("the recycle prompt stamps the written-at and defers the gap to `date`",
+    check("the reincarnation prompt stamps the written-at and defers the gap to `date`",
           "written at 20" in prompt
           and "Calculate from `date` how long ago that was" in prompt, prompt)
-    check("the recycle prompt carries the branch-state line the plan was composed with",
+    check("the reincarnation prompt carries the branch-state line the plan was composed with",
           "branch sync: composer-branch is 2 commit(s) behind main — if behind, "
           "catch up with origin/main before your first substantive action;"
           in prompt, prompt)
-    check("the recycle prompt points at the predecessor's subagent transcripts",
+    check("the reincarnation prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
-    check("the recycle prompt still ignites from the next step",
+    check("the reincarnation prompt still ignites from the next step",
           "keep composing" in prompt, prompt)
 
 

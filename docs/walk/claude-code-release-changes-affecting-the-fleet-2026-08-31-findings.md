@@ -176,7 +176,7 @@ so a machine whose `claude update` is a no-op stops advancing entirely.
 - **No stall or wedge detector.** Issue #27 stands. The window removed three
   specific causes (API never responding, hook output overflow, thinking-only
   turn) but not the class, and the `Stop` hook still fires only at turn end, so
-  a session that never ends a turn still never reaches the recycle trigger.
+  a session that never ends a turn still never reaches the reincarnation trigger.
 - **Nothing about push notifications reaching the user.** `say` remains the
   channel.
 - **Nothing about the memory read path.**

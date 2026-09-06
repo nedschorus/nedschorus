@@ -35,7 +35,7 @@ cold-read half is pending a measurement campaign the discussion produced.
 Presented 2026-09-02 with the recommendation "reopens both designs and earns
 one cold read". The user asked whether a full cold read is proportionate for
 small contract changes, proposing a medium read with a threshold (5 lines / 5%)
-for the full grid, and ruling that cold reads are for English only, never code.
+for the full cold-read run, and ruling that cold reads are for English only, never code.
 
 Side conclusions the discussion produced, all recorded here:
 
@@ -44,13 +44,13 @@ Side conclusions the discussion produced, all recorded here:
   low effort, one cell; medium = one good-tier pass + D4, ruled but unpackaged
   (its REWRITING ambition died by measurement — three passes worse than one,
   no configuration reached the user's 35% hand-cut bar — its REVIEW half
-  survived); slow = the grid.
-- An independent deduplication of today's three grid rounds on the 238 design
+  survived); slow = the full cold-read run.
+- An independent deduplication of today's three cold-read rounds on the 238 design
   (one fresh agent per round, then Gemini placed by three more) measured unique
   defects per cell: claude-good 34, codex-good 24, codex-floor 21, claude-floor
-  1, gemini-3.6-flash 1 (trivial). Best three cells = grid minus one unsure
+  1, gemini-3.6-flash 1 (trivial). Best three cells = the full run minus one unsure
   cluster; no two-cell subset holds coverage (loses 10–26%); the ruled
-  one-pass medium loses 30–45%. Conclusion: claude-floor is the grid's one
+  one-pass medium loses 30–45%. Conclusion: claude-floor is the cold-read run's one
   dead cell; a medium/slow distinction by cell subset does not survive the
   data; the 5-line threshold has no tier to select and was withdrawn.
 - Gemini 3.6 Flash as a defect-hunt cell: 19 findings, all real, 17 distinct,
@@ -95,7 +95,7 @@ not yet presented.
 ## Restart 2026-09-03
 
 The user asked to restart the walk at item 1 ("let's restart the walk at 1"),
-after a seat recycle and a detour on the context-recycle threshold (ruled: 50%
+after a seat reincarnation and a detour on the context-reincarnation threshold (ruled: 50%
 stays) and the launcher passthrough defect (fixed, pull request #245, merged).
 Items 1 and 2 are re-presented; their earlier outcomes above stand unless the
 user rules otherwise on re-presentation. Item 3's cold-read composition remains

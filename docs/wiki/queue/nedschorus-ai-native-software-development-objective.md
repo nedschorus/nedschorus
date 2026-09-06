@@ -40,7 +40,7 @@ The most important design choice is not the sequence of boxes. It is the refusal
 
 If you are an agent reading this to learn what the project is doing: the standing decisions below are what you must not contradict, and the rest of this file is the reasoning around them rather than a second set of rules. The notes describe one way a piece of this might work, and a design that departs from them is fine if it says why.
 
-Two things about how work lands, because getting them backwards wastes a day. Every change reaches `main` through a single door, but that door today is the pull-request lane described in `CLAUDE.md`, not the main-gatekeeper: the gate is built and dormant, and standing decision 14 says the interim lane stands until it is active. And every design and test plan is prose the user reads before it lands, so a design that has not been through him is not finished.
+Two things about how work lands, because getting them backwards wastes a day. Every change reaches `main` by one route, but that route today is the PR process described in `CLAUDE.md`, not the main-gatekeeper: the gate is built and dormant, and standing decision 14 says the PR process stands until it is active. And every design and test plan is prose the user reads before it lands, so a design that has not been through him is not finished.
 
 If something here seems wrong, stale, or at odds with what the repository actually does, report it rather than working around it. An agent the user is directing raises it in its own session. An agent he is not directing reaches him through the liaison, or by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
 
@@ -125,7 +125,7 @@ Build status, the external components worth using, a minimal implementation arch
 11. **Observability is part of design and testing.** Each change defines the evidence needed to distinguish important failure hypotheses, with explicit privacy and retention limits.
 12. **Complexity is earned:** manual, then human-invoked script, then automation. Add machinery only for a demonstrated consumer or failure.
 13. **Rules come in two buckets and three tiers.** Input rules say what we ask a node to do; output rules say what we check when it is finished. Each can be handled by code, which is fast and reliable; by an AI, which is slower and less reliable but still useful; or by a human, who is slowest, scarce, cannot be parallelized, and is high on judgement and low on precision. Put a rule at the cheapest tier that can carry it. A producing node may build code, a prompt, or a combination, and which it chose is part of its output.
-14. **There is one gate to `main`.** The main-gatekeeper is the permanent check-in path. The interim pull-request lane in `CLAUDE.md` remains current until that gate is active.
+14. **There is one gate to `main`.** The main-gatekeeper is the permanent check-in path. The PR process in `CLAUDE.md` remains current until that gate is active.
 15. **Durable outputs are written for an independent reader.** A reader with the repository, applicable project instructions, and the output should not need the conversation that created it.
 16. **The old `nedlern` system is legacy reference, not an inherited specification.** When work deliberately reuses it, touched features are classified as `preserve-feature`, `update-feature`, `remove-feature`, or `consider-feature`; unexamined behavior is not preserved by default.
 17. **Public sources are judged by usefulness and reliability.** Unofficial material may inform a decision but never becomes a runtime contract merely by being quoted.
@@ -147,7 +147,7 @@ The existing Nedschorus placement rule remains useful: GitHub Issues carry walka
 | `docs/wiki/` | Current standing knowledge that is difficult to reconstruct from code alone |
 | `docs/issues/<n>-<slug>.md` | Substantive working material paired with a GitHub Issue |
 | `docs/cross-project/` | Current designs and specifications shared across Nedschorus systems |
-| `handoff/` and machine-local transcripts | Session continuity and complete conversation evidence |
+| `handoff/` and uncommitted transcripts on each machine | Session continuity and complete conversation evidence |
 | `nc-queue/` | Human-requested notes awaiting their initial review |
 | `docs/wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review |
 | `legacy-feature-queue/` | Legacy behavior whose disposition is not yet decidable |
@@ -158,7 +158,7 @@ The existing Nedschorus placement rule remains useful: GitHub Issues carry walka
 
 Every output is either current at its named home or in a named queue with a drain. A queue item is reviewed by the human and then promoted, edited in place, demoted to supporting evidence, or dropped with a recorded reason.
 
-A substantial work item uses an MD-GHI pair: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository's established archive, promotion, or deletion rule.
+A substantial work item uses a GHI-MD: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository's established archive, promotion, or deletion rule.
 
 Logical output versions are immutable even when their repository file is revised in place. Git commit and content hash identify the accepted version; an edit creates a new logical version and `supersedes` edge. Reviews and descendants remain tied to the old hash until reconciliation accepts them against the new one.
 

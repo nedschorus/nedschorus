@@ -10,7 +10,7 @@ identity — `MD-skills`, `merge-lane` — a directory under `~/agents/` and a t
 session of the same name, into which sessions are minted one after another; the
 seat outlives any one session. This designs what brings the seats back: how a pending restart is detected, how live seats are told to hand
 off, how `restart-live-seats-at-login` decides **which** seats were running, and what
-state each returns in. Pair document for
+state each returns in. GHI-MD for
 [nedschorus#116](https://github.com/nedschorus/nedschorus/issues/116); the issue
 carries the summary and the next actions, this carries the substance.
 
@@ -51,7 +51,7 @@ same section restates one standing rule.
 
 **Detection.** `/var/run/reboot-required`, the file Ubuntu creates when a package
 update needs a restart. Runtime staleness gets no trigger; it defers to the
-normal recycle.
+normal reincarnation.
 
 *Ruled 2026-09-02: the second signal is dropped.* The 2026-08-20 form named two
 signals, the second being `needrestart` for daemons holding deleted libraries. It
@@ -264,7 +264,7 @@ reincarnate)."*
 Two halves, and they come apart:
 
 - **Supervised, so it can reincarnate** — already satisfied. The supervisor runs
-  *inside* the seat's tmux session, so a seat recovered headless still recycles
+  *inside* the seat's tmux session, so a seat recovered headless still reincarnates
   normally. Detached does not mean unsupervised.
 - **Interactive and visible** — not satisfied. `recover-crashed-seats.py` calls
   the launcher with a hardcoded `--no-attach`

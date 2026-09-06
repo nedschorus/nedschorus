@@ -8,7 +8,7 @@ coordinator improvised that watch with three hand-built `tail -F | jq`
 pipelines, and four gaps were demonstrated:
 
   1. blind rollover — `tail -F` on a fixed path goes silently blind when a
-     seat recycles into a new transcript file;
+     seat reincarnates into a new transcript file;
   2. blind arrival — a newly created seat gets no watcher until a human
      notices it;
   3. fragile filtering — the jq side mishandled the transcript schema

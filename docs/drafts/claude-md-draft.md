@@ -1,4 +1,4 @@
-# CLAUDE.md draft — for the boss's line-by-line admission
+# CLAUDE.md draft — for the user's line-by-line admission
 
 Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at [43-step-2-claude-md-inputs.md](../issues/43-step-2-claude-md-inputs.md); the seed draft was pre-calibration input, not the base). Each line faces the ruled tests: training covers it → cut; training silent → state plainly; training conflicts → NOT/DO override; actionable at a decision point; no unprobed system-prompt collision. No rationale, no history, present-tense truth. Admission marks land inline here; the admitted set becomes `CLAUDE.md` at the repo root.
 
@@ -8,9 +8,9 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 
 ## Who and where
 
-1. ~~One human — the boss — runs this project with the agents he launches. The boss reads every checked-in document.~~
+1. ~~One human — the user — runs this project with the agents he launches. The user reads every checked-in document.~~
    *admission 2026-08-06 → CUT: training covers working with a human; token waste.*
-2. ~~Nothing gains automated review, publishing, or merge without the boss's explicit admission; automation is earned in steps: manual → script-you-run → automation.~~
+2. ~~Nothing gains automated review, publishing, or merge without the user's explicit admission; automation is earned in steps: manual → script-you-run → automation.~~
    *admission 2026-08-06 → CUT.*
 3. This repository is `~/Projects/nedschorus` (NC). The legacy system at `~/Projects/nedlern` is read-only reference: read anything there freely; NOT: write, commit, or run anything there.
    *admission 2026-08-06 → ADMITTED.*
@@ -20,52 +20,52 @@ Candidate lines for NC's CLAUDE.md (founding plan step 2; inputs consolidated at
 ## The entry checkpoint
 
 5. ~~Every legacy import records in `entry-manifest.md` — in the same commit — the legacy SHA it came from, a one-line purpose, and the date.~~
-   *admission 2026-08-06 → CUT from the floor, with a scope direction (boss): NC's goal is building a Claude–Codex–Python team, not learning from or reusing nedlern; beyond manually selected pieces, carefully tracking imports is a distraction. Reconciling the committed import-tracking doctrine (founding plan checkpoint + rewrite policy, gatekeeper import check) with that direction is nedschorus#44.*
+   *admission 2026-08-06 → CUT from the floor, with a scope direction (user): NC's goal is building a Claude–Codex–Python team, not learning from or reusing nedlern; beyond manually selected pieces, carefully tracking imports is a distraction. Reconciling the committed import-tracking doctrine (founding plan checkpoint + rewrite policy, gatekeeper import check) with that direction is nedschorus#44.*
 
 ## How to work
 
-6. ~~Optimize for correctness and clarity over speed; work in small increments — one file, one decision at a time — walkable with the boss.~~
+6. ~~Optimize for correctness and clarity over speed; work in small increments — one file, one decision at a time — walkable with the user.~~
    *admission 2026-08-06 → CUT.*
 7. ~~What can be code should be code; prose carries only judgment and meaning.~~
-   *admission 2026-08-06 → CUT. Boss's operative bar, stated here: keep only lines clearly unique to this project or to his preferred methods of working — general good practice is training's job, and a ruling recorded in a GHI (#42 for this one) does not need a floor line.*
+   *admission 2026-08-06 → CUT. The user's operative bar, stated here: keep only lines clearly unique to this project or to his preferred methods of working — general good practice is training's job, and a ruling recorded in a GHI (#42 for this one) does not need a floor line.*
 8. ~~Commit as you go. Infrequently-updated files check in immediately after update; append-type logs at a logical breakpoint — session end or next session start. Every commit message carries your session id.~~
    *admission 2026-08-06 → CUT. #25's floor-line destination died with this cut (recorded on the issue); the timing rule and session-id stamping are gatekeeper-automatable when built.*
 9. ~~Any claim about code or a document names the revision it was verified against — a SHA, an issue, a quoted line. An absence claim carries its query and scope.~~
    *admission 2026-08-06 → CUT.*
 10. Use standard SDLC terms.
-    *admission 2026-08-06 → REVISED and admitted as the four words above; the never-invent clause cut. Boss's governing approach, stated here: simplify and streamline — add rules when problems repeat, never by speculating which rules might be needed.*
+    *admission 2026-08-06 → REVISED and admitted as the four words above; the never-invent clause cut. The user's governing approach, stated here: simplify and streamline — add rules when problems repeat, never by speculating which rules might be needed.*
 
 ## Writing
 
 11. Write durable artifacts for a reader with zero context: the subject identifiable, the why stated, actionable without the conversation that produced it.
     *admission 2026-08-06 → ADMITTED.*
 12. Absolute imperatives like 'always' or 'never' can backfire in unforeseen conditions. Use them cautiously.
-    *admission 2026-08-06 → REVISED and admitted in the boss's rewording (adds the positive instruction; supersedes the morning's input-1 text — noted in the #43 pair).*
+    *admission 2026-08-06 → REVISED and admitted in the user's rewording (adds the positive instruction; supersedes the morning's input-1 text — noted in the #43 pair).*
 13. When creating or inventing names, for directories, file names, globals, functions, etc., use explicit, clear and precise multi-part names. Check newly invented names with glob (for path names) or grep (for names in files). If these checks return collisions or ambiguity, choose a more explicit name, with 3 or 4 parts, not 1 or 2. If the thing you are naming already has a name in the project, use the existing name instead of inventing a new one.
     *admission 2026-08-06 → ADMITTED verbatim.*
 14. ~~A skill answers three questions, worded as simply and plainly as reasonable: when to use it, what to do, how to do it. It contains clear instructions, never information whose point in the file is unclear; justifying data lives in the records and git history.~~
-    *admission 2026-08-06 → CUT from the floor, RE-HOMED by boss ruling: this belongs in the skill-making governor, not CLAUDE.md — landed verbatim in the skill-authoring checklist. That checklist was retired as obsolete on 2026-08-30 and the user ruled its rulings lapse with it, so this one is spent: it is neither in CLAUDE.md nor anywhere else.*
+    *admission 2026-08-06 → CUT from the floor, RE-HOMED by user ruling: this belongs in the skill-making governor, not CLAUDE.md — landed verbatim in the skill-authoring checklist. That checklist was retired as obsolete on 2026-08-30 and the user ruled its rulings lapse with it, so this one is spent: it is neither in CLAUDE.md nor anywhere else.*
 15. ~~Skills stay atomic: a skill references other MD files by explicit path, never by assumed knowledge; the shared concepts skills rely on are defined here, once.~~
     *admission 2026-08-06 → CUT from the floor, RE-HOMED beside line 14 in the skill-authoring checklist Register section, and spent with it on 2026-08-30 for the reason given above. The Definitions section below (lines 18–21) now stands or falls on its own merits.*
 
 ## Sessions
 
 16. ~~Session start: read the handoff named by your launch prompt and take its next step.~~
-    *admission 2026-08-06 → CUT: the pickup duty is the launch prompt's job (the ignition prompt names the handoff path); no floor line needed.*
-17. ~~Session end: write the handoff and check it in. Machine-local transcripts under `~/.claude/projects/` hold what handoffs do not; the handoff points there when needed.~~
+    *admission 2026-08-06 → CUT: the pickup duty is the launch prompt's job (the initial agent instructions name the handoff path); no floor line needed.*
+17. ~~Session end: write the handoff and check it in. Uncommitted transcripts under `~/.claude/projects/` hold what handoffs do not; the handoff points there when needed.~~
     *admission 2026-08-06 → CUT: this is the handoff skill's content (the fast-handoff design already carries the transcript pointer as the extract's need-more line); lands with that build.*
 
 ## Definitions
 
-18. ~~The boss — the one human operator; every walk, admission, and ruling in these files means him.~~
-    *admission 2026-08-06 → CUT, with a TERMINOLOGY RULING (boss): use the standard term — "user", not "boss" — in NC instruction files. Follow-up: mechanical boss→user sweep over the landed NC skills and queued instruction docs, executed at this walk's close under this ruling.*
+18. ~~The user — the one human operator; every walk, admission, and ruling in these files means him.~~
+    *admission 2026-08-06 → CUT, with a TERMINOLOGY RULING (user): use the standard term — "user", not "boss" — in NC instruction files. Follow-up: mechanical boss→user sweep over the landed NC skills and queued instruction docs, executed at this walk's close under this ruling.*
 19. ~~Check-in — getting a change onto main. Through the main-gatekeeper once built; by plain commit and push until then.~~
     *admission 2026-08-06 → CUT: the check-in process itself will teach the agent (the gatekeeper's runtime output is the instruction surface, per code-over-prompts).*
-20. ~~GHI — a GitHub issue on nedschorus. The MD-GHI pair — an issue carrying the walkable state plus a `docs/issues/<n>-<slug>.md` document carrying the substance.~~
+20. ~~GHI — a GitHub issue on nedschorus. The GHI-MD — an issue carrying the walkable state plus a `docs/issues/<n>-<slug>.md` document carrying the substance.~~
     *admission 2026-08-06 → CUT: training covers it. Canary (cold `claude -p`, no project context, 2026-08-06): read GHI as "GitHub Issue" and MD-GHI pair as "a Markdown document paired with its corresponding GitHub Issue that tracks the work" — both correct unprompted.*
-21. ~~A walk — presenting material to the boss one item at a time, per `.claude/skills/walk-me-through/SKILL.md`.~~
+21. ~~A walk — presenting material to the user one item at a time, per `.claude/skills/walk-me-through/SKILL.md`.~~
     *admission 2026-08-06 → CUT: invoking the walk skill itself teaches the term.*
 
 ---
 
-ADMISSION COMPLETE 2026-08-06: 21 lines walked; five survive (3, 10, 11, 12, 13); the assembled floor is [claude-md-admitted.md](claude-md-admitted.md), which gets a cold read (the grid's first full run) and then lands as `/CLAUDE.md`.
+ADMISSION COMPLETE 2026-08-06: 21 lines walked; five survive (3, 10, 11, 12, 13); the assembled floor is [claude-md-admitted.md](claude-md-admitted.md), which gets a cold read (the first full cold-read run) and then lands as `/CLAUDE.md`.

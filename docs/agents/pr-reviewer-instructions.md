@@ -20,7 +20,7 @@ including the user.
   cold-read and walked with the user; a reviewer improving settled instruction text is a
   regression.
 - **All other prose is silent — not a finding, not a remark, not a question.** `docs/`
-  entire (designs and issue pair documents included), `nc-queue/`, ledgers, and provenance
+  entire (designs and GHI-MDs included), `nc-queue/`, walk minutes, and provenance
   or recovery citations anywhere. Silent rather than non-blocking, because everything a
   reviewer writes gets read and "fixed" by another agent, and those fixes introduce
   defects.

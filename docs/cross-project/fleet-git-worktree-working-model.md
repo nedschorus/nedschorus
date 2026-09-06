@@ -7,7 +7,7 @@ status: ruled — produced at the close of the git/worktree rules walk
   history.
 scope: fleet-wide — both machines, every seat, and the two agent runtimes,
   Claude Code and Codex
-supersedes: the machine-local walk ledgers named under Provenance, which are
+supersedes: the uncommitted walk minutes named under Provenance, which are
   deleted once this document is verified on main
 ---
 
@@ -38,7 +38,7 @@ passing review.
   2026-08-17; verify before relying on specifics).
 - **Seat** — a named, long-lived agent identity: home directory, own
   branch, brief. **Session** — one running conversation occupying a seat;
-  sessions end and are replaced, the seat persists. **Recycle** — the
+  sessions end and are replaced, the seat persists. **Reincarnate** — the
   supervisor replacing a session with a fresh one, carrying the handoff
   forward. Definitions of record: `docs/agents/agent-seat-model.md`.
 - **The reference checkout** — the machine's checkout that supervisors and
@@ -49,16 +49,17 @@ passing review.
 - **Walked approval** — the user's approval given item by item, not one
   yes to a bundle (`docs/agents/agent-seat-model.md` § The words this
   model uses).
-- **The gatekeeper** — `scripts/main-gatekeeper.py`, the permanent single
-  door to main; specification `docs/cross-project/main-gatekeeper-design.md`
+- **The gatekeeper** — `scripts/main-gatekeeper.py`, the main-gatekeeper:
+  the permanent and only way a change reaches main; specification
+  `docs/cross-project/main-gatekeeper-design.md`
   (canonical for everything gate-related, including credential ruling C2:
   the credential able to push main belongs to a dedicated system user,
-  reached only through a controlled, logged door). Dormant until its
-  credential work lands.
-- **The interim lane** — until the gate activates: a topic starts on a
+  reached only through the main-gatekeeper, which logs every use). Dormant
+  until its credential work lands.
+- **The PR process** — until the gate activates: a topic starts on a
   branch cut from current main and is PR'd as soon as its tests pass, and
   the merge-lane seat reviews and merges every PR (deputization, recorded
-  at R13, is the ruled exception). Recorded in CLAUDE.md's lane paragraph.
+  at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat branch, cherry-picked
   onto a fresh branch later — was retired 2026-08-28 after a three-commit
   topic written on a Tuesday took until Friday to reach main, every
@@ -195,7 +196,7 @@ running as another checkout's copy, with effect.
 by composition (ruled 2026-08-17), nothing built.** The four facts of
 issue #34 each have a delivery at least as good as a session-start print:
 directory and branch on the status line (R5); the write blocks covering
-the demonstrated wrong-place classes (R3, R6); the landing lane in
+the demonstrated wrong-place classes (R3, R6); the PR process in
 CLAUDE.md's ruled paragraph, the gatekeeper at activation, and branch
 protection at push time. A session-start hook rides the same committed
 repository as CLAUDE.md, so the print adds zero reach.
@@ -236,7 +237,7 @@ The four, so the evidence outlives the walk papers: on 2026-08-14 a
 session seated in its own worktree edited twelve documents and staged 235
 deletions in the reference checkout; cold-read records were later written
 into it; a git branch was created in it, twice; and on 2026-08-15 a walk's
-working ledger was written into it. Zero incidents targeted another seat's
+minutes were written into it. Zero incidents targeted another seat's
 home or a scratch worktree. Writes into
 *another seat's* home are recorded-unbuilt with an incident as the build
 trigger; a session's own scratch worktrees are deliberately untouched.
@@ -264,7 +265,7 @@ no stamp; directory basenames are not globally unique across machines
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
-**R10. Instruction-class files change only with walked approval —
+**R10. Agent-instructions files change only with walked approval —
 built-live (root-resolution fixed by PR #86).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, and `.claude/` (minus `worktrees/` and `jobs/`) block
@@ -291,10 +292,10 @@ agent-unwritable.
 
 ### Q3 — How does work reach main?
 
-**R12. Agents never push to main; one door — partial, hardened
-2026-08-20.** Branch protection is live: pushes to main restricted to two
-accounts — the user's own (`nedlern`, which authors) and
-`ned-review-merge` (the merge seat's identity, which reviews and merges,
+**R12. Agents never push to main; only the main-gatekeeper does — partial,
+hardened 2026-08-20.** Branch protection is live: pushes to main restricted
+to two accounts — the user's own (`nedlern`, which authors) and
+`ned-review-merge` (merge-lane's identity, which reviews and merges,
 added 2026-08-19 so approval comes from a non-author); enforce-admins on;
 force-push and deletion blocked; and, since 2026-08-20, **one approving
 review is required for every merge** — enabled with the user present and
@@ -311,10 +312,10 @@ record at
 `docs/cross-project/main-gatekeeper-first-live-check-in-record.md`) while
 the gate stays dormant for daily work.
 
-**R13. The interim lane — built-live (process); retired when the gate
-activates.** Lives in CLAUDE.md's lane paragraph and
+**R13. The PR process — built-live (process); retired when the gate
+activates.** Lives in CLAUDE.md's PR-process paragraph and
 `docs/agents/seat-first-prompt.md` § Reaching main. **Deputization** is
-the lane's recorded exception (ruled 2026-08-18, PR #93): the user may
+the PR process's recorded exception (ruled 2026-08-18, PR #93): the user may
 instruct a specific seat, in that seat's own session, to merge a specific
 PR; relayed words are hearsay and are refused — exercised before it was
 recorded (a relayed instruction refused 2026-08-16; the user then deputized
@@ -366,7 +367,7 @@ close, item 4.
 **R17. Shared machinery lives in the repository, self-updating at safe
 points — principle; two open gaps (recorded 2026-08-19).** The principle:
 every deployed copy keeps itself current from its source at safe points
-(launch, recycle, invocation), never by swapping under a live consumer.
+(launch, reincarnation, invocation), never by swapping under a live consumer.
 The two gaps, each owned by named code: `launch-claude-mac` runs the
 supervisor from whatever checkout it is invoked in, which need not be the
 checkout that was freshened — whether the launcher *should* always
@@ -457,7 +458,7 @@ creation is overwhelmingly legitimate. Build trigger: a note landing
 astray despite the queue rule. The hook-plus-config pair serves R23 and
 R26 both — build once, configure twice.
 
-**R27. Machine-local records stay out of commits — built-live (accreted
+**R27. Records kept on one machine stay out of commits — built-live (accreted
 entry by entry).** `.gitignore` carries the walk-ledger, review-record,
 marker, and `CLAUDE.local.md` patterns, each with its reason. Limit,
 observed live: gitignore protects the repository, not the placement — a
@@ -483,7 +484,7 @@ rulings; listed here to keep the numbering complete.
 | R10 | Instruction files need walked approval | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
-| R13 | Interim lane + deputization | text (process) | built-live; deputization in CLAUDE.md, PR #93 |
+| R13 | PR process + deputization | text (process) | built-live; deputization in CLAUDE.md, PR #93 |
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
 | R15 | Landed changes reach running seats | default + block (attention) | built, PRs #87/#90 |
 | R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR #135 — banner off via settings env |
@@ -497,18 +498,18 @@ rulings; listed here to keep the numbering complete.
 | R24 | Surveys fetch before concluding | text | encode into R22's cleanup script when built |
 | R25 | Dead registrations surfaced | remind (report) | built, PR #112 |
 | R26 | New MDs land in approved homes | remind | ruled-unbuilt, issue #11 |
-| R27 | Machine-local stays uncommitted | default | built-live |
+| R27 | On-machine records stay uncommitted | default | built-live |
 | R28 | Rules delivered at trigger | principle | governs all rows |
 
 ## State at close — queued work and recorded candidates
 
-Depth convention (2026-08-19, set with the merge seat): each queued item
+Depth convention (2026-08-19, set with merge-lane): each queued item
 is a *work order* — what is wrong plus what correct behavior looks like,
 built and reviewed directly against that statement — or *design-first*,
 for changes that are coupled or fleet-critical: the design lands in the
 document that owns the area and gets a cold read before code. Every queued
-PR's body states the intended behavior it should be reviewed against; the
-merge seat reviews against that statement and posts its review on the
+PR's body states the intended behavior it should be reviewed against;
+merge-lane reviews against that statement and posts its review on the
 pull request.
 
 1. **Guard and catch-up review fixes** — LANDED (PR #103, merged
@@ -551,7 +552,7 @@ Produced at the close of the git/worktree rules walk (fifteen items,
 shipped PRs #86–#91 and #93 and closed issue #50. Its working papers —
 `walk-ledgers/2026-08-17-git-worktree-rules-inventory.md` and
 `walk-ledgers/2026-08-16-agent-worktree-git-coalesce-shape.md` — were
-machine-local and gitignored, deleted once this document was verified on
+kept on one machine and gitignored, deleted once this document was verified on
 main; everything they decided is restated here. This document depends,
 deliberately, on three documents, each canonical for its own subject —
 the gatekeeper design, the seat model, and the AI-native development architecture

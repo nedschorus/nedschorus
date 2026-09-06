@@ -1,6 +1,6 @@
 # `gatekeeper` — seat instructions
 
-Your pile — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** Every task here shares one specification, one program, and one threat model (the specification's § The credential and enforcement is where that threat model is written down), so each makes the next cheaper. Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, pile, walked approval, instruction-class, slice, the C-numbers — and this file assumes them.
+Your work — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** Every task here shares one specification, one program, and one threat model (the specification's § The credential and enforcement is where that threat model is written down), so each makes the next cheaper. Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, walked approval, slice, the C-numbers — and this file assumes them.
 
 **Your work is done when** the walked-approval evidence format is designed and slice 6 is built and landed, and everything in the credential work that does not require org-owner powers is prepared and documented, with a written statement to the user of exactly what remains and that it is his to do. Activation itself is not your completion criterion: the final step needs an org owner, so a seat defined as "the gate is live" could never finish. Land what you can, prepare what you cannot, say what is left, write the handoff, stop.
 
@@ -10,7 +10,7 @@ Your pile — the body of related work this seat owns — is **taking the main-g
 
 **Read first:** `docs/cross-project/main-gatekeeper-design.md` (the canonical specification, design-as-of 2026-08-12) and `docs/issues/3-main-gatekeeper-build-slice-plan.md` (the build order, its ruled design points, and the program follow-ups). Issue: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3), whose body is current as of 2026-08-12.
 
-The review history — two cold-read grids and a subtraction review, with the rulings they produced and the reasoning behind each — is in `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`, chiefly `dispositions.md` and `codex-dispositions.md` (roughly forty decisions, each dated with its grounds). Rulings also live in two other places, so that directory is not the whole record: the slice plan carries the design points it settles, and issue #3's body carries the state.
+The review history — two cold-read runs and a subtraction review, with the rulings they produced and the reasoning behind each — is in `git show db917b5:md-review-records/2026-08-09-git-gatekeeper-design/`, chiefly `dispositions.md` and `codex-dispositions.md` (roughly forty decisions, each dated with its grounds). Rulings also live in two other places, so that directory is not the whole record: the slice plan carries the design points it settles, and issue #3's body carries the state.
 
 **A settled question may be reopened — by the user, not by you.** If one now looks wrong, read its disposition first, then put it to him with what changed; do not re-derive it silently and do not act against it. Re-deriving decisions he already made is the specific waste this record exists to prevent.
 
@@ -22,7 +22,7 @@ The review history — two cold-read grids and a subtraction review, with the ru
 
 Step 1 gates step 2 and nothing else. Step 3's preparation can proceed in parallel; only its GitHub half waits on the user.
 
-PR #55 (`gatekeeper audit: account names compared case-insensitively; PR #49 review rulings folded into the slice plan`) **merged 2026-08-13**, so its rulings are in the slice plan you are about to read. Nothing of this pile is outstanding in review as of that date — verify with `gh pr list --repo nedschorus/nedschorus --state open` rather than trusting this sentence, since PR state goes stale within hours.
+PR #55 (`gatekeeper audit: account names compared case-insensitively; PR #49 review rulings folded into the slice plan`) **merged 2026-08-13**, so its rulings are in the slice plan you are about to read. Nothing of this seat's work is outstanding in review as of that date — verify with `gh pr list --repo nedschorus/nedschorus --state open` rather than trusting this sentence, since PR state goes stale within hours.
 
 ## What is already settled
 
@@ -45,4 +45,4 @@ The handoff and supervisor machinery belongs to `fleet`, review methodology to `
 
 Read the specification and the slice plan, check PR #55's state, and confirm the test suite runs green. Then report to the user where the road stands, and propose starting with the walked-approval evidence format — the only step available to you, since step 2 enforces the format step 1 produces and step 3's GitHub half is his. Say that plainly rather than offering a choice the road's own dependencies have already made.
 
-Do not begin designing the format until he agrees: its shape is his ruling, and the result is instruction-class.
+Do not begin designing the format until he agrees: its shape is his ruling, and the result is agent-instructions text.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one Codex cell of a cold-read grid against a document.
+"""Run one Codex cell of a cold-read run against a document.
 
 One invocation = one cell — the twin of the Claude cell launcher
 (scripts/cold-read-claude-cell.py). Everything the two do apart from
@@ -98,7 +98,7 @@ PROGRAM = "cold-read-codex-cell"
 # Both pins were re-measured by the 2026-09-03 tier-roster campaign
 # (REPORT.md under
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
-# machine-local, which is why the numbers are inline here; sections "Step-rule
+# on that machine only and not committed, which is why the numbers are inline here; sections "Step-rule
 # tally, ALL SIX TARGETS", "Aggregate over all six targets" and "Addendum
 # 2026-09-04"). Sol keeps the good tier: it is in every top cell set, and
 # gpt-6-astra at max did not beat it (net -19 unique-and-real over two designs
@@ -111,7 +111,7 @@ TIER_TO_CODEX_MODEL_CHAIN = {
 }
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
-# depends on the machine-local ~/.codex/config.toml default. xhigh for both
+# depends on the machine's own ~/.codex/config.toml default. xhigh for both
 # tiers by user calibration 2026-08-03 ("xhigh is OK for codex"); the good
 # tier raised to max on the 2026-09-03 campaign (user-ruled 2026-09-04):
 # sol at max beat sol at xhigh by +46 net unique-and-real findings over two

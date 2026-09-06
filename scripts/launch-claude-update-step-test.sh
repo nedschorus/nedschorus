@@ -222,7 +222,7 @@ esac
 
 # The after-exit prompt, both twins. When a supervisor exits, its shell offers
 # the operator a choice, and the ordering is load-bearing: `claude --continue`
-# runs but starts NO supervisor, so the seat it resumes can never recycle. It
+# runs but starts NO supervisor, so the seat it resumes can never reincarnate. It
 # was listed first until 2026-08-19, and on 2026-08-18 two seats ran
 # unsupervised for about 25 hours because it was the only listed option that
 # worked (nedschorus#45). Asserted on the emitted command text of both
@@ -245,7 +245,7 @@ assert_supervised_option_is_first() {
         check "$twin_name lists the supervised relaunch before claude --continue" 1
     fi
     case "$emitted" in
-        (*"never recycle"*) check "$twin_name states what claude --continue costs" 0 ;;
+        (*"never reincarnate"*) check "$twin_name states what claude --continue costs" 0 ;;
         (*) check "$twin_name states what claude --continue costs" 1 ;;
     esac
 }

@@ -2,7 +2,7 @@ Issue: https://github.com/nedschorus/nedschorus/issues/10
 
 ## Admission note (new-vp, 2026-07-22)
 
-- Boss-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair #10. Capture ≠ commitment: nothing here is scheduled work, and the boss's walk rules which candidates advance.
+- User-directed capture artifact, cops-reconstructed 2026-07-22 from the 2026-07-21 discussion and Ned's Google-Doc notes (the cleaned version had remained in chat); admitted through the single-admitter gate as pair #10. Capture ≠ commitment: nothing here is scheduled work, and the user's walk rules which candidates advance.
 - The "Related detailed documents" links name cops-local filenames; in this repository that material is [pair #4](4-open-source-publishing-community-strategy.md) (publishing strategy) and [pair #9](9-neds-notes.md) (engineering methods).
 - The 2026-07-22 admission redacted the two raw mirror URLs under "Raw Claude Code mirrors" per that subsection's own retain-privately instruction. REVERSED 2026-07-24 by the public-links ruling (walk item 14: links in this public repository are judged on usefulness and reliability only — no provenance-based quarantine): the URLs are restored below, matching pair #9's research-sources section.
 - Revisions ride this pair as ordinary REVISE dispositions.
@@ -21,7 +21,7 @@ original cleaned version remained in chat instead of being saved as a file.
 - **Decided** means Ned or the NedsChorus founding process has explicitly
   accepted the direction.
 - **Draft** means captured wording awaiting review and adoption; it is not
-  doctrine. (Relabeled from "candidate" by boss ruling 2026-07-26 — a
+  doctrine. (Relabeled from "candidate" by user ruling 2026-07-26 — a
   candidate is not a draft, and draft is the status word the artifact
   lifecycle actually uses.)
 - **Research** means a bounded question still needs evidence.
@@ -61,7 +61,7 @@ The governing approach is:
   [pair #4](4-open-source-publishing-community-strategy.md); this backlog no
   longer duplicates them.
 
-Scrubbed 2026-07-26 (boss-ruled): the marketing and self-promotion material
+Scrubbed 2026-07-26 (user-ruled): the marketing and self-promotion material
 formerly here — channel lists, adaptation workflow, article titles — removed
 as too speculative. Recoverable from git history.
 
@@ -80,7 +80,7 @@ rule); this is the summary, updated 2026-07-26 to the ruled state:
   states its destination, and every queue drains by one four-outcome process
   (promote / edit / demote / drop): `docs/wiki/queue/` for wiki-bound
   doctrine, `docs/issues/queue/` for pair-bound documents, `nc-queue/` for
-  boss-requested notes awaiting their first walk, `legacy-feature-queue/` for
+  user-requested notes awaiting their first walk, `legacy-feature-queue/` for
   consider-features outliving their slice
   ([nedschorus#24](https://github.com/nedschorus/nedschorus/issues/24) tracks
   the drain procedure).
@@ -99,21 +99,21 @@ a Markdown document, or both should not be reopened without new evidence.
 
 ### Walkthroughs and comprehensibility
 
-Retired as a section 2026-07-26 (boss-ruled): the walk behavior is specified
+Retired as a section 2026-07-26 (user-ruled): the walk behavior is specified
 by the walk-me-through skill itself — its frontmatter and code are the
 documentation, and a separate prose description would only drift. Cross-runtime
 scenario tests are deferred to NC step-1 (inner-walk item 2 ruling, pair #9
-ledger). The bullets formerly here are recoverable from git history.
+walk minutes). The bullets formerly here are recoverable from git history.
 
 ## Candidate publishing modules
 
-Removed 2026-07-26 (boss-ruled useless): the module sketches formerly here
+Removed 2026-07-26 (user-ruled useless): the module sketches formerly here
 added nothing beyond pair #4's publishing strategy. Recoverable from git
 history.
 
 ## Draft document and directory structure
 
-Two concerns, framed by boss ruling 2026-07-27 (walk item 17 cluster 5):
+Two concerns, framed by user ruling 2026-07-27 (walk item 17 cluster 5):
 **where things go** (the placement rules below), and **the many-parts
 overview** — "A system with many parts needs one current overview that
 links them together — its code, its MDs (design, test plan), its GHIs,
@@ -191,7 +191,7 @@ for small NedsChorus-native skills, not reasons to import a large framework.
 
 These are draft rules — captured wording awaiting review and adoption, with
 overbroad wording narrowed where the later discussion identified a problem.
-(Relabeled from "candidate" by boss ruling 2026-07-26.)
+(Relabeled from "candidate" by user ruling 2026-07-26.)
 
 ### Evidence and change discipline
 
@@ -213,7 +213,7 @@ overbroad wording narrowed where the later discussion identified a problem.
 - A configuration value's default is defined in one place. A location that
   needs the value reads it or passes it through rather than restating it — a
   restated default can silently override the real one or drift from it.
-  (Added 2026-07-28, boss-approved, from the legacy extraction: a launcher
+  (Added 2026-07-28, user-approved, from the legacy extraction: a launcher
   restated a communications timeout default, so a correctness fix to the
   real default silently reached one runtime's agents and missed the other's
   for six days.)
@@ -224,7 +224,7 @@ overbroad wording narrowed where the later discussion identified a problem.
   known way, green once it is fixed. It catches malformations similar to
   ones already seen, not every possible way an entry can be wrong. Two
   attempts is the budget; after two, record the gap and move on. (Added
-  2026-07-28, boss-approved, from the legacy extraction: a pattern typo in
+  2026-07-28, user-approved, from the legacy extraction: a pattern typo in
   a live injection-map row would make that rule silently never fire, with
   no other point where the loss becomes visible.)
 - An alert that fires on an expected, harmless condition erodes the whole
@@ -233,7 +233,7 @@ overbroad wording narrowed where the later discussion identified a problem.
   known-benign state gets its own low severity or its own counter at the
   detector, so a threshold crossing points at a real failure. When a benign
   condition is found firing an alert, the fix belongs at the detector, not
-  in the reader's habit of ignoring it. (Added 2026-07-28, boss-approved,
+  in the reader's habit of ignoring it. (Added 2026-07-28, user-approved,
   from the legacy extraction: sessions opened in the identity-less shared
   checkout paged at the highest severity through the same counter that
   exists to catch a real registration failure.)
@@ -325,7 +325,7 @@ state machines, migrations, and other high-risk behavior.
 
 ## Agent organization questions
 
-Removed 2026-07-26 (boss-ruled obsolete): the lifecycle-role sketches and
+Removed 2026-07-26 (user-ruled obsolete): the lifecycle-role sketches and
 organization questions formerly here are superseded by the dynamic agent-team
 model — substance and state at [pair #26](26-dynamic-agent-team-model.md)
 ([nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26)).
@@ -333,10 +333,10 @@ Recoverable from git history.
 
 ## Communications backlog
 
-DISPERSED 2026-07-25 (walk item 17 cluster 1, boss-ruled). Five entries were
+DISPERSED 2026-07-25 (walk item 17 cluster 1, user-ruled). Five entries were
 already landed doctrine and are recorded as such: durable walkthrough
-decisions (the walk-ledger rule), self-contained end-of-turn messages and
-contextful recommendations (the zero-context-reader rule), no bare
+decisions (the walk-minutes rule), self-contained end-of-turn messages and
+contextful recommendations (the fresh-reader rule), no bare
 issue-numbers/filenames/references (clickable handles), no fake choices
 (the menu-ban), and explain-material-subtleties-completely in design
 reviews. One entry cut as superseded: "maintain a concise, current
@@ -344,7 +344,7 @@ communications-fix plan" (a standing fix-plan document is the stateless-pile
 class the artifact-lifecycle rule retired). The four open decisions moved to
 GHIs:
 
-- Boss-notification mechanism (popup / markdown artifact / direct message /
+- User-notification mechanism (popup / markdown artifact / direct message /
   other) → rides the spy design on
   [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26).
 - API-vs-MCP per communication type, and agent-level vs task-level
@@ -354,13 +354,13 @@ GHIs:
 - Safe console text-insertion + stuck/waiting-state detection →
   [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27) (new).
 - The former "minimize unnecessary console communication without removing
-  required context" standing direction is RETIRED (boss-ruled 2026-07-26):
+  required context" standing direction is RETIRED (user-ruled 2026-07-26):
   minimize is the wrong verb. The standard is consistent CLEAR AND COMPLETE
   console communication — completeness is never traded for word count.
 
 ## Status, monitoring, and introspection backlog
 
-DISPERSED 2026-07-25 (walk item 17 cluster 2, boss-ruled; doc-only capture
+DISPERSED 2026-07-25 (walk item 17 cluster 2, user-ruled; doc-only capture
 retired — docs are not attention surfaces, task-shaped items get GHIs):
 
 - The spy's design inputs (versioned-adapter session reading; the operator
@@ -373,12 +373,12 @@ retired — docs are not attention surfaces, task-shaped items get GHIs):
   [nedschorus#27](https://github.com/nedschorus/nedschorus/issues/27).
 - The research bundle (recaps customizable; small introspection tools;
   denoised artifact vs raw logs; controlled-test-project tuning method;
-  task-list visibility for the boss) →
+  task-list visibility for the user) →
   [nedschorus#28](https://github.com/nedschorus/nedschorus/issues/28) (new).
 
 ## Claude and Codex runtime research
 
-DISPERSED 2026-07-26 (walk item 17 cluster 3, boss-ruled):
+DISPERSED 2026-07-26 (walk item 17 cluster 3, user-ruled):
 
 - Nine research entries — instruction-compression experiments (fresh-agent
   behavior is the measure; feeds the step-2 `CLAUDE.md` rewrite), the
@@ -395,23 +395,23 @@ DISPERSED 2026-07-26 (walk item 17 cluster 3, boss-ruled):
 - The grep-before-naming line rides the bundle to the step-2 `CLAUDE.md`
   rewrite as a one-line write-time discipline (its explicit-name half is
   already legacy doctrine; the grep-first half was written nowhere).
-- CUT (boss-ruled 2026-07-26): the "Claude demotion / why 10" entry — nobody,
-  the boss included, could say what it refers to. It returns only if it
+- CUT (user-ruled 2026-07-26): the "Claude demotion / why 10" entry — nobody,
+  the user included, could say what it refers to. It returns only if it
   resurfaces with a real trigger.
 
 ## Ways to run prompts in code
 
-Removed 2026-07-26 (boss-ruled: a bad summary, useless). Recoverable from git
+Removed 2026-07-26 (user-ruled: a bad summary, useless). Recoverable from git
 history.
 
 ## Turn and hook order to verify
 
-Removed 2026-07-26 (boss-ruled: another bad summary of documentation).
+Removed 2026-07-26 (user-ruled: another bad summary of documentation).
 Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 ## Git, GitHub, and review backlog
 
-DISPERSED 2026-07-27 (walk item 17 cluster 4, boss-ruled per entry; marks in
+DISPERSED 2026-07-27 (walk item 17 cluster 4, user-ruled per entry; marks in
 place below). Net result: two sentences captured (the one-coherent-change-set
 workflow rule on [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3);
 the reply-incapable-sender terminal-state requirement on
@@ -419,7 +419,7 @@ the reply-incapable-sender terminal-state requirement on
 answered directly by ruling (check-in composition — lifecycle bundling is
 unrealistic); three recognized as already ruled or landed; four cut. The
 recurring deferral trigger across this cluster: review machinery questions
-wake when the boss gates an artifact class (the item-15 grow-back trigger).
+wake when the user gates an artifact class (the item-15 grow-back trigger).
 
 - Keep PRs atomic and independently mergeable.
   — processed 2026-07-27 → sentence on
@@ -428,7 +428,7 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   check-in (NC has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked
   in together.
-  — processed 2026-07-27 → answered by boss ruling: the premise is
+  — processed 2026-07-27 → answered by user ruling: the premise is
   unrealistic — a lifecycle's artifacts arrive at different phases and are
   never bundled. Artifacts check in when produced
   ([nedschorus#25](https://github.com/nedschorus/nedschorus/issues/25));
@@ -436,12 +436,12 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   change's coherent set includes the tests that pin it. No new capture.
 - Define the phases of review and the evidence each phase supplies.
   — processed 2026-07-27 → already ruled (item 15 simplicity cut): no
-  review-evidence machinery until the boss gates an artifact class; the
+  review-evidence machinery until the user gates an artifact class; the
   gatekeeper spec's cut table carries the row and its grow-back trigger.
   Nothing filed.
 - Determine how GitHub Actions-based review with Codex actually behaves.
   — processed 2026-07-27 → CUT: its only consumer is a review system, which
-  NC defers until the boss gates an artifact class (the item-15 grow-back
+  NC defers until the user gates an artifact class (the item-15 grow-back
   trigger). The question re-arises with that trigger; the legacy mechanism's
   behavior stays recoverable from its workflow files and wiki in git
   history. Nothing filed.
@@ -475,13 +475,13 @@ wake when the boss gates an artifact class (the item-15 grow-back trigger).
   injection is the motivating defect.
 - Prefer an existing supported communications API where the work is already
   tracked.
-  — processed 2026-07-27 → CUT (boss-ruled): a truism — all it says is "if
+  — processed 2026-07-27 → CUT (user-ruled): a truism — all it says is "if
   it ain't broke don't fix it"; not a useful design input. Nothing filed.
 
 ## Wiki and memory backlog
 
-DISPERSED 2026-07-27 (walk item 17 cluster 5, boss-ruled per entry; marks in
-place below). Net result: the boss's two-concern frame (placement rules +
+DISPERSED 2026-07-27 (walk item 17 cluster 5, user-ruled per entry; marks in
+place below). Net result: the user's two-concern frame (placement rules +
 the many-parts overview rule) written into § Draft document and directory
 structure with four duplicate bullets folded there; the steward ideal to
 [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26) as a
@@ -497,17 +497,17 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
   transition.
   — processed 2026-07-27 → landed: the artifact-lifecycle rule's promote
   path (wiki-bound doctrine queues in docs/wiki/queue/; the drain's
-  git-mv promote IS the transition), with entry gated by the boss's
+  git-mv promote IS the transition), with entry gated by the user's
   review ruling and the step-3 wiki walk. Nothing filed.
 - Link wiki pages to associated skill definitions when that relationship is
   useful.
   — processed 2026-07-27 → CUT: a page-linking standard for a wiki that
   barely exists; re-arises at the step-3 wiki walk where NC page standards
-  get set under the boss's review (legacy precedent: implementation-
+  get set under the user's review (legacy precedent: implementation-
   reference tables). Nothing filed.
 - Maintain an architecture overview.
   — processed 2026-07-27 → folded into § Draft document and directory
-  structure (boss's two-concern frame: placement rules + the many-parts
+  structure (user's two-concern frame: placement rules + the many-parts
   overview rule). Duplicate; nothing filed. Same mark applies to the
   three sibling overview bullets below.
 - Give every major system a useful overview, including any agent-organization

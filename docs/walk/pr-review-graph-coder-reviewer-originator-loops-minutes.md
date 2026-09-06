@@ -818,7 +818,7 @@ Candidate objective-level decisions merge-lane has taken from this walk:
 prose precedes code; one-in-one-out with the arbitrator exception; the
 artifact ban; a reviewer may reject the code or the prose parent; and a
 finding touching text the user has already ruled is quoted with the ruling
-and not reportable again — which already exists lane-locally in CLAUDE.md and
+and not reportable again — which already exists for the PR process in CLAUDE.md and
 would become general. The package vocabulary goes to a separate vocabulary
 walk he ruled today.
 

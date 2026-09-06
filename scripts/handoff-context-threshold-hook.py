@@ -25,7 +25,7 @@ directory, so the reminder does not repeat at every subsequent turn while
 the agent is composing the handoff.
 
 WHILE A SUBAGENT IS RUNNING THE HANDOFF WAITS (user-ruled 2026-08-27). A
-recycle kills the session, and the session's in-process subagents die with
+reincarnation kills the session, and the session's in-process subagents die with
 it: on 2026-08-27 a seat dispatched a builder subagent at 20:38, the hook
 fired at 50% at 20:43, and the subagent died four minutes into its job. So
 at the threshold the hook first asks whether any Agent-tool subagent is
@@ -37,12 +37,12 @@ a hook that refuses the stop at every boundary drives an otherwise idle
 session into a loop of short turns, one model call each, for as long as the
 subagent runs. Going quiet costs nothing: the completion notification wakes
 the session by itself, and the boundary that ends that turn is where the scan
-finds nothing in flight and the handoff fires. The standing ruling that a recycle records its subagents rather
+finds nothing in flight and the handoff fires. The standing ruling that a reincarnation records its subagents rather
 than waiting for them (2026-08-23, [nedschorus#153]) still governs
 everything else; this deferral is its one bounded exception, and
 --ceiling-used-percentage is the bound. Above the ceiling the handoff fires
 whatever is running, because a session deferring to a subagent that never
-finishes would run out of context instead of recycling — which is a worse
+finishes would run out of context instead of reincarnating — which is a worse
 loss than the one this defers.
 
 TWO MARKERS, both in the handoff directory and both named for the session.

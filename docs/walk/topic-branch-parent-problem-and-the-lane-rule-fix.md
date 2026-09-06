@@ -30,7 +30,7 @@ git would have started the new branch from wherever the working copy was
 standing — which was topic one. The second pull request would then have
 contained topic one's commits as well as its own.
 
-Nobody would have been told. The merge lane would have received a pull request
+Nobody would have been told. Merge-lane would have received a pull request
 holding two topics while its description described one. If topic one had been
 rejected or reworked, its rejected code would have travelled into main inside
 the second pull request.

@@ -58,7 +58,7 @@ Operating rules:
   with a stated reason.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
-  earlier reports) — machine-local working material, gitignored; the
+  earlier reports) — working material on this machine only, gitignored; the
   requesting agent deletes the directory when the work it served lands, or
   when nothing further will use it. What survives is what landed — the
   reports themselves are archived nowhere.

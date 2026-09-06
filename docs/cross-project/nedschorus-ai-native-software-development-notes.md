@@ -517,7 +517,7 @@ The following is a repository-and-GHI snapshot, not a statement that every propo
 
 | Component | Current Nedschorus state | Fit and recommendation |
 | --- | --- | --- |
-| [Fresh-context cold-read grid](https://github.com/nedschorus/nedschorus/blob/main/scripts/cold-read-grid.py) and Claude/Codex cells | **Built** | Keep. It is the clearest existing implementation of independent, zero-context output review. Extend its result records into the common node schema. |
+| [Fresh-reader cold-read run](https://github.com/nedschorus/nedschorus/blob/main/scripts/cold-read-grid.py) and Claude/Codex cells | **Built** | Keep. It is the clearest existing implementation of independent, fresh-reader output review. Extend its result records into the common node schema. |
 | Handoff writer, supervisor, threshold hook, and transcript extraction | **Built** | Keep. Generalize the [existing handoff design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/fast-handoff-design.md) from session continuity into per-work-item state machine checkpoints; do not call it semantic compaction when it is primarily handoff plus transcript preservation. |
 | [main-gatekeeper](https://github.com/nedschorus/nedschorus/blob/main/scripts/main-gatekeeper.py) and extensive test suite | **Built, but the final live gate is constrained/dormant** | Keep its explicit state machine, idempotent digest, atomic-push concurrency, refusal messages, and recovery semantics. Activate only when the repository’s branch-protection and review policy are reconciled. |
 | Branch protection and PR lane | **Built/active infrastructure** | Keep as the current single gate to `main`. Required checks are useful now; a merge queue is optional later. |
