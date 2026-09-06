@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Run one agent session and recycle it when it writes a handoff.
+"""Run one agent session and reincarnate it when it writes a handoff.
 
 The handoff system's supervisor (specification:
 docs/cross-project/fast-handoff-design.md). One supervisor per agent, run in
-that agent's console. It owns the whole recycle cycle because an agent
+that agent's console. It owns the whole reincarnation cycle because an agent
 cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
 trips the safety classifier.
 
-The cycle, per recycle:
+The cycle, per reincarnation:
   1. Watch the handoff file for a restart-counter above the last consumed.
   2. Kill the running session.
   3. Extract its dialog to disk before anything else proceeds.
@@ -15,9 +15,9 @@ The cycle, per recycle:
      where every generation shares one store; otherwise copy the retiring
      session's records into the successor's task directory.
   5. Print one queue-status line — to the console only. It does not ride
-     the ignition prompt (user-ruled 2026-08-29: "Also useless is the
+     the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
      reminder there are files in the queues. Thats what queues are for.").
-  6. Launch the successor with the ignition prompt.
+  6. Launch the successor with the initial agent instructions.
   7. Keep the current and previous handoff and extract; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
@@ -26,7 +26,7 @@ The handoff file the agent writes (simple `key: value` lines):
   restart-counter:      predecessor's counter plus one
   dont-restart:         optional; any value makes the supervisor ask before relaunching
   spawned-subagent-<n>: optional, one per subagent still working when the
-                        handoff was written; the recycle kills them, so the
+                        handoff was written; the reincarnation kills them, so the
                         successor is told it may need to re-commission
                         similar agents. Subagents that completed, failed, or
                         were stopped are not recorded at all (user-ruled
@@ -218,7 +218,7 @@ def counter_from(fields: dict):
 
 def written_at_wariness_sentence(written_at: str) -> str:
     """The dialog line's tail: the handoff's written-at stamp plus the
-    wariness rule, for the ignition prompt.
+    wariness rule, for the initial agent instructions.
 
     The successor computes the elapsed time itself from `date` and applies
     age-proportional wariness (user-approved 2026-08-30). This replaces a
@@ -301,7 +301,7 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
     supervisor is the base module: the writer imports the supervisor, and both
     need the mangling — the writer to find the retiring session's transcript,
     the supervisor to name the predecessor's subagent-transcript directory in
-    the ignition prompt. The writer aliases this function, so there is one
+    the initial agent instructions. The writer aliases this function, so there is one
     copy of the rule.
     """
     mangled = "".join(
@@ -315,7 +315,7 @@ def queue_status_line(working_directory: Path) -> str:
     """Report each queue's depth and oldest item, so rot stays visible.
 
     Console-only since 2026-08-29: the user expired his 2026-08-12 #32 ruling
-    that this line rides the ignition prompt ("Also useless is the reminder
+    that this line rides the initial agent instructions ("Also useless is the reminder
     there are files in the queues. Thats what queues are for."). The
     supervisor still prints it for a watched pane or the log."""
     reports = []
@@ -381,7 +381,7 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
     prompt says nothing about subagents.
 
     Since 2026-08-29 the writer records only subagents still working when the
-    handoff is written, so every entry here is one the recycle killed mid-job
+    handoff is written, so every entry here is one the reincarnation killed mid-job
     and the successor should re-commission. Subagents that completed, failed,
     or were stopped are not in the handoff at all (user-ruled 2026-08-29).
     """
@@ -407,7 +407,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     rule (see written_at_wariness_sentence) — the open-walks duty, the
     pointer at this script, the branch-state line, the malformed-block note
     when the verbatim block was damaged, and the next step — plus, only when
-    the handoff recorded subagents still working at the recycle, the roster
+    the handoff recorded subagents still working at the reincarnation, the roster
     sentence below. Every boilerplate sentence is the user's, ruled
     2026-08-30 on a rendered mock of the prompt. Queue status does not
     ride it (the user expired that 2026-08-12 ruling on 2026-08-29); the
@@ -450,10 +450,10 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     if roster:
         # The orphaned-subagent duty, narrowed 2026-08-29, softened to "may
         # need" in the user's second round (ruled 2026-08-30): the writer
-        # records only subagents still working at the recycle, so every entry
-        # here is one the recycle killed mid-job. Re-commission rather than
+        # records only subagents still working at the reincarnation, so every entry
+        # here is one the reincarnation killed mid-job. Re-commission rather than
         # resume, because a dead subagent cannot be resumed by id across a
-        # recycle: probed 2026-08-29, SendMessage to a predecessor's subagent
+        # reincarnation: probed 2026-08-29, SendMessage to a predecessor's subagent
         # id returns "No transcript found" (the resolver is session-scoped)
         # even though the transcript survives on disk at
         # <predecessor-session-dir>/subagents/agent-<id>.jsonl.
@@ -497,7 +497,7 @@ class DialogIgnitionPlan:
     extract_path: Path
     handoff_fields: dict
     # The retiring session's directory under ~/.claude/projects, where its
-    # subagents' transcripts survive the recycle. Optional so a direct caller
+    # subagents' transcripts survive the reincarnation. Optional so a direct caller
     # without one still composes; the supervisor always passes it.
     predecessor_session_directory: Optional[Path] = None
 
@@ -589,7 +589,7 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     The cost of that rule is that a long-lived session drifts arbitrarily far
     from main with nothing announcing it, since sync is the only mechanism and
     it fires once, before the session begins. The design's answer is that
-    sessions recycle often; a session that does not recycle should re-check
+    sessions reincarnate often; a session that does not reincarnate should re-check
     main itself rather than trust what it read at start.
     """
     toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
@@ -648,7 +648,7 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     crash-recovery path (nedschorus#120), where the session to run already
     has a transcript and must continue it. The CLI reuses the resumed id in
     place (--fork-session is the opt-out), so the state file's session_id
-    stays correct for extraction at the next recycle — confirmed live
+    stays correct for extraction at the next reincarnation — confirmed live
     2026-08-21, when the crash-recovered seats' transcripts grew under
     their original ids.
 
@@ -691,7 +691,7 @@ class AdoptedSession:
     A supervisor normally owns the process it started and can terminate it
     through that handle. A session started by hand — the founding boot, or any
     agent a person launched in a console — has no such owner, so it can never
-    recycle. Adoption closes that: the agent's own handoff script starts a
+    reincarnate. Adoption closes that: the agent's own handoff script starts a
     supervisor and tells it which process to watch, and everything after the
     kill is identical to the ordinary cycle.
     """
@@ -817,7 +817,7 @@ class SupervisorSettings:
     first_prompt: str
     # Crash recovery (nedschorus#120): a session id whose transcript the FIRST
     # launch resumes (`claude --resume`) instead of starting fresh. Later
-    # recycles mint fresh ids as always. The caller is responsible for having
+    # reincarnations mint fresh ids as always. The caller is responsible for having
     # checked that no unconsumed handoff waits — boot-ignition is skipped.
     resume_session_id: str = ""
     # Appended to each launched session's system prompt; "" launches without it.
@@ -866,7 +866,7 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-dialog")
     prune_old_generations(settings.handoff_directory, f"{settings.agent}-handoff")
 
-    # Console only: the queue-status line does not ride the ignition prompt
+    # Console only: the queue-status line does not ride the initial agent instructions
     # (user-ruled 2026-08-29, expiring the 2026-08-12 #32 ruling).
     print(f"handoff-supervisor: {queue_status_line(settings.working_directory)}")
 
@@ -890,7 +890,7 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
-    """Launch, watch, and recycle sessions until one ends without a handoff."""
+    """Launch, watch, and reincarnate sessions until one ends without a handoff."""
     state = read_supervisor_state(settings.state_path)
     generation = state.get("generation", 0)
     if settings.first_prompt:
@@ -1040,7 +1040,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         if not sys.stdin.isatty() and not handoff_fields.get("dont-restart"):
             print(
                 "handoff-supervisor: a handoff arrived, but this supervisor has no terminal to "
-                "seat a successor on — not recycling. The session stays up and the handoff stays "
+                "seat a successor on — not reincarnating. The session stays up and the handoff stays "
                 "unconsumed; a seated supervisor (launch-claude-ubuntu / launch-claude-mac) or a "
                 "by-hand relaunch picks it up. Stopping."
             )
@@ -1078,7 +1078,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run and recycle one agent session.",
+        description="Run and reincarnate one agent session.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -1088,7 +1088,7 @@ def main(argv=None) -> int:
                              "OTHER machines address this seat, so it has to be unique across "
                              "the whole fleet, not just this machine")
     parser.add_argument("--cd", default=".", help="the agent's worktree")
-    parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="machine-local handoff directory")
+    parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="handoff directory on this machine only, not committed")
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
     parser.add_argument(
         "--agent-append-system-prompt-file",
@@ -1111,8 +1111,8 @@ def main(argv=None) -> int:
         "--resume-session-id", default="",
         help="crash recovery (nedschorus#120): the first launch resumes this "
              "session's transcript (claude --resume) instead of starting fresh; "
-             "later recycles mint fresh ids as always. A handoff already on disk "
-             "is marked consumed rather than igniting or recycling — passing this "
+             "later reincarnations mint fresh ids as always. A handoff already on disk "
+             "is marked consumed rather than igniting or reincarnating — passing this "
              "flag chooses the transcript over any waiting handoff",
     )
     parser.add_argument(

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Reproduce: a cold-read grid can report eight saved reviews having
+# Reproduce: a cold-read run can report eight saved reviews having
 # reviewed nothing.
 #
 # WHY THIS EXISTS. `cold-read-grid.py` decides a cell succeeded from its

@@ -1,8 +1,8 @@
-# Clarity registers for explanation and drafting — pair document for [nedschorus#138](https://github.com/nedschorus/nedschorus/issues/138)
+# Clarity registers for explanation and drafting — GHI-MD for [nedschorus#138](https://github.com/nedschorus/nedschorus/issues/138)
 
-The user has typed some form of "I don't understand", "too much", or "explain assuming zero context" thousands of times. Two registers fail: live explanation to the user, and instruction text drafted for zero-context agents. Each item below that changes a file names the file, the pull request whose diff is the change's exact before/after, and the actor the text governs. The decisions were made in a walk on 2026-08-22, closed the same day; its marks are below.
+The user has typed some form of "I don't understand", "too much", or "explain assuming zero context" thousands of times. Two registers fail: live explanation to the user, and instruction text drafted for fresh agents. Each item below that changes a file names the file, the pull request whose diff is the change's exact before/after, and the actor the text governs. The decisions were made in a walk on 2026-08-22, closed the same day; its marks are below.
 
-Grounding observation (2026-08-22): when the user asks a question, the answering explanation is routinely clearer than the drafted rule text it explains — the question supplies the frame, the explanation starts from a concrete case, and conversational register spends words where clarity costs them. The fixes install that register where each actor is forced to read it. The zero-context reader's report already contains an explaining-register restatement of any text it reviews; today that restatement is used only for verification and thrown away.
+Grounding observation (2026-08-22): when the user asks a question, the answering explanation is routinely clearer than the drafted rule text it explains — the question supplies the frame, the explanation starts from a concrete case, and conversational register spends words where clarity costs them. The fixes install that register where each actor is forced to read it. The fresh reader's report already contains an explaining-register restatement of any text it reviews; today that restatement is used only for verification and thrown away.
 
 ## Walk order
 
@@ -27,14 +27,14 @@ Grounding observation (2026-08-22): when the user asks a question, the answering
    history (before/after: the diff of [nedschorus#155](https://github.com/nedschorus/nedschorus/pull/155)).
    *processed 2026-08-22 → accepted with the walk-scope clause (pre-walk history
    off-limits; same-walk items leanable with a one-phrase reminder — the
-   zero-context reader caught that an unscoped ban forces repetition). Landed in
+   fresh reader caught that an unscoped ban forces repetition). Landed in
    the Language paragraph of `.claude/skills/walk-me-through/SKILL.md`, carried
    by [nedschorus#155](https://github.com/nedschorus/nedschorus/pull/155). Actor: the agent presenting a walk.*
-4. walk-me-through amendment: adopt the zero-context reader's restatement where it
+4. walk-me-through amendment: adopt the fresh reader's restatement where it
    is clearer than the drafted text (before/after: the diff of [nedschorus#155](https://github.com/nedschorus/nedschorus/pull/155)).
    *processed 2026-08-22 → accepted as revise-toward, on the reader's own
    correction of the rule (a restatement is describing-voice; verbatim adoption
-   would change voice and drop specifics). Landed in the zero-context-read
+   would change voice and drop specifics). Landed in the cold-read
    paragraph of `.claude/skills/walk-me-through/SKILL.md`, carried by
    [nedschorus#155](https://github.com/nedschorus/nedschorus/pull/155). Actor: the agent presenting a walk, before it shows
    an item that proposes instruction text.*
@@ -60,7 +60,7 @@ Grounding observation (2026-08-22): when the user asks a question, the answering
    walks near-final MDs; md-write's commission keeps the disposition machinery
    (pair search, NEW/REVISE/REPLACE/REMOVE), so the names are two jobs, not a
    collision. Build issue filed: [nedschorus#142](https://github.com/nedschorus/nedschorus/issues/142), carrying the scope boundary and
-   the zero-context-reader-rule migration question; timing his — end of this walk
+   the fresh-reader-rule migration question; timing his — end of this walk
    or soon after. Issue [nedschorus#138](https://github.com/nedschorus/nedschorus/issues/138)'s body edited to match (its draft-md-rejected line
    was stale on arrival).*
 7. The explain skill: hold with a reopen condition, or build now.
@@ -74,5 +74,5 @@ Grounding observation (2026-08-22): when the user asks a question, the answering
    `.claude/settings.json` (carried by [nedschorus#156](https://github.com/nedschorus/nedschorus/pull/156)),
    `.claude/skills/walk-me-through/SKILL.md`, `CLAUDE.md`, `AGENTS.md`, issues
    [nedschorus#138](https://github.com/nedschorus/nedschorus/issues/138) and [nedschorus#142](https://github.com/nedschorus/nedschorus/issues/142), the latter's
-   pair document `docs/issues/142-draft-md-skill-design-notes.md` (carried by
+   GHI-MD `docs/issues/142-draft-md-skill-design-notes.md` (carried by
    [nedschorus#160](https://github.com/nedschorus/nedschorus/pull/160)), and this anchor.*

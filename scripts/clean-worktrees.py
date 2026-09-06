@@ -7,7 +7,7 @@ only when three mechanical checks all pass:
 
   1. clean    - no uncommitted, untracked, or ignored files (`git status
                 --porcelain --ignored` is empty). Ignored files count as dirt
-                on purpose: machine-local state like a walk ledger or an
+                on purpose: uncommitted state like walk minutes or an
                 identity file must never be reaped with its worktree. The one
                 exception is regenerable junk every worktree accumulates —
                 .DS_Store and __pycache__ — which counts as nothing (git
@@ -74,7 +74,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Ignored entries whose basename is one of these are regenerable junk, not
 # state: they never block a removal. Everything else ignored is somebody's
-# machine-local state and keeps the worktree.
+# uncommitted state and keeps the worktree.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
 

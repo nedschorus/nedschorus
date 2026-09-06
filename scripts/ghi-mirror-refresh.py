@@ -19,9 +19,9 @@ Two modes:
   (delta)  The default. One `updated:>` search against the cache's newest
            seen timestamp re-fetches only changed issues, open or closed,
            and merges them in. Cheap and the routine path — run before
-           every ask (design § The ask path, step 1). A session recycle
+           every ask (design § The ask path, step 1). A session reincarnation
            calls --full instead, per the design's "rewritten whole from a
-           full fetch" rule; deciding WHEN to recycle is ghi-info-ask.py's
+           full fetch" rule; deciding WHEN to reincarnate is ghi-info-ask.py's
            job, not this script's.
 
 Fetches ride `gh api graphql` against GitHub's search connection, not
@@ -44,7 +44,7 @@ call does not move it past the creation timestamp — harmless, since
 creation itself always moves `updated_at`, so the issue is still caught by
 the next delta query regardless. The design's own named residual — a
 same-second boundary clip between two mutations can still slip past a delta
-query using strict `>` — is real and accepted; it is what the recycle-time
+query using strict `>` — is real and accepted; it is what the reincarnation-time
 full rewrite bounds.
 
 Mirror writes go temp-then-rename throughout, so a refresh racing another
@@ -129,7 +129,7 @@ query($searchQuery: String!, $cursor: String) {
 # #142 and #138 landed 23 seconds apart). Re-asking for a small window
 # already covered costs a few redundant issues per delta and merges
 # idempotently; it does not close the hole for lag longer than the window,
-# which stays bounded by the recycle-time full rewrite, as designed.
+# which stays bounded by the reincarnation-time full rewrite, as designed.
 DELTA_CUTOFF_OVERLAP_SECONDS = 120
 
 # A gh that never ran (missing binary, timeout) reports a code gh itself

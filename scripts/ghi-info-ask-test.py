@@ -121,7 +121,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("state resets counters on a cold start",
           state["closes_since_birth"] == 0 and state["recent_matches"] == [False], state)
 
-    # --- resume: existing session, no recycle trigger -> one claude call ---
+    # --- resume: existing session, no reincarnation trigger -> one claude call ---
     seat2 = root / "seat2"
     seat2.mkdir()
     ghi_ask.save_state(seat2 / ghi_ask.STATE_FILE_NAME,
@@ -138,7 +138,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("only a delta refresh runs on an ordinary resume (no full refresh)",
           len(refresh_calls) == 1 and refresh_calls[0]["full"] is False, refresh_calls)
 
-    # --- recycle: closes-since-birth over threshold forces a cold start ----
+    # --- reincarnation: closes-since-birth over threshold forces a cold start ----
     seat3 = root / "seat3"
     seat3.mkdir()
     ghi_ask.save_state(seat3 / ghi_ask.STATE_FILE_NAME, {
@@ -158,7 +158,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("closes-since-birth at threshold forces a cold start (fresh session id)",
           answer == "read #3", (answer, error))
     state3 = json.loads((seat3 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
-    check("recycle replaces the old session id with the new one",
+    check("reincarnation replaces the old session id with the new one",
           state3["session_id"] == "sess-NEW", state3)
 
     # --- lock contention: throwaway session, nothing persisted -------------
@@ -278,7 +278,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a claude failure on the ask turn fails cleanly",
           answer is None and "boom" in error, (answer, error))
 
-    # --- transcript-size recycle trigger (real project-dir mangling) -------
+    # --- transcript-size reincarnation trigger (real project-dir mangling) -------
     seat10 = root / "seat10"
     seat10.mkdir()
     ghi_ask.save_state(seat10 / ghi_ask.STATE_FILE_NAME,

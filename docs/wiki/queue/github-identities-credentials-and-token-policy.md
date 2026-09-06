@@ -5,7 +5,7 @@ a human hits repeatedly: **which GitHub account am I acting as, what credential
 holds that identity, and why did GitHub just refuse me?**
 
 It is reference material, not rules. The rules about who may review, approve and
-merge live in `CLAUDE.md` at the repository root, and in the machine-local
+merge live in `CLAUDE.md` at the repository root, and in the uncommitted
 `CLAUDE.local.md` beside it in whichever checkout an agent is working in. This
 page exists so those files do not fill up with credential trivia.
 

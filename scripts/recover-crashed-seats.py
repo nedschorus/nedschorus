@@ -32,10 +32,10 @@ What it does, per seat:
      successor wakes holding the crashed session's full context,
      supervised, on the seat's own per-seat tmux server.
 
-Degraded mode (boss-directed 2026-08-21, recorded on #120): --ignite-fallback
+Degraded mode (user-directed 2026-08-21, recorded on #120): --ignite-fallback
 skips the resume and launches fresh with a first prompt pointing at the
 newest dialog extract in the handoff directory — the same read-and-continue
-shape build_ignition_prompt composes at every recycle. Use it when a resume
+shape build_ignition_prompt composes at every reincarnation. Use it when a resume
 fails or a transcript is too large to be worth replaying; the threshold
 judgment stays with the operator in v1. It is also the automatic path when
 no real transcript exists to resume.
@@ -77,10 +77,10 @@ watcher = importlib.util.module_from_spec(_watcher_spec)
 _watcher_spec.loader.exec_module(watcher)
 
 # First-turn shapes of sessions this machinery itself composes — the
-# supervisor's no-handoff prompt, its recycle ignition opener, and this
+# supervisor's no-handoff prompt, its reincarnation ignition opener, and this
 # script's own ignition and resume prompts. A marker alone writes nothing
 # off: a first-ever session legitimately opens with the no-handoff prompt
-# and then works (observed live 2026-08-22), and a recycled or ignited
+# and then works (observed live 2026-08-22), and a reincarnated or ignited
 # successor can crash mid-work — both must be resumed, not skipped for an
 # older parent. What marks a failed successor is a marker AND no work:
 # substantive_turn_count() below measures work, and the gate applies to
@@ -91,13 +91,13 @@ _watcher_spec.loader.exec_module(watcher)
 # test suite, so a wording change there fails loudly.
 EMPTY_SUCCESSOR_MARKERS = (
     "No handoff exists yet",            # handoff-supervisor's default first prompt
-    # Its recycle opener, shortened to the span both eras share: openers
+    # Its reincarnation opener, shortened to the span both eras share: openers
     # before 2026-08-30 read "it is the dialog from the session you are
     # continuing, written N minutes ago" and sit in transcripts on disk;
     # openers since read "— the dialog from the session you are continuing,
     # written at <UTC>Z". Do not lengthen it back to either full sentence.
     "the dialog from the session you are continuing",
-    "crash recovery, nedschorus#120",   # this script's ignition prompt
+    "crash recovery, nedschorus#120",   # this script's ignition (initial agent instructions)
     "resumed by crash recovery",        # this script's resume prompt
 )
 SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
@@ -302,7 +302,7 @@ def write_resume_prompt(handoff_directory: Path, name: str) -> Path:
     prompt_path.write_text(
         "This session was resumed by crash recovery (nedschorus#120): your "
         "previous incarnation died without writing a handoff — a crash, not a "
-        "recycle — and your transcript was resumed under a fresh supervisor. "
+        "reincarnation — and your transcript was resumed under a fresh supervisor. "
         "Re-verify any in-flight state before trusting it (files you were "
         "mid-edit in, processes you were watching, messages you were owed), "
         "then continue the work you were doing.",
@@ -508,7 +508,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                 f"({size_kb}KB transcript)")
 
     # ignite: fresh session reading the newest dialog extract — the degraded
-    # mode (boss-directed 2026-08-21), and the only path when nothing real
+    # mode (user-directed 2026-08-21), and the only path when nothing real
     # remains to resume.
     extract = newest_dialog_extract(handoff_directory, name)
     if extract is None:

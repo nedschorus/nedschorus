@@ -23,7 +23,7 @@ The roles:
 - **An arbitrator** is any node with two input connections. Item 6.
 - **The user** is a node, not only a gate: he reviews all final prose. A prose document goes cold read, then his review, then it lands.
 - **A validator** sits on the edge into an expensive node and asks one question: can the next node complete its task with these inputs. Item 2.4.
-- **The merge-lane seat** merges. The graph runs inside the existing lane, not beside it.
+- **The merge-lane seat** merges. The graph runs inside the existing PR process, not beside it.
 
 Beside the graph, and not walked here: a GHI-knowledge agent that answers for the issue tracker, a wiki-knowledge agent to follow it, and possibly a liaison agent that headless agents use to reach the user. The user ruled it is too soon to codify any of this in `CLAUDE.md`.
 

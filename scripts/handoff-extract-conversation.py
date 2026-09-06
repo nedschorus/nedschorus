@@ -270,7 +270,7 @@ def dialog_turn_from_record(record):
     # dialog its predecessor's own transcript said nothing about.
     #
     # Observed 2026-08-23: a ruling the user typed at 19:37:20, one second
-    # before his session was recycled, reached neither the retiring agent nor
+    # before his session was reincarnated, reached neither the retiring agent nor
     # its successor and had to be dug out of the JSONL by hand. A census of 530
     # transcripts found 294 human-origin records of this shape, 283 of which
     # appear nowhere else in their transcript.

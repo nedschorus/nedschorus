@@ -14,7 +14,7 @@ verbatim; the 192 KB source remains peer-local.
 ## Delta Packet for the Active Boss Walk
 
 These are only the new decisions or cautions supplied by this research. They
-are keyed to the live combined-walk ledger in NedsChorus
+are keyed to the live combined walk minutes in NedsChorus
 `docs/issues/9-neds-notes.md` at commit `66cf592`. Present one item at a time;
 the full evidence remains below.
 

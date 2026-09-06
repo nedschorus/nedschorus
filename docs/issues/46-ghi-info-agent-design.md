@@ -14,7 +14,7 @@ The organizing idea: instead of building a vector or graph database of the GHIs,
 The first build of the domain-knowledge-agent class defined in [26-dynamic-agent-team-model.md](26-dynamic-agent-team-model.md) ("the GHIs" is that class's first listed domain). Three duties:
 
 1. **Answer asks.** A GHI author, before filing or editing, asks what it should read. The answer is a bare list — "read #13, #24, #31."
-2. **Maintain.** Cross-links between issues, and link integrity across the issue–MD boundary in both directions: every GHI→MD reference resolves on main; every pair MD backlinks its correct GHI(s). Link repairs are `ghi-info`'s own writes — its only write class. Detected problems beyond links — a pair MD stale relative to its issue, a body over the length limit — spawn fixers (§ Maintenance and fixers).
+2. **Maintain.** Cross-links between issues, and link integrity across the issue–MD boundary in both directions: every GHI→MD reference resolves on main; every GHI-MD backlinks its correct GHI(s). Link repairs are `ghi-info`'s own writes — its only write class. Detected problems beyond links — a GHI-MD stale relative to its issue, a body over the length limit — spawn fixers (§ Maintenance and fixers).
 3. **Adjudicate writes.** The write tool consults `ghi-info` with the actual draft title and body — plus, for edits, the target issue number, which is excluded from the comparison. The reply is one line: `verdict: too-similar #n` / `related #n,#m` / `unrelated`. A malformed reply is treated as unavailable (fail-open). From the verdict the tool composes the author-facing reply: **too-similar** (duplicate, overlapping, conflicting) — the write is refused with a merge instruction: read #n, then merge this content into it by editing it; **related but compatible** — the write proceeds, and the reply names the GHIs to become familiar with; **unrelated** — plain success.
 
 Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgment; terms defined in [nedschorus-ai-native-software-development.md](../cross-project/nedschorus-ai-native-software-development.md) § Project organization); authoring issue or MD substance; anything beyond the issue corpus — asked about the wiki or the code, it returns a fixed `out-of-scope` reply. Whether an old ruling still binds is never `ghi-info`'s to decide. Its reply names the ruling and the doubt (`escalate:`), and the question travels up the chain unswallowed: the caller resolves it if it can, and otherwise it lands as one `draft`-labeled issue — the same escalation surface as a blocked fix — for whoever can attend to it, agent or human.
@@ -25,7 +25,7 @@ Out of scope: routing (queue vs GHI vs pair vs bare MD — `ghi-write`'s judgmen
 
 Two files, split by state: `issues-open.md` — every open issue near-raw (number, title, labels, updated time, body, comments); `issues-closed.md` — one line per closed issue: number, title, close reason, closed date. Routine relatedness checks grep the open file; the closed file joins the search for an absence claim (a "no issue covers X" receipt is invalid unless both files were searched) or an explicit precedent hunt.
 
-**Refresh cadence.** Per ask: a delta — one `updated:>` query against the mirror's newest entry re-fetches changed issues, moving entries between files on state change; comments are fetched only for changed issues (one call per issue). At every session recycle the mirror is rewritten whole from a full fetch: anything the delta cannot see — a deletion, a same-second boundary clip — is purged then, so delta blind spots are bounded by the recycle cadence. Mirror writes go temp-then-rename, so concurrent refreshes are safe. Measured 2026-08-07 against the live repo: a full pull of all 45 issues with bodies took 0.82 s; `updated:>` returned exactly the issues touched since a timestamp.
+**Refresh cadence.** Per ask: a delta — one `updated:>` query against the mirror's newest entry re-fetches changed issues, moving entries between files on state change; comments are fetched only for changed issues (one call per issue). At every session reincarnation the mirror is rewritten whole from a full fetch: anything the delta cannot see — a deletion, a same-second boundary clip — is purged then, so delta blind spots are bounded by the reincarnation cadence. Mirror writes go temp-then-rename, so concurrent refreshes are safe. Measured 2026-08-07 against the live repo: a full pull of all 45 issues with bodies took 0.82 s; `updated:>` returned exactly the issues touched since a timestamp.
 
 **The second feed:** the refresh fetches origin and reads `git log origin/main` — pair-MD edits touch no issue timestamp, and they enter the corpus when they land on main.
 
@@ -37,21 +37,21 @@ Two files, split by state: `issues-open.md` — every open issue near-raw (numbe
 
 **Lifecycle:** active while taking a turn, otherwise exited — a session id, transcript, and the mirror persist; no process does. No idle state exists for this class.
 
-**Context:** a cold start loads `issues-open.md` whole; closed issues enter a turn only by grep. A resumed session's context drifts — the mirror refreshes every turn, but entries loaded earlier stay in context, and the agent cannot reliably notice on its own; the wrapper notices for it (§ The ask path). Recycle fires on the first of three script-observable triggers: closes since session birth, the stale-match rate, transcript size. Recycling errs eager: an eager recycle costs one cheap reload; a lazy one costs silently wrong answers.
+**Context:** a cold start loads `issues-open.md` whole; closed issues enter a turn only by grep. A resumed session's context drifts — the mirror refreshes every turn, but entries loaded earlier stay in context, and the agent cannot reliably notice on its own; the wrapper notices for it (§ The ask path). Reincarnation fires on the first of three script-observable triggers: closes since session birth, the stale-match rate, transcript size. Reincarnation errs eager: an eager reincarnation costs one cheap reload; a lazy one costs silently wrong answers.
 
 ## The ask path (ghi-info-ask)
 
 `scripts/ghi-info-ask.py`, run by any agent — and by `ghi-write` step 1. The write tool's adjudication consult rides this same wrapper (user-ruled 2026-08-11): one stored session, one refresh-and-resume machinery, every request form riding it (reading-list asks, adjudication consults, link-repair requests). In order:
 
 1. Run the mirror refresh (delta).
-2. Resume the stored session; cold-start when none exists or a recycle trigger has fired. If another ask holds the session, cold-start a throwaway session instead — nothing waits, nothing shares a transcript.
+2. Resume the stored session; cold-start when none exists or a reincarnation trigger has fired. If another ask holds the session, cold-start a throwaway session instead — nothing waits, nothing shares a transcript.
 3. Prompt: the question — plus, on resume, the changed-issue numbers with the instruction to re-read those entries from the mirror before answering. `--include-closed` marks a deliberate closed-history question (precedent, absence): `ghi-info` greps the closed file, and closed pointers are expected.
 4. Post-check: every returned pointer is verified against the mirror — plain script work; the fact is established here, never by the agent. An unexpected closed pointer triggers one drift notice back to `ghi-info`, carrying the fact and asking only for a judgment redo: "#31 closed on <date> — the mirror is current; re-read its entry in `issues-closed.md`, including any `Superseded-by:` link, and give a corrected reading list." One recheck per ask; the agent reads only mirror files and never calls GitHub. Whatever remains is delivered with truthful tags ("#31 (closed 2026-08-08)"); note lines are plain sentences. Replies that are not reading lists — `escalate:`, `out-of-scope` — pass through to the caller verbatim; the caller owns the escalation and must not swallow it. Unexpected closed pointers count toward the stale-match trigger; expected ones do not.
 5. Print the list.
 
 One overall timeout (inside the hook budget); a killed run is a named failure. Auth is the box's two credentials — its `gh` login and its long-lived Claude token (interactive logins expire unattended). Precedent: nedsmessenger runs this pattern live (`~/Projects/nedsmessenger/adapter/adapter.py`, `ask_claude` — headless `claude -p --resume`, answer off the exit stream; NM runs three watchdogs where version 1 here starts with one timeout).
 
-**A failed ask never blocks a write.** The ladder: ask → grep the local mirror (stale if not regenerated) → `gh` search → proceed under the ordinary rules — the `ghi-write` skill and the artifact-lifecycle rule. Self-correction: a GHI author who finds a relation `ghi-info` missed adds the cross-link while editing; the next refresh carries it into the corpus, and answers reflect it after the next reload — a lag bounded by the recycle triggers.
+**A failed ask never blocks a write.** The ladder: ask → grep the local mirror (stale if not regenerated) → `gh` search → proceed under the ordinary rules — the `ghi-write` skill and the artifact-lifecycle rule. Self-correction: a GHI author who finds a relation `ghi-info` missed adds the cross-link while editing; the next refresh carries it into the corpus, and answers reflect it after the next reload — a lag bounded by the reincarnation triggers.
 
 ## The GHI write path (ghi-issue-write)
 
@@ -62,7 +62,7 @@ The tool's sequence per write:
 1. **Reference check.** In-repo paths cited in the body must resolve on main. A failing reference refuses with both branches: land the MD first, or file without the reference and add it by edit once landed. No GHI is required to cite an MD — the check is reactive to what the body cites.
 2. **Similarity adjudication** (§ What ghi-info is; the edit's own issue excluded). Fail-open: `ghi-info` unreachable means the write proceeds without adjudication — the mechanical checks still run.
 3. **The write**, via `gh` internally; the tool relays `gh`'s own output verbatim and appends its lines after it.
-4. **Length measurement** — no author counts words. Over the limit, the reply instructs: keep a good summary in the body; merge the substance into the linked pair MD, creating or updating it. The author holds the context, so the author does the split; what to link comes from asking `ghi-info`.
+4. **Length measurement** — no author counts words. Over the limit, the reply instructs: keep a good summary in the body; merge the substance into the linked GHI-MD, creating or updating it. The author holds the context, so the author does the split; what to link comes from asking `ghi-info`.
 
 Accepted residual: an issue can change between verdict and write.
 
@@ -76,7 +76,7 @@ Accepted residual: an issue can change between verdict and write.
 
 ## Maintenance and fixers
 
-The sweep is script work riding the two feeds: the length check over changed bodies, the `Superseded-by:` marker scan, and the link-integrity scan in both directions (the MD side read from the repo checkout, not the mirror). Findings spawn **one-shot focused fixer agents** (the class in [26-dynamic-agent-team-model.md](26-dynamic-agent-team-model.md); launched per [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41)) with tight briefs — one defect each, verbatim in § Prompts. Fixers write through the normal path; their reading list is pre-fetched by the sweep, so the fixer invokes nothing to discover its inputs. **Fixer repairs land on main immediately (user-ruled 2026-08-11, an explicit exception to the review-lane convention):** the fixer commits and pushes its document changes itself — on a push race, re-pull and retry once, else blocked — the same immediacy the issue half of every repair already has through gh. The guardrails are the brief's blocked conditions, and the record is append-forward and revertable; the same ruling covers `ghi-info`'s document-side link repairs. `ghi-info` repairs links only, never substance. Pair staleness is swept in one direction only — issue moved, pair MD not. The reverse (MD landed on main, issue silent since) is deliberately unswept (user-ruled 2026-08-11): MD-ahead is the pair sequence's normal intermediate state, and the body is a summary many MD edits never touch. **Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). The sweep files a blocked fix's escalation from the fixer's `blocked:` reply — one `draft`-labeled issue naming what blocked it. Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
+The sweep is script work riding the two feeds: the length check over changed bodies, the `Superseded-by:` marker scan, and the link-integrity scan in both directions (the MD side read from the repo checkout, not the mirror). Findings spawn **one-shot focused fixer agents** (the class in [26-dynamic-agent-team-model.md](26-dynamic-agent-team-model.md); launched per [nedschorus#41](https://github.com/nedschorus/nedschorus/issues/41)) with tight briefs — one defect each, verbatim in § Prompts. Fixers write through the normal path; their reading list is pre-fetched by the sweep, so the fixer invokes nothing to discover its inputs. **Fixer repairs land on main immediately (user-ruled 2026-08-11, an explicit exception to the review-lane convention):** the fixer commits and pushes its document changes itself — on a push race, re-pull and retry once, else blocked — the same immediacy the issue half of every repair already has through gh. The guardrails are the brief's blocked conditions, and the record is append-forward and revertable; the same ruling covers `ghi-info`'s document-side link repairs. `ghi-info` repairs links only, never substance. Pair staleness is swept in one direction only — issue moved, GHI-MD not. The reverse (MD landed on main, issue silent since) is deliberately unswept (user-ruled 2026-08-11): MD-ahead is the pair sequence's normal intermediate state, and the body is a summary many MD edits never touch. **Accepted residual:** an author who lands the MD but never completes the cite step goes uncaught by this sweep; the link-integrity scan does not catch it either (a never-added link resolves vacuously). The sweep files a blocked fix's escalation from the fixer's `blocked:` reply — one `draft`-labeled issue naming what blocked it. Which model and runtime serve each role best — `ghi-info`, fixers, adjudication; Claude or Codex; fable, opus, sonnet — is an open question, settled empirically.
 
 ## The three-layer stack
 
@@ -99,22 +99,22 @@ The sweep is script work riding the two feeds: the length check over changed bod
 
 ## Prompts
 
-Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a zero-context reader. This section passes its own cold read before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
+Every prompt this design depends on, verbatim (user-ruled 2026-08-09/11): a prompt that exists only as description is not buildable or reviewable. Each opens for a fresh reader. This section passes its own cold read before the design's status closes. Angle-bracket `<slots>` are filled by the invoking script, never by the agent receiving the prompt.
 
 
-### Fixer brief — pair document behind its issue
+### Fixer brief — GHI-MD behind its issue
 
 The sweep fills every slot, including the reading list, which it gets by running `ghi-info-ask.py` itself before spawning — the fixer invokes nothing.
 
-> You are a fixer: a one-shot agent spawned when a maintenance script finds that a pair document in this project's GitHub-issue records has fallen behind its issue. Your entire purpose is to bring the one document below up to date, then exit.
+> You are a fixer: a one-shot agent spawned when a maintenance script finds that a GHI-MD (the markdown document paired with a GitHub issue) in this project's GitHub-issue records has fallen behind its issue. Your entire purpose is to bring the one document below up to date, then exit.
 >
-> Job: Issue #\<n\> changed on \<date\>; its pair document \<path\> is untouched since \<date\>. Update the document to match the issue's current state.
+> Job: Issue #\<n\> changed on \<date\>; its GHI-MD \<path\> is untouched since \<date\>. Update the document to match the issue's current state.
 >
-> Read first: issue #\<n\>; its pair document at \<path\>; and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
+> Read first: issue #\<n\>; its GHI-MD at \<path\>; and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
 >
 > Rules:
 >
-> - You change only the pair document, committed with a message stating what and why and landed on main immediately: push; on a push race, re-pull and retry once — if it still fails, report blocked. You do not write to any issue.
+> - You change only the GHI-MD, committed with a message stating what and why and landed on main immediately: push; on a push race, re-pull and retry once — if it still fails, report blocked. You do not write to any issue.
 > - Do only the job stated above.
 >
 > Stop and report blocked instead of editing if:
@@ -135,15 +135,15 @@ Same slot-filling contract as above. The ruled-text handling is the verbatim-mov
 
 > You are a fixer: a one-shot agent spawned when a maintenance script finds an issue body in this project's GitHub-issue records grown past the length limit. Your entire purpose is to shorten the one body below, then exit.
 >
-> Job: Issue #\<n\>'s body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into its pair document \<path\>, creating it if it does not exist.
+> Job: Issue #\<n\>'s body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into its GHI-MD (the markdown document paired with the issue) \<path\>, creating it if it does not exist.
 >
-> Read first: issue #\<n\>; its pair document at \<path\> (may not exist yet); and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
+> Read first: issue #\<n\>; its GHI-MD at \<path\> (may not exist yet); and these related issues: \<the list ghi-info returned when the sweep asked on your behalf, e.g. #13, #24\>.
 >
 > Rules:
 >
 > - Land the document before the body edit: document changes are committed with a message stating what and why and pushed to main immediately (on a push race, re-pull and retry once; if it still fails, report blocked). The body edit then goes through gh as normal — the write tool refuses citations that do not resolve on main, which is why the document lands first.
-> - Nothing removed from the body may be lost: it must land in the pair document.
-> - Text marked as ruled ("user-ruled", "boss-ruled", "Accepted residual", a dated ruling) moves only word-for-word: carry it into the pair document verbatim, and have the body's summary cite where it went.
+> - Nothing removed from the body may be lost: it must land in the GHI-MD.
+> - Text marked as ruled ("user-ruled", "boss-ruled", "Accepted residual", a dated ruling) moves only word-for-word: carry it into the GHI-MD verbatim, and have the body's summary cite where it went.
 > - Do only the job stated above.
 >
 > Stop and report blocked instead of editing if:
@@ -163,7 +163,7 @@ Same slot-filling contract as above. The ruled-text handling is the verbatim-mov
 
 ### Cold-start prompt (ghi-info session birth)
 
-Delivered as the first prompt of a fresh session — cold start fires when no stored session exists or a recycle trigger has fired (ghi-info-ask step 2). The ask itself follows, worded per the resume-ask prompt. `<mirror-path>` is wrapper-filled.
+Delivered as the first prompt of a fresh session — cold start fires when no stored session exists or a reincarnation trigger has fired (ghi-info-ask step 2). The ask itself follows, worded per the resume-ask prompt. `<mirror-path>` is wrapper-filled.
 
 > You are ghi-info: this project's knowledge agent over its GitHub-issue corpus. Other agents send you one request at a time; you answer it from the corpus you hold in context and stop. You are the judgment layer — every mechanical fact (fetching, counting, verifying) is script work done for you before a request reaches you.
 >
@@ -229,7 +229,7 @@ Sent by the sweep for each link-integrity finding — `ghi-info`'s one write cla
 
 Run by the sweep through scripts/ghi-info-ask.py, like any ask; the answer becomes the brief's related-issues list. A failed ask never blocks a repair: the sweep spawns the fixer with the related-issues clause dropped from the brief. (A dead box credential stalls far more than this ask; that fleet-wide case is the sweep's credential check, § Verify at build.)
 
-> A fixer is about to \<the job in one clause, e.g.: update the pair document docs/issues/31-foo.md to match issue #31's current state — or: shorten issue #17's body, merging the substance into its pair document\>. What should it read first?
+> A fixer is about to \<the job in one clause, e.g.: update the GHI-MD docs/issues/31-foo.md to match issue #31's current state — or: shorten issue #17's body, merging the substance into its GHI-MD\>. What should it read first?
 
 ### Write tool replies (refusals and appended instructions)
 
@@ -267,7 +267,7 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 
 **Over-length instruction** (appended when the landed body exceeds the limit):
 
-> This body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into the linked pair MD, creating or updating it. Ask ghi-info what to link.
+> This body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into the linked GHI-MD (the markdown document paired with the issue), creating or updating it. Ask ghi-info what to link.
 
 ## Deliberately not in version 1
 
@@ -284,7 +284,7 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 
 Each with its failure branch (item 7 is a plain measurement and carries none):
 
-1. An issue's `updated` timestamp moves on close, reopen, and label changes as on body edits and comments (documented; untested here) — else the recycle-time rewrite bounds the lag.
+1. An issue's `updated` timestamp moves on close, reopen, and label changes as on body edits and comments (documented; untested here) — else the reincarnation-time rewrite bounds the lag.
 2. `updatedInput` combined with `additionalContext` in one PreToolUse reply (undocumented) — else the tool's reply carries everything and context injection goes unused.
 3. Codex-side pre-tool hook equivalents (the runtime has hooks; field names unverified) — else Codex writes stay in the accepted-holes class.
 4. The cross-reference timeline event as the backlink source for issue↔issue links (API shape) — else backlinks derive from body parsing alone.
@@ -292,4 +292,4 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 6. Both box credentials survive unattended operation (the box's auth has expired before) — the sweep checks validity and flags expiry before it bites.
 7. Comment-fetch cost at real volume (measured once: 0.42 s for one issue with comments).
 
-**Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: `BODY_WORD_LIMIT` 1000 (in the write tool; the sweep imports it); closes-since-birth recycle threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
+**Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: `BODY_WORD_LIMIT` 1000 (in the write tool; the sweep imports it); closes-since-birth reincarnation threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.

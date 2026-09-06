@@ -16,7 +16,7 @@ The existing rule requires a topic to start from current main but does not say w
 
 # 2. Where you stumbled
 
-1. [question] "the handoff supervisor states it plainly in its own source" — Where is that source, so a zero-context reader can verify the stated reason for the seat branch?
+1. [question] "the handoff supervisor states it plainly in its own source" — Where is that source, so a fresh reader can verify the stated reason for the seat branch?
 
 2. [question] "return the seat's home to the seat's own branch, fast-forwarded to main" — Which branch is the seat's own branch, and what action returns the home to it when it is currently on a topic branch?
 

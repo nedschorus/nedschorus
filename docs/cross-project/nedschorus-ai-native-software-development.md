@@ -582,7 +582,7 @@ The following is a repository-and-GHI snapshot, not a statement that every propo
 
 | Component | Current Nedschorus state | Fit and recommendation |
 | --- | --- | --- |
-| [Fresh-context cold-read grid](https://github.com/nedschorus/nedschorus/blob/main/scripts/cold-read-grid.py) and Claude/Codex cells | **Built** | Keep. It is the clearest existing implementation of independent, zero-context artifact review. Extend its result records into the common node schema. |
+| [Fresh-reader cold-read run](https://github.com/nedschorus/nedschorus/blob/main/scripts/cold-read-grid.py) and Claude/Codex cells | **Built** | Keep. It is the clearest existing implementation of independent, fresh-reader artifact review. Extend its result records into the common node schema. |
 | Handoff writer, supervisor, threshold hook, and transcript extraction | **Built** | Keep. Generalize the [existing handoff design](https://github.com/nedschorus/nedschorus/blob/main/docs/cross-project/fast-handoff-design.md) from session continuity into per-work-item master checkpoints; do not call it semantic compaction when it is primarily handoff plus transcript preservation. |
 | [main-gatekeeper](https://github.com/nedschorus/nedschorus/blob/main/scripts/main-gatekeeper.py) and extensive test suite | **Built, but the final live gate is constrained/dormant** | Keep its explicit state machine, idempotent digest, atomic-push concurrency, refusal messages, and recovery semantics. Activate only when the repository’s branch-protection and review policy are reconciled. |
 | Branch protection and PR lane | **Built/active infrastructure** | Keep as the current single gate to `main`. Required checks are useful now; a merge queue is optional later. |
@@ -703,7 +703,7 @@ These are the present architectural decisions established by the human direction
 11. **Observability is part of design and testing.** Each change defines the evidence needed to distinguish important failure hypotheses, with explicit privacy and retention limits.
 12. **Complexity is earned:** manual → human-invoked script → automation. Add machinery only for a demonstrated consumer or failure.
 13. **Behavior belongs in deterministic code when it can be expressed safely there.** Prompts handle judgment and unenumerated inputs; code handles permissions, state transitions, counters, validation, repeatable transforms, and promotion.
-14. **There is one gate to `main`.** The main-gatekeeper is the permanent check-in path. The interim pull-request lane in `CLAUDE.md` remains current until that gate is active.
+14. **There is one gate to `main`.** The main-gatekeeper is the permanent check-in path. The PR process in `CLAUDE.md` remains current until that gate is active.
 15. **Durable artifacts are written for an independent reader.** A reader with the repository, applicable project instructions, and the artifact should not need the conversation that created it.
 16. **The old `nedlern` system is legacy reference, not an inherited specification.** When work deliberately reuses it, touched features are classified as `preserve-feature`, `update-feature`, `remove-feature`, or `consider-feature`; unexamined behavior is not preserved by default.
 17. **Public sources are judged by usefulness and reliability.** Unofficial material may inform a decision but never becomes a runtime contract merely by being quoted.
@@ -717,7 +717,7 @@ The existing Nedschorus placement rule remains useful: GitHub Issues carry walka
 | `docs/wiki/` | Current standing knowledge that is difficult to reconstruct from code alone |
 | `docs/issues/<n>-<slug>.md` | Substantive working material paired with a GitHub Issue |
 | `docs/cross-project/` | Current designs and specifications shared across Nedschorus systems |
-| `handoff/` and machine-local transcripts | Session continuity and complete conversation evidence |
+| `handoff/` and uncommitted transcripts on each machine | Session continuity and complete conversation evidence |
 | `nc-queue/` | Human-requested notes awaiting their initial review |
 | `docs/wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review |
 | `legacy-feature-queue/` | Legacy behavior whose disposition is not yet decidable |
@@ -728,7 +728,7 @@ The existing Nedschorus placement rule remains useful: GitHub Issues carry walka
 
 Every artifact is either current at its named home or in a named queue with a drain. A queue item is reviewed by the human and then promoted, edited in place, demoted to supporting evidence, or dropped with a recorded reason.
 
-A substantial work item uses an MD-GHI pair: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository’s established archive, promotion, or deletion rule.
+A substantial work item uses a GHI-MD: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository’s established archive, promotion, or deletion rule.
 
 Logical artifact versions are immutable even when their repository file is revised in place. Git commit and content hash identify the accepted version; an edit creates a new logical version and `supersedes` edge. Reviews and descendants remain tied to the old hash until reconciliation accepts them against the new one.
 
