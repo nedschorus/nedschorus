@@ -865,8 +865,9 @@ with tempfile.TemporaryDirectory() as scratch:
     # trial: every cell had to run at a named effort while the Codex tier map
     # pins xhigh, and an override quietly running the mapped level would have
     # measured the wrong configuration under a stamp naming the right one.
-    # The ruled fast tier (2026-08-30: gpt-5.6-terra at low) runs through
-    # this same flag.
+    # The fast tier ran through this same flag (2026-08-30: gpt-5.6-terra at
+    # low) until 2026-09-07, when it got a launcher of its own that pins low
+    # (scripts/cold-read-agy-cell.py); on these two legs it is still the flag.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "effort-default", "claude")
