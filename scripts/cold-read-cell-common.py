@@ -65,13 +65,13 @@ the doing cost -- so `duration_s=`, and `tokens=` where the runtime reports
 one, are now stamped alongside the model and the tier.
 
 A THIRD LEG, 2026-09-07: scripts/cold-read-agy-cell.py runs the Antigravity
-CLI (`agy`) and pins the fast tier (user-ruled that day: gemini-3.8-flash at
-low). It is built on this module exactly as the other two are, and it adds
-one seam the others leave unused -- a launcher-supplied rule for taking the
-runtime's stdout as the report when the model answered in chat instead of
-writing the file (`recover_report_from_runtime_stdout`). The rule is the
-launcher's because the quirk is the runtime's; the writing, stamping and
-announcing stay here so the leg cannot drift.
+CLI (`agy`) and pins the fast tier (user-ruled that day, after measurements:
+gemini-3.8-flash at medium). It is built on this module exactly as the other
+two are, and it adds one seam the others leave unused -- a launcher-supplied
+rule for taking the runtime's stdout as the report when the model answered in
+chat instead of writing the file (`recover_report_from_runtime_stdout`). The
+rule is the launcher's because the quirk is the runtime's; the writing,
+stamping and announcing stay here so the leg cannot drift.
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # Every tier any launcher pins. A launcher serves the subset its own tier map
 # names, and its --tier accepts only that subset (see `build_argument_parser`):
-# `fast` (user-ruled 2026-09-07: gemini-3.8-flash at low, replacing
+# `fast` (user-ruled 2026-09-07: gemini-3.8-flash at medium, replacing
 # gpt-5.6-terra at low) is pinned by scripts/cold-read-agy-cell.py alone, and
 # `good` and `floor` by the Claude and Codex launchers alone, so no launcher
 # can be asked for a tier it has no model for.
@@ -204,7 +204,7 @@ def build_argument_parser(
              "effort is answering the question the tier map exists to answer, "
              "and quietly running the mapped level instead would defeat the "
              "request. The fast tier's own launcher "
-             "(scripts/cold-read-agy-cell.py) pins low; on the Claude and "
+             "(scripts/cold-read-agy-cell.py) pins medium; on the Claude and "
              "Codex launchers a low-effort run goes through this flag.",
     )
     parser.add_argument(
