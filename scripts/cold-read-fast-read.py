@@ -30,13 +30,11 @@ model receives is FAST_CLARIFY_PROMPT_TEMPLATE below, fed to the launcher
 through --prompt-file from a temporary file, with --cell fast-clarify naming
 the pass. The cell's provenance stamp therefore carries a `prompt_file=`
 field naming that temporary file; its basename says where the text came
-from. The template is PROVISIONAL: it is the text of
-.claude/skills/cold-read/prompts/fast-clarify.md as it stood on main on
-2026-09-07, copied here unchanged, and it will be replaced after the MD-skills
-seat walks the prompt text with the user (their task #57). Replacing it is a
-one-hunk change to that one constant; nothing else in this file knows what
-the text says. The prompt file under the skill is not read by this program
-and is not edited by this change.
+from. The template is the user's own text: his rewrite of
+.claude/skills/cold-read/prompts/fast-clarify.md, landed by PR #271 on
+2026-09-07, copied here verbatim. A change to the instructions is a one-hunk
+change to that one constant; nothing else in this file knows what the text
+says. The prompt file under the skill is not read by this program.
 
 ONE RETRY, AND WHY NOT MORE. The fast read is a walk's instrument, and the
 walk is waiting on it: a cell that fails once -- a transient CLI error, a
@@ -73,36 +71,40 @@ EXIT_BAD_INVOCATION = 64
 # `prompt_file=` stamp field, so it says where the text came from.
 EMBEDDED_PROMPT_FILE_NAME = "cold-read-fast-read-embedded-fast-clarify-prompt.md"
 
-# PROVISIONAL (see the docstring): .claude/skills/cold-read/prompts/fast-clarify.md
-# as on main 2026-09-07, verbatim. To be replaced after the MD-skills seat's
-# walk of the prompt text with the user (their task #57). {TARGET_PATH} and
+# The user's text (see the docstring): .claude/skills/cold-read/prompts/fast-clarify.md
+# as landed by PR #271 on 2026-09-07, verbatim. {TARGET_PATH} and
 # {REPORT_PATH} are substituted by the cell launcher.
 FAST_CLARIFY_PROMPT_TEMPLATE = """\
-Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Your context is deliberately minimal — what your runtime already loaded, the document under review, and whatever that document references by an explicit path. Nothing else: do not go looking. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this much. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report, described at the end.
+Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Your context is deliberately minimal — what your runtime already loaded, these documents, and whatever they reference by an explicit path. Nothing else: do not go looking. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this info. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report. If {TARGET_PATH} contains multiple documents, treat these documents as an atomic set, read all of them, then answer the 3 questions for each document in the report.
 
-## 1. What it says
+## Question 1: What it says
 
-Go section by section and restate, in your own words, what you take the text to
-mean. Write what you actually took it to mean, not what you suppose the author
-meant to say. Do not repair anything and do not fill gaps. BE CONCISE: one to
-three sentences per section, complete in meaning — every claim the section makes
-should be recognizable in your restatement — but not elaborated: no quotes, no
-examples, no commentary. This section exists so the author can check whether
-what you understood matches what they meant.
+Restate each document or source text as a list of bullets and sub-bullets, one bullet per sentence, one sub bullet per point, action, fact, idea, concept or claim, in that sentence, in the order they were originally presented. A sentence may contain many points. Do not merge or omit details. Restate each point in your own words, literally and precisely. If the sentence does not make sense to you, your restatement may also not make sense, in which case add a ??? to the end that bullet. If there is a clear gap in the source text note that gap with bullet or sub-bullet that says ?gap?. Your rewrite should be roughly double the length of the original. This section-question exists so the author can check whether you understood what they meant, which is why you should be literal, and not try to guess a coherent meaning if there is none.  Your rewrite helps the author determine if other agents correctly parse their text. 
 
-## 2. Where you stumbled
+## Question 2: Where you struggled
 
-Name every place you had to guess, every word you could not resolve, and anything you could read two ways. A word you resolved only by assuming something the document never says is a stumble, even when your assumption turns out to be right — the next reader may assume differently. So is a term the document uses as if it were already defined, a reference you could not follow, and a pronoun whose subject you had to pick. BE CONCISE: for each item, quote the exact phrase and then give AT MOST ONE OR TWO SENTENCES naming what is unclear and why it matters. Focus on the issues that would actually block a fresh reader from acting on the document; a wobble a reader would resolve correctly anyway can be a single short line. Do not pad, do not restate the document, and do not repeat yourself between items. Report every real issue you found — conciseness is about the length of each item, never about dropping a genuine problem.
+Note where an agent might waste tokens or come to incorrect conclusions:
 
-## 3. What it does not cover
+* every place in the text that seemed unclear, opaque, incoherent.
+* ambiguities - phrases or sentences that could read two different ways, in which case describe both readings, including the use of pronouns with ambiguous subjects
+* references that go nowhere
+* meanings you resolved only by reading into it your own ideas, because the document is not clear and complete.
+* undefined terms, or terms the document uses as if they were already defined
+* references you could not follow
 
-The text tells a reader what to do in the situations it names. Find the situations it does not settle: one that matches none of its cases, and one that matches two of its cases at once without saying which wins. Take each rule, instruction, list of cases, or definition the document sets out, and ask what a reader can hit that it does not answer — a boundary value falling between two cases, a state the document's own machinery reaches but never names, a step with no stated stopping point, a failure the text neither handles nor rules out. BE CONCISE here too: for each item, quote the rule involved and describe the unhandled situation in at most one or two sentences. The same rule applies — every real gap gets an item, and no item gets padding. Ask this only of what {TARGET_PATH} sets out to govern itself; a subject it never takes up is not a gap.
+BE CONCISE: for each issue, quote the exact phrase and then a sentence naming the defect and and why it matters. Focus on issues that would actually misdirect or block a fresh reader following the document's instructions. Report every real issue you found — conciseness is about the length of each item, never about dropping a genuine problem. Number each item. 
 
-Number the items in sections 2 and 3 separately, ORDERED MOST IMPORTANT FIRST — the issue most likely to stop a fresh reader leads its section — each opening with the quoted phrase it is about. OPEN EVERY ITEM WITH A CRITERION TAG — one bracket token naming what the finding violates: [guess] you had to guess; [term] a word or name you could not resolve; [two-readings] readable two ways; [no-rule] a situation left without a rule; [rule-conflict] a situation matching two rules at once; [other] plus one word when none fits. The tag comes before the quoted phrase. A ROUTING RULE RIDES THE TAGS, in both numbered sections: when the document itself cannot answer the thing you found — an undefined name, a reference that goes nowhere, a term whose meaning the document nowhere contains, a rule the document never states, two rules with no stated winner — PHRASE THE ITEM AS A QUESTION for the document's author or owner. Never phrase it as a rewrite instruction and never suggest what the answer might be: a rewriter who is handed a gap phrased as an instruction will invent an answer, and two rewriters will invent two different ones. In section 2, tag such an item [question] in place of the tag it would otherwise take — a [term] is only a [term] when the document contains the answer. In section 3, keep the [no-rule] or [rule-conflict] tag and still write the item as the question the owner must answer. A question-phrased item is one sentence: the quoted phrase, then the question. Do not propose fixes and do not rate severity or importance. When a section has nothing in it, write the section heading and one sentence saying you found nothing there and what you examined — a section left out reads as a section you skipped.
+## Question 3: What it does not cover that it implies it should
 
-HOW TO DELIVER YOUR ANSWER. Write your answer to {REPORT_PATH}, with whatever file-writing tool you have. That file is your entire deliverable: this cell discards what you say in conversation, so an answer given only in chat is a lost answer. Write it once, when your analysis is complete, rather than building it up across several writes.
+The text explains something or tells its reader what to do. Find the gaps within its logic, situations it covers incompletely, likely cases or states that are not covered, or are covered in conflicting ways. Take each rule, instruction, case, or definition the document states, and ask what a reader needs to know that is not explained — a boundary value falling between two cases, a state the document's own machinery could reach but never names, a step with no stopping point, a failure the text neither handles nor rules out. BE CONCISE here too: for each gap, quote the relevant text and describe its gap. Ask this only of what {TARGET_PATH} sets out to cover; a subject it never takes up is not a gap.
 
-Write {REPORT_PATH} even when all three sections come back empty: say so in a sentence and name what you examined. A missing or empty report is read as a run that did not happen, and it is discarded and rerun. {REPORT_PATH} is the only file to create; write nothing anywhere else.
+Number the items in sections 2 and 3 separately, ORDERED MOST IMPORTANT FIRST — the issue most likely to stop a fresh reader leads its section. If there are no issues, say "No issues"
+
+{REPORT_PATH} is the only file to create; write nothing anywhere else.
+
+
+
+Write your report to {REPORT_PATH}, once, when your analysis is complete. That file is your entire deliverable: what you say in conversation is discarded. Start your report with a list of the files you were told to examine. Note if you were unable to read any of them. Create no other file.
 """
 
 PROGRAM = "cold-read-fast-read"
