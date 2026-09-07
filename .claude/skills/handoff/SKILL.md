@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the recycle threshold is reached, or when the user asks for a handoff or a restart.
+description: Hand this session over to a fresh one. A program gives your successor everything except one piece — what their first action should be to continue your work from this exact point — and writing that piece is your job. Use when a system message says the reincarnation threshold is reached, or when the user asks for a handoff or a restart.
 ---
 
 # handoff
