@@ -199,7 +199,7 @@ bytes differed between the moment the cells launched and the moment the last one
 finished, so which text any one report describes is unknown.
 
 Do not triage this set as a review of the document. Stop editing the document
-and run the grid again against the settled text.
+and start a new cold-read run against the settled text.
 
 Keep the set. Each report still records truthfully what one reviewer read, which
 is evidence of what the reviewers saw — not of how the file now stands.
