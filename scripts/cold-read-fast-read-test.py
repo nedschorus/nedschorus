@@ -58,9 +58,19 @@ SCRIPT_NAMES = (
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
-# A phrase the embedded template carries and no case's own text does, so a
-# prompt read from the wrong place fails here by content.
-EMBEDDED_PROMPT_MARKER = "HOW TO DELIVER YOUR ANSWER"
+# The embedded template itself, read from the script under test, so the
+# check below compares what the model received against what the script
+# carries. A fixed phrase was used until 2026-09-07, when the user's rewrite
+# of the instructions (PR #271) dropped the phrase and the check failed on
+# text, not on the mechanism; reading the constant keeps the check honest
+# through every future edit of the instructions.
+def embedded_prompt_template() -> str:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cold_read_fast_read_under_test", SCRIPTS_DIR / "cold-read-fast-read.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.FAST_CLARIFY_PROMPT_TEMPLATE
 
 # The stub `agy`: the model from --model, the prompt from --print's value,
 # the plan from the environment, and a counter file that counts launches so
@@ -297,8 +307,11 @@ with tempfile.TemporaryDirectory() as scratch:
         suggestions, walk_draft_relative, counter,
     )
     received_prompt = prompt_dump.read_text(encoding="utf-8") if prompt_dump.is_file() else ""
+    expected_prompt = (embedded_prompt_template()
+                       .replace("{TARGET_PATH}", str(repository / walk_draft_relative))
+                       .replace("{REPORT_PATH}", str(suggestions)))
     check("the model receives the template embedded in the script",
-          result.returncode == 0 and EMBEDDED_PROMPT_MARKER in received_prompt,
+          result.returncode == 0 and received_prompt.strip() == expected_prompt.strip(),
           f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
     check("both paths are substituted and no placeholder remains",
           str(repository / walk_draft_relative) in received_prompt
