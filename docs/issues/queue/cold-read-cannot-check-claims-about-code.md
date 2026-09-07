@@ -112,7 +112,7 @@ verification pass as the live candidate.
 
 **The rule also depends on this instrument.** Its own words: operative prose
 is "taken as given, because it is reviewed BEFORE the pull request by the
-instruments built for prose — the cold-read grid and the user." A documented
+instruments built for prose — the cold-read run and the user." A documented
 blind spot in the cold read is therefore a hole in the rule's premise, which
 raises this finding's priority rather than retiring it.
 
