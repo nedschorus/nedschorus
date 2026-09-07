@@ -25,13 +25,13 @@ other trees stay writable from any state. And where the write LANDS
 (user-walked 2026-08-17): a write whose target sits inside the reference
 checkout while the session is seated elsewhere is refused — every recorded
 cross-checkout incident (the twelve-document bench of 2026-08-14, the
-misplaced review records, the misplaced walk ledger) targeted exactly that
+misplaced review records, the misplaced walk minutes) targeted exactly that
 copy. Deliberately narrow: writes into scratch worktrees, throwaway clones,
 and other seats' trees are NOT blocked — the first two are ordinary work,
 and the third has no recorded incident (recorded as unbuilt; an incident is
 its build trigger).
 
-The exception lane, designed in from the start: the merge lane legitimately
+The exception lane, designed in from the start: merge-lane legitimately
 edits files in the reference checkout while resolving merge conflicts. The
 user's approval for that specific work, quoted into .location-write-approved
 at the root of the session's checkout, passes exactly one write per marker —
@@ -100,7 +100,7 @@ REFERENCE_DENY_MESSAGE = (
     "Refusing to write {path}: this session sits in the machine's reference checkout — the "
     "main worktree other agents read as the truth about main. Work belongs in your own "
     "worktree; use it and leave this copy as reference. If this write IS legitimate work "
-    "in this checkout — the merge lane resolving conflicts, with the user's approval — "
+    "in this checkout — merge-lane resolving conflicts, with the user's approval — "
     "quote his approval words into {marker} at the checkout root and resubmit; the marker "
     "is consumed by the one call it approves. Create the marker with a shell command "
     "(printf/echo): writing it with the Write tool would be refused by this same guard."
@@ -110,8 +110,8 @@ CROSS_REFERENCE_DENY_MESSAGE = (
     "Refusing to write {path}: it lands inside the machine's reference checkout — the main "
     "worktree other agents read as the truth about main — while this session is seated "
     "elsewhere. Work belongs in your own worktree; if this write must land there, land it "
-    "through a branch and the merge lane instead. If it IS legitimate direct work — the "
-    "merge lane resolving conflicts, with the user's approval — quote his approval words "
+    "through a branch and merge-lane instead. If it IS legitimate direct work — "
+    "merge-lane resolving conflicts, with the user's approval — quote his approval words "
     "into {marker} at the root of your own checkout and resubmit; the marker is consumed "
     "by the one call it approves."
 )
