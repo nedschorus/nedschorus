@@ -365,9 +365,10 @@ with tempfile.TemporaryDirectory() as scratch:
     # exit-3 path must not close with the instructions to triage the set.
     check("a moved target does not get the closing instructions to triage",
           "All six reviews are complete" not in result.stdout, repr(result.stdout))
-    check("a moved target is told to stop editing and run the grid again",
+    check("a moved target is told to stop editing and start a new cold-read run",
           "Stop editing the document" in result.stdout
-          and "Do not triage this set" in result.stdout, repr(result.stdout))
+          and "Do not triage this set" in result.stdout
+          and "start a new cold-read run" in result.stdout, repr(result.stdout))
     record_directory = record_directory_of(repository)
     check("the stderr logs are deleted on this path too",
           record_directory is not None
