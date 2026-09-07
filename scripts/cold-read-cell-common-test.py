@@ -592,6 +592,36 @@ with tempfile.TemporaryDirectory() as scratch:
           "I read the document and then wrote nothing." in result.stderr,
           repr(result.stderr))
 
+    # And a LONG stdout with no file is still not a report on this leg. The
+    # Antigravity launcher (scripts/cold-read-agy-cell.py, 2026-09-07) opts
+    # into taking a review-length stdout as the report, through a rule only
+    # it passes to the shared module; the Claude and Codex legs pass none,
+    # and this case is what fails if the rule ever leaks to them.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "long-chat-claude", "claude")
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"stdout": " ".join(f"word{index}" for index in range(150)) + "\n"}},
+        report,
+    )
+    check("a review-length stdout with no file is not a report on the Claude leg",
+          result.returncode == 1 and not report.exists()
+          and "recovered the report from the model's chat output" not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "long-chat-codex", "codex")
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"stdout": " ".join(f"word{index}" for index in range(150)) + "\n"}},
+        report,
+    )
+    check("a review-length stdout with no file is not a report on the Codex leg",
+          result.returncode == 1 and not report.exists()
+          and "recovered the report from the model's chat output" not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
     # --- Failing to look says so, in the words the grid lifts -------------
     # Two ways the check cannot run, and both must be distinguishable from a
     # clean result — that is the whole reason WriteDetectorUnavailable is an
