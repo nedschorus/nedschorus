@@ -27,16 +27,15 @@ EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which every cell
 shares.
 
 WHAT THIS LEG IS FOR (user-ruled 2026-09-07 at the cold-read-research seat,
-after measurements, superseding that morning's ruling for low): the fast cold
-read runs on Gemini 3.8 Flash at MEDIUM, replacing gpt-5.6-terra at low. The
-measurements: about 100-110 s per document (single runs on a 658-word skill
-and a 1,967-word walk draft); on the ghi-write candidate defect list, medium
-found 42% of the rows against 19% at low, and medium and high hit the same
-rows, so medium is the cheapest effort that buys the recall. It is the one
-tier this launcher pins. The good and floor tiers stay on the Claude and Codex
-launchers, and this launcher refuses them (exit 64 from argparse) rather than
-running a Gemini model under a stamp that names a tier the roster never
-measured it on.
+after measurements, superseding the earlier ruling that day for low): the
+fast cold read runs on Gemini 3.8 Flash at MEDIUM, replacing gpt-5.6-terra at
+low. The measurements: about 100-110 s per document (single runs on a
+658-word skill and a 1,967-word walk draft); on the ghi-write candidate
+defect list, medium found 42% of the rows against 19% at low, and medium and
+high hit the same rows. It is the one tier this launcher pins. The good and
+floor tiers stay on the Claude and Codex launchers, and this launcher refuses
+them (exit 64 from argparse) rather than running a Gemini model under a stamp
+that names a tier the roster never measured it on.
 
 THE INVOCATION, as measured working in the 2026-09-04 campaign
 (cold-read-records/2026-09-03-cold-read-tier-roster-campaign/tools/
