@@ -147,11 +147,12 @@ EXIT_BAD_INVOCATION = cell_common.EXIT_BAD_INVOCATION
 CAUGHT_WEIGHT = 0.8
 STUPID_WEIGHT = 0.2
 
-# WHAT THE JUDGE'S REPORT LOOKS LIKE, as the prompt in the judge cell tells it
-# to write: a `## CASE <number>` heading per case, and under it one line per
-# item, each opening with one of three prefixes. Parsed line by line because
-# that is what the judge was asked for; an item wrapped onto a second line is
-# half an item, and the prompt says so.
+# WHAT THE JUDGE'S REPORT LOOKS LIKE, as the judge's prompt file tells it to
+# write -- neither program carries that text, see the docstring: a `## CASE
+# <number>` heading per case, and under it one line per item, each opening
+# with one of three prefixes. Parsed line by line because that is what the
+# judge was asked for; an item wrapped onto a second line is half an item, and
+# the prompt says so.
 CASE_HEADING_PATTERN = re.compile(r"^#{1,6}\s*CASE\s+(\d+)\s*$", re.IGNORECASE)
 # ANY other markdown heading, which ENDS the case above it. The markdown rule
 # -- hashes, then whitespace, then text -- deliberately, rather than anything

@@ -75,7 +75,7 @@ stamping and announcing stay here so the leg cannot drift.
 
 A CALLER THAT IS NOT A CELL LAUNCHER, 2026-09-07:
 scripts/cold-read-restater-judge-cell.py, the restater judge the user ruled
-that day. It reads four files per case rather than one target, so it cannot
+2026-09-05. It reads four files per case rather than one target, so it cannot
 use `run_cell`'s argument surface or `compose_prompt`; what it does use is
 everything from the composed prompt onwards -- `run_model_chain` and its
 chain, invariant, recovery, stray-write check, stamp and exit codes -- and
@@ -703,8 +703,8 @@ def run_model_chain(
     A CHAIN WHOSE MODELS RUN AT DIFFERENT EFFORTS (2026-09-07). Until the
     restater judge (scripts/cold-read-restater-judge-cell.py) every chain ran
     one effort, so `effort` was one string and the stamp used it. The judge's
-    chain is the user's ruling of that day: Fable 5.1 at xhigh, and Opus 5 at
-    max when Fable is unavailable. One chain, two efforts -- so a launcher
+    chain is the user's ruling of 2026-09-05: Fable 5.1 at xhigh, and Opus 5
+    at max when Fable is unavailable. One chain, two efforts -- so a launcher
     whose models differ passes `model_to_effort`, a model -> effort map, and
     the stamp names the effort of the model that ACTUALLY produced the report
     rather than the chain's first. `effort` stays the value for any model the
