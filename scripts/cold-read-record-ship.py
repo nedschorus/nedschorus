@@ -52,7 +52,8 @@ already in the store, which is how a seat catches up after the box was down,
 and how the records that predate the store were shipped once.
 
 OUTPUT. Exactly one line on stdout per record directory -- `shipped:`,
-`REFUSED:` or `FAILED:` -- and, under --all, one summary line after them.
+`REFUSED:` or `FAILED:`, or under --all `skipped:` for an empty directory,
+which is not a record -- and, under --all, one summary line after them.
 Everything else is on stderr. Exit 0 when every directory shipped, 2 when
 any was refused and none failed, 1 when any failed, 64 for a bad invocation.
 
@@ -317,13 +318,22 @@ def main() -> int:
 
     directories = sorted(p for p in RECORDS_DIR.glob("*") if p.is_dir()) \
         if RECORDS_DIR.is_dir() else []
-    shipped, refused, failed = [], [], []
+    shipped, refused, failed, skipped = [], [], [], []
     for record_dir in directories:
+        # An empty directory is not a record and not a failure: a run that
+        # made no reports left it, and counting it failed made every --all
+        # exit 1 until somebody deleted it (found by PR #285's reviewer). A
+        # single empty directory named on the command line is still exit 64.
+        if not any(record_dir.iterdir()):
+            print(f"skipped: {record_dir.name} — empty directory")
+            skipped.append(record_dir.name)
+            continue
         code = ship_one(host, records_path, record_dir)
         {EXIT_SHIPPED: shipped, EXIT_REFUSED: refused}.get(code, failed).append(record_dir.name)
     print(f"--all: {len(shipped)} shipped, {len(refused)} refused"
           f"{' (' + ', '.join(refused) + ')' if refused else ''}, {len(failed)} failed"
-          f"{' (' + ', '.join(failed) + ')' if failed else ''}, of {len(directories)}")
+          f"{' (' + ', '.join(failed) + ')' if failed else ''}, {len(skipped)} skipped"
+          f"{' (' + ', '.join(skipped) + ')' if skipped else ''}, of {len(directories)}")
     if failed:
         return EXIT_FAILED
     return EXIT_REFUSED if refused else EXIT_SHIPPED
