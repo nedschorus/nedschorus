@@ -244,12 +244,38 @@ if [ \$UPDATE_STATUS -eq 124 ]; then echo \"launch-claude-ubuntu: the update was
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never
 # answer and an attached one should not have to.
-PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\" && python3 -c 'import json,os,sys; \
+#
+# The flag is written through a temporary sibling that REPLACES the box's
+# ~/.claude.json, never by truncating it (as this step did until 2026-09-08):
+# that file is the harness's own live state file, written by every running
+# session, so a truncate-and-stream is a file the harness can read torn. The
+# reasoning in full, its precedent (write_atomically in
+# scripts/main-gatekeeper.py), the two places it departs from that
+# precedent, and what it deliberately does not fix — the read-modify-write,
+# and why no lock — are at the Mac twin, scripts/launch-claude-mac. Two
+# things here are the BOX's:
+#   - the program crosses P1 between SINGLE quotes, so it may contain no
+#     single quote of its own: every string in it is double-quoted, and the
+#     \" pairs below are this Mac's escaping of that double quote, which
+#     reaches the box as a plain " inside the single-quoted program;
+#   - the temporary file is created with dir= the target's OWN directory,
+#     which os.path.dirname resolves from the box-side ~ this program
+#     expands there. The rename is then within one filesystem — the box's
+#     $HOME — which is what makes it atomic. A temporary left to TMPDIR
+#     would not be: os.replace across filesystems raises rather than
+#     renaming, and a machine whose /tmp is its own filesystem is the
+#     ordinary case, not the exotic one.
+PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\" && python3 -c 'import json,os,pathlib,sys,tempfile; \
 p=os.path.expanduser(\"~/.claude.json\"); \
 d=json.load(open(p)) if os.path.exists(p) else {}; \
 t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
 d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
-json.dump(d,open(p,\"w\"),indent=2)' \"$AGENT_DIRECTORY_REMOTE\""
+m=os.stat(p).st_mode & 0o777 if os.path.exists(p) else 0o600; \
+h,w=tempfile.mkstemp(dir=os.path.dirname(p),prefix=\".claude.json.\",suffix=\".launch-claude-writing\"); \
+os.close(h); \
+pathlib.Path(w).write_text(json.dumps(d,indent=2),encoding=\"utf-8\"); \
+os.chmod(w,m); \
+os.replace(w,p)' \"$AGENT_DIRECTORY_REMOTE\""
 
 # The agent's home must be a CHECKOUT before the session starts, not after.
 # Project settings — the status line, the reincarnation Stop hook, the
