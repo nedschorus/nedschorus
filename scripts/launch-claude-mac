@@ -199,12 +199,58 @@ mkdir -p "$AGENT_DIRECTORY"
 # Pre-trust the agent directory: a fresh directory otherwise stops at Claude's
 # one-time folder-trust dialog, which a detached launch can never answer and an
 # attached one should not have to.
-python3 -c 'import json,os,sys
+#
+# The flag is written through a temporary sibling that REPLACES the file, and
+# never by truncating ~/.claude.json itself (as this step did until
+# 2026-09-08). That file is the harness's own live state file: running
+# sessions write it too — its mtime was observed changing mid-session on this
+# Mac — so a truncate-and-stream here is a file the harness can read torn,
+# and a fresh session reading torn JSON can stop at the very trust dialog
+# this step exists to skip. os.replace is atomic on macOS and Linux alike, so
+# a concurrent reader sees the whole old file or the whole new one, never a
+# partial one. The precedent is write_atomically in
+# scripts/main-gatekeeper.py (ruled 2026-08-12), and this follows it with two
+# measured differences:
+#   - the temporary name is mkstemp-unique rather than that function's fixed
+#     `.<name>.writing` sibling, because two launches can overlap here where
+#     the gatekeeper's single worker could not, and a shared temporary name
+#     lets one launcher rename the other's half-written file into place;
+#   - the bytes go out through Path.write_text, not open(path, "w").write().
+#     Measured 2026-09-08: with the plain-open form, a write that fails
+#     (RLIMIT_FSIZE, and a full disk the same way) leaves the buffered flush
+#     error to deallocation, where CPython IGNORES it — os.replace then
+#     published an EMPTY .claude.json and the launcher exited 0. write_text
+#     raises instead, so the failure stops before the replace and the
+#     original file is left untouched.
+# os.replace takes the temporary file's mode, not the target's, so the
+# original mode is carried across explicitly: this file may hold
+# credentials, and the harness's own copy was measured at 0600 on this Mac.
+# A file created fresh here is 0600 for the same reason, rather than the
+# umask-derived 0644 the old truncating open produced.
+#
+# What this deliberately does NOT fix: the read-modify-write itself. A
+# harness write landing between the read and the replace is still lost, and
+# so is one seat's flag when two launches overlap. No lock is taken, because
+# the harness holds no lock of ours and so a lock cannot close the case that
+# actually happens; a lock for the launcher-against-launcher case would mean
+# a permanent extra file in HOME for a collision the fleet has not seen
+# (recover-crashed-seats.py works through its seats one at a time,
+# resupervise-seat.py launches one), and a lock ON the target is useless
+# under rename — the second writer would hold it on the freed inode. What
+# remains after this change costs one trust flag, and so at worst one
+# re-shown dialog; what it removes is a corrupted state file.
+# The twin does the same on the box, at scripts/launch-claude-ubuntu.
+python3 -c 'import json, os, pathlib, sys, tempfile
 path = os.path.expanduser("~/.claude.json")
 settings = json.load(open(path)) if os.path.exists(path) else {}
 target = os.path.abspath(os.path.expanduser(sys.argv[1]))
 settings.setdefault("projects", {}).setdefault(target, {})["hasTrustDialogAccepted"] = True
-json.dump(settings, open(path, "w"), indent=2)' "$AGENT_DIRECTORY"
+mode = os.stat(path).st_mode & 0o777 if os.path.exists(path) else 0o600
+handle, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".claude.json.", suffix=".launch-claude-writing")
+os.close(handle)
+pathlib.Path(temporary).write_text(json.dumps(settings, indent=2), encoding="utf-8")
+os.chmod(temporary, mode)
+os.replace(temporary, path)' "$AGENT_DIRECTORY"
 
 # The agent's home must be a CHECKOUT before the session starts, not after:
 # project settings — status line, the reincarnation Stop hook, the instruction-file
