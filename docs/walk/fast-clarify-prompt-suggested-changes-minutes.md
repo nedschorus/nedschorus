@@ -199,3 +199,12 @@ Open tasks from the rider, each a separate topic and PR, not this one
 Walk complete 2026-09-07. All ten items ruled; nothing deferred. Standing ruling
 recorded at item 8: nits and typos are fixed without asking, only substantial
 edits go to the user.
+
+After the close, 2026-09-07: the user asked whether the rest of the file had been
+looked at (it had: Question 3 and the delivery paragraphs drew nothing) and
+ruled "might as well fix" on the two wording candidates the session had left
+to him. Applied: "these documents" in the opener became "the document or
+documents under review"; the two delivery paragraphs merged into one, keeping
+"{REPORT_PATH} is the only file to create; write nothing anywhere else" and
+dropping the duplicate "Create no other file". Also the missing period after
+"No issues", fixed as a nit.
