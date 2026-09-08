@@ -154,8 +154,8 @@ An Opus review did not land, so this is not the review that was asked for.
 
 Stop here. Do not triage the reports in {record_dir}, do not rerun the Opus
 cell on another model, and do not start editing the document on the strength
-of the reviews that did land. Wait for Opus to come back, then run the grid
-again against the same document. Keep {record_dir}: like every record
+of the reviews that did land. Wait for Opus to come back, then start a new
+cold-read run against the same document. Keep {record_dir}: like every record
 directory it is kept, not deleted (user-ruled 2026-08-25), and its FAILED
 line says what the Opus cell reported."""
 
@@ -305,8 +305,8 @@ def mark_reports_target_changed(
         f"{after[:12] or 'unreadable'}. Which text any one report in this directory "
         f"describes is unknown: the edit may have landed before a given reviewer "
         f"opened the file or after. Treat this set as evidence of what reviewers "
-        f"saw, not as a review of the current file; re-run the grid against the "
-        f"settled document."
+        f"saw, not as a review of the current file; start a new cold-read run "
+        f"against the settled document."
     )
     marker = f"{TARGET_CHANGED_MARKER_PREFIX} {detail} -->"
     for report_path in sorted(record_dir.glob("*.md")):
@@ -609,8 +609,8 @@ def main() -> int:
         elif opus_cell_failed:
             what_to_do = (
                 "Do not rerun the Opus cell on another model and do not triage "
-                "the reports that landed: wait for Opus to come back, then run "
-                "the grid again.")
+                "the reports that landed: wait for Opus to come back, then start "
+                "a new cold-read run.")
         elif only_fable_cell_failed:
             what_to_do = (
                 "That is the Fable floor cell, a when-available seat: note its "

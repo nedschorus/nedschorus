@@ -404,7 +404,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a stamped report keeps its provenance stamp as the first line",
           stamped_lines[0].startswith("<!-- provenance:"), repr(stamped_lines[0]))
     check("the marker goes immediately after the stamp",
-          stamped_lines[1].startswith("<!-- TARGET CHANGED DURING RUN:"),
+          stamped_lines[1].startswith("<!-- TARGET CHANGED DURING RUN:")
+          and "start a new cold-read run" in stamped_lines[1]
+          and "re-run the grid" not in stamped_lines[1],
           repr(stamped_lines[1]))
     check("the reviewer's own text survives the marking",
           "STUB REVIEW: one restatement" in stamped_text, repr(stamped_text[:200]))
@@ -459,7 +461,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A target that moved while a cell also failed -----------------------
     # The two conditions are independent and land together often enough to
     # write down: the closing text follows the target change (do not triage,
-    # run the grid again), so the note naming the failed cells must not send
+    # start a new cold-read run), so the note naming the failed cells must not send
     # the reader back to a triage that is not happening. The floor-tier Claude
     # cell fails outright here — the stub refuses claude-fable-5-1, the
     # floor's only model, which is what the account's Fable limit does
@@ -519,6 +521,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the closing text says to stop and wait for Opus",
           "Wait for Opus to come back" in result.stdout
+          and "start a new cold-read run" in result.stdout
+          and "grid again" not in result.stdout
           and "Stop here" in result.stdout,
           f"stdout was {result.stdout!r}")
     check("the closing text does not also say the reviews are complete",
@@ -556,6 +560,8 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the terminology Opus cell alone still gets the stop-and-wait text",
           "Wait for Opus to come back" in result.stdout
+          and "start a new cold-read run" in result.stdout
+          and "grid again" not in result.stdout
           and "Stop here" in result.stdout
           and "All six reviews are complete" not in result.stdout,
           f"stdout was {result.stdout!r}")
