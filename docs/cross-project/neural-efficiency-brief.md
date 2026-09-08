@@ -2,13 +2,19 @@
 
 *Only the context each task needs.*
 
-**Neural Efficiency is a design discipline for organizing humans, agents, and code around small tasks with clear boundaries and only the context each task needs.** A graph runtime such as LangGraph could run such a system; the discipline determines how to design it.
+**Neural Efficiency is a design discipline built around focus: organizing humans, agents, and code so each step has a clear responsibility and only the context it needs.** A graph runtime such as LangGraph could run such a system; the discipline determines how to design it.
+
+**Focus is the deliberate organization of work so that each step has a clear responsibility, sufficient relevant context, and an explicit result or escalation path.** Splitting a large task can give each participant simpler instructions, fewer competing objectives, and less unrelated history to process. Choose boundaries by information need, keeping together the facts that must be considered together. A focused design review may still need substantial context; shorter instructions and smaller nodes are useful only when they preserve what the task needs.
+
+**Focus is the design principle; token efficiency is one measure of resource use.** Here, token efficiency means achieving a given quality of result with fewer tokens across the whole task, including review and retries. A focused workflow can use more tokens overall: a separate implementer and reviewer may both read the design, and that duplication can be worthwhile when their distinct responsibilities improve validation or reduce rework. The goal is better use of reasoning, not the shortest prompt or the fewest tokens at any cost.
+
+The name **Neural Efficiency** expresses the intended benefit of focus. Assess that benefit through validated results, rework, human effort, token use, and elapsed time; the name itself does not establish an improvement.
 
 **Neural Efficiency decomposes complex work into independently understandable and verifiable steps.** Each step receives sufficient information, uses the appropriate combination of code, agents, and humans, and returns a defined result. Cold Read tests whether the prose connecting those steps makes sense without hidden background knowledge. Independent validation checks the work. When something fails across a boundary, an arbitrator examines the relevant history, identifies the cause, and assigns a bounded repair.
 
 There are six essential pieces:
 
-1. **Decompose by information need.** Choose boundaries that minimize what each participant must learn and hold in context. This also makes dependencies clearer and exposes opportunities for parallel work.
+1. **Decompose by information need.** Give each step one coherent responsibility and the information it needs. Reduce unrelated context while retaining facts that must be considered together. This also makes dependencies clearer and exposes opportunities for parallel work.
 
 2. **Compose code, agents, and humans inside nodes.** Code handles mechanical operations, agents interpret and synthesize, and humans supply goals and judgment. A node can contain code–prompt–code or an entire smaller workflow involving all three.
 
