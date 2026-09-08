@@ -10,6 +10,14 @@ for the reviewing agent as reviews land.
 Usage:
   scripts/cold-read-grid.py --target docs/drafts/foo.md
 
+The record directory holds one report per cell, the reference-check file,
+and under target/ the exact bytes reviewed at the target's own repository
+path (frozen at launch, the same read that fingerprints it). At the end of
+the run the record is shipped to the log-store on ned-box by
+scripts/cold-read-record-ship.py, whatever the run's outcome, and the
+shipper's one line is printed as `record:`; a shipping failure is reported,
+never fatal (user-ruled 2026-09-07).
+
 Exit codes: 0 all cells ran, 1 one or more cells failed, 2 bad invocation
 (including a target this instrument refuses to review), 3 the target file
 changed while the cells were running, so every report in the set describes a
@@ -33,6 +41,16 @@ CELL_LAUNCHERS = {
     "claude": REPO_ROOT / "scripts" / "cold-read-claude-cell.py",
     "codex": REPO_ROOT / "scripts" / "cold-read-codex-cell.py",
 }
+# The program that copies a finished record directory to the log-store on
+# ned-box (user-ruled 2026-09-07: records are logs, not system, and never
+# enter git). Run at the end of every grid run, whatever the outcome; its one
+# line is printed and the run goes on, because a store that cannot be reached
+# is no reason to lose a review that landed.
+RECORD_SHIPPER = REPO_ROOT / "scripts" / "cold-read-record-ship.py"
+# Where the target's bytes are frozen inside the record directory: under this
+# name, at the target's own repository path, so a reader of an old record
+# sees both the exact text reviewed and where it lived.
+FROZEN_TARGET_DIRECTORY_NAME = "target"
 # The cells' shared module, loaded the way the cells load it, for the status
 # phrases it pins. Imported rather than copied so the grid and the cells
 # cannot drift on the words the grid lifts out of a cell's log.
@@ -114,12 +132,15 @@ response: which problems are real, and what you propose to do about each.
 Walk that with the user using the walk-me-through skill, ordered from most
 important to least. The walk's anchor is {record_dir}/dispositions.md.
 
-These records stay on this machine and are gitignored (user-ruled 2026-08-14): never
-commit them. Leave {record_dir} in place once the work it served has landed —
-these records are kept, not deleted: like other logs they are useful for
-analysis later (user-ruled 2026-08-25). The findings still belong in the
-reviewed document and the rulings in its governing document; this directory is
-what produced them, not where they live."""
+This record was shipped to the log-store on ned-box when the run ended (the
+`record:` line above says whether it arrived); once dispositions.md is written,
+run `scripts/cold-read-record-ship.py {record_dir}` so it joins the reports
+there. cold-read-records/ stays gitignored: never commit it. Leave {record_dir}
+in place once the work it served has landed — these records are kept, not
+deleted: like other logs they are useful for analysis later (user-ruled
+2026-08-25). The findings still belong in the reviewed document and the
+rulings in its governing document; this directory is what produced them, not
+where they live."""
 
 # The closing text when an Opus cell -- the good Claude cell of either pass
 # -- produced no report (user-ruled 2026-09-04: "If opus fails we stop
@@ -168,6 +189,54 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines.append("- no path-like references found")
     (record_dir / f"{record_dir.name}--reference-check.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
+
+
+def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
+    """record_dir/target/<repository path>; a target outside the repository
+    keeps its absolute path minus the leading slash, so nothing collides and
+    the path still says where the file was."""
+    try:
+        relative = target.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        relative = pathlib.Path(*target.resolve().parts[1:])
+    return record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative
+
+
+def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
+    """Copy the target's bytes into the record and return their sha256.
+
+    One read serves both, so the frozen copy and the fingerprint the grid
+    compares at the end of the run describe the same bytes by construction
+    (user-ruled 2026-09-07: freeze the reviewed target into each record; the
+    hash alone left a reader of an old record with reports but not the text
+    they reviewed). "" when the file cannot be read, as the fingerprint
+    function returns, and then nothing is frozen.
+    """
+    try:
+        content = target.read_bytes()
+    except OSError:
+        return ""
+    frozen = frozen_target_path(target, record_dir)
+    frozen.parent.mkdir(parents=True, exist_ok=True)
+    frozen.write_bytes(content)
+    return hashlib.sha256(content).hexdigest()
+
+
+def ship_record(record_dir: pathlib.Path) -> str:
+    """Run the shipper on the record and return its one line, or a FAILED
+    line of this program's own when the shipper could not run. Never raises:
+    the shipper's outcome is reported, not enforced."""
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
+            capture_output=True, text=True, check=False)
+    except OSError as error:
+        return f"FAILED: the shipper could not be run ({error}); the record stays on disk."
+    sys.stderr.write(completed.stderr)
+    line = completed.stdout.strip().splitlines()
+    return line[0] if line else (
+        f"FAILED: the shipper printed nothing (exit {completed.returncode}); "
+        f"the record stays on disk.")
 
 
 def target_content_fingerprint(target: pathlib.Path) -> str:
@@ -469,7 +538,7 @@ def main() -> int:
     # reading one file over half an hour cannot themselves be stopped from
     # disagreeing if the file moves under them; what this can do is refuse to
     # let the resulting set pass for a review of the current document.
-    target_before = target_content_fingerprint(target)
+    target_before = freeze_target(target, record_dir)
     failures = wait_for_cells(launch_cells(target, record_dir))
     target_after = target_content_fingerprint(target)
     target_changed = target_before != target_after
@@ -477,6 +546,12 @@ def main() -> int:
         detail = mark_reports_target_changed(
             record_dir, target, target_before, target_after)
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
+
+    # The record goes to the log-store now, whatever landed: a set marked
+    # TARGET CHANGED is evidence too, and a failed cell's log is part of the
+    # record. dispositions.md is not written yet; the agent ships again after
+    # writing it, and the shipper adds it beside the reports.
+    print(f"record: {ship_record(record_dir)}", flush=True)
 
     print()
     # WHICH CELL FAILED DECIDES WHAT THE READER DOES NEXT (user-ruled

@@ -19,6 +19,7 @@ A list of the phrases and terms of this project approved by the user, in alphabe
 - **GHI-MD** — the MD file used to explain a GitHub issue.
 - **handoff-supervisor** — the program, one per agent-seat, that launches a session and reincarnates it when the session hands off.
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
+- **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
 - **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
 - **NedsChorus (aka NC)** — this project.
