@@ -245,6 +245,16 @@ ILLEGAL_CASES = [
      {}, exit_from(T.TEST_SUITE_EXECUTING, "green")),
     ("the terminal state emitting anything",
      {}, exit_from(T.ENDED, T.V_ADVANCE)),
+    # Row 65 spans writers and reviewers with two verdicts; the pairing
+    # still holds — a writer has no `reject contract` and a reviewer no
+    # `input-quick-check-failed`, at the ceiling as below it.
+    ("a writer rejecting the contract at the contract-revisions ceiling: writers fail a check, they do not reject",
+     dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_WRITING, T.V_REJECT_CONTRACT)),
+    ("a reviewer failing a check against the contract at the ceiling: reviewers reject, they do not check inputs",
+     dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_INPUT_QUICK_CHECK_FAILED,
+               input_named=T.INPUT_COMPONENT_CONTRACT)),
     # A gap in the design as it reads (reported with this slice): row 60
     # sends `flaky-test` to test-writing below the test-writes ceiling and
     # row 61 names only `reject implementation` and `reject tests` at it,
@@ -312,9 +322,7 @@ class EveryRowOfSection32(unittest.TestCase):
 
     def test_the_rows_are_numbered_in_the_design_s_order(self):
         numbers = [r.row for r in T.TRANSITION_TABLE if r.source == "3.2"]
-        self.assertEqual(numbers[0], "1")
-        self.assertEqual(numbers[-1], "76")
-        self.assertEqual(numbers, sorted(numbers, key=int))
+        self.assertEqual(numbers, [str(n) for n in range(1, 77)])
 
     def test_every_guard_named_in_the_table_has_a_predicate(self):
         for row in T.TRANSITION_TABLE:

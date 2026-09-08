@@ -203,10 +203,16 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_COMPONENT_CONTRACT,
     tables.G_AGAINST_THE_TEST_DESIGN:
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_TEST_DESIGN,
+    # Row 65 is one row across writers and reviewers, so the verdict must
+    # also be one the emitting state has (section 3.1): a writer fails a
+    # check, a reviewer rejects, and the other way round is a machine error
+    # at the ceiling as it is below it.
     tables.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT:
-        lambda ctx: (ctx.state_exit.verdict == tables.V_REJECT_CONTRACT
-                     or (ctx.state_exit.verdict == tables.V_INPUT_QUICK_CHECK_FAILED
-                         and ctx.state_exit.input_named == tables.INPUT_COMPONENT_CONTRACT)),
+        lambda ctx: (
+            ctx.state_exit.verdict in tables.STATE_TABLE_BY_NAME[ctx.state_exit.from_state].verdicts
+            and (ctx.state_exit.verdict == tables.V_REJECT_CONTRACT
+                 or (ctx.state_exit.verdict == tables.V_INPUT_QUICK_CHECK_FAILED
+                     and ctx.state_exit.input_named == tables.INPUT_COMPONENT_CONTRACT))),
     tables.G_TESTS_NOT_YET_BEGUN: lambda ctx: not ctx.run.tests_begun,
     tables.G_TESTS_BEGUN: lambda ctx: ctx.run.tests_begun,
     tables.G_TEST_WORK_STREAM_READY:
