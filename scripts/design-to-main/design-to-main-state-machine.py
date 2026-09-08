@@ -41,6 +41,7 @@ RunStateRecord = run_state_module.RunStateRecord
 CounterCeilingExceeded = run_state_module.CounterCeilingExceeded
 write_counter_charged = run_state_module.write_counter_charged
 TopicBranchGitRecord = git_record_module.TopicBranchGitRecord
+TopicBranchCutRefused = git_record_module.TopicBranchCutRefused
 compose_state_exit_trailer = git_record_module.compose_state_exit_trailer
 
 
@@ -411,6 +412,10 @@ class DesignToMainStateMachineFlow:
         self.node_for(run.current_state).run(run)
 
     def run_until_ended(self, run, max_steps=200):
+        """Run to `ended` and return the outcome. TopicBranchCutRefused
+        leaves here uncaught when row 1's cut is refused (section 6.6):
+        the refusal is the report to the invoking conversation, and the
+        run does not start — nothing committed, the checkout as it was."""
         steps = 0
         while run.current_state != tables.ENDED:
             self.step(run)
@@ -459,9 +464,14 @@ class DesignToMainStateMachineFlow:
         # Entry-charged counters and entry rules apply before the commit, so
         # that run-state.json on the branch is the state the run is in.
         self.enter(run, next_position)
-        commit = self.commit_state_exit(run, state_exit, write_number)
         if run.current_state == tables.INVESTIGATE_WORKFLOW:
-            run.investigation_opened_at_commit = commit
+            # The commit at which the investigation opened (section 6.6),
+            # recorded before the state-exit is committed so that the
+            # branch carries it for the whole pause: the branch head now,
+            # the parent of the opening commit, since that commit's own
+            # SHA cannot be written into a file it contains.
+            run.investigation_opened_at_commit = self.git_record.head_commit()
+        commit = self.commit_state_exit(run, state_exit, write_number)
         self.routed.append((row, state_exit, commit))
         return run.current_state
 
@@ -512,6 +522,14 @@ class DesignToMainStateMachineFlow:
                 run.current_state = tables.INVESTIGATE_WORKFLOW
                 return
             run.counters.increment("arbitrator-rulings")
+        # A work-stream's position is the state it is in, reviewing states
+        # included: the hold rows (23, 43) send the run to the other
+        # work-stream's position, and a stream paused in a reviewing state
+        # resumes there, not at the writing state before it.
+        composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(position, position)
+        work_stream = tables.STATE_TABLE_BY_NAME[composite].work_stream
+        if work_stream:
+            run.set_work_stream_position(work_stream, composite)
         run.current_state = position
 
     # -- applying a row -----------------------------------------------------------
@@ -588,6 +606,10 @@ class DesignToMainStateMachineFlow:
                 run.submit_retry_count = 0
 
         # Row 1: the machine cuts the topic branch before design-writing.
+        # A refusal (TopicBranchCutRefused) leaves the machine here, before
+        # anything is entered or committed: HEAD is not the topic branch,
+        # so a state-exit committed now would land on whatever branch the
+        # checkout stands on.
         if row.row == "1":
             self.git_record.cut_topic_branch(self.topic_branch_start_point)
 

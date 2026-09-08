@@ -46,6 +46,12 @@ def parse_state_exit_trailer(message):
     return trailer
 
 
+class TopicBranchCutRefused(Exception):
+    """Git refused to cut the topic branch (section 6.6: the name is
+    refused, the machine says so in the invoking conversation and the run
+    does not start). Carries git's own words; the checkout is as it was."""
+
+
 class TopicBranchGitRecord:
     """The component's topic branch in one repository checkout."""
 
@@ -82,8 +88,15 @@ class TopicBranchGitRecord:
     def cut_topic_branch(self, start_point="origin/main"):
         """Cut the topic branch from `origin/main`, named for the component,
         naming the start point explicitly (the topic-branch rule,
-        docs/issues/238-topic-branch-creation-script-design.md)."""
-        self.git("checkout", "-b", self.component, start_point)
+        docs/issues/238-topic-branch-creation-script-design.md). A refusal
+        — the branch already exists, as after a run that ended failed —
+        is TopicBranchCutRefused, an ordinary outcome rather than a crash,
+        as the topic-branch rule has it."""
+        cut = self.git("checkout", "-b", self.component, start_point, check=False)
+        if cut.returncode != 0:
+            raise TopicBranchCutRefused(
+                "git refused to cut the topic branch %r from %s: %s" % (
+                    self.component, start_point, cut.stderr.strip()))
         return self.head_commit()
 
     # -- section 9: the record files ----------------------------------------

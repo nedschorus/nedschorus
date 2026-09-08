@@ -166,6 +166,43 @@ class TwoWorkStreams(unittest.TestCase):
         finally:
             repository.remove()
 
+    def test_a_stream_paused_in_a_reviewing_state_resumes_there_not_at_its_last_writing_state(self):
+        # Row 49 opens an investigation with the test-work-stream in
+        # test-reviewing; the user edits only the implementation and
+        # resumes. Row 64 resumes at implementation-reviewing, its reviewer
+        # advances, and row 23 holds the implementation and sends the run to
+        # the test-work-stream's position: test-reviewing, not the
+        # test-writing it was in before the tests were reviewed. No test
+        # write is forced, and the test-writes counter does not move.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_test_writing() + [
+                fixture.test_write(),
+                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),              # row 49
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(run.paused_state, T.TEST_REVIEWING)
+            implementation = record.absolute(fixture.COMPONENT_DIRECTORY + "/widget_counter.py")
+            implementation.parent.mkdir(parents=True, exist_ok=True)
+            implementation.write_text("# the implementation, edited by the user\n")
+            machine.launcher.script += [
+                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 64
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 23: holds
+            ]
+            fixture.drive(machine, run)
+            self.assertEqual([row.row for row, _, _ in machine.routed][-3:], ["49", "64", "23"])
+            self.assertEqual(run.current_state, T.TEST_REVIEWING)
+            self.assertEqual(run.test_work_stream_position, T.TEST_REVIEWING)
+            self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
+            self.assertEqual(run.counters.value("test-writes"), 1)
+            self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 1)
+            self.assertEqual(
+                sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_WRITING), 1)
+        finally:
+            repository.remove()
+
 
 class WholeRunThatFailsAtTheRedesignsCeiling(unittest.TestCase):
 
@@ -321,6 +358,72 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             recovered = RunStateRecord.read_from(record.absolute(record.run_state_path))
             self.assertEqual(recovered.current_state, T.TEST_SUITE_ARBITRATING)
             self.assertEqual(recovered.counters.value("arbitrator-rulings"), 1)
+        finally:
+            repository.remove()
+
+    def test_a_process_that_dies_during_an_investigation_recovers_the_commit_it_opened_at(self):
+        # The commit at which the investigation opened (section 6.6) is in
+        # run-state.json on the branch for the whole pause, so a successor
+        # that recovers from investigate-workflow still diffs the branch
+        # on resume: the design edited resumes as a redesign, not at the
+        # state that was paused in design version 1.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_tests_begun() + [
+                (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {"investigation_focus": T.FOCUS_DESIGN}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(run.paused_state, T.TEST_DESIGN_WRITING)
+            on_the_branch = RunStateRecord.read_from(record.absolute(record.run_state_path))
+            self.assertIsNotNone(on_the_branch.investigation_opened_at_commit)
+            self.assertEqual(on_the_branch.as_dict(), run.as_dict())
+            # The process dies; a successor recovers, then the user edits
+            # the design and resumes without naming a destination.
+            successor = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([(T.INVESTIGATE_WORKFLOW, T.V_RESUME, {})]),
+                today=lambda: "2026-09-08")
+            recovered = successor.recover()
+            self.assertEqual(recovered.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(recovered.investigation_opened_at_commit,
+                             run.investigation_opened_at_commit)
+            design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+            design.parent.mkdir(parents=True, exist_ok=True)
+            design.write_text("# the design, edited by the user during the investigation\n")
+            fixture.drive(successor, recovered)
+            self.assertEqual([row.row for row, _, _ in successor.routed], ["64"])
+            self.assertEqual(recovered.current_state, T.DESIGN_WRITING)
+            self.assertEqual(recovered.design_version, 2)
+            self.assertEqual(recovered.counters.value("redesigns"), 1)
+        finally:
+            repository.remove()
+
+
+class TopicBranchRefusedAtRow1(unittest.TestCase):
+    """Section 6.6: the machine cuts the topic branch and, if the name is
+    refused, says so in the invoking conversation and the run does not
+    start. A re-invocation for a component whose branch already exists is
+    the case: nothing is committed, and the checkout is as it was."""
+
+    def test_a_branch_that_already_exists_is_reported_as_a_refusal_and_the_run_does_not_start(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            fixture.git(repository.checkout, "branch", fixture.COMPONENT, "origin/main")
+            branch_before = fixture.git(repository.checkout, "rev-parse", "--abbrev-ref", "HEAD")
+            head_before = fixture.git(repository.checkout, "rev-parse", "HEAD")
+            script = [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            with self.assertRaises(M.TopicBranchCutRefused) as refused:
+                machine.run_until_ended(run)
+            self.assertIn(fixture.COMPONENT, str(refused.exception))
+            self.assertIn("already exists", str(refused.exception))
+            self.assertEqual(run.current_state, T.INITIATE_DESIGN_TO_MAIN)
+            self.assertEqual(machine.routed, [])
+            self.assertEqual(fixture.git(repository.checkout, "rev-parse", "--abbrev-ref", "HEAD"),
+                             branch_before)
+            self.assertEqual(fixture.git(repository.checkout, "rev-parse", "HEAD"), head_before)
+            self.assertFalse(record.absolute(record.run_state_path).exists())
         finally:
             repository.remove()
 
