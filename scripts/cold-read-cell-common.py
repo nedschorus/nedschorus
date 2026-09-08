@@ -72,6 +72,16 @@ rule for taking the runtime's stdout as the report when the model answered in
 chat instead of writing the file (`recover_report_from_runtime_stdout`). The
 rule is the launcher's because the quirk is the runtime's; the writing,
 stamping and announcing stay here so the leg cannot drift.
+
+A CALLER THAT IS NOT A CELL LAUNCHER, 2026-09-07:
+scripts/cold-read-restater-judge-cell.py, the restater judge the user ruled
+2026-09-05. It reads four files per case rather than one target, so it cannot
+use `run_cell`'s argument surface or `compose_prompt`; what it does use is
+everything from the composed prompt onwards -- `run_model_chain` and its
+chain, invariant, recovery, stray-write check, stamp and exit codes -- and
+the Claude launcher's own `invocation_builder`. It brought one thing with it:
+`model_to_effort`, because its chain is the first to run two models at two
+efforts (Fable at xhigh, Opus at max).
 """
 
 from __future__ import annotations
@@ -98,12 +108,21 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # scripts/cold-read-grid.py's own. `terminology` (user-ruled 2026-09-05) is
 # the grid's second pass: the document's key-terms against five criteria.
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
+# The restater judge is deliberately absent from that list. Its pass token,
+# `restater-judge`, is a constant in scripts/cold-read-restater-judge-cell.py,
+# which parses its own arguments and composes its own prompt because a judge
+# run reads four files per case rather than one target: a cell asked for that
+# pass through a --target launcher would compose a prompt with the case block
+# unfilled, so the launchers refuse the name instead.
 # Every tier any launcher pins. A launcher serves the subset its own tier map
 # names, and its --tier accepts only that subset (see `build_argument_parser`):
 # `fast` (user-ruled 2026-09-07: gemini-3.8-flash at medium, replacing
 # gpt-5.6-terra at low) is pinned by scripts/cold-read-agy-cell.py alone, and
 # `good` and `floor` by the Claude and Codex launchers alone, so no launcher
 # can be asked for a tier it has no model for.
+# `judge` is absent for the same reason `restater-judge` is absent from
+# CELL_CHOICES: the judge has one ruled configuration, so its cell stamps
+# tier=judge as a constant and takes no --tier at all.
 TIER_CHOICES = ["good", "floor", "fast"]
 
 # What --cell may be when --prompt-file is given (user-ruled 2026-09-05): a
@@ -677,9 +696,21 @@ def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
-    recover_report_from_stdout=None,
+    recover_report_from_stdout=None, model_to_effort=None,
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
+
+    A CHAIN WHOSE MODELS RUN AT DIFFERENT EFFORTS (2026-09-07). Until the
+    restater judge (scripts/cold-read-restater-judge-cell.py) every chain ran
+    one effort, so `effort` was one string and the stamp used it. The judge's
+    chain is the user's ruling of 2026-09-05: Fable 5.1 at xhigh, and Opus 5
+    at max when Fable is unavailable. One chain, two efforts -- so a launcher
+    whose models differ passes `model_to_effort`, a model -> effort map, and
+    the stamp names the effort of the model that ACTUALLY produced the report
+    rather than the chain's first. `effort` stays the value for any model the
+    map does not name, and a launcher with one effort passes no map and is
+    unaffected. The map is not consulted for the invocation: that stays the
+    launcher's `build_invocation`, which consults the same map it passed here.
 
     This loop is shared deliberately. It is the whole of what a cell does
     around its model, and the two runtimes' only real difference is
@@ -866,7 +897,10 @@ def run_model_chain(
         )
 
     stamp_provenance(
-        report, runtime=runtime, model=produced_by, effort=effort, cell=cell,
+        report, runtime=runtime, model=produced_by,
+        # The effort the model that produced this report ran at, which is the
+        # chain's one effort unless the launcher pinned a level per model.
+        effort=(model_to_effort or {}).get(produced_by, effort), cell=cell,
         tier=tier, target_argument=target_argument,
         duration_s=int(time.time() - cell_started_at),
         fallback_from="+".join(failed_attempts),
