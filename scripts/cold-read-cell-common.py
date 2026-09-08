@@ -63,6 +63,25 @@ re-emitted, and the total is parsed out of it (`parse_tokens_used`). And its
 provenance stamp recorded what the cell was asked to do but nothing about what
 the doing cost -- so `duration_s=`, and `tokens=` where the runtime reports
 one, are now stamped alongside the model and the tier.
+
+A THIRD LEG, 2026-09-07: scripts/cold-read-agy-cell.py runs the Antigravity
+CLI (`agy`) and pins the fast tier (user-ruled that day, after measurements:
+gemini-3.8-flash at medium). It is built on this module exactly as the other
+two are, and it adds one seam the others leave unused -- a launcher-supplied
+rule for taking the runtime's stdout as the report when the model answered in
+chat instead of writing the file (`recover_report_from_runtime_stdout`). The
+rule is the launcher's because the quirk is the runtime's; the writing,
+stamping and announcing stay here so the leg cannot drift.
+
+A CALLER THAT IS NOT A CELL LAUNCHER, 2026-09-07:
+scripts/cold-read-restater-judge-cell.py, the restater judge the user ruled
+2026-09-05. It reads four files per case rather than one target, so it cannot
+use `run_cell`'s argument surface or `compose_prompt`; what it does use is
+everything from the composed prompt onwards -- `run_model_chain` and its
+chain, invariant, recovery, stray-write check, stamp and exit codes -- and
+the Claude launcher's own `invocation_builder`. It brought one thing with it:
+`model_to_effort`, because its chain is the first to run two models at two
+efforts (Fable at xhigh, Opus at max).
 """
 
 from __future__ import annotations
@@ -89,7 +108,22 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # scripts/cold-read-grid.py's own. `terminology` (user-ruled 2026-09-05) is
 # the grid's second pass: the document's key-terms against five criteria.
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
-TIER_CHOICES = ["good", "floor"]
+# The restater judge is deliberately absent from that list. Its pass token,
+# `restater-judge`, is a constant in scripts/cold-read-restater-judge-cell.py,
+# which parses its own arguments and composes its own prompt because a judge
+# run reads four files per case rather than one target: a cell asked for that
+# pass through a --target launcher would compose a prompt with the case block
+# unfilled, so the launchers refuse the name instead.
+# Every tier any launcher pins. A launcher serves the subset its own tier map
+# names, and its --tier accepts only that subset (see `build_argument_parser`):
+# `fast` (user-ruled 2026-09-07: gemini-3.8-flash at medium, replacing
+# gpt-5.6-terra at low) is pinned by scripts/cold-read-agy-cell.py alone, and
+# `good` and `floor` by the Claude and Codex launchers alone, so no launcher
+# can be asked for a tier it has no model for.
+# `judge` is absent for the same reason `restater-judge` is absent from
+# CELL_CHOICES: the judge has one ruled configuration, so its cell stamps
+# tier=judge as a constant and takes no --tier at all.
+TIER_CHOICES = ["good", "floor", "fast"]
 
 # What --cell may be when --prompt-file is given (user-ruled 2026-09-05): a
 # free label, because a draft prompt is by definition not yet a named pass,
@@ -145,12 +179,18 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
         self.exit(EXIT_BAD_INVOCATION, f"{self.prog}: error: {message}\n")
 
 
-def build_argument_parser(description: str, model_help: str) -> argparse.ArgumentParser:
-    """The argument surface both cells present. Identical by construction.
+def build_argument_parser(
+    description: str, model_help: str, tier_choices=tuple(TIER_CHOICES),
+) -> argparse.ArgumentParser:
+    """The argument surface every cell presents. Identical by construction.
 
     The parser is the subclass above, so a mistyped flag leaves through the
     same door as the cell's own refusals rather than through argparse's
     default 2.
+
+    `tier_choices` is the launcher's own tier map's keys: a launcher asked
+    for a tier it pins no model for would otherwise reach its map and
+    traceback, and the fast tier (2026-09-07) is pinned by one launcher only.
     """
     parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -165,7 +205,7 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
              "--prompt-file, any label of lowercase letters and digits joined "
              "by single hyphens, which names the report",
     )
-    parser.add_argument("--tier", required=True, choices=TIER_CHOICES)
+    parser.add_argument("--tier", required=True, choices=list(tier_choices))
     parser.add_argument(
         "--target", required=True,
         help="document path, relative to the repo root or absolute",
@@ -182,9 +222,9 @@ def build_argument_parser(description: str, model_help: str) -> argparse.Argumen
              "with no fallback, the way --model is: a caller who names an "
              "effort is answering the question the tier map exists to answer, "
              "and quietly running the mapped level instead would defeat the "
-             "request. The ruled fast-tier configuration (2026-08-30, "
-             "gpt-5.6-terra at low) runs through this flag; no tier map pins "
-             "low.",
+             "request. The fast tier's own launcher "
+             "(scripts/cold-read-agy-cell.py) pins medium; on the Claude and "
+             "Codex launchers a low-effort run goes through this flag.",
     )
     parser.add_argument(
         "--prompt-file", metavar="PATH",
@@ -426,6 +466,42 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
 # scripts/cold-read-grid.py, not a sentence anyone should reword in passing.
 NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
 
+# The phrase a cell prints when its runtime's stdout was taken as the report
+# body. A launcher opts into this by passing `recover_report_from_stdout` to
+# `run_cell`; today only the Antigravity leg (scripts/cold-read-agy-cell.py)
+# does, for a quirk measured on 2026-09-04: gemini-3.8-flash sometimes answers
+# the whole review in chat instead of writing the file it was told to. The
+# Claude and Codex legs pass nothing and keep failing on that path, because
+# their stdout on a no-report exit has only ever been a remark, not a review.
+STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
+
+
+def recover_report_from_runtime_stdout(
+    program: str, report: pathlib.Path, runtime_stdout: str, decide_body,
+) -> bool:
+    """Write the runtime's stdout to the report path when the launcher's rule
+    says that stdout is the review, and say so on stderr.
+
+    `decide_body` is the launcher's rule: given the runtime's stdout it
+    returns the report body to keep, or "" when the stdout is not a review.
+    The rule lives in the launcher because it is a fact about one runtime;
+    the writing and the announcement live here because the stamp, the
+    verification and the grid's log-lifting are shared, and a leg that wrote
+    its own recovered file would be a leg that could drift.
+    """
+    body = decide_body(runtime_stdout or "")
+    if not body:
+        return False
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(body.strip() + "\n", encoding="utf-8")
+    print(
+        f"{program}: {STDOUT_RECOVERY_PHRASE} — the model exited 0 without "
+        f"writing {report}, and its stdout is a review by this launcher's "
+        f"rule; that text is now the report and is stamped like any other.",
+        file=sys.stderr,
+    )
+    return True
+
 
 def recover_near_miss_report(
     program: str, report: pathlib.Path, attempt_started_at: float,
@@ -620,8 +696,21 @@ def run_model_chain(
     *, program: str, runtime: str, chain, effort: str, build_invocation,
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
+    recover_report_from_stdout=None, model_to_effort=None,
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
+
+    A CHAIN WHOSE MODELS RUN AT DIFFERENT EFFORTS (2026-09-07). Until the
+    restater judge (scripts/cold-read-restater-judge-cell.py) every chain ran
+    one effort, so `effort` was one string and the stamp used it. The judge's
+    chain is the user's ruling of 2026-09-05: Fable 5.1 at xhigh, and Opus 5
+    at max when Fable is unavailable. One chain, two efforts -- so a launcher
+    whose models differ passes `model_to_effort`, a model -> effort map, and
+    the stamp names the effort of the model that ACTUALLY produced the report
+    rather than the chain's first. `effort` stays the value for any model the
+    map does not name, and a launcher with one effort passes no map and is
+    unaffected. The map is not consulted for the invocation: that stays the
+    launcher's `build_invocation`, which consults the same map it passed here.
 
     This loop is shared deliberately. It is the whole of what a cell does
     around its model, and the two runtimes' only real difference is
@@ -733,6 +822,13 @@ def run_model_chain(
         # failed, and its leavings are not a review to go looking for.
         if not report.is_file():
             recover_near_miss_report(program, report, attempt_started_at)
+        # After the near-miss search and before verification, for the same
+        # reason and on the same exit-0 path: a file the model put in the
+        # wrong place is the review it wrote, and stdout is looked at only
+        # when there is no such file. Launchers that pass no rule skip this.
+        if not report.is_file() and recover_report_from_stdout is not None:
+            recover_report_from_runtime_stdout(
+                program, report, completed.stdout, recover_report_from_stdout)
         try:
             verify_report(program, report)
         except CellRefusal as refusal:
@@ -801,7 +897,10 @@ def run_model_chain(
         )
 
     stamp_provenance(
-        report, runtime=runtime, model=produced_by, effort=effort, cell=cell,
+        report, runtime=runtime, model=produced_by,
+        # The effort the model that produced this report ran at, which is the
+        # chain's one effort unless the launcher pinned a level per model.
+        effort=(model_to_effort or {}).get(produced_by, effort), cell=cell,
         tier=tier, target_argument=target_argument,
         duration_s=int(time.time() - cell_started_at),
         fallback_from="+".join(failed_attempts),
@@ -816,13 +915,15 @@ def run_model_chain(
 def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
+    recover_report_from_stdout=None,
 ) -> int:
     """A whole cell, start to finish. Each launcher is this call plus its pins.
 
-    Everything here is identical for both runtimes, which is the point: a
-    launcher supplies its model chain, its effort mapping, and a factory that
-    builds its own invocation, and nothing else. Anything that grows here
-    grows for both legs at once and cannot drift between them.
+    Everything here is identical for every runtime, which is the point: a
+    launcher supplies its model chain, its effort mapping, a factory that
+    builds its own invocation, and -- only where its runtime has the quirk --
+    a rule for reading a review out of stdout; nothing else. Anything that
+    grows here grows for every leg at once and cannot drift between them.
     """
     # The cell's clock starts here, before anything else this program does,
     # so `duration_s=` in the stamp is the cost of the whole cell -- every
@@ -830,7 +931,8 @@ def run_cell(
     # happened to succeed. A reader budgeting a cold-read run wants what the cell cost
     # him, not what its last model cost.
     cell_started_at = time.time()
-    parser = build_argument_parser(description, model_help)
+    parser = build_argument_parser(
+        description, model_help, tier_choices=tuple(tier_to_model_chain))
     args = parser.parse_args()
 
     # The baseline is taken BEFORE anything runs, so what the detector reports
@@ -873,6 +975,7 @@ def run_cell(
         target_argument=args.target, baseline=baseline,
         cell_started_at=cell_started_at,
         prompt_file_argument=args.prompt_file or "",
+        recover_report_from_stdout=recover_report_from_stdout,
     )
 
 

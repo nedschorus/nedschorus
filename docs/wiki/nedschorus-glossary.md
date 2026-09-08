@@ -8,7 +8,7 @@ A list of the phrases and terms of this project approved by the user, in alphabe
 - **/sanity-check** — a skill used to improve designs.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
 - **agent-instructions** — prompts or MD files that instruct agents. Initial agent instructions are the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent. In addition, instructions can live in CLAUDE.md, CLAUDE.local.md, the project's appended system-prompt file, the project's memory index, a session-start hook, or the equivalent for non-Claude agents such as AGENTS.md.
-- **agent-seat** — a named, long-lived agent identity with its own home directory, git branch and initial agent instructions; context compressed and renewed by a series of reincarnated agents connected by session handoffs from old agent to new agent.
+- **agent-seat** — a named, long-lived agent identity with its own home directory, seat-branch and initial agent instructions; context compressed and renewed by a series of reincarnated agents connected by session handoffs from old agent to new agent.
 - **arbitrator** — a fresh agent, used to resolve conflicts between agents.
 - **Code Prompt Code (aka CPC)** — a program built from both code and prompts.
 - **component-consumer** — anything that invokes a component or reads what it leaves; the parties a component-contract makes promises to. Defined in the design-to-main glossary.
@@ -24,8 +24,10 @@ A list of the phrases and terms of this project approved by the user, in alphabe
 - **NedsChorus (aka NC)** — this project.
 - **reincarnate** — to replace a running session with a new one that continues from the session handoff.
 - **review objection overruled by user** — the record of a review objection that the user overruled.
+- **seat-branch** — the long-lived git branch of one agent-seat, named for the seat, that its sessions work on; not a topic-branch.
 - **session handoff** — the act of transferring the key context and state of one LLM session to the next, and the file that carries it.
 - **soft-block** — a hook refusal the agent can override by including a reason why the override is needed.  Usually accompanied by additional context given to teach the agent the desired behavior.  
+- **topic-branch** — a branch cut from current main for one change, PR'd when its tests pass; not a seat-branch.
 - **user-block** — a hook refusal that can only be cleared by the user.
 - **user ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
 - **walk minutes** — the document the /walk-me-through skill uses to record the outcome of each item of a walk.
