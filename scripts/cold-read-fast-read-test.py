@@ -19,7 +19,7 @@ WHAT IS PINNED HERE.
     report, and the launcher's recovery line is on the read's stderr.
 
   - The fast tier pin shows in the stamp of what the read produces:
-    runtime=agy, gemini-3.8-flash-low, effort low, tier fast.
+    runtime=agy, gemini-3.8-flash-medium, effort medium, tier fast.
 
   - The reviewer's instructions the model receives are the template embedded
     in the script -- not the skill's prompt file -- with both paths
@@ -201,10 +201,10 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an earlier suggestions file is replaced, not appended to",
           "LEFT BY AN EARLIER READ" not in suggestions_text
           and "of the walk item" in suggestions_text, repr(suggestions_text[:200]))
-    check("the fast tier pin shows in the stamp: runtime agy, gemini-3.8-flash-low, low, fast",
+    check("the fast tier pin shows in the stamp: runtime agy, gemini-3.8-flash-medium, medium, fast",
           provenance_stamp_of(suggestions).startswith(
-              "<!-- provenance: runtime=agy model=gemini-3.8-flash-low "
-              "effort=low cell=fast-clarify tier=fast "),
+              "<!-- provenance: runtime=agy model=gemini-3.8-flash-medium "
+              "effort=medium cell=fast-clarify tier=fast "),
           repr(provenance_stamp_of(suggestions)))
     check("the stamp names the embedded prompt file",
           "prompt_file=" in provenance_stamp_of(suggestions)
