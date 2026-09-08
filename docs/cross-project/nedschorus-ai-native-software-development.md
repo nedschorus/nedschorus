@@ -3,9 +3,9 @@ status: working plan
 design-as-of: 2026-09-08
 ---
 
-# NedsChorus: AI-Native Software Development with Natural-Language Human Oversight
+# NedsChorus: Focused AI-Native Software Development
 
-NedsChorus lets a senior software engineer develop software by describing intent, reviewing recommendations, and making decisions in English. Code and AI agents do the detailed work. The human remains responsible for what the software should mean and when its direction should change.
+NedsChorus organizes software development into focused steps performed by code, AI agents, and humans. A senior software engineer directs the work by describing intent, reviewing recommendations, and making decisions in English.
 
 The central idea is simple:
 
@@ -13,7 +13,7 @@ The central idea is simple:
 
 This is the architecture and working plan, not a claim that the complete system is running. Code establishes what is built; GitHub Issues carry work status; [CLAUDE.md](../../CLAUDE.md) governs current operations. The implementation map below identifies existing components and proposed extensions.
 
-This revision incorporates the [neural-efficiency brief](neural-efficiency-brief.md) from [PR #260](https://github.com/nedschorus/nedschorus/pull/260) and the [component-reuse research](../issues/queue/external-component-simplicity-recommendations.md) from [PR #261](https://github.com/nedschorus/nedschorus/pull/261). The brief explains the general philosophy; this document applies it to software development. The research notes hold detailed source inspections, not additional operating rules.
+This is the single project overview. It incorporates the Neural Efficiency concept from [PR #260](https://github.com/nedschorus/nedschorus/pull/260) and the [component-reuse research](../issues/queue/external-component-simplicity-recommendations.md) from [PR #261](https://github.com/nedschorus/nedschorus/pull/261). The research notes hold detailed source inspections, not additional operating rules.
 
 ## The high concept
 
@@ -21,9 +21,11 @@ A work item is one requested change, defect, or investigation. Its ordinary path
 
 A node is one bounded operation in that process. It is not necessarily one agent or one prompt. It may combine deterministic code, an AI judgment, and a human decision. For example, code can collect review reports and group findings by passage; an agent can explain disagreements; the human can decide a disputed change.
 
-The guiding principle is **focus**, defined in the [Neural Efficiency brief](neural-efficiency-brief.md). Split large tasks into steps with clear responsibilities, simpler instructions, and sufficient relevant context. Keep together facts that must be considered together: a design reviewer may need substantial context while still having one focused job.
+**Focus is the deliberate organization of work so that each step has a clear responsibility, sufficient relevant context, and an explicit result or escalation path.** Split large tasks into steps with simpler instructions, fewer competing objectives, and less unrelated history. Keep together facts that must be considered together: a design reviewer may need substantial context while still having one focused job. Shorter prompts and smaller nodes help only when they preserve what the task needs.
 
-Focus and token efficiency answer different questions. Focus concerns how reasoning work is organized; token efficiency concerns the tokens needed to reach a given quality of result. Separate implementation and review can improve focus while spending more tokens because both read the design. Judge that tradeoff by accepted-work quality, rework, and human effort as well as token use and elapsed time.
+**Focus is the design principle; token efficiency is one measure of resource use.** Token efficiency concerns the tokens needed to reach a given quality of result across the whole task, including review and retries. Separate implementation and review can improve focus while spending more tokens because both read the design. That duplication can be worthwhile when their distinct responsibilities improve validation or reduce rework.
+
+**Neural efficiency** names the intended benefit: better use of human and AI reasoning. Assess it through accepted-work quality, rework, human effort, token use, and elapsed time. The name itself does not establish an improvement or imply a measurement of neural activity.
 
 An agent execution is replaceable. It needs the task, applicable instructions, relevant artifacts and code, and enough evidence to do that task—not the conversation that produced them. This is **minimum sufficient context**. Supply necessary dependencies; cutting context that the task needs makes an agent less capable.
 
