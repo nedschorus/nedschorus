@@ -20,6 +20,7 @@ Run the tests: scripts/design-to-main/tests/*-test.py, each directly.
 
 import datetime
 import importlib.util
+import json
 import pathlib
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -393,11 +394,21 @@ class DesignToMainStateMachineFlow:
     def recover(self):
         """Section 9, recovery: re-run the state from the last commit's
         run-state.json; uncommitted files are the dead process's, discarded.
-        The discard refuses (RefusedBeforeTopicBranchCut) when the checkout
-        is not on the topic branch: a run that died before row 1's cut has
-        no commit to recover from, and the checkout is the invoker's."""
-        self.git_record.discard_all_uncommitted_work_for_recovery()
-        return RunStateRecord.read_from(self.git_record.absolute(self.git_record.run_state_path))
+        The run is read from the last commit BEFORE the discard, so that the
+        discard is guarded by the run's own `topic-branch-cut`: a run that
+        died before row 1's cut, or an invocation with no run committed at
+        HEAD at all, has no commit to recover from and the checkout is the
+        invoker's — refused (RefusedBeforeTopicBranchCut), nothing
+        discarded."""
+        text = self.git_record.run_state_text_at_last_commit()
+        if text is None:
+            raise RefusedBeforeTopicBranchCut(
+                "refused to recover: no run-state.json is committed at HEAD (%s on %r), "
+                "so there is no state-exit to recover from; the checkout is as it was" % (
+                    self.git_record.head_commit(), self.git_record.current_branch()))
+        run = RunStateRecord.from_dict(json.loads(text))
+        self.git_record.discard_all_uncommitted_work_for_recovery(run)
+        return run
 
     # -- the flow ---------------------------------------------------------------
 
@@ -416,12 +427,13 @@ class DesignToMainStateMachineFlow:
 
     def run_until_ended(self, run, max_steps=200):
         """Run to `ended` and return the outcome. Two refusals leave here
-        uncaught, both from before the topic branch is cut (section 6.6):
-        TopicBranchCutRefused when row 1's cut is refused, and
+        uncaught, both from before row 1 has cut the topic branch (section
+        6.6): TopicBranchCutRefused when row 1's cut is refused, and
         RefusedBeforeTopicBranchCut when initiate-design-to-main emits
         anything but `invoked`. Either way the refusal is the report to
         the invoking conversation, and the run does not start — nothing
-        committed, the checkout as it was."""
+        written, nothing committed, the checkout as it was, whatever
+        branch it stood on."""
         steps = 0
         while run.current_state != tables.ENDED:
             self.step(run)
@@ -457,20 +469,27 @@ class DesignToMainStateMachineFlow:
         resume_destination = None
         if state_exit.verdict == tables.V_RESUME:
             resume_destination = self.resolve_resume_destination(run, state_exit)
-        self.apply_rulings(run, state_exit)
+        # A `reset` ruling takes effect on the counters before the row is
+        # looked up (row 65 guards on the redesigns ceiling); the rulings
+        # themselves are written to the branch with the commit, below,
+        # after the guard — nothing is on disk if this state-exit is refused.
+        self.apply_rulings_to_the_run(run, state_exit)
         try:
             row = find_legal_transition_row(run, state_exit, resume_destination)
             next_position, write_number = self.apply_transition_row(
                 run, row, state_exit, resume_destination)
         except (IllegalStateExit, CounterCeilingExceeded) as error:
-            if not self.git_record.topic_branch_is_checked_out():
+            if not run.topic_branch_cut:
                 # Before row 1 has cut the topic branch a machine error
                 # cannot open an investigation: the discard and the commit
                 # that open one would run against the invoking
-                # conversation's checkout on `main`. Refused here, before
-                # the run's state is touched, so that the run is still at
+                # conversation's checkout — on `main`, or on the topic
+                # branch a finished run for this component left it on,
+                # which is why the run's own flag decides and not the
+                # branch name. Refused here, before the run's state is
+                # touched, so that the run is still at
                 # initiate-design-to-main and nothing is on disk; the
-                # record's own guard (require_topic_branch_checked_out)
+                # record's own guard (require_topic_branch_cut_for_run)
                 # is the backstop behind this for any path that skips it.
                 raise RefusedBeforeTopicBranchCut(
                     "%r from %s is refused before the topic branch is cut: %s; "
@@ -492,7 +511,7 @@ class DesignToMainStateMachineFlow:
             # ruling appended, a reviewer's notes) and nothing the paused
             # agent half-wrote; that is what makes the resume diff the
             # user's edits and only those.
-            self.git_record.discard_uncommitted_work_outside_the_record()
+            self.git_record.discard_uncommitted_work_outside_the_record(run)
             # The commit the resume diff runs against (section 6.6): the
             # branch head now, the PARENT of the opening commit, not the
             # opening commit itself. The parent, because the value must be
@@ -537,22 +556,30 @@ class DesignToMainStateMachineFlow:
                 state_exit.verdict, state_exit.state, error)
         return tables.INVESTIGATE_WORKFLOW
 
-    def apply_rulings(self, run, state_exit):
+    def apply_rulings_to_the_run(self, run, state_exit):
+        """What a ruling does to the run in memory: `reset` zeroes the
+        counters (section 7). The rulings reach the branch's user-rulings
+        file with the state-exit's commit (write_rulings_to_the_record)."""
         for ruling in state_exit.rulings:
-            self.git_record.append_user_ruling(ruling, self.today())
             if ruling == "reset":
                 run.counters.reset_by_the_user()
 
+    def write_rulings_to_the_record(self, run, state_exit):
+        for ruling in state_exit.rulings:
+            self.git_record.append_user_ruling(run, ruling, self.today())
+
     def commit_state_exit(self, run, state_exit, write_number):
-        # Guarded before run-state.json is written, not only at the
-        # record's commit, so a refusal leaves no file behind.
-        self.git_record.require_topic_branch_checked_out("write and commit run-state.json")
+        # Guarded before anything is written — the rulings, then
+        # run-state.json — not only at the record's commit, so a refusal
+        # leaves no file behind.
+        self.git_record.require_topic_branch_cut_for_run(run, "write and commit the state-exit")
+        self.write_rulings_to_the_record(run, state_exit)
         run.write_to(self.git_record.absolute(self.git_record.run_state_path))
         trailer = compose_state_exit_trailer(
             state_exit.state, state_exit.verdict, state_exit.package_commit,
             run.counters.as_dict(), write_number)
         subject = "%s: %s %s" % (run.component, state_exit.state, state_exit.verdict)
-        return self.git_record.commit_state_exit(subject, trailer)
+        return self.git_record.commit_state_exit(run, subject, trailer)
 
     # -- entering a state -------------------------------------------------------
 
@@ -660,11 +687,15 @@ class DesignToMainStateMachineFlow:
 
         # Row 1: the machine cuts the topic branch before design-writing.
         # A refusal (TopicBranchCutRefused) leaves the machine here, before
-        # anything is entered or committed: HEAD is not the topic branch,
-        # so a state-exit committed now would land on whatever branch the
-        # checkout stands on.
+        # anything is entered or committed, and leaves the run's flag
+        # unset: a state-exit committed now would land on whatever branch
+        # the checkout stands on. The flag, set only once the cut has
+        # succeeded, is what the record's guard reads before every discard
+        # and commit; it goes to the branch in run-state.json with row 1's
+        # own commit, so a successor recovering the run reads it there.
         if row.row == "1":
             self.git_record.cut_topic_branch(self.topic_branch_start_point)
+            run.topic_branch_cut = True
 
         # Approvals and the work-streams.
         if row.row == "15":

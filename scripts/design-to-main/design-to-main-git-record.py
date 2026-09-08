@@ -53,18 +53,21 @@ class TopicBranchCutRefused(Exception):
 
 
 class RefusedBeforeTopicBranchCut(Exception):
-    """Something asked to discard or commit before the run's topic branch
-    was cut, while the checkout still stands on the invoking conversation's
-    branch — `main`, with whatever uncommitted work the invoker had. Until
-    row 1 cuts the branch the machine owns nothing in the checkout, so it
-    refuses: the refusal is the report to the invoking conversation, the
-    run does not start, and the checkout is as it was. A sibling of
+    """Something asked to discard or commit for a run that row 1 has not
+    yet routed — its topic branch not cut — while the checkout is still
+    the invoking conversation's, on whatever branch it stood on (`main`,
+    or the topic branch a finished run for the same component left it
+    on), with whatever uncommitted work the invoker had. Until row 1 cuts
+    the branch the machine owns nothing in the checkout, so it refuses:
+    the refusal is the report to the invoking conversation, the run does
+    not start, and the checkout is as it was. A sibling of
     TopicBranchCutRefused rather than a widening of it: that one carries
     git's refusal of the name at the cut; this one carries what the machine
     refused to do before any cut — a state-exit from
     initiate-design-to-main other than `invoked`, or (the structural
-    backstop, in TopicBranchGitRecord) a discard or a commit off the topic
-    branch."""
+    backstop, in TopicBranchGitRecord) a discard or a commit for a run
+    whose `topic-branch-cut` flag is not set, or with the checkout off
+    the run's topic branch."""
 
 
 class TopicBranchGitRecord:
@@ -116,21 +119,33 @@ class TopicBranchGitRecord:
 
     def topic_branch_is_checked_out(self):
         """Whether the checkout stands on the run's topic branch, the branch
-        named for the component (section 9). Read from git each time, not
-        remembered from `cut_topic_branch`: a successor process recovering
-        a run (section 9) builds a fresh record over a checkout the cut
-        happened in long before."""
+        named for the component (section 9). Read from git each time. This
+        alone cannot stand for "row 1 has cut the branch": this slice's
+        only branch switch is that cut, so a finished run leaves the
+        checkout on its topic branch, and a fresh invocation for the same
+        component from there finds the name already checked out. What
+        row 1 did is the run's own record, `topic-branch-cut`
+        (RunStateRecord), persisted in run-state.json on the branch, which
+        is how a successor process recovering a run reads it."""
         return self.current_branch() == self.component
 
-    def require_topic_branch_checked_out(self, action):
+    def require_topic_branch_cut_for_run(self, run, action):
         """The structural guard: every method here that discards or commits
-        calls this first, so nothing can reach the invoking conversation's
-        checkout before row 1 has cut the topic branch — whatever path a
-        future row takes to get here."""
+        takes the run and calls this first, so nothing can reach the
+        invoking conversation's checkout before row 1 has cut the run's
+        topic branch — whatever path a future row takes to get here, and
+        whatever branch the checkout stands on. The run's flag decides;
+        the branch name is a second condition, for a checkout switched off
+        the topic branch after the cut."""
+        if not run.topic_branch_cut:
+            raise RefusedBeforeTopicBranchCut(
+                "refused to %s: row 1 has not cut the topic branch %r for this run "
+                "(the checkout stands on %r); the run does not start and the checkout is as it was" % (
+                    action, self.component, self.current_branch()))
         if not self.topic_branch_is_checked_out():
             raise RefusedBeforeTopicBranchCut(
-                "refused to %s: the checkout stands on %r, not on the topic branch %r, "
-                "which is not checked out; the run does not start and the checkout is as it was" % (
+                "refused to %s: the checkout stands on %r, not on the run's topic branch %r; "
+                "the checkout is as it was" % (
                     action, self.current_branch(), self.component))
 
     # -- section 9: the record files ----------------------------------------
@@ -146,21 +161,34 @@ class TopicBranchGitRecord:
     def absolute(self, relative):
         return self.repository_dir / relative
 
-    def append_user_ruling(self, text, date):
+    def append_user_ruling(self, run, text, date):
         """The user-rulings file is append-only; each ruling is marked
-        user-ruled with its date."""
+        user-ruled with its date. Guarded like a commit: a ruling carried
+        on an invocation that is then refused is not written, so the
+        refusal leaves no file behind."""
+        self.require_topic_branch_cut_for_run(run, "write a user ruling")
         path = self.absolute(self.user_rulings_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a") as rulings:
             rulings.write("- %s (user-ruled %s)\n" % (text, date))
 
+    def run_state_text_at_last_commit(self):
+        """The text of run-state.json in the commit at HEAD, or None when
+        HEAD carries none: recovery (section 9) re-runs the state from the
+        last commit, and reads the run from there before it discards
+        anything in the checkout."""
+        shown = self.git("show", "HEAD:%s" % self.run_state_path, check=False)
+        if shown.returncode != 0:
+            return None
+        return shown.stdout
+
     # -- section 9: every state-exit is committed -----------------------------
 
-    def commit_state_exit(self, subject, trailer):
-        """Commit everything in the worktree as one state-exit, the trailer
-        under the subject. Empty commits are allowed: a retry or a discarded
-        state-exit changes nothing but the record."""
-        self.require_topic_branch_checked_out("commit a state-exit")
+    def commit_state_exit(self, run, subject, trailer):
+        """Commit everything in the worktree as one state-exit of `run`, the
+        trailer under the subject. Empty commits are allowed: a retry or a
+        discarded state-exit changes nothing but the record."""
+        self.require_topic_branch_cut_for_run(run, "commit a state-exit")
         self.git("add", "-A")
         message = subject + "\n\n" + trailer
         self.git("commit", "--allow-empty", "-q", "-m", message)
@@ -168,13 +196,13 @@ class TopicBranchGitRecord:
 
     # -- section 6.6: the paused agent's uncommitted work is discarded --------
 
-    def discard_uncommitted_work_outside_the_record(self):
+    def discard_uncommitted_work_outside_the_record(self, run):
         """Put every path outside the record directory back to HEAD:
         staged or not, modified, added or deleted, untracked. The record
         directory is kept — a ruling appended for this state-exit and a
         reviewer's notes under `evidence/` belong to the state-exit, not
         to the work that is discarded."""
-        self.require_topic_branch_checked_out("discard the paused agent's uncommitted work")
+        self.require_topic_branch_cut_for_run(run, "discard the paused agent's uncommitted work")
         outside_the_record = [".", ":(exclude)%s" % self.record_directory]
         self.git("reset", "-q", "--", *outside_the_record)
         self.git("checkout", "--", *outside_the_record)
@@ -182,11 +210,12 @@ class TopicBranchGitRecord:
 
     # -- section 9, recovery: the dead process's uncommitted files ------------
 
-    def discard_all_uncommitted_work_for_recovery(self):
+    def discard_all_uncommitted_work_for_recovery(self, run):
         """Put the whole checkout back to HEAD, the record directory
         included: a process that died before committing a state-exit left
-        files that belong to no commit (section 9)."""
-        self.require_topic_branch_checked_out("discard a dead process's uncommitted work")
+        files that belong to no commit (section 9). `run` is the run being
+        recovered, read from the last commit before this is called."""
+        self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
         self.git("checkout", "--", ".", check=False)
         self.git("clean", "-fdq", check=False)
 

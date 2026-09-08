@@ -563,18 +563,25 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
             fixture.git(repository.checkout, "branch", fixture.COMPONENT, "origin/main")
             branch_before = fixture.git(repository.checkout, "rev-parse", "--abbrev-ref", "HEAD")
             head_before = fixture.git(repository.checkout, "rev-parse", "HEAD")
-            script = [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})]
+            # The invocation carries a ruling: a refused invocation must
+            # leave no file behind, the user-rulings file included.
+            script = [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED,
+                       {"rulings": ("a ruling given at the invocation",)})]
             machine, run, record, _ = fixture.make_machine(script, repository)
             with self.assertRaises(M.TopicBranchCutRefused) as refused:
                 machine.run_until_ended(run)
             self.assertIn(fixture.COMPONENT, str(refused.exception))
             self.assertIn("already exists", str(refused.exception))
             self.assertEqual(run.current_state, T.INITIATE_DESIGN_TO_MAIN)
+            self.assertFalse(run.topic_branch_cut)
             self.assertEqual(machine.routed, [])
             self.assertEqual(fixture.git(repository.checkout, "rev-parse", "--abbrev-ref", "HEAD"),
                              branch_before)
             self.assertEqual(fixture.git(repository.checkout, "rev-parse", "HEAD"), head_before)
+            self.assertEqual(fixture.git(repository.checkout, "status", "--porcelain"), "")
             self.assertFalse(record.absolute(record.run_state_path).exists())
+            self.assertFalse(record.absolute(record.user_rulings_path).exists())
+            self.assertFalse(record.absolute(record.record_directory).exists())
         finally:
             repository.remove()
 
@@ -585,9 +592,11 @@ class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
     it stood on, with whatever uncommitted work it had. A verdict from
     initiate-design-to-main other than `invoked` is a machine error, but
     it cannot open an investigation there — the opening discard and commit
-    would run against the invoker's checkout on `main`. It is refused the
-    way a refused branch name is (section 6.6): reported to the invoking
-    conversation, the run does not start, the checkout is as it was."""
+    would run against the invoker's checkout. It is refused the way a
+    refused branch name is (section 6.6): reported to the invoking
+    conversation, the run does not start, the checkout is as it was. What
+    decides is the run's own record of row 1's cut, not the branch the
+    checkout stands on (AReInvocationFromAFinishedRunsCheckout, below)."""
 
     def setUp(self):
         self.repository = fixture.ThrowawayRepository()
@@ -626,24 +635,119 @@ class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
         self.assertEqual(machine.routed, [])
         self.check_the_checkout_is_as_it_was(record)
 
-    def test_the_record_itself_refuses_to_discard_or_commit_off_the_topic_branch(self):
+    def test_a_stray_verdict_carrying_a_ruling_is_refused_and_writes_no_rulings_file(self):
+        # The ruling rides on the refused invocation: it is not written,
+        # because a refused invocation leaves no file behind.
+        script = [(T.INITIATE_DESIGN_TO_MAIN, "started",
+                   {"rulings": ("a ruling given at the invocation",)})]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            machine.run_until_ended(run)
+        self.assertEqual(run.current_state, T.INITIATE_DESIGN_TO_MAIN)
+        self.assertEqual(machine.routed, [])
+        self.assertFalse(record.absolute(record.user_rulings_path).exists())
+        self.check_the_checkout_is_as_it_was(record)
+
+    def test_the_record_itself_refuses_to_discard_or_commit_before_row_1_cut_the_branch(self):
         # The structural guard: whatever performs a discard or a commit
-        # refuses while the checkout is not on the run's topic branch, so a
-        # future row that skips the cut cannot reach the invoker's checkout.
+        # takes the run and refuses while row 1 has not cut its topic
+        # branch, so a future row that skips the cut cannot reach the
+        # invoker's checkout, whatever branch it stands on.
         machine, run, record, _ = fixture.make_machine([], self.repository)
+        self.assertFalse(run.topic_branch_cut)
         self.assertFalse(record.topic_branch_is_checked_out())
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.discard_uncommitted_work_outside_the_record()
+            record.discard_uncommitted_work_outside_the_record(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.discard_all_uncommitted_work_for_recovery()
+            record.discard_all_uncommitted_work_for_recovery(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.commit_state_exit("widget-counter: a commit off the topic branch", "State: x\n")
+            record.commit_state_exit(run, "widget-counter: a commit before the cut", "State: x\n")
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
             machine.commit_state_exit(run, M.StateExitRecord(
                 state=T.INITIATE_DESIGN_TO_MAIN, verdict="started", package_commit="x"), None)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
             machine.recover()
         self.check_the_checkout_is_as_it_was(record)
+
+    def test_the_record_refuses_a_run_not_yet_cut_even_with_the_checkout_on_the_topic_branch(self):
+        # The branch name alone cannot tell a fresh run from a finished
+        # run's leftover checkout; the run's own flag decides. Here the
+        # checkout stands on the component's branch and the run has not
+        # been routed by row 1: refused, nothing discarded, nothing committed.
+        checkout = self.repository.checkout
+        fixture.git(checkout, "checkout", "-q", "-b", fixture.COMPONENT)
+        machine, run, record, _ = fixture.make_machine([], self.repository)
+        self.assertTrue(record.topic_branch_is_checked_out())
+        self.assertFalse(run.topic_branch_cut)
+        head_before = fixture.git(checkout, "rev-parse", "HEAD")
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            record.discard_uncommitted_work_outside_the_record(run)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            record.discard_all_uncommitted_work_for_recovery(run)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            record.commit_state_exit(run, "widget-counter: a commit before the cut", "State: x\n")
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            machine.commit_state_exit(run, M.StateExitRecord(
+                state=T.INITIATE_DESIGN_TO_MAIN, verdict="started", package_commit="x"), None)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            machine.recover()   # no state-exit is committed at HEAD: nothing to recover
+        self.assertEqual((checkout / "seat-notes.md").read_text(), "untracked notes on main\n")
+        self.assertEqual((checkout / "README.md").read_text(), "main, edited but not committed\n")
+        self.assertEqual(fixture.git(checkout, "status", "--porcelain"), self.status_before)
+        self.assertEqual(fixture.git(checkout, "rev-parse", "HEAD"), head_before)
+        self.assertFalse(record.absolute(record.record_directory).exists())
+
+
+class AReInvocationFromAFinishedRunsCheckout(unittest.TestCase):
+    """This slice's only branch switch is row 1's `checkout -b`, so every
+    finished run leaves the checkout on its topic branch. A re-invocation
+    for the same component from there is a fresh run that row 1 has not
+    yet routed: the branch's name says nothing about it, and a stray
+    verdict from initiate-design-to-main must be refused exactly as it is
+    from `main` — the invoker's uncommitted work kept, the finished run's
+    branch head and its run-state.json untouched."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_a_stray_verdict_after_a_finished_run_does_not_touch_the_finished_runs_branch(self):
+        machine, run, record, _ = fixture.make_machine(
+            fixture.whole_run_to_passed(), self.repository)
+        self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
+        checkout = self.repository.checkout
+        self.assertEqual(record.current_branch(), fixture.COMPONENT)
+        run_state_path = record.absolute(record.run_state_path)
+        run_state_before = run_state_path.read_text()
+        head_before = fixture.git(checkout, "rev-parse", "HEAD")
+        # The invoker's uncommitted work, where the finished run left the checkout.
+        (checkout / "seat-notes.md").write_text("untracked notes after the run\n")
+        (checkout / "README.md").write_text("main, edited but not committed\n")
+        status_before = fixture.git(checkout, "status", "--porcelain")
+        self.assertEqual(sorted(status_before.splitlines()),
+                         [" M README.md", "?? seat-notes.md"])
+
+        second_machine, second_run, second_record, _ = fixture.make_machine(
+            [(T.INITIATE_DESIGN_TO_MAIN, "started", {})], self.repository)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut) as refused:
+            second_machine.run_until_ended(second_run)
+        self.assertIn("started", str(refused.exception))
+        self.assertEqual(second_run.current_state, T.INITIATE_DESIGN_TO_MAIN)
+        self.assertFalse(second_run.topic_branch_cut)
+        self.assertEqual(second_machine.routed, [])
+
+        self.assertEqual((checkout / "seat-notes.md").read_text(), "untracked notes after the run\n")
+        self.assertEqual((checkout / "README.md").read_text(), "main, edited but not committed\n")
+        self.assertEqual(fixture.git(checkout, "status", "--porcelain"), status_before)
+        self.assertEqual(fixture.git(checkout, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+                         fixture.COMPONENT)
+        self.assertEqual(fixture.git(checkout, "rev-parse", "HEAD"), head_before)
+        self.assertEqual(run_state_path.read_text(), run_state_before)
+        self.assertEqual(RunStateRecord.read_from(run_state_path).outcome, T.OUTCOME_PASSED)
+        self.assertEqual(fixture.git(checkout, "show", "HEAD:" + str(record.run_state_path)),
+                         run_state_before)
 
 
 if __name__ == "__main__":

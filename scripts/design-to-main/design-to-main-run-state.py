@@ -100,11 +100,19 @@ class RunStateRecord:
     current state, the consecutive program-check failures, each writing
     state's entry reason (for the three buckets), the writes emitted per
     version (the `Write:` number), the coverage-types, and what an
-    investigation needs to resume.
+    investigation needs to resume. One more, `topic-branch-cut`: whether
+    row 1 has cut the run's topic branch (section 6.6). Until it has, the
+    machine owns nothing in the checkout and refuses every discard and
+    commit; the git record's guard reads this flag off the run, not the
+    name of the branch the checkout stands on, because a finished run
+    leaves the checkout on its topic branch and the name cannot tell a
+    fresh invocation from that. Persisted here so that a successor
+    process recovering a run reads it from the branch.
     """
 
     FIELDS = (
         "component", "current-state", "design-version", "outcome",
+        "topic-branch-cut",
         "counters", "tests-begun", "design-approved", "test-design-approved",
         "implementation-work-stream-position", "test-work-stream-position",
         "consecutive-could-not-run-count", "submit-retry-count",
@@ -122,6 +130,7 @@ class RunStateRecord:
         self.previous_state = None
         self.design_version = 1
         self.outcome = None
+        self.topic_branch_cut = False
         self.counters = RunCounters()
         self.tests_begun = False
         self.design_approved = False
@@ -187,6 +196,7 @@ class RunStateRecord:
             "previous-state": self.previous_state,
             "design-version": self.design_version,
             "outcome": self.outcome,
+            "topic-branch-cut": self.topic_branch_cut,
             "counters": self.counters.as_dict(),
             "tests-begun": self.tests_begun,
             "design-approved": self.design_approved,
@@ -215,6 +225,10 @@ class RunStateRecord:
         run.previous_state = data.get("previous-state")
         run.design_version = data["design-version"]
         run.outcome = data.get("outcome")
+        # Absent means not cut: a file without the flag recovers into a
+        # run the record refuses to discard for or commit, never one it
+        # takes as cut.
+        run.topic_branch_cut = bool(data.get("topic-branch-cut", False))
         run.counters = RunCounters(data["counters"])
         run.tests_begun = data["tests-begun"]
         run.design_approved = data["design-approved"]
