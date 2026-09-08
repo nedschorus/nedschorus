@@ -52,8 +52,8 @@ class WholeRunThatPasses(unittest.TestCase):
             T.TEST_SUITE_EXECUTING, T.SUBMIT_TO_PR_GATE,
         ])
         rows = [row.row for row, _, _ in self.machine.routed]
-        self.assertEqual(rows, ["1", "2", "5", "3.1-a", "15", "18", "21", "29", "3.1-c", "36",
-                                "37", "42", "51", "66"])
+        self.assertEqual(rows, ["1", "2", "5", "3.1-a", "18", "21", "24", "32", "3.1-c", "39",
+                                "40", "45", "54", "72"])
 
     def test_the_machine_cut_the_topic_branch_from_origin_main_named_for_the_component(self):
         self.assertEqual(self.record.current_branch(), fixture.COMPONENT)
@@ -137,25 +137,25 @@ class TwoWorkStreams(unittest.TestCase):
         try:
             script = fixture.prefix_to_test_writing() + [
                 fixture.test_write(),
-                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),            # row 48
-                (T.CONTRACT_REVISING, T.V_EMITTED, {}),                            # row 16
+                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),            # row 51
+                (T.CONTRACT_REVISING, T.V_EMITTED, {}),                            # row 19
                 (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),               # row 6
                 (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 9
                 fixture.implementation_write(),                                   # forced, uncharged
-                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 23: holds
-                (T.TEST_DESIGN_WRITING, T.V_EMITTED, {}),                          # row 29
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 26: holds
+                (T.TEST_DESIGN_WRITING, T.V_EMITTED, {}),                          # row 32
                 (T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
-                (T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE, {}),               # row 36
+                (T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE, {}),               # row 39
                 fixture.test_write(),                                             # forced, uncharged
-                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                     # row 42
+                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                     # row 45
                 (T.TEST_SUITE_EXECUTING, T.V_PASS, {}),
                 (T.SUBMIT_TO_PR_GATE, T.V_ACCEPTED, {}),
             ]
             machine, run, record, _ = fixture.make_machine(script, repository)
             self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
             rows = [row.row for row, _, _ in machine.routed]
-            self.assertEqual(rows[-13:], ["48", "16", "6", "9", "18", "23", "29", "3.1-c", "36",
-                                          "37", "42", "51", "66"])
+            self.assertEqual(rows[-13:], ["51", "19", "6", "9", "21", "26", "32", "3.1-c", "39",
+                                          "40", "45", "54", "72"])
             self.assertEqual(run.counters.value("contract-revisions"), 1)
             self.assertEqual(run.counters.value("implementation-writes"), 1)
             self.assertEqual(run.counters.value("test-writes"), 1)
@@ -167,10 +167,10 @@ class TwoWorkStreams(unittest.TestCase):
             repository.remove()
 
     def test_a_stream_paused_in_a_reviewing_state_resumes_there_not_at_its_last_writing_state(self):
-        # Row 49 opens an investigation with the test-work-stream in
+        # Row 52 opens an investigation with the test-work-stream in
         # test-reviewing; the user edits only the implementation and
-        # resumes. Row 64 resumes at implementation-reviewing, its reviewer
-        # advances, and row 23 holds the implementation and sends the run to
+        # resumes. Row 70 resumes at implementation-reviewing, its reviewer
+        # advances, and row 26 holds the implementation and sends the run to
         # the test-work-stream's position: test-reviewing, not the
         # test-writing it was in before the tests were reviewed. No test
         # write is forced, and the test-writes counter does not move.
@@ -178,7 +178,7 @@ class TwoWorkStreams(unittest.TestCase):
         try:
             script = fixture.prefix_to_test_writing() + [
                 fixture.test_write(),
-                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),              # row 49
+                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),              # row 52
             ]
             machine, run, record, _ = fixture.make_machine(script, repository)
             fixture.drive(machine, run)
@@ -188,11 +188,11 @@ class TwoWorkStreams(unittest.TestCase):
             implementation.parent.mkdir(parents=True, exist_ok=True)
             implementation.write_text("# the implementation, edited by the user\n")
             machine.launcher.script += [
-                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 64
-                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 23: holds
+                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 70
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 26: holds
             ]
             fixture.drive(machine, run)
-            self.assertEqual([row.row for row, _, _ in machine.routed][-3:], ["49", "64", "23"])
+            self.assertEqual([row.row for row, _, _ in machine.routed][-3:], ["52", "70", "26"])
             self.assertEqual(run.current_state, T.TEST_REVIEWING)
             self.assertEqual(run.test_work_stream_position, T.TEST_REVIEWING)
             self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
@@ -215,7 +215,7 @@ class WholeRunThatFailsAtTheRedesignsCeiling(unittest.TestCase):
                 (T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
                 (T.DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE, {}),
                 fixture.implementation_write(),
-                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),    # row 27
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),    # row 30
                 (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),
             ]
             script = [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})] + redesign_round * 3
@@ -224,7 +224,7 @@ class WholeRunThatFailsAtTheRedesignsCeiling(unittest.TestCase):
             self.assertEqual(outcome, T.OUTCOME_FAILED)
             self.assertEqual(run.counters.value("redesigns"), 2)
             self.assertEqual(run.design_version, 3)
-            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["18", "27", "65"])
+            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["21", "30", "71"])
             trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
             self.assertEqual(trailer["Counter-redesigns"], "2")
             self.assertEqual(RunStateRecord.read_from(
@@ -316,7 +316,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
 
     def open_investigation_from_test_design_writing(self):
         """test-design-writing writes its draft and touches a tracked file,
-        then escalates (row 61, focus design)."""
+        then escalates (row 67, focus design)."""
         script = fixture.prefix_to_tests_begun() + [
             (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {
                 "investigation_focus": T.FOCUS_DESIGN,
@@ -344,7 +344,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
         machine, run, record = self.open_investigation_from_test_design_writing()
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
-        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["61", "64"])
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["67", "70"])
         self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
         self.assertEqual(run.design_version, 1)
 
@@ -363,7 +363,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
 
     def test_row_20_a_partial_implementation_never_emitted_is_not_sent_to_review(self):
         # implementation-writing writes part of the implementation, then
-        # finds the design wanting (row 20); the user edits nothing and
+        # finds the design wanting (row 23); the user edits nothing and
         # resumes: implementation-writing again, not implementation-
         # reviewing of a file its writer never emitted.
         script = fixture.prefix_to_design_approved() + [
@@ -375,7 +375,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
         ]
         machine, run, record, _ = fixture.make_machine(script, self.repository)
         fixture.drive(machine, run)
-        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["20", "64"])
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["23", "70"])
         self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
         self.assertEqual(run.implementation_work_stream_position, T.IMPLEMENTATION_WRITING)
         self.assertFalse(record.absolute(self.IMPLEMENTATION).exists())
@@ -426,7 +426,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         self.stray_verdict_then_check_the_pause_is_unchanged(machine, run, record)
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "64")
+        self.assertEqual(machine.routed[-1][0].row, "70")
         self.assertIsNone(machine.routed[-2][0])   # the stray exit: a machine error, no row
         self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
         self.assertEqual(run.design_version, 1)
@@ -457,7 +457,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         machine.launcher.script.append(
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "64")
+        self.assertEqual(machine.routed[-1][0].row, "70")
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.design_version, 2)
         self.assertEqual(run.counters.value("redesigns"), 1)
@@ -604,7 +604,7 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             design.parent.mkdir(parents=True, exist_ok=True)
             design.write_text("# the design, edited by the user during the investigation\n")
             fixture.drive(successor, recovered)
-            self.assertEqual([row.row for row, _, _ in successor.routed], ["64"])
+            self.assertEqual([row.row for row, _, _ in successor.routed], ["70"])
             self.assertEqual(recovered.current_state, T.DESIGN_WRITING)
             self.assertEqual(recovered.design_version, 2)
             self.assertEqual(recovered.counters.value("redesigns"), 1)

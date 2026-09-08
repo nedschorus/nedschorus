@@ -244,7 +244,7 @@ def find_legal_transition_row(run, state_exit, resume_destination=None):
     # before any row is looked up (a derived one always comes from the
     # tables): one that names no state or sub-state is a machine error
     # like any other illegal state-exit (section 3.2, "any other
-    # state-exit"). Row 64's guard holds for any string that is not
+    # state-exit"). Row 70's guard holds for any string that is not
     # design-writing, and a row applied to a name the tables do not know
     # would escape the machine as a KeyError instead of being routed to
     # investigate-workflow.
@@ -271,7 +271,7 @@ def find_legal_transition_row(run, state_exit, resume_destination=None):
                 [r.row for r in matches], state_exit.verdict, from_state))
     row = matches[0]
     # On `resume` the destination is the user's input to the guard, not a
-    # claim about the row: row 65 overrides it with `ended`.
+    # claim about the row: row 71 overrides it with `ended`.
     if state_exit.destination is not None and state_exit.verdict != tables.V_RESUME:
         derived = derived_destination(row, context)
         if derived is not None and state_exit.destination != derived:
@@ -490,7 +490,7 @@ class DesignToMainStateMachineFlow:
         if state_exit.verdict == tables.V_RESUME:
             resume_destination = self.resolve_resume_destination(run, state_exit)
         # A `reset` ruling takes effect on the counters before the row is
-        # looked up (row 65 guards on the redesigns ceiling); the rulings
+        # looked up (row 71 guards on the redesigns ceiling); the rulings
         # themselves are written to the branch with the commit, below,
         # after the guard — nothing is on disk if this state-exit is refused.
         self.apply_rulings_to_the_run(run, state_exit)
@@ -713,29 +713,29 @@ class DesignToMainStateMachineFlow:
         # succeeded, is what the record's guard reads before every discard
         # and commit; it goes to the branch in run-state.json with row 1's
         # own commit, so a successor recovering the run reads it there.
-        if row.row == "1":
+        if row.row == tables.ROW_TOPIC_BRANCH_CUT:
             self.git_record.cut_topic_branch(self.topic_branch_start_point)
             run.topic_branch_cut = True
 
         # Approvals and the work-streams.
-        if row.row == "15":
+        if row.row == tables.ROW_DESIGN_APPROVED:
             run.design_approved = True
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING, self.reason_for_advance(
                 run, tables.IMPLEMENTATION_WRITING, tables.ENTRY_REASON_REDESIGN))
             if run.tests_begun:
                 self.enter_writing_state(run, tables.TEST_DESIGN_WRITING,
                                          tables.ENTRY_REASON_REDESIGN)
-        if row.row == "36":
+        if row.row == tables.ROW_TEST_DESIGN_APPROVED:
             run.test_design_approved = True
             self.enter_writing_state(run, tables.TEST_WRITING, self.reason_for_advance(
                 run, tables.TEST_WRITING, self.upstream_reason_for_test_writing(run)))
-        if row.row == "21":
+        if row.row == tables.ROW_TESTS_BEGIN:
             run.tests_begun = True
             run.set_work_stream_position(tables.IMPLEMENTATION_WORK_STREAM, tables.READY_FOR_TEST_SUITE)
             self.enter_writing_state(run, tables.TEST_DESIGN_WRITING, tables.ENTRY_REASON_FIRST_WRITE)
-        if row.row == "22":
+        if row.row == tables.ROW_IMPLEMENTATION_TO_TEST_SUITE:
             run.set_work_stream_position(tables.IMPLEMENTATION_WORK_STREAM, tables.READY_FOR_TEST_SUITE)
-        if row.row == "42":
+        if row.row == tables.ROW_TESTS_TO_TEST_SUITE:
             run.set_work_stream_position(tables.TEST_WORK_STREAM, tables.READY_FOR_TEST_SUITE)
         if row.to_state == tables.TO_HOLD_READY_FOR_TEST_SUITE:
             held = tables.STATE_TABLE_BY_NAME[from_state].work_stream
@@ -757,7 +757,7 @@ class DesignToMainStateMachineFlow:
             next_position = from_state
 
         # Re-entering a writing state by a reject, a discuss or the
-        # arbitrator's ruling: why, for the three buckets. (Rows 15 and 36,
+        # arbitrator's ruling: why, for the three buckets. (Rows 18 and 39,
         # the advances from upstream, set their reason above.)
         if (row.to_state in (tables.IMPLEMENTATION_WRITING, tables.TEST_WRITING)
                 and verdict != tables.V_ADVANCE):
@@ -768,7 +768,7 @@ class DesignToMainStateMachineFlow:
             else:
                 reason = tables.ENTRY_REASON_REJECT_FROM_REVIEW
             self.enter_writing_state(run, row.to_state, reason)
-        if row.to_state == tables.TEST_DESIGN_WRITING and row.row != "21":
+        if row.to_state == tables.TEST_DESIGN_WRITING and row.row != tables.ROW_TESTS_BEGIN:
             reason = (tables.ENTRY_REASON_TEST_DESIGN_CORRECTION
                       if row.counter == "test-design-corrections"
                       else tables.ENTRY_REASON_REJECT_FROM_REVIEW)
