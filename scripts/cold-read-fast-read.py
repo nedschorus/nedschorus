@@ -6,12 +6,14 @@ Usage:
 
 WHAT IT DOES. Picks the report path from the target, runs ONE fast-clarify
 cell on the fast tier through scripts/cold-read-agy-cell.py (user-ruled
-2026-09-07: Gemini 3.8 Flash at low, expected under one minute, replacing
-gpt-5.6-terra at low), retries once if that cell fails, and then prints
-exactly one line on stdout: the report's absolute path on success, or a line
-opening `FAILED` on failure. Exit 0 on success, 1 on failure, 64 when the
-invocation itself was wrong (a --target that is not a file) and nothing was
-launched. Every cell's own progress -- the launcher's stderr, the runtime's
+2026-09-07 after measurements, superseding the earlier ruling for low: Gemini
+3.8 Flash at medium, about 100-110 s per document in single runs on a
+658-word skill and a 1,967-word walk draft, recall 42% against 19% at low on
+the ghi-write candidate defect list, replacing gpt-5.6-terra at low), retries
+once if that cell fails, and then prints exactly one line on stdout: the
+report's absolute path on success, or a line opening `FAILED` on failure. Exit
+0 on success, 1 on failure, 64 when the invocation itself was wrong (a --target
+that is not a file) and nothing was launched. Every cell's own progress -- the launcher's stderr, the runtime's
 stderr, the stray-write and recovery lines -- is re-emitted on this program's
 stderr, so a caller watching stdout gets the one line and a caller reading
 stderr gets the whole account.
