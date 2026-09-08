@@ -7,9 +7,9 @@ A list of the phrases and terms of this project approved by the user, in alphabe
 - **/handoff** — a skill that hands a session over to a new one.
 - **/sanity-check** — a skill used to improve designs.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
-- **adjudicator** — a fresh agent, used to resolve conflicts between agents.
 - **agent-instructions** — prompts or MD files that instruct agents. Initial agent instructions are the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent. In addition, instructions can live in CLAUDE.md, CLAUDE.local.md, the project's appended system-prompt file, the project's memory index, a session-start hook, or the equivalent for non-Claude agents such as AGENTS.md.
 - **agent-seat** — a named, long-lived agent identity with its own home directory, git branch and initial agent instructions; context compressed and renewed by a series of reincarnated agents connected by session handoffs from old agent to new agent.
+- **arbitrator** — a fresh agent, used to resolve conflicts between agents.
 - **Code Prompt Code (aka CPC)** — a program built from both code and prompts.
 - **component-consumer** — anything that invokes a component or reads what it leaves; the parties a component-contract makes promises to. Defined in the design-to-main glossary.
 - **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt`, `script-and-prompt`; a test may also be `no-tests` with a reason. Defined in the design-to-main glossary.
