@@ -784,16 +784,21 @@ class DesignToMainStateMachineFlow:
         write_number = None
 
         # The row's counter (section 7: only an emitted state-exit charges
-        # a write counter, and by the three buckets).
+        # a write counter, and by the three buckets). The `Write:` trailer
+        # counts what the writer's counter counts (section 9): the number
+        # that counter reaches, or `forced` when the write spends none of
+        # it. writes_emitted_per_version counts every write, for the
+        # first-write rule.
         if row.counter in tables.COUNTED_WRITING_STATES.values():
             run.writes_emitted_per_version[from_state] = (
                 run.writes_emitted_per_version.get(from_state, 0) + 1)
-            write_number = run.writes_emitted_per_version[from_state]
             charged = write_counter_charged(
                 from_state, run.writing_state_entry_reason.get(
                     from_state, tables.ENTRY_REASON_FIRST_WRITE))
             if charged:
-                run.counters.increment(charged)
+                write_number = run.counters.increment(charged)
+            else:
+                write_number = tables.WRITE_TRAILER_FORCED
         elif row.counter:
             run.counters.increment(row.counter)
 

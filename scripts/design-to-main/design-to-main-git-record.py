@@ -21,7 +21,9 @@ _tables_spec.loader.exec_module(tables)
 
 def compose_state_exit_trailer(state, verdict, package_commit, counters, write_number=None):
     """The commit trailer of section 9: `State:`, `Exit:`, `Package-commit:`,
-    `Write:` (the write number, for writes), and every counter as
+    `Write:` (for writes: the number the writer's counter reached, or
+    `forced` for a write forced by an upstream change or ordered by the
+    arbitrator, which that counter does not count), and every counter as
     `Counter-<name>:`, on the model of the gatekeeper's trailer."""
     lines = [
         "State: %s" % state,
@@ -29,7 +31,7 @@ def compose_state_exit_trailer(state, verdict, package_commit, counters, write_n
         "Package-commit: %s" % package_commit,
     ]
     if write_number is not None:
-        lines.append("Write: %d" % write_number)
+        lines.append("Write: %s" % write_number)
     for name in tables.COUNTER_NAMES:
         lines.append("Counter-%s: %d" % (name, counters[name]))
     return "\n".join(lines) + "\n"

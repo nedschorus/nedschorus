@@ -126,6 +126,54 @@ class WholeRunThatPasses(unittest.TestCase):
                       launched[T.IMPLEMENTATION_WRITING]["standard-package"])
 
 
+class TheWriteTrailer(unittest.TestCase):
+    """Section 9 after the seventh walk: `Write:` counts what the writer's
+    counter counts; a write forced by an upstream change or ordered by the
+    arbitrator carries `Write: forced` instead of a number."""
+
+    def write_trailers(self, machine, record):
+        return [G.parse_state_exit_trailer(record.commit_message(commit)).get("Write")
+                for _, state_exit, commit in machine.routed
+                if state_exit.state == T.IMPLEMENTATION_WRITING]
+
+    def test_counted_writes_are_numbered_by_the_writer_s_counter_and_forced_writes_say_so(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                fixture.implementation_write(),                                   # Write: 1
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),
+                fixture.implementation_write(),                                   # Write: 2
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),  # row 29
+                (T.CONTRACT_REVISING, T.V_EMITTED, {}),
+                (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
+                (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 9
+                fixture.implementation_write(),                                   # Write: forced
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),
+                fixture.implementation_write(),                                   # Write: 3
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(self.write_trailers(machine, record), ["1", "2", "forced", "3"])
+            self.assertEqual(run.counters.value("implementation-writes"), 3)
+            self.assertEqual(run.writes_emitted_per_version[T.IMPLEMENTATION_WRITING], 4)
+        finally:
+            repository.remove()
+
+    def test_a_write_the_arbitrator_orders_is_forced(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.whole_run_to_passed()[:-2] + [
+                (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),
+                (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),       # row 59
+                fixture.implementation_write(),                                  # Write: forced
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(self.write_trailers(machine, record), ["1", "forced"])
+        finally:
+            repository.remove()
+
+
 class TwoWorkStreams(unittest.TestCase):
     """The revised-contract invalidation rule (section 3.2) with tests
     begun: both work-streams re-enter their writing states, the

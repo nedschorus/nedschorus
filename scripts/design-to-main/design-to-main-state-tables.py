@@ -729,6 +729,9 @@ def contract_path_while_no_code_exists(component):
 
 
 RECORD_DIRECTORY_NAME = "design-to-main-record"
+# The `Write:` trailer of a write the writer's counter does not count — one
+# forced by an upstream change or ordered by the arbitrator (section 9).
+WRITE_TRAILER_FORCED = "forced"
 RUN_STATE_FILE_NAME = "run-state.json"
 USER_RULINGS_FILE_NAME = "user-rulings.md"
 
