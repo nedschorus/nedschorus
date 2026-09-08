@@ -58,14 +58,6 @@ The literature does not point toward a larger society of autonomous agents. It p
 
 Terms of art used here are collected in the project's glossary, `docs/wiki/nedschorus-glossary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. Where a term already has a name in this project, that name is used rather than a new one.
 
-## What every node receives and returns
-
-A node is given an explicit input package, and nothing it needs arrives any other way. What it returns depends on what kind of node it is.
-
-A **producing node** returns a candidate output, that output's provenance, the evidence behind it, and a recommended destination. A **non-producing node** builds nothing: it returns findings, the evidence for them, and a recommended destination. Both kinds return a destination as a recommendation; the state machine decides what to do with it, because deciding the next step is the state machine's job and not the node's.
-
-The rule underneath both: nothing that matters exists only in an agent's chat message.
-
 ## The pipeline
 
 The forward order is fixed: define the work, create and review a design and its contract, write and review an implementation, write and review a test plan, write and review tests, integrate, build and test, deploy, and triage what production reports. Fixed means no agent invents the order while working. It does not mean the only direction is forward: a node that cannot proceed routes backward, separate work items run in parallel, and some steps that share a governing design can run beside each other rather than in the listed order. Each node has one job and one point of view. The contract is the design's companion file, written by the design's author in the same conversation, carrying the detail the implementation and the tests need that the design does not; after the fan-out a fresh agent corrects it from a reviewer's notes, and it reaches the user only when it has failed review twice.
