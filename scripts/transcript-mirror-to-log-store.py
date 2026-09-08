@@ -109,7 +109,7 @@ def rsync_vanished_exit_code() -> int:
     line of `rsync --version`, which opens "openrsync" on the Mac's
     /usr/bin/rsync and "rsync  version 3.4.1" on ned-box.
 
-    Measured 2026-09-07 with a 4,000-file tree, 500 files deleted while rsync
+    Measured 2026-09-08 with a 4,000-file tree, 500 files deleted while rsync
     ran: exit 23 on the Mac (openrsync, stderr "open (2)" errors, everything
     else copied) and exit 24 on ned-box (rsync 3.4.1, "file has vanished").
     GNU's 23 is a genuine partial-transfer error and openrsync's 24 is not
