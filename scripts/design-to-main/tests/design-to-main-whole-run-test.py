@@ -579,5 +579,72 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
             repository.remove()
 
 
+class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
+    """Before row 1 has cut the topic branch the machine owns nothing: the
+    checkout is the invoking conversation's, standing on whatever branch
+    it stood on, with whatever uncommitted work it had. A verdict from
+    initiate-design-to-main other than `invoked` is a machine error, but
+    it cannot open an investigation there — the opening discard and commit
+    would run against the invoker's checkout on `main`. It is refused the
+    way a refused branch name is (section 6.6): reported to the invoking
+    conversation, the run does not start, the checkout is as it was."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+        checkout = self.repository.checkout
+        (checkout / "seat-notes.md").write_text("untracked notes on main\n")
+        (checkout / "README.md").write_text("main, edited but not committed\n")
+        self.status_before = fixture.git(checkout, "status", "--porcelain")
+        self.assertEqual(sorted(self.status_before.splitlines()),
+                         [" M README.md", "?? seat-notes.md"])
+        self.branch_before = fixture.git(checkout, "rev-parse", "--abbrev-ref", "HEAD")
+        self.head_before = fixture.git(checkout, "rev-parse", "HEAD")
+        self.assertEqual(self.branch_before.strip(), "main")
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def check_the_checkout_is_as_it_was(self, record):
+        checkout = self.repository.checkout
+        self.assertEqual((checkout / "seat-notes.md").read_text(), "untracked notes on main\n")
+        self.assertEqual((checkout / "README.md").read_text(), "main, edited but not committed\n")
+        self.assertEqual(fixture.git(checkout, "status", "--porcelain"), self.status_before)
+        self.assertEqual(fixture.git(checkout, "rev-parse", "--abbrev-ref", "HEAD"), self.branch_before)
+        self.assertEqual(fixture.git(checkout, "rev-parse", "HEAD"), self.head_before)
+        self.assertFalse(record.absolute(record.run_state_path).exists())
+        self.assertFalse(record.absolute(record.record_directory).exists())
+
+    def test_a_stray_verdict_from_initiate_design_to_main_is_refused_and_the_run_does_not_start(self):
+        script = [(T.INITIATE_DESIGN_TO_MAIN, "started", {})]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut) as refused:
+            machine.run_until_ended(run)
+        self.assertIn("started", str(refused.exception))
+        self.assertIn(T.INITIATE_DESIGN_TO_MAIN, str(refused.exception))
+        self.assertEqual(run.current_state, T.INITIATE_DESIGN_TO_MAIN)
+        self.assertIsNone(run.paused_state)
+        self.assertEqual(machine.routed, [])
+        self.check_the_checkout_is_as_it_was(record)
+
+    def test_the_record_itself_refuses_to_discard_or_commit_off_the_topic_branch(self):
+        # The structural guard: whatever performs a discard or a commit
+        # refuses while the checkout is not on the run's topic branch, so a
+        # future row that skips the cut cannot reach the invoker's checkout.
+        machine, run, record, _ = fixture.make_machine([], self.repository)
+        self.assertFalse(record.topic_branch_is_checked_out())
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            record.discard_uncommitted_work_outside_the_record()
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            record.discard_all_uncommitted_work_for_recovery()
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            record.commit_state_exit("widget-counter: a commit off the topic branch", "State: x\n")
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            machine.commit_state_exit(run, M.StateExitRecord(
+                state=T.INITIATE_DESIGN_TO_MAIN, verdict="started", package_commit="x"), None)
+        with self.assertRaises(M.RefusedBeforeTopicBranchCut):
+            machine.recover()
+        self.check_the_checkout_is_as_it_was(record)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

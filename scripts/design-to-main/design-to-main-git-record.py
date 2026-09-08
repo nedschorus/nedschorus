@@ -52,6 +52,21 @@ class TopicBranchCutRefused(Exception):
     does not start). Carries git's own words; the checkout is as it was."""
 
 
+class RefusedBeforeTopicBranchCut(Exception):
+    """Something asked to discard or commit before the run's topic branch
+    was cut, while the checkout still stands on the invoking conversation's
+    branch — `main`, with whatever uncommitted work the invoker had. Until
+    row 1 cuts the branch the machine owns nothing in the checkout, so it
+    refuses: the refusal is the report to the invoking conversation, the
+    run does not start, and the checkout is as it was. A sibling of
+    TopicBranchCutRefused rather than a widening of it: that one carries
+    git's refusal of the name at the cut; this one carries what the machine
+    refused to do before any cut — a state-exit from
+    initiate-design-to-main other than `invoked`, or (the structural
+    backstop, in TopicBranchGitRecord) a discard or a commit off the topic
+    branch."""
+
+
 class TopicBranchGitRecord:
     """The component's topic branch in one repository checkout."""
 
@@ -99,6 +114,25 @@ class TopicBranchGitRecord:
                     self.component, start_point, cut.stderr.strip()))
         return self.head_commit()
 
+    def topic_branch_is_checked_out(self):
+        """Whether the checkout stands on the run's topic branch, the branch
+        named for the component (section 9). Read from git each time, not
+        remembered from `cut_topic_branch`: a successor process recovering
+        a run (section 9) builds a fresh record over a checkout the cut
+        happened in long before."""
+        return self.current_branch() == self.component
+
+    def require_topic_branch_checked_out(self, action):
+        """The structural guard: every method here that discards or commits
+        calls this first, so nothing can reach the invoking conversation's
+        checkout before row 1 has cut the topic branch — whatever path a
+        future row takes to get here."""
+        if not self.topic_branch_is_checked_out():
+            raise RefusedBeforeTopicBranchCut(
+                "refused to %s: the checkout stands on %r, not on the topic branch %r, "
+                "which has not been cut; the run does not start and the checkout is as it was" % (
+                    action, self.current_branch(), self.component))
+
     # -- section 9: the record files ----------------------------------------
 
     @property
@@ -126,6 +160,7 @@ class TopicBranchGitRecord:
         """Commit everything in the worktree as one state-exit, the trailer
         under the subject. Empty commits are allowed: a retry or a discarded
         state-exit changes nothing but the record."""
+        self.require_topic_branch_checked_out("commit a state-exit")
         self.git("add", "-A")
         message = subject + "\n\n" + trailer
         self.git("commit", "--allow-empty", "-q", "-m", message)
@@ -139,10 +174,21 @@ class TopicBranchGitRecord:
         directory is kept — a ruling appended for this state-exit and a
         reviewer's notes under `evidence/` belong to the state-exit, not
         to the work that is discarded."""
+        self.require_topic_branch_checked_out("discard the paused agent's uncommitted work")
         outside_the_record = [".", ":(exclude)%s" % self.record_directory]
         self.git("reset", "-q", "--", *outside_the_record)
         self.git("checkout", "--", *outside_the_record)
         self.git("clean", "-fdq", "--", *outside_the_record)
+
+    # -- section 9, recovery: the dead process's uncommitted files ------------
+
+    def discard_all_uncommitted_work_for_recovery(self):
+        """Put the whole checkout back to HEAD, the record directory
+        included: a process that died before committing a state-exit left
+        files that belong to no commit (section 9)."""
+        self.require_topic_branch_checked_out("discard a dead process's uncommitted work")
+        self.git("checkout", "--", ".", check=False)
+        self.git("clean", "-fdq", check=False)
 
     # -- section 6.6: what the user changed in an investigation --------------
 

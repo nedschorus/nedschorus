@@ -42,6 +42,7 @@ CounterCeilingExceeded = run_state_module.CounterCeilingExceeded
 write_counter_charged = run_state_module.write_counter_charged
 TopicBranchGitRecord = git_record_module.TopicBranchGitRecord
 TopicBranchCutRefused = git_record_module.TopicBranchCutRefused
+RefusedBeforeTopicBranchCut = git_record_module.RefusedBeforeTopicBranchCut
 compose_state_exit_trailer = git_record_module.compose_state_exit_trailer
 
 
@@ -391,9 +392,11 @@ class DesignToMainStateMachineFlow:
 
     def recover(self):
         """Section 9, recovery: re-run the state from the last commit's
-        run-state.json; uncommitted files are the dead process's, discarded."""
-        self.git_record.git("checkout", "--", ".", check=False)
-        self.git_record.git("clean", "-fdq", check=False)
+        run-state.json; uncommitted files are the dead process's, discarded.
+        The discard refuses (RefusedBeforeTopicBranchCut) when the checkout
+        is not on the topic branch: a run that died before row 1's cut has
+        no commit to recover from, and the checkout is the invoker's."""
+        self.git_record.discard_all_uncommitted_work_for_recovery()
         return RunStateRecord.read_from(self.git_record.absolute(self.git_record.run_state_path))
 
     # -- the flow ---------------------------------------------------------------
@@ -412,10 +415,13 @@ class DesignToMainStateMachineFlow:
         self.node_for(run.current_state).run(run)
 
     def run_until_ended(self, run, max_steps=200):
-        """Run to `ended` and return the outcome. TopicBranchCutRefused
-        leaves here uncaught when row 1's cut is refused (section 6.6):
-        the refusal is the report to the invoking conversation, and the
-        run does not start — nothing committed, the checkout as it was."""
+        """Run to `ended` and return the outcome. Two refusals leave here
+        uncaught, both from before the topic branch is cut (section 6.6):
+        TopicBranchCutRefused when row 1's cut is refused, and
+        RefusedBeforeTopicBranchCut when initiate-design-to-main emits
+        anything but `invoked`. Either way the refusal is the report to
+        the invoking conversation, and the run does not start — nothing
+        committed, the checkout as it was."""
         steps = 0
         while run.current_state != tables.ENDED:
             self.step(run)
@@ -457,6 +463,19 @@ class DesignToMainStateMachineFlow:
             next_position, write_number = self.apply_transition_row(
                 run, row, state_exit, resume_destination)
         except (IllegalStateExit, CounterCeilingExceeded) as error:
+            if not self.git_record.topic_branch_is_checked_out():
+                # Before row 1 has cut the topic branch a machine error
+                # cannot open an investigation: the discard and the commit
+                # that open one would run against the invoking
+                # conversation's checkout on `main`. Refused here, before
+                # the run's state is touched, so that the run is still at
+                # initiate-design-to-main and nothing is on disk; the
+                # record's own guard (require_topic_branch_checked_out)
+                # is the backstop behind this for any path that skips it.
+                raise RefusedBeforeTopicBranchCut(
+                    "%r from %s is refused before the topic branch is cut: %s; "
+                    "the run does not start and the checkout is as it was" % (
+                        state_exit.verdict, state_exit.state, error)) from error
             row = None
             write_number = None
             next_position = self.route_machine_error(run, state_exit, error)
@@ -525,6 +544,9 @@ class DesignToMainStateMachineFlow:
                 run.counters.reset_by_the_user()
 
     def commit_state_exit(self, run, state_exit, write_number):
+        # Guarded before run-state.json is written, not only at the
+        # record's commit, so a refusal leaves no file behind.
+        self.git_record.require_topic_branch_checked_out("write and commit run-state.json")
         run.write_to(self.git_record.absolute(self.git_record.run_state_path))
         trailer = compose_state_exit_trailer(
             state_exit.state, state_exit.verdict, state_exit.package_commit,
