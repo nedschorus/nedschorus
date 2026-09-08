@@ -130,7 +130,7 @@ class TopicBranchGitRecord:
         if not self.topic_branch_is_checked_out():
             raise RefusedBeforeTopicBranchCut(
                 "refused to %s: the checkout stands on %r, not on the topic branch %r, "
-                "which has not been cut; the run does not start and the checkout is as it was" % (
+                "which is not checked out; the run does not start and the checkout is as it was" % (
                     action, self.current_branch(), self.component))
 
     # -- section 9: the record files ----------------------------------------
