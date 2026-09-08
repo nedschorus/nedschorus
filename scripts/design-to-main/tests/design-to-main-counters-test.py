@@ -310,6 +310,53 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
 
+    def test_a_held_ruling_at_both_ceilings_routes_by_row_61_pending_the_users_ruling(self):
+        # PR #295, round 1, finding 2, pinned AS IT BEHAVES TODAY. The
+        # test writer at its ceiling (3) and arbitrator-rulings at its (2):
+        # the third entry opens the investigation (row 63) without a
+        # charge, and a resume carrying the held `reject tests` routes by
+        # row 61 to the writer, arbitrator-rulings unmoved — one forced
+        # write per resume of the user's, past section 7's three-plus-two.
+        # Whether that is the intended reading or the ruling should be
+        # refused (no row admits it with arbitrator-rulings at its ceiling,
+        # as row 61's guard text reads) is the design question of
+        # docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
+        # item 5, which the user has not yet ruled on. When he rules, this
+        # test changes with the code.
+        script = fixture.prefix_to_test_writing()
+        for _ in range(3):
+            script += [fixture.test_write(),
+                       (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]          # row 47, 47, 48
+        for _ in range(2):
+            script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),           # row 61
+                       fixture.test_write(),                                        # forced
+                       (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]          # row 48
+        machine, run, _ = self.drive(script)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+        self.assertEqual(run.counters.value("test-writes"), 3)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+        self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 5)
+        for expected_writes in (6, 7):
+            machine.launcher.script += [
+                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),  # row 70
+                fixture.test_write(),                                                    # forced
+                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {}),                      # row 48
+            ]
+            fixture.drive(machine, run)
+            self.assertEqual(machine.held_rulings_applied[-1][0].row, "61")
+            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["70", "40", "48"])
+            self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], expected_writes)
+            self.assertEqual(run.counters.value("test-writes"), 3)
+            self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+            self.assertEqual(run.writing_state_entry_reason[T.TEST_WRITING],
+                             T.ENTRY_REASON_ARBITRATOR_RULING)
+            self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(
+            sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_SUITE_ARBITRATING), 2)
+
     def contract_reaches_the_user(self):
         return fixture.prefix_to_design_approved() + [
             fixture.implementation_write(),

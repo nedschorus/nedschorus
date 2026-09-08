@@ -409,9 +409,15 @@ G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
 # rules from: 1 on its first entry, 2 on its second, and a third entry
 # never rules (row 63 opens the investigation instead). The guard therefore
 # reads the counter before that entry's charge — "below its ceiling" is
-# true of every ruling an arbitrator makes, which is what section 7 means
-# by "two more ordered by the arbitrator": the write is bounded by this
-# counter through the entries, not refused by it at a ruling.
+# true of every ruling an arbitrator makes from a charged entry, which is
+# what section 7 means by "two more ordered by the arbitrator": the write
+# is bounded by this counter through the entries, not refused by it at a
+# ruling. The one ruling from an entry that was NOT charged — the held
+# ruling applied on a resume from the investigation row 63 opened — reads
+# AT the ceiling, and the machine admits it past this clause today
+# (design-to-main-state-machine.py, the predicate), pending the user's
+# ruling on docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
+# item 5.
 G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE = (
     "arbitrator-rulings below its ceiling, read before the entry the arbitrator rules from was charged")
 G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN = "investigation-focus design or test-design as the agent names it"

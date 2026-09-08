@@ -299,6 +299,22 @@ class EveryRowOfSection32(unittest.TestCase):
             M.find_legal_transition_row(run, exit_from(
                 T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, destination=T.TEST_WRITING))
 
+    def test_row_61_s_ceiling_clause_reads_the_counter_s_value_before_the_entry_the_ruling_comes_from(self):
+        # PR #295, round 1, finding 2. arbitrator-rulings is charged on
+        # entry, so a ruling the arbitrator makes from a charged entry
+        # reads one below the counter; the held ruling applied on a resume
+        # from the row-63 investigation comes from an entry that was NOT
+        # charged (enter() returned before the increment), so there the
+        # counter's value is the pre-entry value itself.
+        run = run_with(counters={"test-writes": 3, "arbitrator-rulings": 2})
+        held = exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)
+        from_a_charged_entry = M.GuardContext(run, held)
+        from_the_held_ruling = M.GuardContext(run, held, held_ruling_applied_on_resume=True)
+        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_a_charged_entry), 1)
+        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_the_held_ruling), 2)
+        run.counters.values["arbitrator-rulings"] = 1
+        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_a_charged_entry), 0)
+
     def test_row_16_names_the_next_check_as_its_destination(self):
         state_exit = exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE,
                                destination=T.DESIGN_ACCEPTANCE_BY_USER)

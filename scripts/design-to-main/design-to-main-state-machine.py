@@ -107,6 +107,12 @@ class GuardContext:
     run: RunStateRecord
     state_exit: StateExitRecord
     resume_destination: Optional[str] = None
+    # True while the machine routes the ruling the arbitrator held in its
+    # report, applied on a resume from the investigation row 63 opened
+    # (apply_the_held_ruling). That entry was not charged — enter()
+    # returned before the increment — so the ceiling arithmetic of row 61
+    # reads it differently from a ruling made from a charged entry.
+    held_ruling_applied_on_resume: bool = False
 
 
 def applicable_acceptance_checks(run, composite_state):
@@ -166,6 +172,33 @@ def _writers_counter(ctx):
 
 def _submit_attempt_number(ctx):
     return ctx.run.submit_retry_count + 1
+
+
+def arbitrator_rulings_before_the_entry_the_ruling_comes_from(ctx):
+    """arbitrator-rulings as it stood before the entry the arbitrator rules
+    from: one below the counter when that entry was charged (section 7,
+    charged on entry), the counter itself when it was not — the held
+    ruling applied on a resume from the investigation row 63 opened, where
+    enter() returned before the charge (PR #295, round 1, finding 2)."""
+    value = ctx.run.counters.value("arbitrator-rulings")
+    if ctx.held_ruling_applied_on_resume:
+        return value
+    return value - 1
+
+
+def _arbitrator_rulings_below_ceiling_before_this_entrys_charge(ctx):
+    # The held ruling applied on a resume is admitted past the ceiling
+    # clause: it reads at the ceiling (2 of 2), and the machine today
+    # routes it by row 61 to the writer anyway, one forced write per
+    # resume of the user's. Whether that is intended or the ruling should
+    # be refused is a design question the user has not yet ruled on
+    # (docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md, item
+    # 5); the admission is explicit here so that the ruling changes one
+    # line, and the counters test pins today's routing under that name.
+    if ctx.held_ruling_applied_on_resume:
+        return True
+    return (arbitrator_rulings_before_the_entry_the_ruling_comes_from(ctx)
+            < ctx.run.counters.rule("arbitrator-rulings").at_ceiling_from_value)
 
 
 GUARD_PREDICATES = {
@@ -230,8 +263,7 @@ GUARD_PREDICATES = {
     tables.G_WRITERS_COUNTER_AT_CEILING:
         lambda ctx: ctx.run.counters.at_ceiling(_writers_counter(ctx)),
     tables.G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE:
-        lambda ctx: (ctx.run.counters.value("arbitrator-rulings") - 1
-                     < ctx.run.counters.rule("arbitrator-rulings").at_ceiling_from_value),
+        _arbitrator_rulings_below_ceiling_before_this_entrys_charge,
     tables.G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN:
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
     tables.G_FOCUS_NOT_NAMED:
@@ -310,10 +342,11 @@ def refuse_malformed_resume(run, state_exit, resume_destination):
                                tables.ROW_THE_ARBITRATORS_THIRD_ENTRY, run.paused_state))
 
 
-def find_legal_transition_row(run, state_exit, resume_destination=None):
+def find_legal_transition_row(run, state_exit, resume_destination=None,
+                              held_ruling_applied_on_resume=False):
     """Given a state and a state-exit, the row of section 3.2 that allows
     it; IllegalStateExit when none does."""
-    context = GuardContext(run, state_exit, resume_destination)
+    context = GuardContext(run, state_exit, resume_destination, held_ruling_applied_on_resume)
     from_state = state_exit.from_state
     refuse_malformed_resume(run, state_exit, resume_destination)
     matches = [
@@ -799,7 +832,7 @@ class DesignToMainStateMachineFlow:
                                package_commit=state_exit.package_commit,
                                input_named=state_exit.input_named,
                                investigation_focus=state_exit.investigation_focus)
-        row = find_legal_transition_row(run, held)
+        row = find_legal_transition_row(run, held, held_ruling_applied_on_resume=True)
         next_position, _ = self.apply_transition_row(run, row, held, None)
         self.held_rulings_applied.append((row, held))
         return next_position
