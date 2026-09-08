@@ -418,6 +418,51 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
         self.assertEqual(run.counters.value("implementation-writes"), 0)
 
 
+class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
+    """Section 9 after the seventh walk: a state-exit's commit carries only
+    the files the state-exit names — the artifact, the notes, the record —
+    never the whole worktree, so a paused agent's half-written files are
+    not committed as anyone's work."""
+
+    IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
+    STRAY = fixture.COMPONENT_DIRECTORY + "/scratch-notes.txt"
+
+    def test_an_emitted_write_commits_the_files_it_names_and_the_record_nothing_else(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                    "coverage_type": "script",
+                    "named_files": (self.IMPLEMENTATION,),
+                    fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                        self.IMPLEMENTATION: "# the implementation\n",
+                        self.STRAY: "a writer's scratch file, not named\n",
+                        "README.md": "main, touched by the writer\n",
+                    }}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+            commit = machine.routed[-1][2]
+            files_in_commit = record.git("show", "--name-only", "--format=", commit).stdout.split()
+            self.assertEqual(sorted(files_in_commit),
+                             sorted([self.IMPLEMENTATION, str(record.run_state_path)]))
+            self.assertNotIn(self.STRAY, files_in_commit)
+            self.assertNotIn("README.md", files_in_commit)
+            self.assertEqual(record.git("ls-files", self.STRAY).stdout, "")
+        finally:
+            repository.remove()
+
+    def test_the_record_never_stages_the_whole_worktree(self):
+        # A `git add -A` with no pathspec after it stages the whole
+        # worktree; the one the record runs is restricted to the record
+        # directory and the named files (`"add", "-A", "--", ...`).
+        source = (fixture.MACHINE_DIR / "design-to-main-git-record.py").read_text()
+        self.assertNotIn('"add", "-A")', source)
+        self.assertNotIn('"add", "-A", ".")', source)
+        self.assertIn('"add", "-A", "--", str(self.record_directory), *named_files)', source)
+
+
 class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
     """A state-exit from investigate-workflow outside stop, submit-to-PR-
     gate and resume is a machine error (section 3.2), but not a new
@@ -645,13 +690,11 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             repository.remove()
 
     def test_a_process_that_dies_after_staging_leaves_nothing_staged_for_the_next_state_exit(self):
-        # The window is the record's own: every state-exit is `add -A` then
-        # `commit` as two subprocesses, and on a resume paths_changed_since
-        # stages the whole checkout well before the commit. A process that
-        # dies inside that window leaves its files STAGED; recovery puts
-        # the index back to HEAD as well as the working tree, so the next
-        # state-exit's `add -A` does not commit the dead process's
-        # leftovers as that state's work.
+        # Every state-exit is `add` of the files it names then `commit`, as
+        # two subprocesses; a process that dies between them leaves its
+        # files STAGED. Recovery puts the index back to HEAD as well as the
+        # working tree, so nothing a dead process staged is committed as
+        # the next state's work.
         repository = fixture.ThrowawayRepository()
         try:
             script = fixture.prefix_to_design_approved()
@@ -725,6 +768,69 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             recovered = RunStateRecord.read_from(record.absolute(record.run_state_path))
             self.assertEqual(recovered.current_state, T.TEST_SUITE_ARBITRATING)
             self.assertEqual(recovered.counters.value("arbitrator-rulings"), 1)
+        finally:
+            repository.remove()
+
+    def test_recovery_during_an_investigation_keeps_the_worktree_as_it_finds_it(self):
+        # Section 9 after the seventh walk (item 7): in investigate-workflow
+        # the uncommitted files are the user's; recovery keeps the worktree
+        # as it finds it and reopens the dialog, and the resume sees the
+        # edit the user made before the process died.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_tests_begun() + [
+                (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {"investigation_focus": T.FOCUS_DESIGN}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+            design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+            design.parent.mkdir(parents=True, exist_ok=True)
+            design.write_text("# the design, edited by the user before the process died\n")
+            notes = record.absolute("seat-notes.md")
+            notes.write_text("the user's notes\n")
+            status_before = record.git("status", "--porcelain").stdout
+            successor = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([(T.INVESTIGATE_WORKFLOW, T.V_RESUME, {})]),
+                today=lambda: "2026-09-08")
+            recovered = successor.recover()
+            self.assertEqual(recovered.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertTrue(design.exists())
+            self.assertEqual(design.read_text(), "# the design, edited by the user before the process died\n")
+            self.assertEqual(notes.read_text(), "the user's notes\n")
+            self.assertEqual(record.git("status", "--porcelain").stdout, status_before)
+            fixture.drive(successor, recovered)
+            self.assertEqual(successor.launcher.launched[0]["state"], T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(recovered.current_state, T.DESIGN_WRITING)
+            self.assertEqual(recovered.design_version, 2)
+        finally:
+            repository.remove()
+
+    def test_recovery_of_an_ended_run_is_keyed_on_the_state_not_the_outcome(self):
+        # PR #287's round-6 review: the guard keyed on `outcome is None`
+        # let a run at `ended` with no outcome be "recovered" — its
+        # checkout's uncommitted work discarded. Keyed on the state.
+        repository = fixture.ThrowawayRepository()
+        try:
+            machine, run, record, _ = fixture.make_machine(fixture.whole_run_to_passed(), repository)
+            self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
+            run.outcome = None
+            run.write_to(record.absolute(record.run_state_path))
+            record.git("add", "--", str(record.run_state_path))
+            record.git("commit", "-q", "-m", "widget-counter: ended with no outcome (a tampered record)")
+            checkout = repository.checkout
+            (checkout / "seat-notes.md").write_text("untracked notes after the run\n")
+            (checkout / "README.md").write_text("main, edited but not committed\n")
+            status_before = record.git("status", "--porcelain").stdout
+            head_before = record.head_commit()
+            recovered = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([]), today=lambda: "2026-09-08").recover()
+            self.assertEqual(recovered.current_state, T.ENDED)
+            self.assertIsNone(recovered.outcome)
+            self.assertEqual((checkout / "seat-notes.md").read_text(), "untracked notes after the run\n")
+            self.assertEqual((checkout / "README.md").read_text(), "main, edited but not committed\n")
+            self.assertEqual(record.git("status", "--porcelain").stdout, status_before)
+            self.assertEqual(record.head_commit(), head_before)
         finally:
             repository.remove()
 

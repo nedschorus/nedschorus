@@ -184,12 +184,19 @@ class TopicBranchGitRecord:
 
     # -- section 9: every state-exit is committed -----------------------------
 
-    def commit_state_exit(self, run, subject, trailer):
-        """Commit everything in the worktree as one state-exit of `run`, the
-        trailer under the subject. Empty commits are allowed: a retry or a
-        discarded state-exit changes nothing but the record."""
+    def commit_state_exit(self, run, subject, trailer, named_files=()):
+        """Commit one state-exit of `run`: the record directory and the
+        files the state-exit names (the artifact, the notes), the trailer
+        under the subject. Never the whole worktree (section 9): a paused
+        agent's half-written files, or anything else in the checkout the
+        state-exit does not name, is not committed as this state's work.
+        Empty commits are allowed: a retry or a discarded state-exit
+        changes nothing but the record."""
         self.require_topic_branch_cut_for_run(run, "commit a state-exit")
-        self.git("add", "-A")
+        # `add -A` restricted to these paths stages their deletions too;
+        # a named file that does not exist is git's error, as it should
+        # be — the state-exit named something it did not write.
+        self.git("add", "-A", "--", str(self.record_directory), *named_files)
         message = subject + "\n\n" + trailer
         self.git("commit", "--allow-empty", "-q", "-m", message)
         return self.head_commit()
@@ -217,13 +224,11 @@ class TopicBranchGitRecord:
         recovered, read from the last commit before this is called.
 
         The index too, not only the working tree: commit_state_exit is
-        `add -A` then `commit`, two subprocesses, and paths_changed_since
-        stages the whole checkout on a resume long before the commit, so a
-        process that dies in that window leaves its files STAGED.
+        `add` of the named files then `commit`, two subprocesses, so a
+        process that dies between them leaves those files STAGED.
         `checkout -- .` restores from the index and `clean` removes only
         untracked files; without the `reset` first, what was staged
-        survives both and the next state-exit's `add -A` commits it as
-        that state's work."""
+        survives both into the next state-exit's commit."""
         self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
         self.git("reset", "-q", check=False)
         self.git("checkout", "--", ".", check=False)
@@ -233,11 +238,14 @@ class TopicBranchGitRecord:
 
     def paths_changed_since(self, commit):
         """Committed and uncommitted changes since `commit`, ignoring the
-        record directory (the report and the user-rulings file)."""
-        self.git("add", "-A")
-        changed = self.git("diff", "--name-only", commit).stdout.split()
+        record directory (the report and the user-rulings file). Read
+        without staging anything: `diff <commit>` is the commit against
+        the working tree for tracked paths, and `ls-files --others` the
+        untracked ones."""
+        changed = set(self.git("diff", "--name-only", commit).stdout.split())
+        changed |= set(self.git("ls-files", "--others", "--exclude-standard").stdout.split())
         record = str(self.record_directory)
-        return [p for p in changed if not p.startswith(record + "/")]
+        return sorted(p for p in changed if not p.startswith(record + "/"))
 
     def document_of_path(self, path):
         """Which of section 9's documents a changed path belongs to:

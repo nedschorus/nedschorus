@@ -71,7 +71,9 @@ class ScriptedStateExitLauncherWritingFiles(machine_module.ScriptedStateExitLaun
     """The stub launcher, feigning an agent that writes into the checkout
     before it emits: a scripted entry's fields may carry
     `files_written_before_emitting`, a dict of path (relative to the
-    checkout) to content, written before the state-exit is returned."""
+    checkout) to content, written before the state-exit is returned. What
+    the state-exit NAMES of them is its own `named_files` field (section
+    9: the commit carries the named files and the record, nothing else)."""
 
     def __init__(self, script, checkout):
         super().__init__(script)

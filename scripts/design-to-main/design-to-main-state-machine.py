@@ -78,6 +78,10 @@ class StateExitRecord:
     # opened: the ruling the arbitrator held in its report, one of
     # test-suite-arbitrating's verdicts (section 6.6).
     held_ruling: Optional[str] = None
+    # The files the state-exit names, relative to the repository: the
+    # artifact it wrote and its notes. Its commit carries these and the
+    # record, never the whole worktree (section 9).
+    named_files: Tuple[str, ...] = ()
     notes: str = ""
 
     @property
@@ -465,13 +469,16 @@ class DesignToMainStateMachineFlow:
 
     def recover(self):
         """Section 9, recovery: re-run the state from the last commit's
-        run-state.json; uncommitted files are the dead process's, discarded.
-        The run is read from the last commit BEFORE the discard, so that the
-        discard is guarded by the run's own `topic-branch-cut`: a run that
-        died before row 1's cut, or an invocation with no run committed at
-        HEAD at all, has no commit to recover from and the checkout is the
-        invoker's — refused (RefusedBeforeTopicBranchCut), nothing
-        discarded."""
+        run-state.json; uncommitted files are the dead process's, discarded
+        — unless the paused state is investigate-workflow, where they are
+        the user's: the worktree is kept as found and the dialog reopened
+        (the successor's next step launches investigate-workflow again).
+        Recovery of a run that has ended touches nothing. The run is read
+        from the last commit BEFORE any discard, so that the discard is
+        guarded by the run's own `topic-branch-cut`: a run that died before
+        row 1's cut, or an invocation with no run committed at HEAD at all,
+        has no commit to recover from and the checkout is the invoker's —
+        refused (RefusedBeforeTopicBranchCut), nothing discarded."""
         text = self.git_record.run_state_text_at_last_commit()
         if text is None:
             raise RefusedBeforeTopicBranchCut(
@@ -479,11 +486,10 @@ class DesignToMainStateMachineFlow:
                 "so there is no state-exit to recover from; the checkout is as it was" % (
                     self.git_record.head_commit(), self.git_record.current_branch()))
         run = RunStateRecord.from_dict(json.loads(text))
-        # A run at `ended` has no state to re-run, so there is nothing of a
-        # dead process's to discard: what is in the checkout is the
-        # invoker's, kept. What recover() should return or refuse on a
-        # finished run is the user's to rule.
-        if run.outcome is None:
+        # Keyed on the state, not on the outcome (PR #287, round 6): a run
+        # at `ended` has no state to re-run, whatever its outcome field
+        # says, so nothing in the checkout is a dead process's.
+        if run.current_state not in (tables.ENDED, tables.INVESTIGATE_WORKFLOW):
             self.git_record.discard_all_uncommitted_work_for_recovery(run)
         return run
 
@@ -671,7 +677,7 @@ class DesignToMainStateMachineFlow:
             state_exit.state, state_exit.verdict, state_exit.package_commit,
             run.counters.as_dict(), write_number)
         subject = "%s: %s %s" % (run.component, state_exit.state, state_exit.verdict)
-        return self.git_record.commit_state_exit(run, subject, trailer)
+        return self.git_record.commit_state_exit(run, subject, trailer, state_exit.named_files)
 
     # -- entering a state -------------------------------------------------------
 
