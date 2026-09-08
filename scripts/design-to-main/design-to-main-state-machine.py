@@ -240,6 +240,19 @@ def find_legal_transition_row(run, state_exit, resume_destination=None):
     it; IllegalStateExit when none does."""
     context = GuardContext(run, state_exit, resume_destination)
     from_state = state_exit.from_state
+    # On `resume` the destination is what the user typed in the dialog. One
+    # that names no state or sub-state is a machine error like any other
+    # illegal state-exit (section 3.2, "any other state-exit"), checked
+    # here before any row is looked up: row 64's guard holds for any string
+    # that is not design-writing, and a row applied to a name the tables
+    # do not know would escape the machine as a KeyError instead of being
+    # routed to investigate-workflow.
+    if (state_exit.verdict == tables.V_RESUME
+            and resume_destination not in tables.STATE_TABLE_BY_NAME
+            and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):
+        raise IllegalStateExit(
+            "%r from %s names %r as its destination, which is no state or sub-state of section 3.1" % (
+                state_exit.verdict, from_state, resume_destination))
     matches = [
         row for row in tables.TRANSITION_TABLE
         if from_state in row.from_states

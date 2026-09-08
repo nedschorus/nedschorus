@@ -405,10 +405,11 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         self.assertEqual(run.paused_state, T.TEST_DESIGN_WRITING)
         return machine, run, record
 
-    def stray_verdict_then_check_the_pause_is_unchanged(self, machine, run, record):
+    def stray_verdict_then_check_the_pause_is_unchanged(self, machine, run, record,
+                                                        verdict="continue", fields=None):
         opened_at = run.investigation_opened_at_commit
         opening_commit = machine.routed[-1][2]
-        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, "continue", {}))
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, verdict, fields or {}))
         fixture.drive(machine, run)
         self.assertEqual(len(machine.machine_errors), 1)
         self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
@@ -418,7 +419,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         self.assertEqual(record.commits_on_branch(since=opening_commit), [machine.routed[-1][2]])
         trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
         self.assertEqual(trailer["State"], T.INVESTIGATE_WORKFLOW)
-        self.assertEqual(trailer["Exit"], "continue")
+        self.assertEqual(trailer["Exit"], verdict)
 
     def test_a_stray_verdict_leaves_the_run_paused_where_it_was_and_a_plain_resume_returns_there(self):
         machine, run, record = self.open_investigation()
@@ -440,6 +441,23 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
                          "# the design, edited by the user before the stray verdict\n")
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        self.assertEqual(run.design_version, 2)
+        self.assertEqual(run.counters.value("redesigns"), 1)
+
+    def test_a_resume_to_a_mistyped_destination_is_a_machine_error_not_a_crash(self):
+        # The dialog is where a human types a state name. A destination
+        # that names no state is a machine error like any illegal
+        # state-exit (section 3.2, "any other state-exit"): committed,
+        # the run left paused where it was, and the next resume routed.
+        machine, run, record = self.open_investigation()
+        self.stray_verdict_then_check_the_pause_is_unchanged(
+            machine, run, record, verdict=T.V_RESUME, fields={"destination": "desgin-writing"})
+        self.assertIn("desgin-writing", run.machine_error)
+        machine.launcher.script.append(
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "64")
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.design_version, 2)
         self.assertEqual(run.counters.value("redesigns"), 1)
