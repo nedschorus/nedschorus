@@ -31,6 +31,7 @@ The state names of the machine are in the design, `docs/design-to-main/design-to
 - **no-tests-written** — a `no-tests` reason: a test could be written and was not, the sentence saying whether the code is trivial or the fixture, tool or environment does not exist yet.
 - **per-run-text** — what one agent writes during a run for another agent: a reviewer's notes, an input-quick-check-failed report, a contract-revision. The user does not review it, except a contract-revision at `contract-acceptance-by-user`.
 - **ready-for-test-suite** — the position a work-stream holds at when its last reviewing state has advanced and the other work-stream has not yet; recorded per work-stream in the run-state file.
+- **redesign** (verdict) — the user's verdict at `contract-acceptance-by-user` that the contract's trouble is the design's: opens the redesign through the investigation, counted against redesigns.
 - **refusal-clause-pair** — how a refusal is written in a component-contract: one `world-requires` clause and one `component-consumer-receives` clause sharing a number, with suffixes `a` and `b`.
 - **reset** — a user ruling, given in any dialog with him, that zeroes every counter of the run; recorded in the user-rulings file.
 - **revised-contract-invalidation-rule** — when a contract-revision is advanced, both work-streams are marked not ready and re-enter their writing states from scratch; everything written from the superseded component-contract is written again from the new one.
