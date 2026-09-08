@@ -5,7 +5,8 @@ quirk, driven through a stub `agy` so no model is ever called.
 WHAT IS PINNED HERE.
 
   - The fast tier's pin (user-ruled 2026-09-07): --tier fast runs
-    gemini-3.8-flash-low at effort low, and the stamp says so, with
+    gemini-3.8-flash-medium at effort medium (the 2026-09-07 ruling after
+    measurements, superseding low), and the stamp says so, with
     runtime=agy. The other tiers are refused by this launcher before agy
     runs: it pins no model for them, and a Gemini review under a good- or
     floor-tier stamp would be a tier the roster never measured it on.
@@ -195,9 +196,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a fast-tier cell whose agy writes the report exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     stamp = provenance_stamp_of(report)
-    check("the fast tier is pinned to gemini-3.8-flash-low at low, stamped as runtime agy",
-          stamp.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-low "
-                           "effort=low cell=fast-clarify tier=fast "),
+    check("the fast tier is pinned to gemini-3.8-flash-medium at medium, stamped as runtime agy",
+          stamp.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-medium "
+                           "effort=medium cell=fast-clarify tier=fast "),
           repr(stamp))
     check("the stamp carries duration_s and no tokens field",
           re.search(r"\bduration_s=\d+\b", stamp) is not None and "tokens=" not in stamp,
@@ -211,8 +212,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("agy is told to skip permission prompts",
           "--dangerously-skip-permissions" in argv, repr(argv))
     check("the model, effort, print timeout and text output are on the command line",
-          argv[argv.index("--model") + 1] == "gemini-3.8-flash-low"
-          and argv[argv.index("--effort") + 1] == "low"
+          argv[argv.index("--model") + 1] == "gemini-3.8-flash-medium"
+          and argv[argv.index("--effort") + 1] == "medium"
           and argv[argv.index("--print-timeout") + 1] == "30m"
           and argv[argv.index("--output-format") + 1] == "text",
           repr(argv))
@@ -249,7 +250,7 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     report_text = report.read_text(encoding="utf-8") if report.is_file() else ""
     check("its stdout is the report, under a stamp",
-          report_text.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-low ")
+          report_text.startswith("<!-- provenance: runtime=agy model=gemini-3.8-flash-medium ")
           and LONG_CHAT_REVIEW.strip() in report_text,
           repr(report_text[:200]))
     check("the recovery is announced on stderr under the pinned phrase",
