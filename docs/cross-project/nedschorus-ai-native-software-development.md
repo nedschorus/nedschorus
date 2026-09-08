@@ -1,6 +1,6 @@
 ---
 status: working plan
-design-as-of: 2026-09-07
+design-as-of: 2026-09-08
 ---
 
 # NedsChorus: AI-Native Software Development with Natural-Language Human Oversight
@@ -9,7 +9,7 @@ NedsChorus lets a senior software engineer develop software by describing intent
 
 The central idea is simple:
 
-> Divide the work by the information each step needs. Use code, AI, and human judgment where each is useful. Preserve the inputs, outputs, and decisions so another execution can continue the work.
+> Give each step a clear responsibility and the information it needs. Use code, AI, and human judgment where each is useful. Preserve the inputs, outputs, and decisions so another execution can continue the work.
 
 This is the architecture and working plan, not a claim that the complete system is running. Code establishes what is built; GitHub Issues carry work status; [CLAUDE.md](../../CLAUDE.md) governs current operations. The implementation map below identifies existing components and proposed extensions.
 
@@ -21,7 +21,11 @@ A work item is one requested change, defect, or investigation. Its ordinary path
 
 A node is one bounded operation in that process. It is not necessarily one agent or one prompt. It may combine deterministic code, an AI judgment, and a human decision. For example, code can collect review reports and group findings by passage; an agent can explain disagreements; the human can decide a disputed change.
 
-An agent execution is replaceable. It needs the task, applicable instructions, relevant artifacts and code, and enough evidence to do that task—not the conversation that produced them. This is **minimum sufficient context**, not zero context and not a prohibition on reading necessary dependencies. Cutting context that the task needs makes an agent less capable.
+The guiding principle is **focus**, defined in the [Neural Efficiency brief](neural-efficiency-brief.md). Split large tasks into steps with clear responsibilities, simpler instructions, and sufficient relevant context. Keep together facts that must be considered together: a design reviewer may need substantial context while still having one focused job.
+
+Focus and token efficiency answer different questions. Focus concerns how reasoning work is organized; token efficiency concerns the tokens needed to reach a given quality of result. Separate implementation and review can improve focus while spending more tokens because both read the design. Judge that tradeoff by accepted-work quality, rework, and human effort as well as token use and elapsed time.
+
+An agent execution is replaceable. It needs the task, applicable instructions, relevant artifacts and code, and enough evidence to do that task—not the conversation that produced them. This is **minimum sufficient context**. Supply necessary dependencies; cutting context that the task needs makes an agent less capable.
 
 Each step also develops a useful point of view on its inputs. Implementing a design exposes implementation holes. Planning tests exposes unspecified behavior. Writing tests exposes an unusable test oracle—the rule for deciding whether a result is correct. A node must use that insight: a significant input defect stops promotion and becomes a recommendation to repair the source.
 
