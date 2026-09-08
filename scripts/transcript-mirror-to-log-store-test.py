@@ -24,6 +24,9 @@ RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
 
 STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
+if sys.argv[0].endswith("rsync") and "--version" in sys.argv:
+    print(os.environ.get("MIRROR_TEST_RSYNC_VERSION_LINE", "rsync  version 3.4.1  protocol version 32"))
+    sys.exit(0)
 with open(os.environ["MIRROR_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
 if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv):
@@ -149,10 +152,35 @@ with tempfile.TemporaryDirectory(prefix="transcript-mirror-test-") as scratch_na
     check("every ssh call runs in batch mode with a connect timeout",
           ssh_calls and all("BatchMode=yes" in c for c in ssh_calls), str(ssh_calls))
 
+    # Files vanishing mid-run is exit 24 from GNU rsync (ned-box) and exit 23
+    # from openrsync (the Mac's /usr/bin/rsync); each is a note on its own
+    # implementation only, and the other implementation's code stays FAILED.
+    GNU_VERSION_LINE = "rsync  version 3.4.1  protocol version 32"
+    OPENRSYNC_VERSION_LINE = "openrsync: protocol version 29"
     argv_log.unlink()
-    result = run_mirror(home, RULED_DESTINATION, dict(remote_env, MIRROR_TEST_RSYNC_EXIT="24"))
-    check("rsync exit 24, files vanished mid-run, is a mirrored line with a note, exit 0",
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=GNU_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="24"))
+    check("GNU rsync exit 24, files vanished mid-run, is a mirrored line with a note, exit 0",
           result.returncode == 0 and result.stdout.count("vanished mid-run") == 2, result.stdout)
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=GNU_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"))
+    check("GNU rsync exit 23, a partial transfer, is FAILED naming the exit, exit 1",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 2
+          and "rsync exit 23" in result.stdout and "ned-box unreachable" not in result.stdout,
+          result.stdout)
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"))
+    check("openrsync exit 23, files vanished mid-run, is a mirrored line with a note, exit 0",
+          result.returncode == 0 and result.stdout.count("vanished mid-run") == 2, result.stdout)
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="24"))
+    check("openrsync exit 24 is not its vanished code and is FAILED naming the exit, exit 1",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 2
+          and "rsync exit 24" in result.stdout and "ned-box unreachable" not in result.stdout,
+          result.stdout)
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(remote_env, MIRROR_TEST_RSYNC_EXIT="255"))
     check("rsync exit 255 is FAILED naming ned-box unreachable, exit 1",

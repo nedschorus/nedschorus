@@ -31,10 +31,11 @@ session's transcript grows between runs and rsync sends the delta -- so the
 no-overwrite rule scripts/cold-read-record-ship.py applies to cold-read
 records does not apply here. Two things rsync meets on a live tree are
 expected and not failures: files that vanish between its listing and its
-transfer (a scratch project directory removed by a session ending; rsync exit
-24) and files that change while being read. A run that overlaps a slow
-earlier run -- the first pass moves about a gigabyte -- exits quietly on the
-lock rather than racing it.
+transfer (a scratch project directory removed by a session ending; exit 24
+from GNU rsync on ned-box, exit 23 from the Mac's openrsync -- told apart by
+rsync_vanished_exit_code) and files that change while being read. A run
+that overlaps a slow earlier run -- the first pass moves about a gigabyte --
+exits quietly on the lock rather than racing it.
 
 OUTPUT. One line per source on stdout: `mirrored: <source> — local N files,
 store M files` (the two counts differ by a file or two while a session runs,
@@ -65,6 +66,7 @@ directory the sources are read from, for the same tests.
 """
 
 import fcntl
+import functools
 import os
 import pathlib
 import socket
@@ -89,13 +91,34 @@ SOURCES = (
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 RSYNC_IO_TIMEOUT_SECONDS = "300"
 # rsync: some source files vanished before they could be transferred. On a
-# live tree that is a session ending, not a failure.
-RSYNC_EXIT_VANISHED_SOURCE_FILES = 24
+# live tree that is a session ending, not a failure. The code depends on
+# which rsync is on PATH; see rsync_vanished_exit_code.
+RSYNC_EXIT_VANISHED_GNU = 24
+RSYNC_EXIT_VANISHED_OPENRSYNC = 23
 LOCK_FILE_NAME = ".transcript-mirror.lock"
 
 EXIT_MIRRORED = 0
 EXIT_FAILED = 1
 EXIT_LOCKED = 3
+
+
+@functools.lru_cache(maxsize=None)
+def rsync_vanished_exit_code() -> int:
+    """The exit the rsync on PATH gives when source files vanished mid-run:
+    23 for openrsync, 24 for GNU rsync. Detected once per run from the first
+    line of `rsync --version`, which opens "openrsync" on the Mac's
+    /usr/bin/rsync and "rsync  version 3.4.1" on ned-box.
+
+    Measured 2026-09-07 with a 4,000-file tree, 500 files deleted while rsync
+    ran: exit 23 on the Mac (openrsync, stderr "open (2)" errors, everything
+    else copied) and exit 24 on ned-box (rsync 3.4.1, "file has vanished").
+    GNU's 23 is a genuine partial-transfer error and openrsync's 24 is not
+    the vanished case, so each implementation gets exactly its own code.
+    openrsync propagates ssh's 255 correctly; a transcript appended during
+    transfer is exit 0 on both."""
+    completed = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=False)
+    first_line = completed.stdout.partition("\n")[0]
+    return RSYNC_EXIT_VANISHED_OPENRSYNC if first_line.startswith("openrsync") else RSYNC_EXIT_VANISHED_GNU
 
 
 def split_destination(destination: str):
@@ -178,12 +201,13 @@ def mirror_one(host, machine_path: pathlib.PurePosixPath, name: str, source: pat
     completed = subprocess.run(rsync_command(host, source, target),
                                capture_output=True, text=True, check=False)
     sys.stderr.write(completed.stderr)
-    if completed.returncode not in (0, RSYNC_EXIT_VANISHED_SOURCE_FILES):
+    vanished = rsync_vanished_exit_code()
+    if completed.returncode not in (0, vanished):
         print(f"FAILED: {name} — rsync exit {completed.returncode}"
               f"{' (ned-box unreachable)' if completed.returncode == 255 else ''}")
         return EXIT_FAILED
     note = " (some files vanished mid-run: a session ended)" \
-        if completed.returncode == RSYNC_EXIT_VANISHED_SOURCE_FILES else ""
+        if completed.returncode == vanished else ""
     in_store = count_files_in_store(host, target)
     print(f"mirrored: {name} — local {count_files_local(source)} files, store "
           f"{'unknown' if in_store is None else in_store} files{note}")
