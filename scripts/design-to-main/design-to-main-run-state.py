@@ -120,7 +120,7 @@ class RunStateRecord:
         "implementation-coverage-type", "tests-coverage-type",
         "writing-state-entry-reason", "writes-emitted-per-version",
         "paused-state", "investigation-focus", "investigation-opened-at-commit",
-        "investigation-opened-by", "machine-error",
+        "investigation-opened-by", "investigation-opened-by-row", "machine-error",
         "previous-state",
     )
 
@@ -148,6 +148,10 @@ class RunStateRecord:
         self.investigation_focus = None
         self.investigation_opened_at_commit = None
         self.investigation_opened_by = None
+        # The row of section 3.2 that opened the investigation, or None for
+        # a machine error; row 63 (the arbitrator's third entry) is the one
+        # a resume must not return to (section 6.6).
+        self.investigation_opened_by_row = None
         self.machine_error = None
 
     # -- section 3.2, "A redesign resets the version" --------------------
@@ -215,6 +219,7 @@ class RunStateRecord:
             "investigation-focus": self.investigation_focus,
             "investigation-opened-at-commit": self.investigation_opened_at_commit,
             "investigation-opened-by": self.investigation_opened_by,
+            "investigation-opened-by-row": self.investigation_opened_by_row,
             "machine-error": self.machine_error,
         }
 
@@ -247,6 +252,7 @@ class RunStateRecord:
         run.investigation_focus = data.get("investigation-focus")
         run.investigation_opened_at_commit = data.get("investigation-opened-at-commit")
         run.investigation_opened_by = data.get("investigation-opened-by")
+        run.investigation_opened_by_row = data.get("investigation-opened-by-row")
         run.machine_error = data.get("machine-error")
         return run
 

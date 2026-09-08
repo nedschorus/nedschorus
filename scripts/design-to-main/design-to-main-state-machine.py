@@ -218,6 +218,11 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
     tables.G_FOCUS_NOT_NAMED:
         lambda ctx: ctx.state_exit.investigation_focus not in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
+    # Row 63's guard is read on ENTRY to test-suite-arbitrating (enter()),
+    # not on a state-exit; it is here so that every guard phrase of the
+    # table has its predicate, evaluated on the run alone.
+    tables.G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION:
+        lambda ctx: ctx.run.counters.at_ceiling("arbitrator-rulings"),
     tables.G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING:
         lambda ctx: (ctx.resume_destination != tables.DESIGN_WRITING
                      or ctx.run.counters.below_ceiling("redesigns")),
@@ -586,6 +591,7 @@ class DesignToMainStateMachineFlow:
             run.investigation_focus = tables.FOCUS_UNKNOWN
             run.investigation_opened_by = "%s from %s: %s" % (
                 state_exit.verdict, state_exit.state, error)
+            run.investigation_opened_by_row = None   # no row: a machine error
         return tables.INVESTIGATE_WORKFLOW
 
     def apply_rulings_to_the_run(self, run, state_exit):
@@ -624,14 +630,20 @@ class DesignToMainStateMachineFlow:
             run.counters.increment("redesigns")
             run.start_new_design_version()
         if position == tables.TEST_SUITE_ARBITRATING:
-            if run.counters.at_ceiling("arbitrator-rulings"):
-                # The arbitrator's third entry opens the investigation
-                # (sections 6.5, 7); its ruling rides in the report.
+            third_entry = tables.TRANSITION_TABLE_BY_ROW[tables.ROW_THE_ARBITRATORS_THIRD_ENTRY]
+            if guards_hold(third_entry, GuardContext(run, None)):
+                # Row 63: the arbitrator's third entry opens the
+                # investigation (sections 6.5, 7); its ruling rides in the
+                # report, and a resume from here names a destination or
+                # applies that ruling (section 6.6), never re-entering.
                 run.paused_state = tables.TEST_SUITE_ARBITRATING
-                run.investigation_focus = tables.FOCUS_UNKNOWN
-                run.investigation_opened_by = "the arbitrator's third entry in design version %d" % run.design_version
+                run.investigation_focus = third_entry.investigation_focus
+                run.investigation_opened_by = (
+                    "the arbitrator's third entry in design version %d (row %s)" % (
+                        run.design_version, third_entry.row))
+                run.investigation_opened_by_row = third_entry.row
                 run.previous_state = tables.TEST_SUITE_ARBITRATING
-                run.current_state = tables.INVESTIGATE_WORKFLOW
+                run.current_state = third_entry.to_state
                 return
             run.counters.increment("arbitrator-rulings")
         # A work-stream's position is the state it is in, reviewing states
@@ -657,6 +669,7 @@ class DesignToMainStateMachineFlow:
         run.investigation_focus = row.investigation_focus or state_exit.investigation_focus
         run.investigation_opened_by = "%s from %s (row %s)" % (
             state_exit.verdict, state_exit.state, row.row)
+        run.investigation_opened_by_row = row.row
 
     def resolve_resume_destination(self, run, state_exit):
         """Section 6.6: the destination the user names; else the earliest

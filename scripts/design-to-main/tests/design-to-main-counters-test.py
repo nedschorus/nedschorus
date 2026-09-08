@@ -253,6 +253,13 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
         self.assertEqual(run.investigation_focus, T.FOCUS_UNKNOWN)
         self.assertIn("third entry", run.investigation_opened_by)
+        # Row 63 is applied on entry, not on a state-exit: the run records
+        # it as the row that opened the investigation, so a resume knows
+        # (section 6.6) not to loop back into the arbitrator.
+        self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+        self.assertEqual(T.TRANSITION_TABLE_BY_ROW[T.ROW_THE_ARBITRATORS_THIRD_ENTRY].to_state,
+                         T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
         # The arbitrator was not launched a third time in test-suite-arbitrating.
         self.assertEqual(
             sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_SUITE_ARBITRATING), 2)

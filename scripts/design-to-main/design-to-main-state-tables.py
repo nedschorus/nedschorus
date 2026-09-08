@@ -375,6 +375,8 @@ G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
 G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
 G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN = "investigation-focus design or test-design as the agent names it"
 G_FOCUS_NOT_NAMED = "no investigation-focus named by the agent"
+G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION = (
+    "entered for the third time in the design version")
 G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING = (
     "the redesigns counter below its ceiling or the destination not design-writing")
 G_RESUME_TO_DESIGN_WRITING_AT_REDESIGNS_CEILING = (
@@ -583,6 +585,14 @@ TRANSITION_TABLE = (
          (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_FLAKY_TEST),
          (G_WRITERS_COUNTER_AT_CEILING,), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN, note="the ruling in the report"),
+    # Row 63 has no verdict: it is applied when test-suite-arbitrating is
+    # ENTERED with arbitrator-rulings at its ceiling (the machine's enter()),
+    # before any arbitrator is launched there. Its guard is the entry check.
+    _row("63", TEST_SUITE_ARBITRATING, (),
+         (G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION,), INVESTIGATE_WORKFLOW,
+         investigation_focus=FOCUS_UNKNOWN,
+         note="the ruling the arbitrator would have made rides in the report; "
+              "applied on entry (sections 6.5, 7)"),
     _row("64", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
          CONTRACT_REVISING, "contract-revisions"),
     _row("65",
@@ -641,9 +651,10 @@ ROW_TESTS_BEGIN = "24"                            # sets tests-begun; enters tes
 ROW_IMPLEMENTATION_TO_TEST_SUITE = "25"           # the implementation-work-stream is ready
 ROW_TEST_DESIGN_APPROVED = "39"                   # sets test-design-approved; enters test-writing
 ROW_TESTS_TO_TEST_SUITE = "45"                    # the test-work-stream is ready
+ROW_THE_ARBITRATORS_THIRD_ENTRY = "63"            # applied on entry, no verdict
 for _row_number in (ROW_TOPIC_BRANCH_CUT, ROW_DESIGN_APPROVED, ROW_TESTS_BEGIN,
                     ROW_IMPLEMENTATION_TO_TEST_SUITE, ROW_TEST_DESIGN_APPROVED,
-                    ROW_TESTS_TO_TEST_SUITE):
+                    ROW_TESTS_TO_TEST_SUITE, ROW_THE_ARBITRATORS_THIRD_ENTRY):
     assert _row_number in TRANSITION_TABLE_BY_ROW, _row_number
 
 # The design's own row numbers (source 3.2), for the coverage assertion in

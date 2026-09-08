@@ -272,7 +272,14 @@ class EveryRowOfSection32(unittest.TestCase):
     def test_the_cases_cover_every_row_of_the_design_s_table(self):
         hit = {row for row, _, _ in LEGALITY_CASES} | {row for row, _, _, _ in RESUME_CASES}
         design_rows = set(T.DESIGN_TRANSITION_ROWS)
-        self.assertEqual(design_rows - hit, set(), "rows of section 3.2 with no legality case")
+        # Row 63 has no verdict: the arbitrator's third entry is a row the
+        # machine applies on entering test-suite-arbitrating, never on a
+        # state-exit, so no legality case can find it; the counters test
+        # drives it through the machine.
+        entry_rule_rows = {row.row for row in T.TRANSITION_TABLE if not row.verdicts}
+        self.assertEqual(entry_rule_rows, {T.ROW_THE_ARBITRATORS_THIRD_ENTRY})
+        self.assertEqual(design_rows - hit - entry_rule_rows, set(),
+                         "rows of section 3.2 with no legality case")
         self.assertEqual(hit - set(T.TRANSITION_TABLE_BY_ROW), set(), "cases naming no row")
 
     def test_the_rows_are_numbered_in_the_design_s_order(self):
