@@ -96,6 +96,7 @@ V_REJECT_TEST_DESIGN = "reject test-design"
 # word; this one is reported with the slice.
 V_REJECT_IMPLEMENTATION_AND_TESTS = "reject implementation and tests"
 V_DISCUSS = "discuss"
+V_REDESIGN = "redesign"          # the user's, at contract-acceptance-by-user only
 V_INPUT_QUICK_CHECK_FAILED = "input-quick-check-failed"
 V_ESCALATE_TO_USER = "escalate-to-user"
 V_PASS = "pass"
@@ -148,7 +149,7 @@ STATE_TABLE = (
                   (CONTRACT_ACCEPTANCE_BY_PROGRAM, CONTRACT_ACCEPTANCE_BY_AGENT,
                    CONTRACT_ACCEPTANCE_BY_USER),
                   "the previous version and the notes, on a revision",
-                  (V_ADVANCE, V_REJECT_CONTRACT, V_DISCUSS), "composite"),
+                  (V_ADVANCE, V_REJECT_CONTRACT, V_DISCUSS, V_REDESIGN), "composite"),
     StateTableRow(DESIGN_REVIEWING,
                   (DESIGN_ACCEPTANCE_BY_AGENT, DESIGN_ACCEPTANCE_BY_USER),
                   "",
@@ -472,6 +473,12 @@ TRANSITION_TABLE = (
          TO_BOTH_WORK_STREAMS_RE_ENTER, note="the revised-contract invalidation rule"),
     _row("10", CONTRACT_REVIEWING, V_DISCUSS, (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
          CONTRACT_REVISING, counter_note="the user's own time"),
+    _row("11", CONTRACT_REVIEWING, V_REDESIGN, (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
+         INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_CONTRACT,
+         counter_note="redesigns, on entry to design-writing",
+         note="then design-writing as a redesign: the investigation holds design-writing "
+              "as its resume destination (section 6.6), the redesigns ceiling deciding at "
+              "the resume (rows 70, 71)"),
     _row("12", DESIGN_REVIEWING, V_REJECT_DESIGN,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_below_ceiling("design-revisions")),
          DESIGN_WRITING, "design-revisions", note="the same initiator; it revises alone"),
@@ -686,9 +693,11 @@ ROW_IMPLEMENTATION_TO_TEST_SUITE = "25"           # the implementation-work-stre
 ROW_TEST_DESIGN_APPROVED = "39"                   # sets test-design-approved; enters test-writing
 ROW_TESTS_TO_TEST_SUITE = "45"                    # the test-work-stream is ready
 ROW_THE_ARBITRATORS_THIRD_ENTRY = "63"            # applied on entry, no verdict
+ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK = "11"  # the investigation holds design-writing
 for _row_number in (ROW_TOPIC_BRANCH_CUT, ROW_DESIGN_APPROVED, ROW_TESTS_BEGIN,
                     ROW_IMPLEMENTATION_TO_TEST_SUITE, ROW_TEST_DESIGN_APPROVED,
-                    ROW_TESTS_TO_TEST_SUITE, ROW_THE_ARBITRATORS_THIRD_ENTRY):
+                    ROW_TESTS_TO_TEST_SUITE, ROW_THE_ARBITRATORS_THIRD_ENTRY,
+                    ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK):
     assert _row_number in TRANSITION_TABLE_BY_ROW, _row_number
 
 # The design's own row numbers (source 3.2), for the coverage assertion in

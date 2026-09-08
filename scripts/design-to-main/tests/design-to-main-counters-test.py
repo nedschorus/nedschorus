@@ -310,6 +310,54 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
 
+    def contract_reaches_the_user(self):
+        return fixture.prefix_to_design_approved() + [
+            fixture.implementation_write(),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),  # row 29
+            (T.CONTRACT_REVISING, T.V_EMITTED, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),        # row 8
+        ]
+
+    def test_row_11_the_user_s_redesign_at_the_contract_check_opens_the_redesign_through_the_investigation(self):
+        script = self.contract_reaches_the_user() + [
+            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),                # row 11
+        ]
+        machine, run, _ = self.drive(script)
+        self.assertEqual(machine.routed[-1][0].row, "11")
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.investigation_focus, T.FOCUS_CONTRACT)
+        self.assertEqual(run.investigation_opened_by_row, "11")
+        self.assertEqual(run.counters.value("redesigns"), 0)                   # counted on entry, not here
+        # A plain resume applies the destination the ruling held:
+        # design-writing as a redesign, not the contract check it left.
+        machine.launcher.script += [(T.INVESTIGATE_WORKFLOW, T.V_RESUME, {})]
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        self.assertEqual(run.design_version, 2)
+        self.assertEqual(run.counters.value("redesigns"), 1)
+        self.assertEqual(run.counters.value("contract-revisions"), 0)
+        self.assertEqual(
+            sum(1 for p in machine.launcher.launched if p["state"] == T.CONTRACT_ACCEPTANCE_BY_USER), 1)
+
+    def test_row_11_at_the_redesigns_ceiling_the_resume_ends_the_run_failed(self):
+        script = self.contract_reaches_the_user() + [
+            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
+        ]
+        machine, run, _ = self.drive(script)
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        run.counters.values["redesigns"] = 2        # as after two redesigns
+        machine.launcher.script += self.contract_reaches_the_user()[1:] + [
+            (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 71
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.ENDED)
+        self.assertEqual(run.outcome, T.OUTCOME_FAILED)
+
     def test_redesigns_reset_the_version_and_keep_the_redesigns_counter(self):
         script = fixture.prefix_to_tests_begun() + [
             (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, {"input_named": T.INPUT_DESIGN}),  # row 34

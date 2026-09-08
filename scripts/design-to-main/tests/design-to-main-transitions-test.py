@@ -64,6 +64,8 @@ LEGALITY_CASES = [
      exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
     ("10", dict(APPROVED, counters={"contract-revisions": 1}),
      exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
+    ("11", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN)),
     ("12", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
     ("13", dict(counters={"design-revisions": 2}),
      exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),

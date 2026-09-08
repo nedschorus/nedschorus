@@ -598,6 +598,7 @@ class DesignToMainStateMachineFlow:
             run.investigation_opened_by = "%s from %s: %s" % (
                 state_exit.verdict, state_exit.state, error)
             run.investigation_opened_by_row = None   # no row: a machine error
+            run.investigation_held_resume_destination = None
         return tables.INVESTIGATE_WORKFLOW
 
     def apply_rulings_to_the_run(self, run, state_exit):
@@ -648,6 +649,7 @@ class DesignToMainStateMachineFlow:
                     "the arbitrator's third entry in design version %d (row %s)" % (
                         run.design_version, third_entry.row))
                 run.investigation_opened_by_row = third_entry.row
+                run.investigation_held_resume_destination = None
                 run.previous_state = tables.TEST_SUITE_ARBITRATING
                 run.current_state = third_entry.to_state
                 return
@@ -676,13 +678,23 @@ class DesignToMainStateMachineFlow:
         run.investigation_opened_by = "%s from %s (row %s)" % (
             state_exit.verdict, state_exit.state, row.row)
         run.investigation_opened_by_row = row.row
+        # Row 11: the user's redesign goes through the investigation, "then
+        # design-writing as a redesign" — the investigation holds that
+        # destination for its resume, so a plain resume does not return to
+        # the contract check the user just left.
+        run.investigation_held_resume_destination = (
+            tables.DESIGN_WRITING
+            if row.row == tables.ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK else None)
 
     def resolve_resume_destination(self, run, state_exit):
-        """Section 6.6: the destination the user names; else the earliest
+        """Section 6.6: the destination the user names; else the one the
+        investigation's opening held (row 11's redesign); else the earliest
         state downstream of what the diff shows changed; else the state
         that was paused."""
         if state_exit.destination:
             return state_exit.destination
+        if run.investigation_held_resume_destination:
+            return run.investigation_held_resume_destination
         derived = None
         if run.investigation_opened_at_commit:
             derived = self.git_record.earliest_state_downstream_of_changes(
