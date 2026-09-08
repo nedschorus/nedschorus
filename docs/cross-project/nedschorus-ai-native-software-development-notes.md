@@ -6,7 +6,7 @@
 
 **If a section here seems wrong, stale, or at odds with the objective**, that is worth reporting rather than working around. An agent the user is directing raises it in its own session. An agent he is not directing reaches him through the liaison, or by filing a GitHub issue labelled `draft`, which is his review queue in the issue world.
 
-**Provenance.** Split from `docs/cross-project/nedschorus-ai-native-software-development.md` on 2026-09-04, under the rulings of the walk recorded at `docs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`. The text below is as it was written, except where those rulings renamed something.
+**Provenance.** Split on 2026-09-04 from the architecture document at docs/cross-project/nedschorus-ai-native-software-development.md, which this same change deletes; it is readable in git history at the commit before its deletion. The split was made under the rulings of the walk recorded at `docs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`. The text below is as it was written, except where those rulings renamed something.
 
 ---
 
