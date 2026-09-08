@@ -306,7 +306,8 @@ def derived_destination(row, context):
     if row.to_state == tables.TO_RETRY_SAME_STATE:
         return context.state_exit.from_state
     if row.to_state in (tables.TO_HOLD_READY_FOR_TEST_SUITE,
-                        tables.TO_BOTH_WORK_STREAMS_RE_ENTER):
+                        tables.TO_BOTH_WORK_STREAMS_RE_ENTER,
+                        tables.TO_BOTH_WRITERS_FRESH):
         return None
     if row.to_state == tables.TO_RESUME_DESTINATION:
         return context.resume_destination
@@ -782,6 +783,15 @@ class DesignToMainStateMachineFlow:
             if run.tests_begun:
                 self.enter_writing_state(run, tables.TEST_DESIGN_WRITING,
                                          tables.ENTRY_REASON_CONTRACT_REVISION)
+            next_position = tables.IMPLEMENTATION_WRITING
+        if row.to_state == tables.TO_BOTH_WRITERS_FRESH:
+            # Row 62: both writers, each write the arbitrator's bucket; the
+            # implementation-work-stream runs first, and holds for the
+            # test-work-stream (row 26) at test-writing.
+            self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING,
+                                     tables.ENTRY_REASON_ARBITRATOR_RULING)
+            self.enter_writing_state(run, tables.TEST_WRITING,
+                                     tables.ENTRY_REASON_ARBITRATOR_RULING)
             next_position = tables.IMPLEMENTATION_WRITING
         if row.to_state == tables.TO_RETRY_SAME_STATE:
             next_position = from_state

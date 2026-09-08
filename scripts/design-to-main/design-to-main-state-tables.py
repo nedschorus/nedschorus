@@ -90,6 +90,11 @@ V_REJECT_DESIGN = "reject design"
 V_REJECT_IMPLEMENTATION = "reject implementation"
 V_REJECT_TESTS = "reject tests"
 V_REJECT_TEST_DESIGN = "reject test-design"
+# The arbitrator's one ruling against both sibling artifacts (sections 3.1
+# and 6.1: "one or both of the implementation and the tests"; "both are
+# named and both are re-entered"). The design fixes no spelling for the
+# word; this one is reported with the slice.
+V_REJECT_IMPLEMENTATION_AND_TESTS = "reject implementation and tests"
 V_DISCUSS = "discuss"
 V_INPUT_QUICK_CHECK_FAILED = "input-quick-check-failed"
 V_ESCALATE_TO_USER = "escalate-to-user"
@@ -192,6 +197,7 @@ STATE_TABLE = (
                   "the implementation-work-stream's last state-package and files; "
                   "the test-work-stream's; the whole branch",
                   (V_ADVANCE, V_REJECT_IMPLEMENTATION, V_REJECT_TESTS,
+                   V_REJECT_IMPLEMENTATION_AND_TESTS,
                    V_REJECT_CONTRACT, V_FLAKY_TEST, V_ESCALATE_TO_USER),
                   "agent"),
     StateTableRow(INVESTIGATE_WORKFLOW, (),
@@ -345,6 +351,7 @@ TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
 TO_RETRY_SAME_STATE = "the same state (retry)"
 TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
 TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
+TO_BOTH_WRITERS_FRESH = "both writers, fresh"
 
 # Guard words. Each is a phrase of the design; the machine holds one
 # predicate per phrase (GUARD_PREDICATES in design-to-main-state-machine.py).
@@ -606,6 +613,12 @@ TRANSITION_TABLE = (
                       "is bounded by arbitrator-rulings (section 7)",
          note="the design names only the two rejects here; flaky-test at the "
               "test-writes ceiling has no row (reported with this slice)"),
+    _row("62", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION_AND_TESTS,
+         (G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE,),
+         TO_BOTH_WRITERS_FRESH,
+         counter_note="each write bounded as row 61",
+         note="both artifacts contradicting the component-contract; the "
+              "implementation-work-stream runs first (section 3.1)"),
     # Row 63 has no verdict: it is applied when test-suite-arbitrating is
     # ENTERED with arbitrator-rulings at its ceiling (the machine's enter()),
     # before any arbitrator is launched there. Its guard is the entry check.

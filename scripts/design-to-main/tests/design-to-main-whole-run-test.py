@@ -204,6 +204,42 @@ class TwoWorkStreams(unittest.TestCase):
             repository.remove()
 
 
+class TheArbitratorRejectsBothArtifactsInOneRuling(unittest.TestCase):
+    """Row 62: `reject implementation and tests` re-enters both writers,
+    fresh, each write the arbitrator's bucket; the implementation-work-
+    stream runs first (section 3.1), holds, and the test-work-stream runs;
+    they meet again at test-suite-executing."""
+
+    def test_row_62_re_enters_both_writers_the_implementation_first(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.whole_run_to_passed()[:-2] + [
+                (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),                                  # row 55
+                (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS, {}),    # row 62
+                fixture.implementation_write(),                                         # forced
+                (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 26: holds
+                fixture.test_write(),                                                   # forced
+                (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                           # row 45
+                (T.TEST_SUITE_EXECUTING, T.V_PASS, {}),
+                (T.SUBMIT_TO_PR_GATE, T.V_ACCEPTED, {}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
+            rows = [row.row for row, _, _ in machine.routed]
+            self.assertEqual(rows[-8:], ["55", "62", "21", "26", "40", "45", "54", "72"])
+            self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
+            self.assertEqual(run.counters.value("implementation-writes"), 1)
+            self.assertEqual(run.counters.value("test-writes"), 1)
+            self.assertEqual(run.writes_emitted_per_version, {
+                T.IMPLEMENTATION_WRITING: 2, T.TEST_WRITING: 2})
+            self.assertEqual(run.writing_state_entry_reason[T.IMPLEMENTATION_WRITING],
+                             T.ENTRY_REASON_ARBITRATOR_RULING)
+            self.assertEqual(run.writing_state_entry_reason[T.TEST_WRITING],
+                             T.ENTRY_REASON_ARBITRATOR_RULING)
+        finally:
+            repository.remove()
+
+
 class WholeRunThatFailsAtTheRedesignsCeiling(unittest.TestCase):
 
     def test_three_redesigns_asked_for_the_run_ends_failed(self):

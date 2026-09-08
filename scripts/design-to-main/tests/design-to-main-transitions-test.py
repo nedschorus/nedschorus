@@ -144,6 +144,11 @@ LEGALITY_CASES = [
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
     ("61", dict(counters={"test-writes": 3, "arbitrator-rulings": 2}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
+    # Row 62: both artifacts in one ruling, whatever the writers' counters.
+    ("62", dict(counters={"arbitrator-rulings": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS)),
+    ("62", dict(counters={"implementation-writes": 3, "test-writes": 3, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS)),
     ("64", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
     # Row 65: a reject of, or a failed check against, the component-contract
     # with the contract-revisions counter at its ceiling, from any state.
