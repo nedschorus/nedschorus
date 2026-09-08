@@ -294,6 +294,157 @@ class ResumingAnInvestigation(unittest.TestCase):
                          "- the exit status of a refusal is 3 (user-ruled 2026-09-08)\n")
 
 
+class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
+    """Section 6.6: an investigation pauses the run — whatever agent was
+    working is ended, its uncommitted work discarded, and its state re-run
+    on resume. The opening commit carries the state-exit and the record,
+    nothing the paused agent half-wrote; the resume diff therefore sees
+    the user's edits and only those."""
+
+    TEST_DESIGN = fixture.COMPONENT_DIRECTORY + "/widget-counter-test-design.md"
+    IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def paths_in_commit_outside_the_record(self, record, commit):
+        names = record.git("show", "--name-only", "--format=", commit).stdout.split()
+        return [p for p in names if not p.startswith(str(record.record_directory) + "/")]
+
+    def open_investigation_from_test_design_writing(self):
+        """test-design-writing writes its draft and touches a tracked file,
+        then escalates (row 61, focus design)."""
+        script = fixture.prefix_to_tests_begun() + [
+            (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {
+                "investigation_focus": T.FOCUS_DESIGN,
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                    self.TEST_DESIGN: "# a half-written test-design\n",
+                    "README.md": "main, touched by the writer\n",
+                }}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.investigation_focus, T.FOCUS_DESIGN)
+        return machine, run, record
+
+    def test_the_opening_commit_carries_nothing_the_paused_agent_wrote(self):
+        machine, run, record = self.open_investigation_from_test_design_writing()
+        opening_commit = machine.routed[-1][2]
+        self.assertEqual(self.paths_in_commit_outside_the_record(record, opening_commit), [])
+        self.assertFalse(record.absolute(self.TEST_DESIGN).exists())
+        self.assertEqual(record.absolute("README.md").read_text(), "main\n")
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+
+    def test_nothing_edited_resumes_the_state_that_wrote_before_it_opened(self):
+        machine, run, record = self.open_investigation_from_test_design_writing()
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["61", "64"])
+        self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.design_version, 1)
+
+    def test_the_design_edited_resumes_as_a_redesign_without_the_discarded_draft(self):
+        machine, run, record = self.open_investigation_from_test_design_writing()
+        design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+        design.parent.mkdir(parents=True, exist_ok=True)
+        design.write_text("# the design, edited by the user\n")
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        self.assertEqual(run.design_version, 2)
+        self.assertEqual(run.counters.value("redesigns"), 1)
+        self.assertFalse(record.absolute(self.TEST_DESIGN).exists())
+        self.assertEqual(record.git("ls-files", self.TEST_DESIGN).stdout, "")
+
+    def test_row_20_a_partial_implementation_never_emitted_is_not_sent_to_review(self):
+        # implementation-writing writes part of the implementation, then
+        # finds the design wanting (row 20); the user edits nothing and
+        # resumes: implementation-writing again, not implementation-
+        # reviewing of a file its writer never emitted.
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, {
+                "input_named": T.INPUT_DESIGN,
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                    self.IMPLEMENTATION: "# half an implementation\n"}}),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["20", "64"])
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+        self.assertEqual(run.implementation_work_stream_position, T.IMPLEMENTATION_WRITING)
+        self.assertFalse(record.absolute(self.IMPLEMENTATION).exists())
+        self.assertEqual(run.counters.value("implementation-writes"), 0)
+
+
+class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
+    """A state-exit from investigate-workflow outside stop, submit-to-PR-
+    gate and resume is a machine error (section 3.2), but not a new
+    investigation: the run stays paused where it was, with the focus and
+    the opening commit it had, and the stray exit is committed like any
+    other state-exit (section 9)."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def open_investigation(self):
+        script = fixture.prefix_to_tests_begun() + [
+            (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {"investigation_focus": T.FOCUS_DESIGN}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_DESIGN_WRITING)
+        return machine, run, record
+
+    def stray_verdict_then_check_the_pause_is_unchanged(self, machine, run, record):
+        opened_at = run.investigation_opened_at_commit
+        opening_commit = machine.routed[-1][2]
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, "continue", {}))
+        fixture.drive(machine, run)
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.investigation_focus, T.FOCUS_DESIGN)
+        self.assertEqual(run.investigation_opened_at_commit, opened_at)
+        self.assertEqual(record.commits_on_branch(since=opening_commit), [machine.routed[-1][2]])
+        trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
+        self.assertEqual(trailer["State"], T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(trailer["Exit"], "continue")
+
+    def test_a_stray_verdict_leaves_the_run_paused_where_it_was_and_a_plain_resume_returns_there(self):
+        machine, run, record = self.open_investigation()
+        self.stray_verdict_then_check_the_pause_is_unchanged(machine, run, record)
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "64")
+        self.assertIsNone(machine.routed[-2][0])   # the stray exit: a machine error, no row
+        self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.design_version, 1)
+
+    def test_the_users_edit_before_a_stray_verdict_is_still_seen_on_resume(self):
+        machine, run, record = self.open_investigation()
+        design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+        design.parent.mkdir(parents=True, exist_ok=True)
+        design.write_text("# the design, edited by the user before the stray verdict\n")
+        self.stray_verdict_then_check_the_pause_is_unchanged(machine, run, record)
+        self.assertEqual(design.read_text(),
+                         "# the design, edited by the user before the stray verdict\n")
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        self.assertEqual(run.design_version, 2)
+        self.assertEqual(run.counters.value("redesigns"), 1)
+
+
 class RecoveryFromTheLastCommit(unittest.TestCase):
 
     def test_a_process_that_dies_before_committing_re_runs_the_state(self):

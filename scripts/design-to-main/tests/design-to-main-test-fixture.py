@@ -64,12 +64,37 @@ class ThrowawayRepository:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
+FILES_WRITTEN_BEFORE_EMITTING = "files_written_before_emitting"
+
+
+class ScriptedStateExitLauncherWritingFiles(machine_module.ScriptedStateExitLauncher):
+    """The stub launcher, feigning an agent that writes into the checkout
+    before it emits: a scripted entry's fields may carry
+    `files_written_before_emitting`, a dict of path (relative to the
+    checkout) to content, written before the state-exit is returned."""
+
+    def __init__(self, script, checkout):
+        super().__init__(script)
+        self.checkout = pathlib.Path(checkout)
+
+    def launch(self, state_package):
+        if self.script:
+            state, verdict, fields = self.script[0]
+            fields = dict(fields)
+            for path, content in fields.pop(FILES_WRITTEN_BEFORE_EMITTING, {}).items():
+                target = self.checkout / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            self.script[0] = (state, verdict, fields)
+        return super().launch(state_package)
+
+
 def make_machine(script, repository=None):
     """A machine over a throwaway repository, driven by `script`."""
     repository = repository or ThrowawayRepository()
     record = git_record_module.TopicBranchGitRecord(
         repository.checkout, COMPONENT, COMPONENT_DIRECTORY)
-    launcher = machine_module.ScriptedStateExitLauncher(script)
+    launcher = ScriptedStateExitLauncherWritingFiles(script, repository.checkout)
     machine = machine_module.DesignToMainStateMachineFlow(
         record, launcher, today=lambda: "2026-09-08")
     run = machine.start(COMPONENT)

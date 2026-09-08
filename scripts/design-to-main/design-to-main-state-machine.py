@@ -464,27 +464,58 @@ class DesignToMainStateMachineFlow:
         # Entry-charged counters and entry rules apply before the commit, so
         # that run-state.json on the branch is the state the run is in.
         self.enter(run, next_position)
-        if run.current_state == tables.INVESTIGATE_WORKFLOW:
-            # The commit at which the investigation opened (section 6.6),
-            # recorded before the state-exit is committed so that the
-            # branch carries it for the whole pause: the branch head now,
-            # the parent of the opening commit, since that commit's own
-            # SHA cannot be written into a file it contains.
+        if self.investigation_opens_with(run, state_exit):
+            # Section 6.6: the investigation pauses the run — the agent
+            # that was working is ended and its uncommitted work discarded,
+            # its state re-run on resume. Discarded here, before the
+            # opening state-exit is committed, so that the opening commit
+            # carries the state-exit and the record (run-state.json, a
+            # ruling appended, a reviewer's notes) and nothing the paused
+            # agent half-wrote; that is what makes the resume diff the
+            # user's edits and only those.
+            self.git_record.discard_uncommitted_work_outside_the_record()
+            # The commit the resume diff runs against (section 6.6): the
+            # branch head now, the PARENT of the opening commit, not the
+            # opening commit itself. The parent, because the value must be
+            # in run-state.json inside the opening commit for the branch
+            # to carry it through the pause (a successor recovering from
+            # investigate-workflow reads it there), and a commit's own SHA
+            # cannot be written into a file it contains. The diff is the
+            # same against either: after the discard, the opening commit
+            # touches only the record directory, which the diff ignores.
             run.investigation_opened_at_commit = self.git_record.head_commit()
         commit = self.commit_state_exit(run, state_exit, write_number)
         self.routed.append((row, state_exit, commit))
         return run.current_state
 
+    def investigation_opens_with(self, run, state_exit):
+        """Whether this state-exit is the one that opens an investigation:
+        the run is now paused in investigate-workflow and the state-exit
+        came from somewhere else. A state-exit from investigate-workflow
+        itself that leaves the run there (a stray verdict, below) does
+        not open a new investigation over the one in progress."""
+        return (run.current_state == tables.INVESTIGATE_WORKFLOW
+                and state_exit.from_state != tables.INVESTIGATE_WORKFLOW)
+
     def route_machine_error(self, run, state_exit, error):
         """Section 3.2: any other state-exit is a machine error; the run
         pauses in investigate-workflow, investigation-focus unknown, the
-        illegal state-exit in the arbitrator's report."""
+        illegal state-exit in the arbitrator's report.
+
+        Emitted from investigate-workflow itself — a verdict other than
+        stop, submit-to-PR-gate or resume — the machine error is recorded
+        and committed like any other, but the run stays paused where it
+        was: the paused state, the focus and the opening commit are the
+        investigation's, not overwritten with investigate-workflow and
+        unknown, which would send every plain resume back into the
+        investigation and lose the user's edits before the stray exit."""
         self.machine_errors.append((state_exit, error))
         run.machine_error = str(error)
-        run.paused_state = state_exit.from_state
-        run.investigation_focus = tables.FOCUS_UNKNOWN
-        run.investigation_opened_by = "%s from %s: %s" % (
-            state_exit.verdict, state_exit.state, error)
+        if state_exit.from_state != tables.INVESTIGATE_WORKFLOW:
+            run.paused_state = state_exit.from_state
+            run.investigation_focus = tables.FOCUS_UNKNOWN
+            run.investigation_opened_by = "%s from %s: %s" % (
+                state_exit.verdict, state_exit.state, error)
         return tables.INVESTIGATE_WORKFLOW
 
     def apply_rulings(self, run, state_exit):

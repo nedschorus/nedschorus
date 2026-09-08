@@ -131,6 +131,19 @@ class TopicBranchGitRecord:
         self.git("commit", "--allow-empty", "-q", "-m", message)
         return self.head_commit()
 
+    # -- section 6.6: the paused agent's uncommitted work is discarded --------
+
+    def discard_uncommitted_work_outside_the_record(self):
+        """Put every path outside the record directory back to HEAD:
+        staged or not, modified, added or deleted, untracked. The record
+        directory is kept — a ruling appended for this state-exit and a
+        reviewer's notes under `evidence/` belong to the state-exit, not
+        to the work that is discarded."""
+        outside_the_record = [".", ":(exclude)%s" % self.record_directory]
+        self.git("reset", "-q", "--", *outside_the_record)
+        self.git("checkout", "--", *outside_the_record)
+        self.git("clean", "-fdq", "--", *outside_the_record)
+
     # -- section 6.6: what the user changed in an investigation --------------
 
     def paths_changed_since(self, commit):
