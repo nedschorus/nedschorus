@@ -26,10 +26,10 @@ itself being the only difference -- under three rules ruled with the design:
      or not at all (its default temporary-file-and-rename; --inplace is never
      passed), so a copy interrupted midway is finished by the next run.
   2. REFUSE ON DIFFERENCE. A file already in the store whose content differs
-     from the local one is refused before anything is copied: the line names
-     the file and prints the provenance comment each report opens with, from
-     both copies, and the person renames the local directory with a -2
-     suffix and ships again. Two machines reviewing one document on one day
+     from the local one is refused before anything is copied: the one line
+     names every such file and prints the provenance comment each report
+     opens with, from both copies, and the person renames the local
+     directory with a -2 suffix and ships again. Two machines reviewing one document on one day
      produce exactly this, and rsync alone would overwrite the first silently.
   3. FAIL LOUDLY. When ned-box cannot be reached the run prints a line
      opening FAILED and exits non-zero; the record stays on disk, unshipped,
@@ -263,6 +263,9 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
                        if relative in in_store and in_store[relative] != digest)
     new_files = sorted(relative for relative in local if relative not in in_store)
     if differing:
+        # The loop only gathers; the one print comes after it, so a record
+        # with several differing files still gets exactly one stdout line.
+        described = []
         for relative in differing:
             local_line = provenance_comment_of(local_first_line(record_dir / relative))
             if host:
@@ -270,9 +273,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
             else:
                 store_line = provenance_comment_of(
                     local_first_line(pathlib.Path(store_dir) / relative))
-            print(f"REFUSED: {name} — {relative} is already in the store with different "
-                  f"content; store: {store_line}; local: {local_line}. Rename the local "
-                  f"directory with a -2 suffix and ship again.")
+            described.append(f"{relative} (store: {store_line}; local: {local_line})")
+        print(f"REFUSED: {name} — already in the store with different content: "
+              f"{'; '.join(described)}. Rename the local directory with a -2 suffix "
+              f"and ship again.")
         return EXIT_REFUSED
 
     if not new_files:

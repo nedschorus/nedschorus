@@ -125,6 +125,30 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and stored_a.read_text(encoding="utf-8") == REPORT_A)
     (demo / "a.md").write_text(REPORT_A, encoding="utf-8")
 
+    stored_b = store_root / "cold-read-records" / demo.name / "b.md"
+    (demo / "a.md").write_text(
+        "<!-- provenance: runtime=claude model=opus-rerun -->\n# A\n\nfinding one, reworded\n",
+        encoding="utf-8")
+    (demo / "b.md").write_text(
+        "<!-- provenance: runtime=codex model=gpt-rerun -->\n# B\n\nfinding two, reworded\n",
+        encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("two differing files at once are REFUSED with exit 2",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:"), result.stdout)
+    check("two differing files still make exactly one stdout line",
+          result.stdout.count("\n") == 1, result.stdout)
+    check("the one line names both files and carries all four provenance comments",
+          "a.md" in result.stdout and "b.md" in result.stdout
+          and "model=opus " in result.stdout and "model=opus-rerun" in result.stdout
+          and "model=gpt " in result.stdout and "model=gpt-rerun" in result.stdout,
+          result.stdout)
+    check("nothing was copied on the two-file refusal either",
+          not (store_root / "cold-read-records" / demo.name / "late.md").exists()
+          and stored_a.read_text(encoding="utf-8") == REPORT_A
+          and stored_b.read_text(encoding="utf-8") == REPORT_B)
+    (demo / "a.md").write_text(REPORT_A, encoding="utf-8")
+    (demo / "b.md").write_text(REPORT_B, encoding="utf-8")
+
     (demo / "dispositions.md").write_text("# dispositions\n\nrewritten\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
     check("a differing file with no provenance comment says so instead of crashing",
