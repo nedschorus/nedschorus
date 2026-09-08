@@ -9,6 +9,7 @@ Run: python3 scripts/design-to-main/tests/design-to-main-whole-run-test.py
 """
 
 import importlib.util
+import json
 import pathlib
 import unittest
 
@@ -112,6 +113,30 @@ class WholeRunThatPasses(unittest.TestCase):
         self.assertEqual(read_back.counters.as_dict(), {
             "redesigns": 0, "design-revisions": 0, "implementation-writes": 1, "test-writes": 1,
             "arbitrator-rulings": 0, "contract-revisions": 0, "test-design-corrections": 0})
+
+    def test_run_state_json_carries_the_fields_section_9_lists_under_the_design_s_names(self):
+        # Section 9 after the seventh walk: the design version; each
+        # work-stream's position; the counters of section 7; tests-begun;
+        # whether the design and the test-design are approved; the
+        # consecutive could-not-run, program-check-failure and submit-retry
+        # counts; why each state was entered; each artifact's
+        # coverage-type; the paused state and the commit at which an
+        # investigation opened; whether row 1 has cut the topic branch; the
+        # outcome once ended.
+        on_disk = json.loads(self.record.absolute(self.record.run_state_path).read_text())
+        for key in (
+                "design-version",
+                "implementation-work-stream-position", "test-work-stream-position",
+                "counters", "tests-begun", "design-approved", "test-design-approved",
+                "consecutive-could-not-run-count", "consecutive-program-check-failure-count",
+                "submit-retry-count",
+                "writing-state-entry-reason",
+                "implementation-coverage-type", "tests-coverage-type",
+                "paused-state", "investigation-opened-at-commit",
+                "topic-branch-cut", "outcome"):
+            self.assertIn(key, on_disk, key)
+        self.assertEqual(set(on_disk), set(RunStateRecord.FIELDS))
+        self.assertEqual(set(on_disk["counters"]), set(T.COUNTER_NAMES))
 
     def test_the_machine_never_pushed(self):
         self.assertEqual(self.repository.origin_refs(), self.repository.origin_refs_at_start)

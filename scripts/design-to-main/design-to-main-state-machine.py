@@ -171,9 +171,9 @@ def _submit_attempt_number(ctx):
 GUARD_PREDICATES = {
     tables.G_FROM_PROGRAM_CHECK: _from_sub_state(tables.CONTRACT_ACCEPTANCE_BY_PROGRAM),
     tables.G_FIRST_TIME:
-        lambda ctx: ctx.run.consecutive_contract_program_check_failures == 0,
+        lambda ctx: ctx.run.consecutive_program_check_failure_count == 0,
     tables.G_SECOND_CONSECUTIVE_TIME:
-        lambda ctx: ctx.run.consecutive_contract_program_check_failures >= 1,
+        lambda ctx: ctx.run.consecutive_program_check_failure_count >= 1,
     tables.G_DESIGN_NOT_YET_APPROVED: lambda ctx: not ctx.run.design_approved,
     tables.G_ON_A_CONTRACT_REVISION: lambda ctx: ctx.run.design_approved,
     tables.G_FROM_CONTRACT_ACCEPTANCE_BY_AGENT:
@@ -811,9 +811,9 @@ class DesignToMainStateMachineFlow:
         # The contract's program check: consecutive failures.
         if state_exit.state == tables.CONTRACT_ACCEPTANCE_BY_PROGRAM:
             if verdict == tables.V_REJECT_CONTRACT:
-                run.consecutive_contract_program_check_failures += 1
+                run.consecutive_program_check_failure_count += 1
             else:
-                run.consecutive_contract_program_check_failures = 0
+                run.consecutive_program_check_failure_count = 0
 
         # The suite's consecutive could-not-run count and the submit retries.
         if from_state == tables.TEST_SUITE_EXECUTING:

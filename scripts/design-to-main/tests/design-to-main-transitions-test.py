@@ -52,7 +52,7 @@ LEGALITY_CASES = [
     ("1", {}, exit_from(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED)),
     ("2", {}, exit_from(T.DESIGN_WRITING, T.V_EMITTED)),
     ("3", {}, exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_REJECT_CONTRACT)),
-    ("4", dict(consecutive_contract_program_check_failures=1),
+    ("4", dict(consecutive_program_check_failure_count=1),
      exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_REJECT_CONTRACT)),
     ("5", {}, exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE)),
     ("6", APPROVED, exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE)),

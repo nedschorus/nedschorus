@@ -92,22 +92,24 @@ def write_counter_charged(writing_state, entry_reason):
 
 class RunStateRecord:
     """`run-state.json` (section 9): the design version; each work-stream's
-    position, or ready-for-test-suite; the counters; tests-begun; whether
-    the design and the test-design are approved; the consecutive
-    could-not-run and submit-retry counts; the outcome once ended.
+    position, or ready-for-test-suite; the counters of section 7;
+    tests-begun; whether the design and the test-design are approved; the
+    consecutive could-not-run, program-check-failure and submit-retry
+    counts; why each state was entered (the writing states' entry reasons,
+    for the three buckets); each artifact's coverage-type; the paused
+    state and the commit at which an investigation opened; whether row 1
+    has cut the topic branch; the outcome once ended.
 
-    Fields beyond section 9's list are named in the build report: the
-    current state, the consecutive program-check failures, each writing
-    state's entry reason (for the three buckets), the writes emitted per
-    version (the `Write:` number), the coverage-types, and what an
-    investigation needs to resume. One more, `topic-branch-cut`: whether
-    row 1 has cut the run's topic branch (section 6.6). Until it has, the
-    machine owns nothing in the checkout and refuses every discard and
-    commit; the git record's guard reads this flag off the run, not the
-    name of the branch the checkout stands on, because a finished run
-    leaves the checkout on its topic branch and the name cannot tell a
-    fresh invocation from that. Persisted here so that a successor
-    process recovering a run reads it from the branch.
+    Fields beyond that list: the current and previous state; the writes
+    emitted per version (for the first-write rule); the investigation's
+    focus, what opened it and by which row, the destination it holds for
+    its resume; and the last machine error. `topic-branch-cut` is the
+    flag the git record's guard reads off the run before every discard
+    and commit (section 6.6) — not the name of the branch the checkout
+    stands on, because a finished run leaves the checkout on its topic
+    branch and the name cannot tell a fresh invocation from that.
+    Persisted so that a successor process recovering a run reads it from
+    the branch.
     """
 
     FIELDS = (
@@ -116,7 +118,7 @@ class RunStateRecord:
         "counters", "tests-begun", "design-approved", "test-design-approved",
         "implementation-work-stream-position", "test-work-stream-position",
         "consecutive-could-not-run-count", "submit-retry-count",
-        "consecutive-contract-program-check-failures",
+        "consecutive-program-check-failure-count",
         "implementation-coverage-type", "tests-coverage-type",
         "writing-state-entry-reason", "writes-emitted-per-version",
         "paused-state", "investigation-focus", "investigation-opened-at-commit",
@@ -140,7 +142,7 @@ class RunStateRecord:
         self.test_work_stream_position = None
         self.consecutive_could_not_run_count = 0
         self.submit_retry_count = 0
-        self.consecutive_contract_program_check_failures = 0
+        self.consecutive_program_check_failure_count = 0
         self.implementation_coverage_type = None
         self.tests_coverage_type = None
         self.writing_state_entry_reason = {}
@@ -170,7 +172,7 @@ class RunStateRecord:
         self.test_design_approved = False
         self.writes_emitted_per_version = {}
         self.writing_state_entry_reason = {}
-        self.consecutive_contract_program_check_failures = 0
+        self.consecutive_program_check_failure_count = 0
 
     # -- work-streams ------------------------------------------------------
 
@@ -213,8 +215,8 @@ class RunStateRecord:
             "test-work-stream-position": self.test_work_stream_position,
             "consecutive-could-not-run-count": self.consecutive_could_not_run_count,
             "submit-retry-count": self.submit_retry_count,
-            "consecutive-contract-program-check-failures":
-                self.consecutive_contract_program_check_failures,
+            "consecutive-program-check-failure-count":
+                self.consecutive_program_check_failure_count,
             "implementation-coverage-type": self.implementation_coverage_type,
             "tests-coverage-type": self.tests_coverage_type,
             "writing-state-entry-reason": dict(self.writing_state_entry_reason),
@@ -247,8 +249,8 @@ class RunStateRecord:
         run.test_work_stream_position = data["test-work-stream-position"]
         run.consecutive_could_not_run_count = data["consecutive-could-not-run-count"]
         run.submit_retry_count = data["submit-retry-count"]
-        run.consecutive_contract_program_check_failures = data[
-            "consecutive-contract-program-check-failures"]
+        run.consecutive_program_check_failure_count = data[
+            "consecutive-program-check-failure-count"]
         run.implementation_coverage_type = data.get("implementation-coverage-type")
         run.tests_coverage_type = data.get("tests-coverage-type")
         run.writing_state_entry_reason = dict(data.get("writing-state-entry-reason", {}))
