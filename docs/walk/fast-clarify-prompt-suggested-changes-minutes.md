@@ -165,7 +165,9 @@ branch, was read back; it is the 7.2 text with ?nonsense?.
 ## Item 10.2 — who lands the changes
 
 processed 2026-09-07 → accepted ("y"): the session commits the applied
-changes on this branch and opens the PR.
+changes on this branch and opens the PR. Done: PR #274,
+https://github.com/nedschorus/nedschorus/pull/274, commit 1dbf90b. The user
+added that the merge-lane agent reviews it, not him.
 
 Rider raised with it: "we need to switch to gemini 3.8 medium or normal (not
 low or high). Not sure the exact command - you should test/check." Checked:
