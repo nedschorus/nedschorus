@@ -186,6 +186,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     good = make_record(scratch_repo / "cold-read-records", "2026-09-01-good", {"r.md": REPORT_A})
     bad = make_record(scratch_repo / "cold-read-records", "2026-09-02-bad", {"r.md": REPORT_B})
     (scratch_repo / "cold-read-records" / "stray-file.txt").write_text("not a directory\n")
+    make_record(scratch_repo / "cold-read-records", "2026-08-30-empty", {})
     ship(all_store, str(bad))  # bad is in the store once...
     (bad / "r.md").write_text(REPORT_A, encoding="utf-8")  # ...and now differs locally
     result = ship(all_store, "--all", script=scratch_ship)
@@ -199,7 +200,18 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           and "1 refused (2026-09-02-bad)" in lines[-1] and result.returncode == 2,
           result.stdout)
     check("--all ignores a stray file beside the record directories",
-          "stray-file" not in result.stdout and "of 2" in lines[-1], result.stdout)
+          "stray-file" not in result.stdout and "of 3" in lines[-1], result.stdout)
+    check("--all skips an empty directory with a note and counts it skipped, not failed",
+          any(line == "skipped: 2026-08-30-empty — empty directory" for line in lines)
+          and "0 failed" in lines[-1] and "1 skipped (2026-08-30-empty)" in lines[-1],
+          result.stdout)
+    # With the refused directory made good again, an empty one alone leaves
+    # --all at exit 0: the finding from PR #285's review was that it did not.
+    (bad / "r.md").write_text(REPORT_B, encoding="utf-8")
+    result = ship(all_store, "--all", script=scratch_ship)
+    check("an empty directory alone does not make --all exit non-zero",
+          result.returncode == 0 and "1 skipped" in result.stdout.splitlines()[-1],
+          f"exit {result.returncode}: {result.stdout}")
 
     # --- The remote invocation, read from stubs ---------------------------------
     stubs = scratch / "stub-bin"
