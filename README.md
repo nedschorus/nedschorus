@@ -48,4 +48,4 @@ Three agent lifetimes, used deliberately:
 
 ## Status
 
-Founding phase, retired. The current architecture and working plan: [docs/wiki/queue/nedschorus-ai-native-software-development-objective.md](docs/wiki/queue/nedschorus-ai-native-software-development-objective.md). The boot-up plan's record: `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`.
+Founding phase, retired. The current architecture and working plan: [docs/wiki/nedschorus-ai-native-software-development-objective.md](docs/wiki/nedschorus-ai-native-software-development-objective.md). The boot-up plan's record: `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`.

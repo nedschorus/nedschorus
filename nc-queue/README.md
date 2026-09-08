@@ -1,6 +1,6 @@
 # nc-queue (the NC walk queue)
 
-The intake directory for user-requested notes awaiting their initial walk (user-ruled 2026-07-22; the rule of record is [nedschorus-ai-native-software-development.md](../docs/wiki/queue/nedschorus-ai-native-software-development-objective.md) § Project organization).
+The intake directory for user-requested notes awaiting their initial walk (user-ruled 2026-07-22; the rule of record is [nedschorus-ai-native-software-development.md](../docs/wiki/nedschorus-ai-native-software-development-objective.md) § Project organization).
 
 - Every requested note is committed here as `<YYYY-MM-DD>-<slug>.md` — the request is complete only when the file exists in this directory.
 - Queue commits are verbatim relays: never reviewed before being committed. The drafting agent keeps do-not-publish material out (this repository is public).
