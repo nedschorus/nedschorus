@@ -373,6 +373,36 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertIsNone(run.implementation_work_stream_position)
         self.assertIsNone(run.test_work_stream_position)
 
+    def test_a_redesign_resets_all_six_per_version_counters_the_approvals_the_positions_and_the_entry_reasons(self):
+        # Section 3.2, "A redesign resets the version", as the seventh walk
+        # worded it: the six per-version counters by name, tests-begun,
+        # both positions, the approvals, and every state's entry reason;
+        # the redesigns counter does not reset.
+        script = fixture.prefix_to_test_writing() + [
+            fixture.test_write(),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),                  # row 52
+        ]
+        machine, run, _ = self.drive(script)
+        run.counters.values.update({
+            "design-revisions": 1, "implementation-writes": 2, "test-writes": 1,
+            "contract-revisions": 1, "test-design-corrections": 1, "arbitrator-rulings": 1})
+        self.assertTrue(run.design_approved and run.test_design_approved and run.tests_begun)
+        self.assertEqual(set(run.writing_state_entry_reason),
+                         {T.IMPLEMENTATION_WRITING, T.TEST_DESIGN_WRITING, T.TEST_WRITING})
+        machine.launcher.script += [(T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING})]
+        fixture.drive(machine, run)
+        self.assertEqual(run.design_version, 2)
+        self.assertEqual(run.counters.as_dict(), {
+            "redesigns": 1, "design-revisions": 0, "implementation-writes": 0, "test-writes": 0,
+            "arbitrator-rulings": 0, "contract-revisions": 0, "test-design-corrections": 0})
+        self.assertFalse(run.tests_begun)
+        self.assertFalse(run.design_approved)
+        self.assertFalse(run.test_design_approved)
+        self.assertIsNone(run.implementation_work_stream_position)
+        self.assertIsNone(run.test_work_stream_position)
+        self.assertEqual(run.writing_state_entry_reason, {})
+        self.assertEqual(run.writes_emitted_per_version, {})
+
     def test_redesigns_at_the_ceiling_a_third_is_refused_and_the_run_fails(self):
         redesign_round = [
             (T.DESIGN_WRITING, T.V_EMITTED, {}),

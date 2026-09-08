@@ -518,8 +518,10 @@ TRANSITION_TABLE = (
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
     _row("21", IMPLEMENTATION_WRITING, V_EMITTED, (), IMPLEMENTATION_REVIEWING,
          "implementation-writes",
-         counter_note="charged by the three buckets of section 7: only a first write, "
-                      "or one after a reject from review or the user's discuss"),
+         counter_note="only when the state was entered by a reject implementation from "
+                      "review (or the user's discuss, counted like any other) or as the "
+                      "first write; a write forced by an upstream change or ordered by "
+                      "the arbitrator charges nothing here (section 7, the three buckets)"),
     _row("22", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
          CONTRACT_REVISING, "contract-revisions"),
@@ -563,7 +565,7 @@ TRANSITION_TABLE = (
     _row("39", TEST_DESIGN_REVIEWING, V_ADVANCE, (G_FROM_THE_LAST_ACCEPTANCE_CHECK,),
          TEST_WRITING),
     _row("40", TEST_WRITING, V_EMITTED, (), TEST_REVIEWING, "test-writes",
-         counter_note="charged by the three buckets of section 7, as row 21"),
+         counter_note="on the same rule as row 21"),
     _row("41", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_TEST_DESIGN, counter_below_ceiling("test-design-corrections")),
          TEST_DESIGN_WRITING, "test-design-corrections"),
@@ -599,8 +601,8 @@ TRANSITION_TABLE = (
          counter_note="the user's own time"),
     _row("54", TEST_SUITE_EXECUTING, V_PASS, (), SUBMIT_TO_PR_GATE),
     _row("55", TEST_SUITE_EXECUTING, V_FAIL, (), TEST_SUITE_ARBITRATING,
-         counter_note="the design's column says none; arbitrator-rulings is charged "
-                      "on entry (sections 6.5 and 7)"),
+         counter_note="arbitrator-rulings, charged on entry to test-suite-arbitrating "
+                      "(sections 6.5 and 7; COUNTER_CHARGED_ON_ENTRY)"),
     _row("56", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_FIRST,),
          TO_RETRY_SAME_STATE),
     _row("57", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_SECOND,),
@@ -609,9 +611,13 @@ TRANSITION_TABLE = (
     _row("58", TEST_SUITE_ARBITRATING, V_ADVANCE, (), SUBMIT_TO_PR_GATE,
          note="a rerun passed and the failure was the environment's"),
     _row("59", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION,
-         (G_WRITERS_COUNTER_BELOW_CEILING,), IMPLEMENTATION_WRITING),
+         (G_WRITERS_COUNTER_BELOW_CEILING,), IMPLEMENTATION_WRITING,
+         counter_note="arbitrator-rulings, charged on entry to test-suite-arbitrating, "
+                      "as every row of this state; the write it orders is the "
+                      "arbitrator's bucket"),
     _row("60", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
-         (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING),
+         (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING,
+         counter_note="as row 59"),
     _row("61", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS),
          (G_WRITERS_COUNTER_AT_CEILING,
           G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE),
