@@ -19,8 +19,9 @@ than reading the launchers' source for the word "replace":
     target itself), a replace changes it (the target path is never opened
     for writing at all, so there is no moment at which a reader could see
     it short);
-  - a write sabotaged partway (RLIMIT_FSIZE via `ulimit -f 0`, which a full
-    disk reaches by the same errno) must leave the original file
+  - a write sabotaged partway (RLIMIT_FSIZE via `ulimit -f 0`, which fails
+    the payload write the way a full disk does — the same failure path,
+    EFBIG here and ENOSPC there) must leave the original file
     byte-identical, and must leave its temporary beside the target rather
     than in TMPDIR — os.replace is atomic only within one filesystem;
   - two controls give the harness teeth, by running the shapes the fix
@@ -265,8 +266,9 @@ class PreTrustSandbox:
                           sabotage: bool = False):
         """Run a pre-trust program against this sandbox's HOME. With
         sabotage, RLIMIT_FSIZE is zero, so the first byte written to any
-        regular file fails (EFBIG) — the same errno a full disk gives, and
-        the failure lands after the read and before the replace."""
+        regular file fails with EFBIG: an OSError out of the payload write,
+        after the read and before the replace — the same place in the
+        program a full disk fails, where the errno would be ENOSPC."""
         script = 'exec "$0" -c "$1" "$2"'
         if sabotage:
             script = "ulimit -f 0; " + script
