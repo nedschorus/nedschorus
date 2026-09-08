@@ -13,8 +13,15 @@ every run and a second judging on one name would delete the first's reports.
 
 Usage:
   scripts/cold-read-restater-judge-runner.py --restater gemini-3.8-flash-low \\
+      --prompt-file <the judge's instructions> \\
       --case <rough draft> <perfect version> <defect list> <restatement> \\
       --case ... --case ...
+
+--prompt-file is required, and is handed to both runs unchanged. Neither this
+program nor the judge cell carries the judge's instructions: that text is
+operative prose, and this project reads operative prose before a pull request,
+by cold read and by the user, so it travels through the user's walk rather
+than inside a program. The cell's docstring says where it lands.
 
 THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"), from item 5 of the walk
@@ -173,9 +180,11 @@ def build_runner_argument_parser():
     """This program's argument surface: the judge cell's, minus the report.
 
     The cases are the cell's own --case, four paths in one flag, so an
-    operator who has run the cell by hand types the same line here. Where the
-    reports go is this program's business, not the caller's: two runs of one
-    restater belong in one record directory, named for the restater.
+    operator who has run the cell by hand types the same line here, and
+    --prompt-file is the cell's own too, passed through unchanged so both runs
+    judge under one set of instructions. Where the reports go is this
+    program's business, not the caller's: two runs of one restater belong in
+    one record directory, named for the restater.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -189,6 +198,12 @@ def build_runner_argument_parser():
         help="one document's four files, in that order, each relative to the "
              "repository root or absolute. Repeat once per document; the "
              "ruled campaign passes three")
+    parser.add_argument(
+        "--prompt-file", required=True, metavar="PATH",
+        help="the file holding the judge's instructions, passed to both runs "
+             "unchanged; relative to the repository root unless absolute. "
+             "Required, because neither this program nor the judge cell "
+             "carries that text -- see the module docstring")
     parser.add_argument(
         "--record-dir", metavar="PATH",
         help="where the two reports and the combined result go, used exactly "
@@ -273,6 +288,7 @@ def judge_cell_status_line(line: str, phrase: str) -> bool:
 
 def launch_judge_runs(
     restater_class: str, case_arguments, record_dir: pathlib.Path,
+    prompt_file_argument: str,
 ) -> dict:
     """Start both judge runs in parallel. Returns {run number: (process,
     report path, stderr log path)}.
@@ -289,6 +305,7 @@ def launch_judge_runs(
         command = [
             sys.executable, str(JUDGE_CELL_LAUNCHER),
             "--restater", restater_class,
+            "--prompt-file", prompt_file_argument,
             "--report", str(report_path),
         ]
         for case_argument in case_arguments:
@@ -794,10 +811,13 @@ def main() -> int:
     # Refused here as well as in the cell, and before anything is launched:
     # the cell would refuse each of these the same way, but only after two
     # processes had started, and an operator who mistyped one of twelve paths
-    # should be told once rather than twice from inside a record directory
-    # that had already been created.
+    # -- or pointed --prompt-file at a file that is not there yet -- should be
+    # told once rather than twice from inside a record directory that had
+    # already been created. The cell's own resolvers are called, not copies of
+    # them, which is part of why this program imports the cell.
     try:
         judge_cell.validate_restater_class(args.restater)
+        judge_cell.resolve_judge_prompt_file(args.prompt_file)
         cases = judge_cell.resolve_cases(args.case)
     except cell_common.CellRefusal as refusal:
         print(f"{PROGRAM}: {refusal}", file=sys.stderr)
@@ -819,7 +839,8 @@ def main() -> int:
     print(f"{PROGRAM}: judging restater {args.restater} on {len(cases)} case(s), "
           f"{JUDGE_RUNS} runs, into {record_dir}", file=sys.stderr)
     exit_codes = wait_for_judge_runs(
-        launch_judge_runs(args.restater, args.case, record_dir))
+        launch_judge_runs(
+            args.restater, args.case, record_dir, args.prompt_file))
 
     runs = {
         run_number: read_run(

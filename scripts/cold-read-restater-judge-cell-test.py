@@ -23,9 +23,14 @@ WHAT IS PINNED HERE.
     --output-format text --allowedTools Read,Grep,Glob,Write`, with the
     prompt on stdin.
 
-  - The prompt the judge receives: every one of a case's four paths, in the
-    order --case takes them, under the words that name their roles; the
-    restater class; the report path; and no placeholder left unfilled.
+  - THE PROMPT COMES FROM --prompt-file, WHICH IS REQUIRED. This cell holds
+    no prompt of its own: the judge's instructions are prose the user reads
+    before they land, so they travel separately and the cell refuses to run
+    without them. The substitution into whatever that file holds is pinned
+    here -- every one of a case's four paths, in the order --case takes them,
+    under the words that name their roles; the restater class; the report
+    path; and no placeholder left unfilled -- and so are the two refusals: a
+    --prompt-file naming no file, and one naming an empty file.
 
   - The refusals, all of which exit 64 without launching a model: a case file
     that is not there (named by case number and role), a --restater that
@@ -90,6 +95,18 @@ THREE_CASES = (
 RESTATER_CLASS = "gemini-3.8-flash-low"
 
 STUB_JUDGE_REPORT = "## CASE 1\n\nCAUGHT: 1 — the restatement gave two readings.\n"
+
+# The judge's instructions, as a stub. The cell carries no prompt of its own
+# and --prompt-file is required, so every run here supplies one. It holds all
+# three placeholders because that is the contract the cell substitutes into,
+# and the checks below read the substituted text back out of the stub model.
+STUB_JUDGE_PROMPT = """\
+You are the judge of {RESTATER_CLASS}.
+
+{CASES_BLOCK}
+
+Write your report to {REPORT_PATH}.
+"""
 
 # A stand-in for the `claude` CLI. It reads the model from --model and the
 # prompt from stdin, then does what the plan says for that model: "report" is
@@ -167,8 +184,20 @@ def report_path_for(repository, case_slug, run_number=1):
             / f"{record_directory_name}--claude-restater-judge-run{run_number}.md")
 
 
+def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
+    """The judge's instructions, where the cell can be pointed at them.
+
+    Written before the cell is launched, so it is in the working-tree baseline
+    the cell takes at its own start and is not read back as a stray write.
+    """
+    prompt_file = repository / "test-cases/judge-prompt.md"
+    prompt_file.write_text(text, encoding="utf-8")
+    return prompt_file
+
+
 def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
-                   cases=THREE_CASES, restater=RESTATER_CLASS):
+                   cases=THREE_CASES, restater=RESTATER_CLASS,
+                   prompt_file=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -177,10 +206,13 @@ def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_RESTATER_JUDGE_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_RESTATER_JUDGE_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
+    if prompt_file is None:
+        prompt_file = write_stub_prompt_file(repository)
     command = [
         sys.executable,
         str(repository / "scripts" / "cold-read-restater-judge-cell.py"),
         "--restater", restater, "--report", str(report_path),
+        "--prompt-file", str(prompt_file),
     ]
     for case in cases:
         command += ["--case", *case]
@@ -254,6 +286,52 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no placeholder is left unfilled in the prompt",
           "{RESTATER_CLASS}" not in prompt and "{CASES_BLOCK}" not in prompt
           and "{REPORT_PATH}" not in prompt, repr(prompt[:200]))
+    check("the prompt is the --prompt-file's own text, not a template this "
+          "program carries",
+          prompt.startswith(f"You are the judge of {RESTATER_CLASS}."),
+          repr(prompt[:200]))
+
+    # --- --prompt-file is required, and must name a file with text in it ---
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "no-prompt-file-flag")
+    result = run_judge_cell(
+        repository, stubs, {"*": {"report": STUB_JUDGE_REPORT}}, report,
+        prompt_file="test-cases/a-prompt-file-that-is-not-there.md",
+    )
+    check("a --prompt-file naming no file is refused with exit 64, naming the "
+          "path it looked for",
+          result.returncode == 64 and not report.exists()
+          and "prompt file not found:" in result.stderr
+          and "Traceback" not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "empty-prompt-file")
+    result = run_judge_cell(
+        repository, stubs, {"*": {"report": STUB_JUDGE_REPORT}}, report,
+        prompt_file=write_stub_prompt_file(repository, "   \n\n"),
+    )
+    check("a --prompt-file naming an empty file is refused the same way, "
+          "rather than judging on no instructions",
+          result.returncode == 64 and not report.exists()
+          and "is empty: it must hold the judge's instructions" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "prompt-file-flag-omitted")
+    environment = dict(os.environ)
+    environment["COLD_READ_RESTATER_JUDGE_CELL_TEST_STUB_PLAN"] = "{}"
+    environment["COLD_READ_RESTATER_JUDGE_CELL_TEST_STUB_REPORT_PATH"] = str(report)
+    omitted = subprocess.run(
+        [sys.executable,
+         str(repository / "scripts" / "cold-read-restater-judge-cell.py"),
+         "--restater", RESTATER_CLASS, "--report", str(report),
+         "--case", *THREE_CASES[0]],
+        capture_output=True, text=True, check=False, env=environment)
+    check("omitting --prompt-file altogether is refused with exit 64, the way "
+          "any missing required flag is",
+          omitted.returncode == 64 and "--prompt-file" in omitted.stderr,
+          f"exit {omitted.returncode}; stderr={omitted.stderr!r}")
 
     # --- Fable unavailable, way one: it exits non-zero --------------------
     repository = build_scratch_repository(scratch)

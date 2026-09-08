@@ -28,6 +28,7 @@ Usage:
   scripts/cold-read-restater-judge-cell.py --restater gemini-3.8-flash-low \\
       --case <rough draft> <perfect version> <defect list> <restatement> \\
       --case ... --case ... \\
+      --prompt-file <the judge's instructions> \\
       --report cold-read-records/2026-09-07-restater-judge-gemini-3.8-flash-low/\\
 2026-09-07-restater-judge-gemini-3.8-flash-low--claude-restater-judge-run1.md
 
@@ -36,7 +37,8 @@ stderr and nothing to stdout.
 
 Exit codes: 0 a model produced a report; 1 every model in the chain failed to
 produce one; 64 this program refused the invocation and never launched a
-model, naming its own fix. 64 rather than the conventional 2 for the reason
+model, naming its own fix -- a --prompt-file naming no file, or naming an
+empty one, is refused that way like any other bad invocation. 64 rather than the conventional 2 for the reason
 written beside EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which
 every cell shares.
 
@@ -65,18 +67,22 @@ design asks for something their shape cannot express:
     therefore takes an optional `model_to_effort` map (added with this cell)
     and stamps the effort of the model that actually produced the report.
 
-WHY THE JUDGE'S INSTRUCTIONS ARE IN THIS FILE. Every other cell's prompt is a
-file under .claude/skills/cold-read/prompts/, and that is where this one
-belongs: JUDGE_PROMPT_TEMPLATE below is written to be moved there whole, and
---prompt-file already reads a template from anywhere. It is here because the
-text is new prose that has had neither a cold read nor the user's walk, and
-.claude/ changes only through that walk (.claude/hooks/instruction-file-guard.py,
-user-walked 2026-08-07, nedschorus#45). Moving it is a one-hunk change once
-the user has walked it: write the constant to
-.claude/skills/cold-read/prompts/restater-judge.md and read it here through
-the shared PROMPTS_DIR. This is not the fast read's ruling
+WHERE THE JUDGE'S INSTRUCTIONS COME FROM: --prompt-file, and nowhere else.
+This program holds no prompt of its own, and the flag is REQUIRED rather than
+an override, which is the one thing about this cell that is not like the
+others. The judge's instructions are operative prose, and this project reads
+operative prose BEFORE a pull request, by cold read and by the user, because
+the pull-request process is the wrong instrument for prose. Carrying the text
+inside this program would have landed it through that wrong door. So the text
+travels separately, through the user's walk, and this cell refuses to run
+until a file holds it -- which is the correct refusal: nothing should judge
+anything until the user has read what the judge is told to do. The file's home
+once he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
+beside every other cell's prompt, and .claude/ changes only through that walk
+(.claude/hooks/instruction-file-guard.py, user-walked 2026-08-07,
+nedschorus#45). This is not the fast read's ruling
 (scripts/cold-read-fast-read.py holds its prompt in the file because the user
-ruled that for the fast cell); it is a hold, not a home.
+ruled that for the fast cell).
 
 WHY THIS CELL HAS NO --tier. The other launchers take one because they pin
 several measured tiers and the flag chooses among them. The judge has one
@@ -170,56 +176,21 @@ CASE_FILE_ROLES = (
 # what this run judged.
 JUDGED_ROLE_INDEX = 3
 
-# The judge's instructions. Written to be moved whole to
-# .claude/skills/cold-read/prompts/restater-judge.md once the user has walked
-# the text -- see the docstring. {RESTATER_CLASS}, {CASES_BLOCK} and
-# {REPORT_PATH} are the substitutions `compose_judge_prompt` makes; the other
-# cells' templates take {TARGET_PATH} and {REPORT_PATH}, and this one takes a
-# block of cases instead of one target because a judge run reads twelve files.
+# The judge's instructions are NOT in this program. --prompt-file names the
+# file that holds them, and it is required: see "WHERE THE JUDGE'S
+# INSTRUCTIONS COME FROM" in the docstring. The three substitutions
+# `compose_judge_prompt` makes in whatever that file holds are
+# {RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} -- the other cells'
+# templates take {TARGET_PATH} and {REPORT_PATH}, and this one takes a block of
+# cases instead of one target because a judge run reads twelve files.
 #
-# THE JUDGE COUNTS NOTHING, and the prompt says so twice. The ruling's score
-# is arithmetic over the items the judge reports, and the 2026-08-29 trial's
-# scorer "was wrong six ways until two agents hand-counted it" (the walk, item
-# 5). So the model reports items, one per line, each line naming a defect
-# number or quoting a sentence, and the runner counts the lines and computes
-# the composite. A total of the model's own beside a total of the runner's
-# would be two answers to one question.
-JUDGE_PROMPT_TEMPLATE = """\
-You are the judge of one restater. A restater is a model that was given a rough draft and asked to say, in its own words, what each sentence of it means — completely and literally, repairing nothing. The restater under judgment here is {RESTATER_CLASS}, and you judge its work on the cases below and on nothing else.
-
-Each case gives you four files:
-
-- the ROUGH DRAFT the restater read;
-- the PERFECT VERSION of that same document, which is the draft as it should have been written;
-- the DEFECT LIST, one numbered row per defect between the two, scrubbed by hand;
-- the RESTATEMENT that {RESTATER_CLASS} produced from the rough draft.
-
-{CASES_BLOCK}
-
-Read every file in full before you judge anything. Your context is deliberately minimal — what your runtime already loaded and these files. Nothing else: do not go looking. These files are read-only: do not edit them, or anything else in the checkout. The one file you create is your report, described at the end.
-
-For each case, report three kinds of item.
-
-CAUGHT — a defect on that case's defect list that the restatement caught. A restatement catches a defect when its reading of the rough draft shows that defect to someone reading the restatement alone: it gives two readings of a sentence that supports two, says a term or a reference defeated it, marks a gap, says the sentence made no sense, or restates the sentence in a way that is wrong in the way the defect list says the sentence is wrong. Restating a defective sentence smoothly, as though nothing were wrong with it, is not catching it. Name the defect BY ITS NUMBER on that case's own defect list, and name each number at most once per case.
-
-STUPID — a place the restatement was stupid: a sentence that the perfect version keeps unchanged and the restatement misread. That the perfect version keeps the sentence is what makes the misreading the restatement's error rather than the draft's, so check the perfect version before you report one. Quote the sentence, then say what the restatement made of it.
-
-NOT-ON-LIST — a problem the restatement caught that no row of that case's defect list names. Report it and move on: these are not scored here, they go back to the scrub that built the list.
-
-DO NOT COUNT, AND DO NOT SCORE. Report the items and nothing else: no totals, no percentages, no ranking, no closing summary. The counting and the score are done from your lines by the program that launched you, and a number of your own beside a number of its own would be two answers to one question.
-
-FORMAT. Write one `## CASE <number>` heading per case, with the number exactly as this prompt gives it above, and put every item under the heading of the case it belongs to. Under a heading write that case's items, each on a line of its own:
-
-## CASE 1
-
-CAUGHT: <defect number> — <what the restatement says, and how that shows the defect>
-STUPID: "<the sentence, quoted>" — <what the restatement made of it, and why that is a misreading>
-NOT-ON-LIST: <the problem the restatement caught, and why no row of the list names it>
-
-Every item is a single line, however long that line runs, beginning with `CAUGHT:`, `STUPID:` or `NOT-ON-LIST:`. An item broken across two lines is read as half an item, which is to say as none. A case with no items of one kind simply has none; write no placeholder line for it.
-
-HOW TO DELIVER YOUR ANSWER. Write your answer to {REPORT_PATH}, with whatever file-writing tool you have. That file is your entire deliverable: this cell discards what you say in conversation, so an answer given only in chat is a lost answer. Write it once, when your judgment is complete, rather than building it up across several writes. A missing or empty report is read as a run that did not happen, and it is discarded and rerun. {REPORT_PATH} is the only file to create; write nothing anywhere else.
-"""
+# THE JUDGE COUNTS NOTHING, whatever the prompt file says about anything else.
+# The ruling's score is arithmetic over the items the judge reports, and the
+# 2026-08-29 trial's scorer "was wrong six ways until two agents hand-counted
+# it" (the walk, item 5). So the model reports items, one per line, each line
+# naming a defect number or quoting a sentence, and the runner counts the lines
+# and computes the composite. A total of the model's own beside a total of the
+# runner's would be two answers to one question.
 
 
 def build_judge_argument_parser():
@@ -265,11 +236,14 @@ def build_judge_argument_parser():
              "the way --model is",
     )
     parser.add_argument(
-        "--prompt-file", metavar="PATH",
-        help="read the judge's instructions from this file instead of the "
-             "template in this program, with the same {RESTATER_CLASS}, "
-             "{CASES_BLOCK} and {REPORT_PATH} substitution; relative to the "
-             "repository root unless absolute. The stamp records the path",
+        "--prompt-file", required=True, metavar="PATH",
+        help="the file holding the judge's instructions, with "
+             "{RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} substituted "
+             "into it; relative to the repository root unless absolute. "
+             "Required: this program carries no prompt of its own, because "
+             "the judge's instructions are prose the user reads before they "
+             "land, not code that rides in on a pull request. The stamp "
+             "records the path",
     )
     return parser
 
@@ -283,6 +257,27 @@ def validate_restater_class(restater_class: str) -> None:
             "this restater's record directory name, so it must be lowercase "
             "letters and digits joined by single hyphens or dots, like "
             "gemini-3.8-flash-low")
+
+
+def resolve_judge_prompt_file(path_argument: str) -> pathlib.Path:
+    """The file holding the judge's instructions: present, and not empty.
+
+    The shared `resolve_prompt_file` already refuses a path that names no
+    file. The empty check is this cell's own, and lives here rather than in
+    the shared module because no other leg needs it: on every other leg the
+    prompt file is an override of a template the program carries, so an empty
+    one is a caller's mistake with a working default behind it. Here there is
+    no default -- an empty file would send the judge twelve paths and no
+    instructions, and that run would burn an xhigh judgment to produce
+    whatever a model does with a bare list of files.
+    """
+    prompt_file = common.resolve_prompt_file(path_argument)
+    if not prompt_file.read_text(encoding="utf-8").strip():
+        raise common.CellRefusal(
+            f"--prompt-file {prompt_file} is empty: it must hold the judge's "
+            "instructions, with {RESTATER_CLASS}, {CASES_BLOCK} and "
+            "{REPORT_PATH} in them. This program carries no prompt of its own")
+    return prompt_file
 
 
 def resolve_case_file(case_number: int, role: str, path_argument: str) -> pathlib.Path:
@@ -328,19 +323,15 @@ def render_cases_block(cases) -> str:
 
 
 def compose_judge_prompt(
-    restater_class: str, cases, report: pathlib.Path, prompt_file=None,
+    restater_class: str, cases, report: pathlib.Path, prompt_file: pathlib.Path,
 ) -> str:
-    """The exact text the judge receives.
+    """The exact text the judge receives: `prompt_file`, substituted.
 
-    `prompt_file`, when given, is the template to read in place of
-    JUDGE_PROMPT_TEMPLATE; the substitution is the same either way. This is
-    also what a test calls to see what the model would be given, so a check
-    is made against the text that runs rather than an approximation of it.
+    No default behind the argument, deliberately -- see the docstring. This is
+    also what a test calls to see what the model would be given, so a check is
+    made against the text that runs rather than an approximation of it.
     """
-    template = (
-        prompt_file.read_text(encoding="utf-8") if prompt_file is not None
-        else JUDGE_PROMPT_TEMPLATE
-    )
+    template = prompt_file.read_text(encoding="utf-8")
     return (
         template
         .replace("{RESTATER_CLASS}", restater_class)
@@ -393,8 +384,7 @@ def main() -> int:
         validate_restater_class(args.restater)
         cases = resolve_cases(args.case)
         report = common.resolve_report_path(args.report)
-        prompt_file = (
-            common.resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
+        prompt_file = resolve_judge_prompt_file(args.prompt_file)
         prompt = compose_judge_prompt(args.restater, cases, report, prompt_file)
         chain = (args.model,) if args.model else JUDGE_MODEL_CHAIN
         # --effort names one level for the whole chain; without it each model
@@ -429,7 +419,7 @@ def main() -> int:
         prompt=prompt, report=report, cell=JUDGE_CELL, tier=JUDGE_TIER,
         target_argument=target_argument, baseline=baseline,
         cell_started_at=cell_started_at,
-        prompt_file_argument=args.prompt_file or "",
+        prompt_file_argument=args.prompt_file,
         model_to_effort=model_to_effort,
     )
 

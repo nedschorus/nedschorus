@@ -8,6 +8,11 @@ from the launch of two runs to the combined result they are read into.
 
 WHAT IS PINNED HERE.
 
+  - THE JUDGE'S INSTRUCTIONS COME FROM --prompt-file, WHICH IS REQUIRED AND
+    IS PASSED TO BOTH RUNS UNCHANGED. Neither program carries that text: it
+    is prose the user reads before it lands, so it travels separately. A
+    --prompt-file naming no file is refused before either run is launched.
+
   - TWO RUNS PER RESTATER (user-ruled 2026-09-05), launched into one record
     directory named for the restater and the day, their reports named for the
     run so the shared module's near-miss recovery cannot move one run's report
@@ -96,6 +101,18 @@ THREE_CASES = (
     ("test-cases/draft-three.md", "test-cases/perfect-three.md",
      "test-cases/defects-three.md", "test-cases/restatement-three.md"),
 )
+
+# The judge's instructions, as a stub. The cell carries no prompt of its own
+# and --prompt-file is required, so every run here supplies one. It holds all
+# three placeholders because that is the contract the cell substitutes into,
+# and the checks below read the substituted text back out of the stub model.
+STUB_JUDGE_PROMPT = """\
+You are the judge of {RESTATER_CLASS}.
+
+{CASES_BLOCK}
+
+Write your report to {REPORT_PATH}.
+"""
 
 # One judge report, written as the judge's prompt asks for it. Case 1 names
 # defect 4 twice, which is one caught defect; case 2 carries a CAUGHT line
@@ -207,6 +224,8 @@ run_token = "run" + match.group(1)
 plan = json.loads(os.environ["COLD_READ_RESTATER_JUDGE_RUNNER_TEST_STUB_PLAN"])
 for_run = plan.get(run_token, {})
 step = for_run.get(model, for_run.get("*", {}))
+if "dump_prompt" in step:
+    pathlib.Path(step["dump_prompt"]).write_text(prompt, encoding="utf-8")
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(step["report"], encoding="utf-8")
@@ -256,8 +275,20 @@ def build_scratch_repository(scratch):
     return repository
 
 
+def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
+    """The judge's instructions, where the runner can be pointed at them.
+
+    It MUST carry {REPORT_PATH}: the stub `claude` below finds which run it is
+    serving by the report path in the prompt it is handed, which is what lets
+    one stub serve both runs at once.
+    """
+    prompt_file = repository / "test-cases/judge-prompt.md"
+    prompt_file.write_text(text, encoding="utf-8")
+    return prompt_file
+
+
 def run_runner(repository, stub_directory, plan, *arguments,
-               cases=THREE_CASES, restater=RESTATER_CLASS):
+               cases=THREE_CASES, restater=RESTATER_CLASS, prompt_file=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -265,10 +296,12 @@ def run_runner(repository, stub_directory, plan, *arguments,
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_RESTATER_JUDGE_RUNNER_TEST_STUB_PLAN"] = json.dumps(plan)
+    if prompt_file is None:
+        prompt_file = write_stub_prompt_file(repository)
     command = [
         sys.executable,
         str(repository / "scripts" / "cold-read-restater-judge-runner.py"),
-        "--restater", restater,
+        "--restater", restater, "--prompt-file", str(prompt_file),
     ]
     for case in cases:
         command += ["--case", *case]
@@ -571,6 +604,49 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a refused invocation creates no record directory",
           not expected_record_directory(repository).exists(),
           "the record directory was created before the invocation was checked")
+
+    # --- A --prompt-file naming no file is refused before either launch ----
+    repository = build_scratch_repository(scratch)
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+        prompt_file="test-cases/a-prompt-file-that-is-not-there.md",
+    )
+    check("a --prompt-file naming no file is refused with exit 64, before "
+          "either run is launched",
+          result.returncode == 64
+          and "prompt file not found:" in result.stderr
+          and result.stdout.startswith("FAILED (")
+          and not expected_record_directory(repository).exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"stderr={result.stderr!r}")
+
+    # --- The prompt file reaches both runs, unchanged -----------------------
+    repository = build_scratch_repository(scratch)
+    prompt_file = write_stub_prompt_file(
+        repository,
+        "The judge of {RESTATER_CLASS}, on a prompt of the caller's own.\n\n"
+        "{CASES_BLOCK}\n\nReport to {REPORT_PATH}.\n")
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE,
+                        "dump_prompt": str(scratch / "run1-prompt.txt")}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING,
+                        "dump_prompt": str(scratch / "run2-prompt.txt")}}},
+        prompt_file=prompt_file,
+    )
+    prompts = [
+        (scratch / f"run{run_number}-prompt.txt").read_text(encoding="utf-8")
+        if (scratch / f"run{run_number}-prompt.txt").is_file() else ""
+        for run_number in (1, 2)
+    ]
+    check("both runs judge under the caller's prompt file, substituted",
+          result.returncode == 0
+          and all(text.startswith(f"The judge of {RESTATER_CLASS}, on a prompt "
+                                  "of the caller's own.")
+                  for text in prompts),
+          f"exit {result.returncode}; prompts={[text[:80] for text in prompts]!r}")
 
 print()
 if failures:
