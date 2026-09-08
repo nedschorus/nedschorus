@@ -499,6 +499,125 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         self.assertEqual(run.counters.value("redesigns"), 1)
 
 
+    def test_a_resume_may_not_name_ended_or_initiate_design_to_main(self):
+        # Section 6.6 after the seventh walk; PR #287's round-6 review
+        # reproduced `ended` ending the run with outcome null and
+        # `initiate-design-to-main` crashing after the cut. Both are
+        # machine errors with the pause unchanged, and the next resume
+        # routes.
+        for name in (T.ENDED, T.INITIATE_DESIGN_TO_MAIN):
+            with self.subTest(destination=name):
+                self.repository.remove()
+                self.repository = fixture.ThrowawayRepository()
+                machine, run, record = self.open_investigation()
+                self.stray_verdict_then_check_the_pause_is_unchanged(
+                    machine, run, record, verdict=T.V_RESUME, fields={"destination": name})
+                self.assertIsNone(run.outcome)
+                self.assertIn(name, run.machine_error)
+                machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+                fixture.drive(machine, run)
+                self.assertEqual(machine.routed[-1][0].row, "70")
+                self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
+
+    def test_a_reset_carried_on_a_malformed_resume_is_refused_with_the_whole_state_exit(self):
+        # Section 9 after the seventh walk (item 8): the reset is neither
+        # applied to the counters nor written to the user-rulings file; the
+        # user says it again on the correct resume.
+        machine, run, record = self.open_investigation()
+        run.counters.values["redesigns"] = 2                 # as after two redesigns
+        self.stray_verdict_then_check_the_pause_is_unchanged(
+            machine, run, record, verdict=T.V_RESUME,
+            fields={"destination": "desgin-writing", "rulings": ("reset",)})
+        self.assertEqual(run.counters.value("redesigns"), 2)
+        self.assertFalse(record.absolute(record.user_rulings_path).exists())
+        # Without the reset a resume to design-writing is row 71; with it,
+        # said again on the correct resume, row 70.
+        machine.launcher.script.append(
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING, "rulings": ("reset",)}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        self.assertEqual(run.counters.value("redesigns"), 1)
+        self.assertEqual(record.absolute(record.user_rulings_path).read_text(),
+                         "- reset (user-ruled 2026-09-08)\n")
+
+
+class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
+    """Section 6.6: an investigation the arbitrator's third entry opened
+    (row 63) is the one a plain resume would loop back into, since the
+    paused state is test-suite-arbitrating at its ceiling. There a resume
+    either names a destination or applies the ruling the arbitrator held
+    in its report, routed through test-suite-arbitrating's rows without
+    entering the state; a resume with neither is a machine error, the
+    pause unchanged."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def open_the_third_entry_investigation(self):
+        suite_fails_and_arbitrator_sends_tests_back = [
+            (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),
+            (T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),
+            fixture.test_write(),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
+        ]
+        script = fixture.whole_run_to_passed()[:-2]
+        script += suite_fails_and_arbitrator_sends_tests_back * 2
+        script += [(T.TEST_SUITE_EXECUTING, T.V_FAIL, {})]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+        return machine, run, record
+
+    def arbitrator_launches(self, machine):
+        return sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_SUITE_ARBITRATING)
+
+    def test_a_plain_resume_with_no_held_ruling_is_a_machine_error_and_does_not_re_enter_the_arbitrator(self):
+        machine, run, record = self.open_the_third_entry_investigation()
+        opened_at = run.investigation_opened_at_commit
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
+        self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+        self.assertEqual(run.investigation_opened_at_commit, opened_at)
+        self.assertEqual(self.arbitrator_launches(machine), 2)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+
+    def test_a_resume_applies_the_ruling_the_arbitrator_held_in_its_report(self):
+        machine, run, record = self.open_the_third_entry_investigation()
+        machine.launcher.script += [
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),
+            fixture.test_write(),                                                # forced
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["70", "40"])
+        # test-writes is 1: the arbitrator's two earlier writes were its
+        # bucket, so the held ruling routes by row 60, not 61.
+        self.assertEqual(machine.held_rulings_applied[-1][0].row, "60")
+        self.assertEqual(self.arbitrator_launches(machine), 2)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+        self.assertEqual(run.counters.value("test-writes"), 1)
+        self.assertEqual(run.writing_state_entry_reason[T.TEST_WRITING], T.ENTRY_REASON_ARBITRATOR_RULING)
+        self.assertEqual(run.current_state, T.TEST_REVIEWING)
+        self.assertEqual(machine.machine_errors, [])
+
+    def test_a_resume_naming_a_destination_goes_there(self):
+        machine, run, record = self.open_the_third_entry_investigation()
+        machine.launcher.script.append(
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.IMPLEMENTATION_REVIEWING}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+        self.assertEqual(self.arbitrator_launches(machine), 2)
+
+
 class RecoveryFromTheLastCommit(unittest.TestCase):
 
     def test_a_process_that_dies_before_committing_re_runs_the_state(self):

@@ -39,6 +39,7 @@ run_state_module = _load_sibling_module("design-to-main-run-state.py", "design_t
 git_record_module = _load_sibling_module("design-to-main-git-record.py", "design_to_main_git_record")
 
 RunStateRecord = run_state_module.RunStateRecord
+RunCounters = run_state_module.RunCounters
 CounterCeilingExceeded = run_state_module.CounterCeilingExceeded
 write_counter_charged = run_state_module.write_counter_charged
 TopicBranchGitRecord = git_record_module.TopicBranchGitRecord
@@ -73,6 +74,10 @@ class StateExitRecord:
     coverage_type: Optional[str] = None
     refusal_class: Optional[str] = None
     rulings: Tuple[str, ...] = ()
+    # On a `resume` from the investigation the arbitrator's third entry
+    # opened: the ruling the arbitrator held in its report, one of
+    # test-suite-arbitrating's verdicts (section 6.6).
+    held_ruling: Optional[str] = None
     notes: str = ""
 
     @property
@@ -253,26 +258,54 @@ def guards_hold(row, context):
     return all(GUARD_PREDICATES[guard](context) for guard in row.guards)
 
 
+def refuse_malformed_resume(run, state_exit, resume_destination):
+    """Section 6.6's form of a `resume`, checked before any ruling it
+    carries is applied and before any row is looked up, so that a
+    malformed resume is refused whole — the reset it carries with it
+    (section 9). A malformed resume is a machine error like any other
+    illegal state-exit (section 3.2, "any other state-exit"), and the
+    pause is unchanged (route_machine_error).
+
+    Three forms are refused. A destination the user typed that names no
+    state or sub-state (row 70's guard would hold for any string, and a
+    row applied to a name the tables do not know would escape as a
+    KeyError). A destination of `ended` or `initiate-design-to-main`,
+    which section 6.1 forbids (PR #287's round-6 review reproduced the
+    first ending the run with no outcome and the second crashing after
+    the cut). And, from the investigation the arbitrator's third entry
+    opened, a resume that neither names a destination nor carries the
+    ruling the arbitrator held — the paused state is the arbitrator at
+    its ceiling, and returning there would open the investigation again.
+    """
+    if state_exit.verdict != tables.V_RESUME:
+        return
+    from_state = state_exit.from_state
+    if state_exit.destination is not None:
+        if (resume_destination not in tables.STATE_TABLE_BY_NAME
+                and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):
+            raise IllegalStateExit(
+                "%r from %s names %r as its destination, which is no state or sub-state of section 3.1" % (
+                    state_exit.verdict, from_state, resume_destination))
+        if resume_destination in tables.RESUME_MAY_NOT_NAME:
+            raise IllegalStateExit(
+                "%r from %s names %r as its destination; a resume may not name %s (section 6.1)" % (
+                    state_exit.verdict, from_state, resume_destination,
+                    " or ".join(tables.RESUME_MAY_NOT_NAME)))
+    elif (run.investigation_opened_by_row == tables.ROW_THE_ARBITRATORS_THIRD_ENTRY
+            and state_exit.held_ruling is None):
+        raise IllegalStateExit(
+            "%r from %s names no destination and carries no held ruling, from the investigation "
+            "the arbitrator's third entry opened (row %s): returning to %s would open it again "
+            "(section 6.6)" % (state_exit.verdict, from_state,
+                               tables.ROW_THE_ARBITRATORS_THIRD_ENTRY, run.paused_state))
+
+
 def find_legal_transition_row(run, state_exit, resume_destination=None):
     """Given a state and a state-exit, the row of section 3.2 that allows
     it; IllegalStateExit when none does."""
     context = GuardContext(run, state_exit, resume_destination)
     from_state = state_exit.from_state
-    # On `resume` a destination the user typed in the dialog is checked
-    # before any row is looked up (a derived one always comes from the
-    # tables): one that names no state or sub-state is a machine error
-    # like any other illegal state-exit (section 3.2, "any other
-    # state-exit"). Row 70's guard holds for any string that is not
-    # design-writing, and a row applied to a name the tables do not know
-    # would escape the machine as a KeyError instead of being routed to
-    # investigate-workflow.
-    if (state_exit.verdict == tables.V_RESUME
-            and state_exit.destination is not None
-            and resume_destination not in tables.STATE_TABLE_BY_NAME
-            and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):
-        raise IllegalStateExit(
-            "%r from %s names %r as its destination, which is no state or sub-state of section 3.1" % (
-                state_exit.verdict, from_state, resume_destination))
+    refuse_malformed_resume(run, state_exit, resume_destination)
     matches = [
         row for row in tables.TRANSITION_TABLE
         if from_state in row.from_states
@@ -423,6 +456,7 @@ class DesignToMainStateMachineFlow:
         self.routed = []            # (row, state_exit, commit) in order
         self.discarded = []         # stale state-exits
         self.machine_errors = []
+        self.held_rulings_applied = []   # (row, the arbitrator's held state-exit) on a resume
 
     # -- starting and recovering ---------------------------------------------
 
@@ -510,14 +544,19 @@ class DesignToMainStateMachineFlow:
         """Check the state-exit against section 3.2, apply the row, commit
         (section 9), and return the next position."""
         resume_destination = None
-        if state_exit.verdict == tables.V_RESUME:
-            resume_destination = self.resolve_resume_destination(run, state_exit)
-        # A `reset` ruling takes effect on the counters before the row is
-        # looked up (row 71 guards on the redesigns ceiling); the rulings
-        # themselves are written to the branch with the commit, below,
-        # after the guard — nothing is on disk if this state-exit is refused.
-        self.apply_rulings_to_the_run(run, state_exit)
+        counters_before_rulings = run.counters.as_dict()
+        rulings_refused = False
         try:
+            if state_exit.verdict == tables.V_RESUME:
+                # Resolved, and its form checked, before any ruling it
+                # carries is applied (refuse_malformed_resume).
+                resume_destination = self.resolve_resume_destination(run, state_exit)
+            # A `reset` ruling takes effect on the counters before the row
+            # is looked up (row 71 guards on the redesigns ceiling); the
+            # rulings themselves are written to the branch with the commit,
+            # below, after the guard — nothing is on disk if this
+            # state-exit is refused.
+            self.apply_rulings_to_the_run(run, state_exit)
             row = find_legal_transition_row(run, state_exit, resume_destination)
             next_position, write_number = self.apply_transition_row(
                 run, row, state_exit, resume_destination)
@@ -540,6 +579,12 @@ class DesignToMainStateMachineFlow:
                         state_exit.verdict, state_exit.state, error)) from error
             row = None
             write_number = None
+            # A refused state-exit is refused whole (section 9, on the
+            # reset a malformed resume carries): its rulings are neither
+            # applied nor recorded; the user says them again on the
+            # correct state-exit.
+            run.counters = RunCounters(counters_before_rulings)
+            rulings_refused = True
             next_position = self.route_machine_error(run, state_exit, error)
         run.previous_state = state_exit.from_state
         # Entry-charged counters and entry rules apply before the commit, so
@@ -565,7 +610,8 @@ class DesignToMainStateMachineFlow:
             # same against either: after the discard, the opening commit
             # touches only the record directory, which the diff ignores.
             run.investigation_opened_at_commit = self.git_record.head_commit()
-        commit = self.commit_state_exit(run, state_exit, write_number)
+        commit = self.commit_state_exit(run, state_exit, write_number,
+                                        record_rulings=not rulings_refused)
         self.routed.append((row, state_exit, commit))
         return run.current_state
 
@@ -613,12 +659,13 @@ class DesignToMainStateMachineFlow:
         for ruling in state_exit.rulings:
             self.git_record.append_user_ruling(run, ruling, self.today())
 
-    def commit_state_exit(self, run, state_exit, write_number):
+    def commit_state_exit(self, run, state_exit, write_number, record_rulings=True):
         # Guarded before anything is written — the rulings, then
         # run-state.json — not only at the record's commit, so a refusal
         # leaves no file behind.
         self.git_record.require_topic_branch_cut_for_run(run, "write and commit the state-exit")
-        self.write_rulings_to_the_record(run, state_exit)
+        if record_rulings:
+            self.write_rulings_to_the_record(run, state_exit)
         run.write_to(self.git_record.absolute(self.git_record.run_state_path))
         trailer = compose_state_exit_trailer(
             state_exit.state, state_exit.verdict, state_exit.package_commit,
@@ -687,12 +734,18 @@ class DesignToMainStateMachineFlow:
             if row.row == tables.ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK else None)
 
     def resolve_resume_destination(self, run, state_exit):
-        """Section 6.6: the destination the user names; else the one the
-        investigation's opening held (row 11's redesign); else the earliest
-        state downstream of what the diff shows changed; else the state
-        that was paused."""
+        """Section 6.6: the destination the user names; else, from the
+        investigation the arbitrator's third entry opened, the ruling the
+        arbitrator held; else the destination the investigation's opening
+        held (row 11's redesign); else the earliest state downstream of
+        what the diff shows changed; else the state that was paused. The
+        form is checked here (refuse_malformed_resume), before any ruling
+        the resume carries is applied."""
+        refuse_malformed_resume(run, state_exit, state_exit.destination)
         if state_exit.destination:
             return state_exit.destination
+        if run.investigation_opened_by_row == tables.ROW_THE_ARBITRATORS_THIRD_ENTRY:
+            return tables.TO_APPLY_THE_HELD_RULING
         if run.investigation_held_resume_destination:
             return run.investigation_held_resume_destination
         derived = None
@@ -700,6 +753,21 @@ class DesignToMainStateMachineFlow:
             derived = self.git_record.earliest_state_downstream_of_changes(
                 run.investigation_opened_at_commit)
         return derived or run.paused_state
+
+    def apply_the_held_ruling(self, run, state_exit):
+        """Section 6.6: the ruling the arbitrator held in its report,
+        routed as if test-suite-arbitrating had emitted it — through its
+        rows, with its entry reasons — but without entering the state,
+        whose next entry would be the fourth. Returns the next position."""
+        held = StateExitRecord(state=tables.TEST_SUITE_ARBITRATING,
+                               verdict=state_exit.held_ruling,
+                               package_commit=state_exit.package_commit,
+                               input_named=state_exit.input_named,
+                               investigation_focus=state_exit.investigation_focus)
+        row = find_legal_transition_row(run, held)
+        next_position, _ = self.apply_transition_row(run, row, held, None)
+        self.held_rulings_applied.append((row, held))
+        return next_position
 
     def apply_transition_row(self, run, row, state_exit, resume_destination):
         """Side effects of a row: counters, flags, positions; returns the
@@ -835,8 +903,11 @@ class DesignToMainStateMachineFlow:
         if row.to_state == tables.ENDED:
             run.outcome = row.outcome
         if row.to_state == tables.TO_RESUME_DESTINATION:
-            next_position = resume_destination
-            self.position_work_streams_for_resume(run, next_position, state_exit)
+            if resume_destination == tables.TO_APPLY_THE_HELD_RULING:
+                next_position = self.apply_the_held_ruling(run, state_exit)
+            else:
+                next_position = resume_destination
+                self.position_work_streams_for_resume(run, next_position, state_exit)
 
         return next_position, write_number
 

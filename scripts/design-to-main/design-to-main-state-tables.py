@@ -349,6 +349,13 @@ WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
 TO_HOLD_READY_FOR_TEST_SUITE = "hold at ready-for-test-suite"
 TO_BOTH_WORK_STREAMS_RE_ENTER = "both work-streams re-enter their writing states"
 TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
+# A resume destination that is not a state: from the investigation the
+# arbitrator's third entry opened (row 63), a resume that names no
+# destination applies the ruling the arbitrator held in its report,
+# routed through test-suite-arbitrating's rows without entering it.
+TO_APPLY_THE_HELD_RULING = "the ruling the arbitrator held in its report (section 6.6)"
+# The two names of section 3.1 a resume may not name (section 6.1).
+RESUME_MAY_NOT_NAME = (ENDED, INITIATE_DESIGN_TO_MAIN)
 TO_RETRY_SAME_STATE = "the same state (retry)"
 TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
 TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
