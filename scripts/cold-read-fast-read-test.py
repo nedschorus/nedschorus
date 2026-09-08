@@ -63,7 +63,13 @@ SCRIPT_NAMES = (
     "cold-read-cell-common.py",
     "cold-read-agy-cell.py",
     "cold-read-fast-read.py",
+    "cold-read-record-ship.py",
 )
+# Every read on the records route ships its record; here, to a scratch
+# log-store inside the scratch checkout through the shipper's destination
+# override, so no case reaches ned-box.
+RECORD_SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+SCRATCH_LOG_STORE_RELATIVE = Path("log-store") / "cold-read-records"
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
@@ -167,7 +173,7 @@ def build_scratch_repository(scratch):
 
 
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
-                  counter_path):
+                  counter_path, ship_destination=None):
     """The read as a subprocess, with the stub agy first on PATH.
 
     `expected_report` is where the stub writes -- the path the case expects
@@ -184,6 +190,8 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)
     environment["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"] = str(counter_path)
+    environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
+        ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
@@ -406,6 +414,80 @@ with tempfile.TemporaryDirectory() as scratch:
           and "target not found" in result.stderr and launches_counted(counter) == 0
           and "Traceback" not in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # --- The records route freezes the target and ships the record ----------
+    # User-ruled 2026-09-07: a record carries the exact bytes reviewed at the
+    # target's repository path, and goes to the log-store once the report has
+    # landed. The walk route does neither: a suggestions file is not a record.
+    repository = build_scratch_repository(scratch)
+    other_relative = "docs/drafts/a-design.md"
+    records_report = (repository / "cold-read-records" / f"{today}-a-design"
+                      / "a-design-fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, other_relative, counter,
+    )
+    frozen = records_report.parent / "target" / other_relative
+    check("the target's bytes are frozen under target/ at its repository path before the cell runs",
+          result.returncode == 0 and frozen.is_file()
+          and frozen.read_bytes() == (repository / other_relative).read_bytes(),
+          f"exit {result.returncode}; frozen present={frozen.exists()}; stderr={result.stderr[-300:]!r}")
+    record_lines = [line for line in result.stderr.splitlines() if "record: " in line]
+    check("the read reports the shipping on stderr, and it shipped",
+          len(record_lines) == 1 and "record: shipped:" in record_lines[0],
+          f"{record_lines!r}; stderr={result.stderr[-400:]!r}")
+    check("the read's stdout is still exactly the report path",
+          result.stdout.strip() == str(records_report) and result.stdout.count("\n") == 1,
+          result.stdout)
+    store_copy = repository / SCRATCH_LOG_STORE_RELATIVE / records_report.parent.name
+    check("the store holds the report and the frozen target",
+          (store_copy / records_report.name).is_file()
+          and (store_copy / "target" / other_relative).is_file(),
+          sorted(str(p.relative_to(store_copy)) for p in store_copy.rglob("*")) if store_copy.exists() else "no store copy")
+
+    # A second read of the same document on the same day takes a fresh -2
+    # directory, so two frozen targets never share one (the grid's rule).
+    second_report = (repository / "cold-read-records" / f"{today}-a-design-2"
+                     / "a-design-fast-read.md")
+    (repository / other_relative).write_text("# A design\n\nRevised line.\n", encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the revised design\n"}},
+        second_report, other_relative, counter,
+    )
+    check("a second read on the same day takes the -2 directory",
+          result.returncode == 0 and result.stdout.strip() == str(second_report)
+          and second_report.is_file(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-300:]!r}")
+    check("each directory holds its own frozen target: the first the original, the second the revision",
+          b"Revised" not in frozen.read_bytes()
+          and b"Revised" in (second_report.parent / "target" / other_relative).read_bytes())
+
+    # The walk route: no record, no freeze, no ship.
+    repository = build_scratch_repository(scratch)
+    walk_draft_relative = "docs/walk/a-walk-item-draft.md"
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
+        suggestions, walk_draft_relative, counter,
+    )
+    check("a walk draft's read freezes nothing and ships nothing",
+          result.returncode == 0 and not (repository / "cold-read-records").exists()
+          and "record: " not in result.stderr and not (repository / "log-store").exists(),
+          f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
+
+    # A store that cannot be reached: the read still succeeds, and says so.
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"{today}-a-design"
+                      / "a-design-fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, other_relative, counter,
+        ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
+    )
+    check("an unreachable store is reported as record: FAILED on stderr and the read still exits 0",
+          result.returncode == 0 and result.stdout.strip() == str(records_report)
+          and any("record: FAILED:" in line for line in result.stderr.splitlines()),
+          f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
 
 print()
 if failures:

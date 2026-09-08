@@ -23,9 +23,15 @@ suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
 the walk reads next. Anything else -- a design, a skill, a record copy, a
 file outside this checkout -- gets a record directory of its own under the
 gitignored records tree: `cold-read-records/<YYYY-MM-DD>-<name>/<name>-fast-read.md`,
-where <name> is the target's file name without its extension. The cell
-launcher pre-clears the report path, so a suggestions file left by an earlier
-read is replaced, never appended to.
+where <name> is the target's file name without its extension, and the
+directory takes a -2, -3 suffix when the day's name is taken, the grid's
+rule. That directory also gets `target/<repository path>`, the exact bytes
+the reviewer read, frozen before the cell launches, and once the report has
+landed the directory is shipped to the log-store on ned-box by
+scripts/cold-read-record-ship.py, whose one line is printed on stderr as
+`record:` (user-ruled 2026-09-07; a shipping failure never fails the read).
+The cell launcher pre-clears the report path, so a suggestions file left by
+an earlier read is replaced, never appended to.
 
 THE REVIEWER'S INSTRUCTIONS LIVE IN THIS FILE (user ruling): the text the
 model receives is FAST_CLARIFY_PROMPT_TEMPLATE below, fed to the launcher
@@ -58,6 +64,15 @@ import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
+# The program that copies a record directory to the log-store on ned-box
+# (user-ruled 2026-09-07: records are logs, not system). Run after a read
+# on the records route lands its report; its one line goes to stderr, since
+# this program's stdout is the report path and nothing else, and a shipping
+# failure never fails the read.
+RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+# Where the target's bytes are frozen inside the record directory: under this
+# name at the target's own repository path, as scripts/cold-read-grid.py does.
+FROZEN_TARGET_DIRECTORY_NAME = "target"
 WALK_DIRECTORY_RELATIVE = pathlib.Path("docs") / "walk"
 RECORDS_DIR = REPO_ROOT / "cold-read-records"
 
@@ -129,7 +144,59 @@ def fast_read_report_path_for_target(target: pathlib.Path, today: str) -> pathli
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
         return REPO_ROOT / WALK_DIRECTORY_RELATIVE / f"{name}-suggestions.md"
     name = target.stem
-    return RECORDS_DIR / f"{today}-{name}" / f"{name}-fast-read.md"
+    return fresh_record_dir(RECORDS_DIR / f"{today}-{name}") / f"{name}-fast-read.md"
+
+
+def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
+    """The day's name, or the first of -2, -3, ... that is not taken.
+
+    The rule scripts/cold-read-grid.py's make_record_dir applies, restated
+    here rather than imported because the grid is a program, not a module
+    (user-ruled 2026-09-07 with the frozen target: two frozen targets never
+    share a directory, so a fast read after a grid run on the same document
+    and day, or after an earlier fast read of a revised draft, takes its own).
+    Nothing is created here; the launcher creates the report's directory.
+    """
+    record_dir = base
+    suffix = 2
+    while record_dir.exists():
+        record_dir = base.with_name(f"{base.name}-{suffix}")
+        suffix += 1
+    return record_dir
+
+
+def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
+    """record_dir/target/<repository path>, or the absolute path minus its
+    leading slash for a target outside the repository -- the grid's rule."""
+    try:
+        relative = target.relative_to(REPO_ROOT)
+    except ValueError:
+        relative = pathlib.Path(*target.parts[1:])
+    return record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative
+
+
+def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
+    """Copy the target's bytes into the record before the cell reads it, so
+    the record says exactly what was reviewed (user-ruled 2026-09-07)."""
+    frozen = frozen_target_path(target, record_dir)
+    frozen.parent.mkdir(parents=True, exist_ok=True)
+    frozen.write_bytes(target.read_bytes())
+
+
+def ship_record(record_dir: pathlib.Path) -> str:
+    """The shipper's one line, or a FAILED line of this program's own when
+    it could not run. Reported on stderr by the caller, never fatal."""
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
+            capture_output=True, text=True, check=False)
+    except OSError as error:
+        return f"FAILED: the shipper could not be run ({error}); the record stays on disk."
+    sys.stderr.write(completed.stderr)
+    lines = completed.stdout.strip().splitlines()
+    return lines[0] if lines else (
+        f"FAILED: the shipper printed nothing (exit {completed.returncode}); "
+        f"the record stays on disk.")
 
 
 def run_one_fast_clarify_cell(
@@ -176,6 +243,11 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     report = fast_read_report_path_for_target(target, time.strftime("%Y-%m-%d"))
+    # A walk draft's report lands in docs/walk/ and is not a record; only the
+    # records route freezes the target and ships.
+    on_records_route = RECORDS_DIR in report.parents
+    if on_records_route:
+        freeze_target(target, report.parent)
 
     last_exit_code = 1
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
@@ -184,6 +256,8 @@ def main() -> int:
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
             last_exit_code = run_one_fast_clarify_cell(target, report, prompt_file)
             if last_exit_code == 0:
+                if on_records_route:
+                    print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
                 print(report)
                 return 0
             if last_exit_code == EXIT_BAD_INVOCATION:
