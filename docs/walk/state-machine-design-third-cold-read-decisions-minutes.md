@@ -63,6 +63,13 @@ rulings to #224; the cold-read citation form if ruled in md-skills' walk; filing
 build issue right after the PR. Next: merge origin/main into the branch, one commit with
 this walk's rulings and its four files, push, PR.
 
+AFTER THE WALK, 2026-09-08: committed 3a56f03; merged origin/main (one glossary conflict,
+main's agent-seat line taken, arbitrator kept), fd55502; pushed; PR #281 opened
+(https://github.com/nedschorus/nedschorus/pull/281); GHI #282 filed, "Build the
+design-to-main state machine", carrying §11
+(https://github.com/nedschorus/nedschorus/issues/282); merge-lane-e7 told, with the
+design's path change and item 7's answer.
+
 ## Item 2 — the user's glossary rule applied to the document's own words
 
 presented 2026-09-07. <revised> then <accepted>: "keep nit. It's standard SDLC. And nits
