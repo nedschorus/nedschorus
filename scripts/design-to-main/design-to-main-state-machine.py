@@ -408,9 +408,7 @@ class DesignToMainStateMachineFlow:
     def step(self, run):
         if run.current_state == tables.ENDED:
             raise RunEnded(run.outcome)
-        position = run.current_state
-        next_position = self.node_for(position).run(run)
-        self.enter(run, next_position)
+        self.node_for(run.current_state).run(run)
 
     def run_until_ended(self, run, max_steps=200):
         steps = 0
@@ -458,12 +456,14 @@ class DesignToMainStateMachineFlow:
             write_number = None
             next_position = self.route_machine_error(run, state_exit, error)
         run.previous_state = state_exit.from_state
-        run.current_state = next_position
+        # Entry-charged counters and entry rules apply before the commit, so
+        # that run-state.json on the branch is the state the run is in.
+        self.enter(run, next_position)
         commit = self.commit_state_exit(run, state_exit, write_number)
-        if next_position == tables.INVESTIGATE_WORKFLOW:
+        if run.current_state == tables.INVESTIGATE_WORKFLOW:
             run.investigation_opened_at_commit = commit
         self.routed.append((row, state_exit, commit))
-        return next_position
+        return run.current_state
 
     def route_machine_error(self, run, state_exit, error):
         """Section 3.2: any other state-exit is a machine error; the run
@@ -495,7 +495,8 @@ class DesignToMainStateMachineFlow:
 
     def enter(self, run, position):
         """Section 7's entry-charged counters and section 3.2's entry rules,
-        applied when the run moves to `position`."""
+        applied when the run moves to `position`, before the state-exit
+        that moves it is committed. A sub-state position charges nothing."""
         if position == tables.DESIGN_WRITING and run.previous_state == tables.INVESTIGATE_WORKFLOW:
             # A redesign: counted on entry; resets the version.
             run.counters.increment("redesigns")

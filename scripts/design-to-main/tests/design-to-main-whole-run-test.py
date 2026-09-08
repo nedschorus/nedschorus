@@ -283,6 +283,47 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
         finally:
             repository.remove()
 
+    def test_the_commit_of_a_resume_into_design_writing_already_carries_the_redesign(self):
+        # Entry-charged counters (redesigns, arbitrator-rulings) are applied
+        # before the state-exit that enters the state is committed, so a
+        # process that dies right after that commit recovers the charge.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                (T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, {"input_named": T.INPUT_DESIGN}),
+                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.DESIGN_WRITING)
+            trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
+            self.assertEqual(trailer["Counter-redesigns"], "1")
+            recovered = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([]), today=lambda: "2026-09-08").recover()
+            self.assertEqual(recovered.as_dict(), run.as_dict())
+            self.assertEqual(recovered.design_version, 2)
+            self.assertEqual(recovered.counters.value("redesigns"), 1)
+        finally:
+            repository.remove()
+
+    def test_the_commit_of_a_reject_at_the_ceiling_already_carries_the_arbitrator_s_entry(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved()
+            for _ in range(3):
+                script += [fixture.implementation_write(),
+                           (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {})]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.TEST_SUITE_ARBITRATING)
+            trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
+            self.assertEqual(trailer["Counter-arbitrator-rulings"], "1")
+            recovered = RunStateRecord.read_from(record.absolute(record.run_state_path))
+            self.assertEqual(recovered.current_state, T.TEST_SUITE_ARBITRATING)
+            self.assertEqual(recovered.counters.value("arbitrator-rulings"), 1)
+        finally:
+            repository.remove()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
