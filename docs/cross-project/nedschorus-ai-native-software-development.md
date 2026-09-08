@@ -3,15 +3,19 @@ status: working plan
 design-as-of: 2026-09-08
 ---
 
-# NedsChorus: Focused AI-Native Software Development
+# Neural-Eff
 
-NedsChorus organizes software development into focused steps performed by code, AI agents, and humans. A senior software engineer directs the work by describing intent, reviewing recommendations, and making decisions in English.
+*An AI-native SDLC built around focus.*
 
-The central idea is simple:
+Neural-Eff organizes the software development life cycle (SDLC) into focused tasks, from design and implementation through testing, deployment, and production feedback. Each task has a clear responsibility, sufficient relevant context, and an explicit result or request for help.
+
+The workflow is designed around these tasks. Code handles repeatable mechanics, AI agents perform bounded engineering work, and a senior software engineer directs the work by describing intent, reviewing recommendations, and making decisions in English. Each participant can concentrate on its assigned task while recorded artifacts and decisions connect the work across steps.
+
+The organizing rule is:
 
 > Give each step a clear responsibility and the information it needs. Use code, AI, and human judgment where each is useful. Preserve the inputs, outputs, and decisions so another execution can continue the work.
 
-This is the architecture and working plan, not a claim that the complete system is running. Code establishes what is built; GitHub Issues carry work status; [CLAUDE.md](../../CLAUDE.md) governs current operations. The implementation map below identifies existing components and proposed extensions.
+This is the architecture and working plan for Neural-Eff, developed in the [nedschorus repository](../../README.md). Code establishes what is built; GitHub Issues carry work status; [CLAUDE.md](../../CLAUDE.md) governs current operations. The implementation map below identifies existing components and proposed extensions; the complete system is not yet running.
 
 This is the single project overview. It incorporates the Neural Efficiency concept from [PR #260](https://github.com/nedschorus/nedschorus/pull/260) and the [component-reuse research](../issues/queue/external-component-simplicity-recommendations.md) from [PR #261](https://github.com/nedschorus/nedschorus/pull/261). The research notes hold detailed source inspections, not additional operating rules.
 
@@ -189,7 +193,7 @@ Where possible, let unaffected work continue. Updating a prompt should not silen
 
 ## Continuity and recovery without a new backup system
 
-The user reports that the files are already saved by Time Machine. Treat file backup as provided infrastructure, not a new NedsChorus subsystem. The existing [preservation-and-placement design](../issues/32-preservation-and-placement.md) remains the home for preservation policy and machine-specific details.
+The user reports that the files are already saved by Time Machine. Treat file backup as provided infrastructure, not a new Neural-Eff subsystem. The existing [preservation-and-placement design](../issues/32-preservation-and-placement.md) remains the home for preservation policy and machine-specific details.
 
 The remaining workflow problem is smaller: after a crash, what was being done, what completed, and what should happen next? Backups preserve files; they do not by themselves identify whether an agent finished, a question is still pending, or an external action succeeded before its reply was lost.
 
@@ -235,7 +239,7 @@ This is a source-tree snapshot for this revision, not a replacement for issue st
 
 The [research index](../issues/queue/external-component-simplicity-recommendations.md) links inspected source and limitations. These are specific design borrowings, not dependency recommendations.
 
-| Project | Useful borrowing | NedsChorus application |
+| Project | Useful borrowing | Neural-Eff application |
 | --- | --- | --- |
 | [PocketFlow](../issues/queue/pocketflow-node-boundary-recommendations.md) | Small node boundaries and code that reduces intermediate results. | Shared invocation in #41 and report consolidation in #166. Keep the existing runners and graph. |
 | [Anthropic skill-creator](../issues/queue/anthropic-skill-creator-evaluation-recommendations.md) | Side-by-side output viewing and evaluation result layout. | Adapt for #23 when comparing skill versions; correct the inspected aggregator's missing-result and counting problems before relying on its totals. |
@@ -248,7 +252,7 @@ Do not add a general agent-conversation framework, a larger graph service, anoth
 
 ## Build a useful slice, then measure it
 
-Start with mechanical work already costing human or agent effort: report consolidation and reference checking. Extract shared runner code when the next real node needs it. Then take one bounded NedsChorus change through design, review, implementation, test planning, tests, integration, and an English decision when blocked.
+Start with mechanical work already costing human or agent effort: report consolidation and reference checking. Extract shared runner code when the next real node needs it. Then take one bounded Neural-Eff change through design, review, implementation, test planning, tests, integration, and an English decision when blocked.
 
 Include a deliberate interruption and a defective upstream input in that pilot. Demonstrate that it resumes from recorded facts and routes the defect to the right place. Add the smallest master interface needed for those questions; keep fleet recovery in its existing work.
 
@@ -294,7 +298,7 @@ GitHub Issues carry walkable work state, Markdown carries substantive reasoning,
 | --- | --- |
 | `docs/wiki/` | Current standing knowledge that is difficult to reconstruct from code. |
 | `docs/issues/<n>-<slug>.md` | Substantive work paired with a GitHub Issue: a GHI-MD. |
-| `docs/cross-project/` | Current designs shared across NedsChorus systems, including this architecture. |
+| `docs/cross-project/` | Current designs shared across Neural-Eff systems, including this architecture. |
 | Existing per-seat handoff and transcript locations | Session continuity and conversation evidence, following their owning designs. |
 | `nc-queue/` | Human-requested notes awaiting initial review. |
 | `docs/wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review. |
