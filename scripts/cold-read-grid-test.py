@@ -124,7 +124,14 @@ GRID_SCRIPT_NAMES = (
     "cold-read-cell-common.py",
     "cold-read-claude-cell.py",
     "cold-read-codex-cell.py",
+    "cold-read-record-ship.py",
 )
+# Every run here ships its record to a scratch log-store inside the scratch
+# repository, through the shipper's destination override, so no case reaches
+# ned-box; the store is real, the copy is the real rsync. A case that wants the
+# shipping to fail overrides the override with an unreachable host.
+RECORD_SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+SCRATCH_LOG_STORE_RELATIVE = Path("log-store") / "cold-read-records"
 
 TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 
@@ -267,6 +274,7 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         stub.chmod(0o755)
     environment = dict(os.environ)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
+    environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
     environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / "cold-read-grid.py"),
@@ -776,6 +784,62 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
 
+
+    # --- The target is frozen into the record, and the record is shipped ------
+    # User-ruled 2026-09-07: the record carries the exact bytes reviewed at the
+    # target's repository path, and goes to the log-store at the end of every
+    # run. The plain run: the frozen copy equals the target, the `record:`
+    # line says shipped, and the store holds the same files as the record.
+    repository = build_scratch_repository(scratch, "checkout-frozen-and-shipped")
+    result = run_grid(repository, stubs)
+    record_directory = record_directory_of(repository)
+    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    check("the target's bytes are frozen under target/ at its repository path",
+          frozen.is_file() and frozen.read_bytes() == (repository / TARGET_RELATIVE_PATH).read_bytes(),
+          f"{frozen} present={frozen.exists()}")
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("the run prints one record: line, and it says shipped",
+          len(record_lines) == 1 and record_lines[0].startswith("record: shipped:"),
+          f"{record_lines!r}; stderr={result.stderr[-400:]!r}")
+    store_copy = repository / SCRATCH_LOG_STORE_RELATIVE / record_directory.name
+    check("the store holds every file the record holds, the frozen target included",
+          store_copy.is_dir() and sorted(p.relative_to(store_copy) for p in store_copy.rglob("*") if p.is_file())
+          == sorted(p.relative_to(record_directory) for p in record_directory.rglob("*") if p.is_file()),
+          f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
+    check("the closing text names the ship command for after dispositions.md",
+          f"scripts/cold-read-record-ship.py {record_directory.resolve()}" in result.stdout
+          and "gitignored" in result.stdout and "user-ruled 2026-08-14" not in result.stdout,
+          result.stdout[-900:])
+    check("a settled run that shipped still exits 0",
+          result.returncode == 0, f"exit {result.returncode}")
+
+    # --- A store that cannot be reached does not fail the read ----------------
+    repository = build_scratch_repository(scratch, "checkout-store-unreachable")
+    result = run_grid(repository, stubs, {
+        RECORD_SHIP_DESTINATION_VARIABLE: "nobody@no-such-host.invalid:/tmp/no-store"})
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("an unreachable store prints record: FAILED and the run exits 0 all the same",
+          len(record_lines) == 1 and record_lines[0].startswith("record: FAILED:")
+          and result.returncode == 0,
+          f"exit {result.returncode}; {record_lines!r}")
+    record_directory = record_directory_of(repository)
+    check("the record, frozen target included, stays on disk for a later ship",
+          record_directory is not None and (record_directory / "target" / TARGET_RELATIVE_PATH).is_file())
+
+    # --- A changed target is still shipped: it is evidence -------------------
+    repository = build_scratch_repository(scratch, "checkout-changed-still-shipped")
+    result = run_grid(repository, stubs, {
+        "COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)})
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("a run whose target moved ships its marked record and exits 3",
+          result.returncode == 3 and record_lines and record_lines[0].startswith("record: shipped:"),
+          f"exit {result.returncode}; {record_lines!r}")
+    record_directory = record_directory_of(repository)
+    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    check("the frozen target is the launch-time text, not the edited one",
+          frozen.is_file() and b"reviewer's own edit" not in frozen.read_bytes()
+          and b"reviewer's own edit" in (repository / TARGET_RELATIVE_PATH).read_bytes())
+
     # --- Every file in the set is named for the run ------------------------
     # A report carried out of its directory, or read beside another run's,
     # still says which run wrote it. That prefix is also what lets a cell's
@@ -787,12 +851,20 @@ with tempfile.TemporaryDirectory() as scratch:
           len(record_directories) == 1,
           [directory.name for directory in record_directories])
     record_directory = record_directories[0]
-    written_names = sorted(path.name for path in record_directory.iterdir())
+    # The frozen target lives under target/ at its own repository path, which
+    # is the one name in the record that is not the run's: it says where the
+    # reviewed file lived. Every file the run itself wrote still carries the
+    # record directory's name.
+    written_names = sorted(path.name for path in record_directory.iterdir()
+                           if path.name != "target")
     check("every file the run wrote carries the record directory's name",
           all(name.startswith(f"{record_directory.name}--")
               for name in written_names),
           [name for name in written_names
            if not name.startswith(f"{record_directory.name}--")])
+    check("beside them, the record holds only the frozen target directory",
+          sorted(path.name for path in record_directory.iterdir()
+                 if not path.name.startswith(f"{record_directory.name}--")) == ["target"])
     expected_names = sorted(
         [f"{record_directory.name}--reference-check.md"]
         + [f"{record_directory.name}--{runtime}-{pass_token}-{tier}.md"
