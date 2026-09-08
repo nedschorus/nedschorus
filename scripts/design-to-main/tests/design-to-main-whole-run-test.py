@@ -810,6 +810,28 @@ class AReInvocationFromAFinishedRunsCheckout(unittest.TestCase):
         self.assertEqual(fixture.git(checkout, "show", "HEAD:" + str(record.run_state_path)),
                          run_state_before)
 
+    def test_recovery_from_a_finished_runs_checkout_discards_nothing(self):
+        # A run at `ended` has no state to re-run, so the discard that
+        # recovery does for a dead process has no purpose there: the
+        # uncommitted work in the checkout is the invoker's, kept. What
+        # recover() should return or refuse on a finished run is the
+        # user's to rule; this pins only that nothing is discarded.
+        machine, run, record, _ = fixture.make_machine(
+            fixture.whole_run_to_passed(), self.repository)
+        self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
+        checkout = self.repository.checkout
+        (checkout / "seat-notes.md").write_text("untracked notes after the run\n")
+        (checkout / "README.md").write_text("main, edited but not committed\n")
+        status_before = fixture.git(checkout, "status", "--porcelain")
+        head_before = fixture.git(checkout, "rev-parse", "HEAD")
+        successor = M.DesignToMainStateMachineFlow(
+            record, M.ScriptedStateExitLauncher([]), today=lambda: "2026-09-08")
+        successor.recover()
+        self.assertEqual((checkout / "seat-notes.md").read_text(), "untracked notes after the run\n")
+        self.assertEqual((checkout / "README.md").read_text(), "main, edited but not committed\n")
+        self.assertEqual(fixture.git(checkout, "status", "--porcelain"), status_before)
+        self.assertEqual(fixture.git(checkout, "rev-parse", "HEAD"), head_before)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

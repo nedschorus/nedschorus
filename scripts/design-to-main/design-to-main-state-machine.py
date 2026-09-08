@@ -420,7 +420,12 @@ class DesignToMainStateMachineFlow:
                 "so there is no state-exit to recover from; the checkout is as it was" % (
                     self.git_record.head_commit(), self.git_record.current_branch()))
         run = RunStateRecord.from_dict(json.loads(text))
-        self.git_record.discard_all_uncommitted_work_for_recovery(run)
+        # A run at `ended` has no state to re-run, so there is nothing of a
+        # dead process's to discard: what is in the checkout is the
+        # invoker's, kept. What recover() should return or refuse on a
+        # finished run is the user's to rule.
+        if run.outcome is None:
+            self.git_record.discard_all_uncommitted_work_for_recovery(run)
         return run
 
     # -- the flow ---------------------------------------------------------------
