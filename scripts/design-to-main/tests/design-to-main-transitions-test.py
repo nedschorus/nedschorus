@@ -141,6 +141,24 @@ LEGALITY_CASES = [
     ("61", dict(counters={"test-writes": 3}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
     ("61", dict(counters={"test-writes": 3}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
     ("64", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
+    # Row 65: a reject of, or a failed check against, the component-contract
+    # with the contract-revisions counter at its ceiling, from any state.
+    ("65", dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("65", dict(TESTS_ARE_SCRIPT, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("65", dict(counters={"contract-revisions": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
     ("66", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER)),
     ("66", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER,
                          investigation_focus=T.FOCUS_UNKNOWN)),
@@ -269,14 +287,23 @@ class EveryRowOfSection32(unittest.TestCase):
                 self.assertIn(guard, M.GUARD_PREDICATES, "row %s" % row.row)
 
     def test_every_verdict_in_the_transition_table_is_one_the_state_lists(self):
+        # Row 65 is one row across seven states and two verdicts (a reject
+        # of the contract from the reviewing states and the arbitrator, a
+        # failed check against it from the writing states), so the check is
+        # per pairing: every from-state lists one of the row's verdicts, and
+        # every verdict of the row is one some from-state lists.
         for row in T.TRANSITION_TABLE:
+            listed_by_some_state = set()
             for from_state in row.from_states:
                 listed = set(T.STATE_TABLE_BY_NAME[from_state].verdicts)
                 if from_state in (T.CONTRACT_REVISING, T.TEST_DESIGN_WRITING,
                                   T.TEST_SUITE_ARBITRATING) or T.STATE_TABLE_BY_NAME[from_state].work == "composite":
                     listed.add(T.V_ESCALATE_TO_USER)
-                for verdict in row.verdicts:
-                    self.assertIn(verdict, listed, "row %s, %s" % (row.row, from_state))
+                if row.verdicts:
+                    self.assertTrue(listed & set(row.verdicts), "row %s, %s" % (row.row, from_state))
+                listed_by_some_state |= listed
+            for verdict in row.verdicts:
+                self.assertIn(verdict, listed_by_some_state, "row %s" % row.row)
 
     def test_the_counters_the_rows_charge_are_section_7_s(self):
         charged = {row.counter for row in T.TRANSITION_TABLE if row.counter}

@@ -325,22 +325,67 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         rulings = record.absolute(record.user_rulings_path).read_text()
         self.assertIn("- reset (user-ruled 2026-09-08)", rulings)
 
-    def test_an_increment_past_a_ceiling_is_a_machine_error_routed_to_the_investigation(self):
-        # Rows 22, 29, 33, 36, 43, 51 and 64 send `reject contract` to
-        # contract-revising with no ceiling guard; the third such reject
-        # would take contract-revisions past two (build report).
+    def test_contract_revisions_a_second_reject_from_any_state_goes_to_the_user_by_row_65(self):
+        # Rows 22, 29, 33, 36, 43, 51 and 64 send a reject of the contract
+        # to contract-revising only below the ceiling; at the ceiling the
+        # reject goes to contract-acceptance-by-user by row 65, whichever
+        # state rejects — here the implementation's reviewer, then the
+        # test-design's writer — and no second revision is written.
         reject_contract_round = [
-            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {}),   # row 29
             (T.CONTRACT_REVISING, T.V_EMITTED, {}),
             (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
-            (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 9
             fixture.implementation_write(),
         ]
         script = fixture.prefix_to_design_approved() + [fixture.implementation_write()]
-        script += reject_contract_round * 2
-        script += [(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {})]
+        script += reject_contract_round
+        script += [(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {})]  # row 65
         machine, run, _ = self.drive(script)
-        self.assertEqual(run.counters.value("contract-revisions"), 2)
+        self.assertEqual(run.counters.value("contract-revisions"), 1)
+        self.assertEqual(run.current_state, T.CONTRACT_ACCEPTANCE_BY_USER)
+        self.assertEqual(machine.routed[-1][0].row, "65")
+        self.assertEqual(machine.machine_errors, [])
+        # The user advances the revision as it stands (row 9): both
+        # work-streams re-enter, and the run goes on.
+        machine.launcher.script += [(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_ADVANCE, {})]
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "9")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+
+        script = fixture.prefix_to_tests_begun() + [
+            (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+             {"input_named": T.INPUT_COMPONENT_CONTRACT}),                    # row 33
+            (T.CONTRACT_REVISING, T.V_EMITTED, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 9
+            fixture.implementation_write(),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 26: holds
+            (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+             {"input_named": T.INPUT_COMPONENT_CONTRACT}),                    # row 65
+        ]
+        self.repository.remove()
+        self.repository = fixture.ThrowawayRepository()
+        machine, run, _ = self.drive(script)
+        self.assertEqual(run.counters.value("contract-revisions"), 1)
+        self.assertEqual(run.current_state, T.CONTRACT_ACCEPTANCE_BY_USER)
+        self.assertEqual(machine.routed[-1][0].row, "65")
+
+    def test_an_increment_past_a_ceiling_is_a_machine_error_routed_to_the_investigation(self):
+        # The one path the table leaves to a counter past its ceiling: the
+        # user's discuss at implementation-acceptance-by-user (row 31) with
+        # implementation-writes at three — "the write it forces is counted
+        # like any other", and a fourth write has no counter to spend.
+        script = fixture.prefix_to_design_approved()
+        for _ in range(2):
+            script += [fixture.implementation_write(coverage_type="prompt"),
+                       (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {})]
+        script += [fixture.implementation_write(coverage_type="prompt"),
+                   (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),      # row 16
+                   (T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_DISCUSS, {}),       # row 31
+                   fixture.implementation_write(coverage_type="prompt")]         # the fourth
+        machine, run, _ = self.drive(script)
+        self.assertEqual(run.counters.value("implementation-writes"), 3)
         self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
         self.assertEqual(len(machine.machine_errors), 1)
         self.assertIn("ceiling", run.machine_error)

@@ -361,6 +361,8 @@ G_FROM_AN_EARLIER_ACCEPTANCE_CHECK = "from an acceptance-check that is not the l
 G_AGAINST_THE_DESIGN = "against the design"
 G_AGAINST_THE_COMPONENT_CONTRACT = "against the component-contract"
 G_AGAINST_THE_TEST_DESIGN = "against the test-design"
+G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT = (
+    "a reject of, or a failed check against, the component-contract")
 G_TESTS_NOT_YET_BEGUN = "tests not yet begun"
 G_TESTS_BEGUN = "tests begun"
 G_TEST_WORK_STREAM_READY = "the test-work-stream at ready-for-test-suite"
@@ -486,7 +488,8 @@ TRANSITION_TABLE = (
          counter_note="charged by the three buckets of section 7: only a first write, "
                       "or one after a reject from review or the user's discuss"),
     _row("22", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT,), CONTRACT_REVISING, "contract-revisions"),
+         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         CONTRACT_REVISING, "contract-revisions"),
     _row("23", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_DESIGN,), INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
     _row("24", IMPLEMENTATION_REVIEWING, V_ADVANCE,
@@ -502,8 +505,8 @@ TRANSITION_TABLE = (
     _row("28", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
          (counter_at_ceiling("implementation-writes"),), TEST_SUITE_ARBITRATING,
          counter_note="arbitrator-rulings, on entry"),
-    _row("29", IMPLEMENTATION_REVIEWING, V_REJECT_CONTRACT, (), CONTRACT_REVISING,
-         "contract-revisions"),
+    _row("29", IMPLEMENTATION_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
     _row("30", IMPLEMENTATION_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_DESIGN),
     _row("31", IMPLEMENTATION_REVIEWING, V_DISCUSS,
@@ -511,14 +514,15 @@ TRANSITION_TABLE = (
          counter_note="the user's own time; the write it forces is counted like any other"),
     _row("32", TEST_DESIGN_WRITING, V_EMITTED, (), TEST_DESIGN_REVIEWING),
     _row("33", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT,), CONTRACT_REVISING, "contract-revisions"),
+         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         CONTRACT_REVISING, "contract-revisions"),
     _row("34", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_DESIGN,), INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
     _row("35", TEST_DESIGN_REVIEWING, V_REJECT_TEST_DESIGN,
          (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_AGENT,), TEST_DESIGN_WRITING,
          counter_note="a re-write before approval", note="fresh, with the notes"),
-    _row("36", TEST_DESIGN_REVIEWING, V_REJECT_CONTRACT, (), CONTRACT_REVISING,
-         "contract-revisions"),
+    _row("36", TEST_DESIGN_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
     _row("37", TEST_DESIGN_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_DESIGN),
     _row("38", TEST_DESIGN_REVIEWING, V_DISCUSS, (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_USER,),
@@ -534,7 +538,8 @@ TRANSITION_TABLE = (
          (G_AGAINST_THE_TEST_DESIGN, counter_at_ceiling("test-design-corrections")),
          TEST_DESIGN_ACCEPTANCE_BY_USER),
     _row("43", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT,), CONTRACT_REVISING, "contract-revisions"),
+         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         CONTRACT_REVISING, "contract-revisions"),
     _row("44", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_DESIGN,), INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
     _row("45", TEST_REVIEWING, V_ADVANCE,
@@ -553,7 +558,8 @@ TRANSITION_TABLE = (
          "test-design-corrections"),
     _row("50", TEST_REVIEWING, V_REJECT_TEST_DESIGN,
          (counter_at_ceiling("test-design-corrections"),), TEST_DESIGN_ACCEPTANCE_BY_USER),
-    _row("51", TEST_REVIEWING, V_REJECT_CONTRACT, (), CONTRACT_REVISING, "contract-revisions"),
+    _row("51", TEST_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
     _row("52", TEST_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_DESIGN),
     _row("53", TEST_REVIEWING, V_DISCUSS, (G_FROM_TEST_ACCEPTANCE_BY_USER,), TEST_WRITING,
@@ -577,8 +583,17 @@ TRANSITION_TABLE = (
          (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_FLAKY_TEST),
          (G_WRITERS_COUNTER_AT_CEILING,), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN, note="the ruling in the report"),
-    _row("64", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (), CONTRACT_REVISING,
-         "contract-revisions"),
+    _row("64", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("65",
+         (IMPLEMENTATION_WRITING, IMPLEMENTATION_REVIEWING, TEST_DESIGN_WRITING,
+          TEST_DESIGN_REVIEWING, TEST_WRITING, TEST_REVIEWING, TEST_SUITE_ARBITRATING),
+         (V_REJECT_CONTRACT, V_INPUT_QUICK_CHECK_FAILED),
+         (G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT,
+          counter_at_ceiling("contract-revisions")),
+         CONTRACT_ACCEPTANCE_BY_USER,
+         note="any state above (sections 5.3, 6.6); contract-reviewing's own is row 8, "
+              "and design-reviewing's rejects of the contract are rows 14 and 15"),
     _row("66", TEST_SUITE_ARBITRATING, V_ESCALATE_TO_USER, (G_FOCUS_NOT_NAMED,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN),
     _row("67",
