@@ -536,6 +536,104 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         self.assertIn('"add", "-A", "--", str(self.record_directory), *named_files)', source)
 
 
+class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
+    """Section 6.6: in an investigation the user may edit any file on the
+    branch. Section 9: a state-exit's commit carries only the files it
+    names — and the resume's, for the user's edits, are the paths the
+    machine's own diff found changed since the investigation opened (the
+    same paths it routes on), or the next discard erases them and the
+    next state's package-commit does not hold them (PR #295, round 1)."""
+
+    IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
+    A_NEW_FILE = fixture.COMPONENT_DIRECTORY + "/widget_counter_helper.py"
+    V1 = "# the implementation, v1\n"
+    V2 = "# the implementation, v2, edited by the user in the investigation\n"
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def paths_in_commit(self, record, commit):
+        return record.git("show", "--name-only", "--format=", commit).stdout.split()
+
+    def open_the_investigation_with_v1_committed(self):
+        """The implementation-write commits v1 (named); tests written and
+        accepted; the suite fails; the arbitrator escalates (row 66, its
+        first entry)."""
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                "coverage_type": "script",
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
+            (T.TEST_DESIGN_WRITING, T.V_EMITTED, {}),
+            (T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
+            (T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE, {}),
+            fixture.test_write(),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
+            (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),
+            (T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
+        self.assertEqual(record.git("show", "HEAD:" + self.IMPLEMENTATION).stdout, self.V1)
+        return machine, run, record
+
+    def test_the_users_edit_to_a_tracked_file_rides_in_the_resume_commit_and_survives_the_next_discard(self):
+        machine, run, record = self.open_the_investigation_with_v1_committed()
+        record.absolute(self.IMPLEMENTATION).write_text(self.V2)
+        machine.launcher.script += [
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
+            (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),
+            (T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER, {}),
+        ]
+        fixture.drive(machine, run)
+        rows = [row.row for row, _, _ in machine.routed]
+        self.assertEqual(rows[-4:], ["70", "25", "55", "66"])
+        resume_commit = machine.routed[-4][2]
+        self.assertEqual(machine.routed[-4][1].verdict, T.V_RESUME)
+        self.assertIn(self.IMPLEMENTATION, self.paths_in_commit(record, resume_commit))
+        self.assertEqual(record.git("show", "%s:%s" % (resume_commit, self.IMPLEMENTATION)).stdout, self.V2)
+        # The next state's package-commit is the resume commit, which holds
+        # the edit: an agent in a worktree of the branch sees v2.
+        launched_after_the_resume = machine.launcher.launched[-3]
+        self.assertEqual(launched_after_the_resume["state"], T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
+        self.assertEqual(launched_after_the_resume["package-commit"], resume_commit)
+        # After the second investigation's discard, worktree and HEAD both read v2.
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(record.absolute(self.IMPLEMENTATION).read_text(), self.V2)
+        self.assertEqual(record.git("show", "HEAD:" + self.IMPLEMENTATION).stdout, self.V2)
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+
+    def test_a_new_file_and_a_deletion_by_the_user_ride_in_the_resume_commit_too(self):
+        machine, run, record = self.open_the_investigation_with_v1_committed()
+        record.absolute(self.A_NEW_FILE).write_text("# a helper the user added\n")
+        record.absolute(self.IMPLEMENTATION).unlink()
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+        resume_commit = machine.routed[-1][2]
+        self.assertEqual(sorted(self.paths_in_commit(record, resume_commit)),
+                         sorted([self.IMPLEMENTATION, self.A_NEW_FILE, str(record.run_state_path)]))
+        self.assertEqual(record.git("ls-tree", "--name-only", resume_commit, self.IMPLEMENTATION).stdout, "")
+        self.assertEqual(record.git("show", "%s:%s" % (resume_commit, self.A_NEW_FILE)).stdout,
+                         "# a helper the user added\n")
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+
+    def test_a_resume_with_nothing_edited_commits_the_record_alone(self):
+        machine, run, record = self.open_the_investigation_with_v1_committed()
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.TEST_SUITE_ARBITRATING)   # the paused state, re-run
+        self.assertEqual(self.paths_in_commit(record, machine.routed[-1][2]), [str(record.run_state_path)])
+
+
 class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
     """A state-exit from investigate-workflow outside stop, submit-to-PR-
     gate and resume is a machine error (section 3.2), but not a new

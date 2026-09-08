@@ -622,8 +622,10 @@ class DesignToMainStateMachineFlow:
             # same against either: after the discard, the opening commit
             # touches only the record directory, which the diff ignores.
             run.investigation_opened_at_commit = self.git_record.head_commit()
-        commit = self.commit_state_exit(run, state_exit, write_number,
-                                        record_rulings=not rulings_refused)
+        commit = self.commit_state_exit(
+            run, state_exit, write_number, record_rulings=not rulings_refused,
+            files_beyond_the_named=self.paths_the_user_changed_in_the_investigation(
+                run, state_exit, row))
         self.routed.append((row, state_exit, commit))
         return run.current_state
 
@@ -671,7 +673,26 @@ class DesignToMainStateMachineFlow:
         for ruling in state_exit.rulings:
             self.git_record.append_user_ruling(run, ruling, self.today())
 
-    def commit_state_exit(self, run, state_exit, write_number, record_rulings=True):
+    def paths_the_user_changed_in_the_investigation(self, run, state_exit, row):
+        """The files a `resume` names beyond its own `named_files`: every
+        path the user changed on the branch since the investigation opened
+        — tracked modifications, deletions and new files alike, the record
+        directory apart — read by the same diff the resume routes on
+        (section 6.6: the user may edit any file on the branch; section 9:
+        a state-exit's commit carries the files it names). Without them
+        the edit stays uncommitted, the next state's package-commit does
+        not hold it, and the next investigation's discard erases it
+        (PR #295, round 1). A resume refused as a machine error (no row)
+        is refused whole and names nothing: the run stays paused in
+        investigate-workflow, where the worktree is the user's and the
+        next resume's diff still sees the edit."""
+        if (row is None or state_exit.verdict != tables.V_RESUME
+                or not run.investigation_opened_at_commit):
+            return ()
+        return tuple(self.git_record.paths_changed_since(run.investigation_opened_at_commit))
+
+    def commit_state_exit(self, run, state_exit, write_number, record_rulings=True,
+                          files_beyond_the_named=()):
         # Guarded before anything is written — the rulings, then
         # run-state.json — not only at the record's commit, so a refusal
         # leaves no file behind.
@@ -683,7 +704,9 @@ class DesignToMainStateMachineFlow:
             state_exit.state, state_exit.verdict, state_exit.package_commit,
             run.counters.as_dict(), write_number)
         subject = "%s: %s %s" % (run.component, state_exit.state, state_exit.verdict)
-        return self.git_record.commit_state_exit(run, subject, trailer, state_exit.named_files)
+        named = tuple(state_exit.named_files) + tuple(
+            f for f in files_beyond_the_named if f not in state_exit.named_files)
+        return self.git_record.commit_state_exit(run, subject, trailer, named)
 
     # -- entering a state -------------------------------------------------------
 
