@@ -106,6 +106,8 @@ A small routing vocabulary is enough:
 
 A `PASS` from a creator means **submitted**, not independently accepted. A reviewer can find a definite defect and report `FAIL`; a producer unable to implement a defective design can report `HELP`. Both reports should identify the affected artifact and recommended route. The labels do not replace the explanation.
 
+The node contract names the checks and approvals required for acceptance, including any human decision. The controller records acceptance and advances only when those requirements are met. A reviewer's `PASS` completes that review; it does not satisfy other required checks or approvals.
+
 A **nit** is a local, unambiguous, behavior-preserving correction within the node's authority. Fix, verify, and record it without interrupting the human. Treat it as a note on the result, not a separate workflow branch. This can include an input typo when the node is allowed to correct it; version and review rules still apply. A change to intent, expected behavior, public interfaces, or an unauthorized edit to another node's accepted work is not a nit merely because the edit is small.
 
 A node may self-check its work. That is useful but does not replace independent review. If a significant input problem prevents completion, preserve useful partial work only as diagnostic material. Do not promote it as a finished artifact. When inputs change, examine the whole affected output against the new inputs; regenerating or reusing parts is an implementation choice, not permission to keep an obsolete approval.
@@ -150,7 +152,7 @@ Different checks need different context:
 
 Freshness reduces dependence on shared conversation; it does not prove correctness. Several reviewers can agree and still be wrong. Cold Read is a readability instrument, not a substitute for code inspection or testing.
 
-Keep Cold Read's policy and roster in its [skill](../../.claude/skills/cold-read/SKILL.md) and [runner](../../scripts/cold-read-grid.py), rather than duplicating them here. In particular, the brief's discussion of restatement is not an instruction to restore a retired default cell. A separate code-claim check addresses the [documented verification gap](../issues/queue/cold-read-cannot-check-claims-about-code.md); it does not expand the repository's ordinary PR review to prose.
+Keep Cold Read's policy and roster in its [skill](../../.claude/skills/cold-read/SKILL.md) and [runner](../../scripts/cold-read-grid.py), rather than duplicating them here. A separate code-claim check addresses the [documented verification gap](../issues/queue/cold-read-cannot-check-claims-about-code.md); it does not expand the repository's ordinary PR review to prose.
 
 Mechanical consolidation should preserve original findings, source attribution, and unresolved disagreement. Grouping similar reports helps the human read them; it does not settle their truth.
 
@@ -177,7 +179,7 @@ Raw reports and evidence remain available. A polished summary is not proof.
 
 The question records the work item, relevant input versions, and the decision being requested. The answer becomes an instruction for the next attempt of that same work item. If the inputs changed while the human was considering the question, reconcile the answer before applying it.
 
-The user can redirect A, start B, pause either, or order conflicting work. Independent conversations can proceed without a global pause. A shared master means a shared place to route questions and preserve decisions, not one enormous context window.
+The user can redirect A, start B, pause either, or decide which conflicting work proceeds first. Independent conversations can proceed without a global pause. A shared master means a shared place to route questions and preserve decisions, not one enormous context window.
 
 This is intended architecture, not current seat behavior. The [agent-seat model](../agents/agent-seat-model.md) previously declined a coordinating agent while the human handled routing. Implementation must reconcile that operating model before enabling automatic handoffs between seats. Editing this document alone does not launch or authorize a new seat.
 
@@ -208,7 +210,7 @@ Use Git and the existing work records, reports, and handoffs. Add machine-readab
 
 The intended master maintains continuity across session replacements by reconstructing the active work from durable records. Handoff summaries are working aids, not the sole authority for decisions. Relevant source records remain retrievable; routine nodes do not inherit the entire transcript.
 
-Recovery should separate **observation, decision, and action**. Determine whether a worker is live, interrupted, deliberately stopped, or parked before launching anything. A launch command returning successfully is not proof that the replacement is running. After an uncertain external action, inspect its destination before repeating it—for example, check whether the intended PR or check-in already exists.
+Recovery should separate **observation, decision, and action**. Determine whether a worker is live, interrupted, or deliberately stopped before launching anything. A launch command returning successfully is not proof that the replacement is running. After an uncertain external action, inspect its destination before repeating it—for example, check whether the intended PR or check-in already exists. If inspection cannot establish the outcome, the recovery process records the unresolved action and requests human help through the master before repeating it.
 
 Workflow recovery and restoring terminals, sessions, and machine processes are separate jobs. Extend the existing supervisors and seat-recovery work for the latter. Preserve the repository's accepted loss and retention policies; “resilient” does not mean saving every transient thought or requiring exactly-once execution everywhere.
 
@@ -308,7 +310,7 @@ GitHub Issues carry walkable work state, Markdown carries substantive reasoning,
 
 Every retained artifact has a current named home or a named queue with a drain. Human review promotes it, edits it in place, demotes it to supporting evidence, or drops it with a recorded reason.
 
-A substantial work item uses a GHI-MD. Clarifications edit the current body rather than accumulating corrective comments; comments record genuinely new events. On closure, follow the repository's established archive, promotion, or deletion rule.
+A substantial work item uses a GHI-MD. Clarifications edit the current body rather than accumulating corrective comments; comments record genuinely new events. On closure, apply the artifact-disposition rule above: human review decides whether the GHI-MD remains at a named home, moves to a named queue, or is dropped with a recorded reason.
 
 A file may be edited in place, but its old and new contents are different logical versions. Git commits and content hashes identify the versions that reviews and dependent work used. An edit does not retroactively change old evidence.
 
