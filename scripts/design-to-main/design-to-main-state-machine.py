@@ -39,6 +39,7 @@ run_state_module = _load_sibling_module("design-to-main-run-state.py", "design_t
 git_record_module = _load_sibling_module("design-to-main-git-record.py", "design_to_main_git_record")
 
 RunStateRecord = run_state_module.RunStateRecord
+RunCounters = run_state_module.RunCounters
 CounterCeilingExceeded = run_state_module.CounterCeilingExceeded
 write_counter_charged = run_state_module.write_counter_charged
 TopicBranchGitRecord = git_record_module.TopicBranchGitRecord
@@ -73,6 +74,14 @@ class StateExitRecord:
     coverage_type: Optional[str] = None
     refusal_class: Optional[str] = None
     rulings: Tuple[str, ...] = ()
+    # On a `resume` from the investigation the arbitrator's third entry
+    # opened: the ruling the arbitrator held in its report, one of
+    # test-suite-arbitrating's verdicts (section 6.6).
+    held_ruling: Optional[str] = None
+    # The files the state-exit names, relative to the repository: the
+    # artifact it wrote and its notes. Its commit carries these and the
+    # record, never the whole worktree (section 9).
+    named_files: Tuple[str, ...] = ()
     notes: str = ""
 
     @property
@@ -98,20 +107,26 @@ class GuardContext:
     run: RunStateRecord
     state_exit: StateExitRecord
     resume_destination: Optional[str] = None
+    # True while the machine routes the ruling the arbitrator held in its
+    # report, applied on a resume from the investigation row 63 opened
+    # (apply_the_held_ruling). That entry was not charged — enter()
+    # returned before the increment — so the ceiling arithmetic of row 61
+    # reads it differently from a ruling made from a charged entry.
+    held_ruling_applied_on_resume: bool = False
 
 
 def applicable_acceptance_checks(run, composite_state):
-    """The sub-states a reviewing state runs, in order, for this run
+    """The sub-states a reviewing state runs in order, for this run
     (section 3.1): the user's check of an implementation or of tests only
     when they are agent-instructions; the contract's agent check only on a
-    contract-revision, and its user check only at the ceiling."""
+    contract-revision. The contract's user check is not in this order at
+    all: no advance reaches it — it is entered by a reject at the
+    revisions ceiling (rows 8 and 65), and left by rows 9, 10 and 11."""
     row = tables.STATE_TABLE_BY_NAME[composite_state]
     if composite_state == tables.CONTRACT_REVIEWING:
         checks = [tables.CONTRACT_ACCEPTANCE_BY_PROGRAM]
         if run.design_approved:
             checks.append(tables.CONTRACT_ACCEPTANCE_BY_AGENT)
-            if run.counters.at_ceiling("contract-revisions"):
-                checks.append(tables.CONTRACT_ACCEPTANCE_BY_USER)
         return tuple(checks)
     if composite_state == tables.IMPLEMENTATION_REVIEWING:
         if run.is_agent_instructions(run.implementation_coverage_type):
@@ -138,6 +153,12 @@ def _earlier_acceptance_check(ctx):
     return ctx.state_exit.state in checks[:-1]
 
 
+def next_acceptance_check(run, state_exit):
+    """Row 16's destination: the check after the one that emitted."""
+    checks = applicable_acceptance_checks(run, state_exit.from_state)
+    return checks[checks.index(state_exit.state) + 1]
+
+
 def _from_an_acceptance_check_by_agent(ctx):
     state = ctx.state_exit.state
     if state in tables.COMPOSITE_STATE_OF_SUB_STATE:
@@ -153,12 +174,39 @@ def _submit_attempt_number(ctx):
     return ctx.run.submit_retry_count + 1
 
 
+def arbitrator_rulings_before_the_entry_the_ruling_comes_from(ctx):
+    """arbitrator-rulings as it stood before the entry the arbitrator rules
+    from: one below the counter when that entry was charged (section 7,
+    charged on entry), the counter itself when it was not — the held
+    ruling applied on a resume from the investigation row 63 opened, where
+    enter() returned before the charge (PR #295, round 1, finding 2)."""
+    value = ctx.run.counters.value("arbitrator-rulings")
+    if ctx.held_ruling_applied_on_resume:
+        return value
+    return value - 1
+
+
+def _arbitrator_rulings_below_ceiling_before_this_entrys_charge(ctx):
+    # The held ruling applied on a resume is admitted past the ceiling
+    # clause: it reads at the ceiling (2 of 2), and the machine today
+    # routes it by row 61 to the writer anyway, one forced write per
+    # resume of the user's. Whether that is intended or the ruling should
+    # be refused is a design question the user has not yet ruled on
+    # (docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md, item
+    # 5); the admission is explicit here so that the ruling changes one
+    # line, and the counters test pins today's routing under that name.
+    if ctx.held_ruling_applied_on_resume:
+        return True
+    return (arbitrator_rulings_before_the_entry_the_ruling_comes_from(ctx)
+            < ctx.run.counters.rule("arbitrator-rulings").at_ceiling_from_value)
+
+
 GUARD_PREDICATES = {
     tables.G_FROM_PROGRAM_CHECK: _from_sub_state(tables.CONTRACT_ACCEPTANCE_BY_PROGRAM),
     tables.G_FIRST_TIME:
-        lambda ctx: ctx.run.consecutive_contract_program_check_failures == 0,
+        lambda ctx: ctx.run.consecutive_program_check_failure_count == 0,
     tables.G_SECOND_CONSECUTIVE_TIME:
-        lambda ctx: ctx.run.consecutive_contract_program_check_failures >= 1,
+        lambda ctx: ctx.run.consecutive_program_check_failure_count >= 1,
     tables.G_DESIGN_NOT_YET_APPROVED: lambda ctx: not ctx.run.design_approved,
     tables.G_ON_A_CONTRACT_REVISION: lambda ctx: ctx.run.design_approved,
     tables.G_FROM_CONTRACT_ACCEPTANCE_BY_AGENT:
@@ -188,6 +236,16 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_COMPONENT_CONTRACT,
     tables.G_AGAINST_THE_TEST_DESIGN:
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_TEST_DESIGN,
+    # Row 65 is one row across writers and reviewers, so the verdict must
+    # also be one the emitting state has (section 3.1): a writer fails a
+    # check, a reviewer rejects, and the other way round is a machine error
+    # at the ceiling as it is below it.
+    tables.G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT:
+        lambda ctx: (
+            ctx.state_exit.verdict in tables.STATE_TABLE_BY_NAME[ctx.state_exit.from_state].verdicts
+            and (ctx.state_exit.verdict == tables.V_REJECT_CONTRACT
+                 or (ctx.state_exit.verdict == tables.V_INPUT_QUICK_CHECK_FAILED
+                     and ctx.state_exit.input_named == tables.INPUT_COMPONENT_CONTRACT))),
     tables.G_TESTS_NOT_YET_BEGUN: lambda ctx: not ctx.run.tests_begun,
     tables.G_TESTS_BEGUN: lambda ctx: ctx.run.tests_begun,
     tables.G_TEST_WORK_STREAM_READY:
@@ -204,10 +262,17 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.run.counters.below_ceiling(_writers_counter(ctx)),
     tables.G_WRITERS_COUNTER_AT_CEILING:
         lambda ctx: ctx.run.counters.at_ceiling(_writers_counter(ctx)),
+    tables.G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE:
+        _arbitrator_rulings_below_ceiling_before_this_entrys_charge,
     tables.G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN:
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
     tables.G_FOCUS_NOT_NAMED:
         lambda ctx: ctx.state_exit.investigation_focus not in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
+    # Row 63's guard is read on ENTRY to test-suite-arbitrating (enter()),
+    # not on a state-exit; it is here so that every guard phrase of the
+    # table has its predicate, evaluated on the run alone.
+    tables.G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION:
+        lambda ctx: ctx.run.counters.at_ceiling("arbitrator-rulings"),
     tables.G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING:
         lambda ctx: (ctx.resume_destination != tables.DESIGN_WRITING
                      or ctx.run.counters.below_ceiling("redesigns")),
@@ -235,26 +300,55 @@ def guards_hold(row, context):
     return all(GUARD_PREDICATES[guard](context) for guard in row.guards)
 
 
-def find_legal_transition_row(run, state_exit, resume_destination=None):
+def refuse_malformed_resume(run, state_exit, resume_destination):
+    """Section 6.6's form of a `resume`, checked before any ruling it
+    carries is applied and before any row is looked up, so that a
+    malformed resume is refused whole — the reset it carries with it
+    (section 9). A malformed resume is a machine error like any other
+    illegal state-exit (section 3.2, "any other state-exit"), and the
+    pause is unchanged (route_machine_error).
+
+    Three forms are refused. A destination the user typed that names no
+    state or sub-state (row 70's guard would hold for any string, and a
+    row applied to a name the tables do not know would escape as a
+    KeyError). A destination of `ended` or `initiate-design-to-main`,
+    which section 6.1 forbids (PR #287's round-6 review reproduced the
+    first ending the run with no outcome and the second crashing after
+    the cut). And, from the investigation the arbitrator's third entry
+    opened, a resume that neither names a destination nor carries the
+    ruling the arbitrator held — the paused state is the arbitrator at
+    its ceiling, and returning there would open the investigation again.
+    """
+    if state_exit.verdict != tables.V_RESUME:
+        return
+    from_state = state_exit.from_state
+    if state_exit.destination is not None:
+        if (resume_destination not in tables.STATE_TABLE_BY_NAME
+                and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):
+            raise IllegalStateExit(
+                "%r from %s names %r as its destination, which is no state or sub-state of section 3.1" % (
+                    state_exit.verdict, from_state, resume_destination))
+        if resume_destination in tables.RESUME_MAY_NOT_NAME:
+            raise IllegalStateExit(
+                "%r from %s names %r as its destination; a resume may not name %s (section 6.1)" % (
+                    state_exit.verdict, from_state, resume_destination,
+                    " or ".join(tables.RESUME_MAY_NOT_NAME)))
+    elif (run.investigation_opened_by_row == tables.ROW_THE_ARBITRATORS_THIRD_ENTRY
+            and state_exit.held_ruling is None):
+        raise IllegalStateExit(
+            "%r from %s names no destination and carries no held ruling, from the investigation "
+            "the arbitrator's third entry opened (row %s): returning to %s would open it again "
+            "(section 6.6)" % (state_exit.verdict, from_state,
+                               tables.ROW_THE_ARBITRATORS_THIRD_ENTRY, run.paused_state))
+
+
+def find_legal_transition_row(run, state_exit, resume_destination=None,
+                              held_ruling_applied_on_resume=False):
     """Given a state and a state-exit, the row of section 3.2 that allows
     it; IllegalStateExit when none does."""
-    context = GuardContext(run, state_exit, resume_destination)
+    context = GuardContext(run, state_exit, resume_destination, held_ruling_applied_on_resume)
     from_state = state_exit.from_state
-    # On `resume` a destination the user typed in the dialog is checked
-    # before any row is looked up (a derived one always comes from the
-    # tables): one that names no state or sub-state is a machine error
-    # like any other illegal state-exit (section 3.2, "any other
-    # state-exit"). Row 64's guard holds for any string that is not
-    # design-writing, and a row applied to a name the tables do not know
-    # would escape the machine as a KeyError instead of being routed to
-    # investigate-workflow.
-    if (state_exit.verdict == tables.V_RESUME
-            and state_exit.destination is not None
-            and resume_destination not in tables.STATE_TABLE_BY_NAME
-            and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):
-        raise IllegalStateExit(
-            "%r from %s names %r as its destination, which is no state or sub-state of section 3.1" % (
-                state_exit.verdict, from_state, resume_destination))
+    refuse_malformed_resume(run, state_exit, resume_destination)
     matches = [
         row for row in tables.TRANSITION_TABLE
         if from_state in row.from_states
@@ -271,7 +365,7 @@ def find_legal_transition_row(run, state_exit, resume_destination=None):
                 [r.row for r in matches], state_exit.verdict, from_state))
     row = matches[0]
     # On `resume` the destination is the user's input to the guard, not a
-    # claim about the row: row 65 overrides it with `ended`.
+    # claim about the row: row 71 overrides it with `ended`.
     if state_exit.destination is not None and state_exit.verdict != tables.V_RESUME:
         derived = derived_destination(row, context)
         if derived is not None and state_exit.destination != derived:
@@ -288,10 +382,15 @@ def derived_destination(row, context):
     if row.to_state == tables.TO_RETRY_SAME_STATE:
         return context.state_exit.from_state
     if row.to_state in (tables.TO_HOLD_READY_FOR_TEST_SUITE,
-                        tables.TO_BOTH_WORK_STREAMS_RE_ENTER):
+                        tables.TO_BOTH_WORK_STREAMS_RE_ENTER,
+                        tables.TO_BOTH_WRITERS_FRESH):
         return None
     if row.to_state == tables.TO_RESUME_DESTINATION:
         return context.resume_destination
+    if row.to_state == tables.TO_THE_NEXT_ACCEPTANCE_CHECK:
+        return next_acceptance_check(context.run, context.state_exit)
+    if row.to_state == tables.TO_THE_WRITER_THE_VERDICT_NAMES:
+        return tables.WRITER_STATE_FOR_VERDICT[context.state_exit.verdict]
     return row.to_state
 
 
@@ -400,6 +499,7 @@ class DesignToMainStateMachineFlow:
         self.routed = []            # (row, state_exit, commit) in order
         self.discarded = []         # stale state-exits
         self.machine_errors = []
+        self.held_rulings_applied = []   # (row, the arbitrator's held state-exit) on a resume
 
     # -- starting and recovering ---------------------------------------------
 
@@ -408,13 +508,16 @@ class DesignToMainStateMachineFlow:
 
     def recover(self):
         """Section 9, recovery: re-run the state from the last commit's
-        run-state.json; uncommitted files are the dead process's, discarded.
-        The run is read from the last commit BEFORE the discard, so that the
-        discard is guarded by the run's own `topic-branch-cut`: a run that
-        died before row 1's cut, or an invocation with no run committed at
-        HEAD at all, has no commit to recover from and the checkout is the
-        invoker's — refused (RefusedBeforeTopicBranchCut), nothing
-        discarded."""
+        run-state.json; uncommitted files are the dead process's, discarded
+        — unless the paused state is investigate-workflow, where they are
+        the user's: the worktree is kept as found and the dialog reopened
+        (the successor's next step launches investigate-workflow again).
+        Recovery of a run that has ended touches nothing. The run is read
+        from the last commit BEFORE any discard, so that the discard is
+        guarded by the run's own `topic-branch-cut`: a run that died before
+        row 1's cut, or an invocation with no run committed at HEAD at all,
+        has no commit to recover from and the checkout is the invoker's —
+        refused (RefusedBeforeTopicBranchCut), nothing discarded."""
         text = self.git_record.run_state_text_at_last_commit()
         if text is None:
             raise RefusedBeforeTopicBranchCut(
@@ -422,11 +525,10 @@ class DesignToMainStateMachineFlow:
                 "so there is no state-exit to recover from; the checkout is as it was" % (
                     self.git_record.head_commit(), self.git_record.current_branch()))
         run = RunStateRecord.from_dict(json.loads(text))
-        # A run at `ended` has no state to re-run, so there is nothing of a
-        # dead process's to discard: what is in the checkout is the
-        # invoker's, kept. What recover() should return or refuse on a
-        # finished run is the user's to rule.
-        if run.outcome is None:
+        # Keyed on the state, not on the outcome (PR #287, round 6): a run
+        # at `ended` has no state to re-run, whatever its outcome field
+        # says, so nothing in the checkout is a dead process's.
+        if run.current_state not in (tables.ENDED, tables.INVESTIGATE_WORKFLOW):
             self.git_record.discard_all_uncommitted_work_for_recovery(run)
         return run
 
@@ -487,14 +589,19 @@ class DesignToMainStateMachineFlow:
         """Check the state-exit against section 3.2, apply the row, commit
         (section 9), and return the next position."""
         resume_destination = None
-        if state_exit.verdict == tables.V_RESUME:
-            resume_destination = self.resolve_resume_destination(run, state_exit)
-        # A `reset` ruling takes effect on the counters before the row is
-        # looked up (row 65 guards on the redesigns ceiling); the rulings
-        # themselves are written to the branch with the commit, below,
-        # after the guard — nothing is on disk if this state-exit is refused.
-        self.apply_rulings_to_the_run(run, state_exit)
+        counters_before_rulings = run.counters.as_dict()
+        rulings_refused = False
         try:
+            if state_exit.verdict == tables.V_RESUME:
+                # Resolved, and its form checked, before any ruling it
+                # carries is applied (refuse_malformed_resume).
+                resume_destination = self.resolve_resume_destination(run, state_exit)
+            # A `reset` ruling takes effect on the counters before the row
+            # is looked up (row 71 guards on the redesigns ceiling); the
+            # rulings themselves are written to the branch with the commit,
+            # below, after the guard — nothing is on disk if this
+            # state-exit is refused.
+            self.apply_rulings_to_the_run(run, state_exit)
             row = find_legal_transition_row(run, state_exit, resume_destination)
             next_position, write_number = self.apply_transition_row(
                 run, row, state_exit, resume_destination)
@@ -517,6 +624,12 @@ class DesignToMainStateMachineFlow:
                         state_exit.verdict, state_exit.state, error)) from error
             row = None
             write_number = None
+            # A refused state-exit is refused whole (section 9, on the
+            # reset a malformed resume carries): its rulings are neither
+            # applied nor recorded; the user says them again on the
+            # correct state-exit.
+            run.counters = RunCounters(counters_before_rulings)
+            rulings_refused = True
             next_position = self.route_machine_error(run, state_exit, error)
         run.previous_state = state_exit.from_state
         # Entry-charged counters and entry rules apply before the commit, so
@@ -542,7 +655,10 @@ class DesignToMainStateMachineFlow:
             # same against either: after the discard, the opening commit
             # touches only the record directory, which the diff ignores.
             run.investigation_opened_at_commit = self.git_record.head_commit()
-        commit = self.commit_state_exit(run, state_exit, write_number)
+        commit = self.commit_state_exit(
+            run, state_exit, write_number, record_rulings=not rulings_refused,
+            files_beyond_the_named=self.paths_the_user_changed_in_the_investigation(
+                run, state_exit, row))
         self.routed.append((row, state_exit, commit))
         return run.current_state
 
@@ -574,6 +690,8 @@ class DesignToMainStateMachineFlow:
             run.investigation_focus = tables.FOCUS_UNKNOWN
             run.investigation_opened_by = "%s from %s: %s" % (
                 state_exit.verdict, state_exit.state, error)
+            run.investigation_opened_by_row = None   # no row: a machine error
+            run.investigation_held_resume_destination = None
         return tables.INVESTIGATE_WORKFLOW
 
     def apply_rulings_to_the_run(self, run, state_exit):
@@ -588,18 +706,40 @@ class DesignToMainStateMachineFlow:
         for ruling in state_exit.rulings:
             self.git_record.append_user_ruling(run, ruling, self.today())
 
-    def commit_state_exit(self, run, state_exit, write_number):
+    def paths_the_user_changed_in_the_investigation(self, run, state_exit, row):
+        """The files a `resume` names beyond its own `named_files`: every
+        path the user changed on the branch since the investigation opened
+        — tracked modifications, deletions and new files alike, the record
+        directory apart — read by the same diff the resume routes on
+        (section 6.6: the user may edit any file on the branch; section 9:
+        a state-exit's commit carries the files it names). Without them
+        the edit stays uncommitted, the next state's package-commit does
+        not hold it, and the next investigation's discard erases it
+        (PR #295, round 1). A resume refused as a machine error (no row)
+        is refused whole and names nothing: the run stays paused in
+        investigate-workflow, where the worktree is the user's and the
+        next resume's diff still sees the edit."""
+        if (row is None or state_exit.verdict != tables.V_RESUME
+                or not run.investigation_opened_at_commit):
+            return ()
+        return tuple(self.git_record.paths_changed_since(run.investigation_opened_at_commit))
+
+    def commit_state_exit(self, run, state_exit, write_number, record_rulings=True,
+                          files_beyond_the_named=()):
         # Guarded before anything is written — the rulings, then
         # run-state.json — not only at the record's commit, so a refusal
         # leaves no file behind.
         self.git_record.require_topic_branch_cut_for_run(run, "write and commit the state-exit")
-        self.write_rulings_to_the_record(run, state_exit)
+        if record_rulings:
+            self.write_rulings_to_the_record(run, state_exit)
         run.write_to(self.git_record.absolute(self.git_record.run_state_path))
         trailer = compose_state_exit_trailer(
             state_exit.state, state_exit.verdict, state_exit.package_commit,
             run.counters.as_dict(), write_number)
         subject = "%s: %s %s" % (run.component, state_exit.state, state_exit.verdict)
-        return self.git_record.commit_state_exit(run, subject, trailer)
+        named = tuple(state_exit.named_files) + tuple(
+            f for f in files_beyond_the_named if f not in state_exit.named_files)
+        return self.git_record.commit_state_exit(run, subject, trailer, named)
 
     # -- entering a state -------------------------------------------------------
 
@@ -612,14 +752,21 @@ class DesignToMainStateMachineFlow:
             run.counters.increment("redesigns")
             run.start_new_design_version()
         if position == tables.TEST_SUITE_ARBITRATING:
-            if run.counters.at_ceiling("arbitrator-rulings"):
-                # The arbitrator's third entry opens the investigation
-                # (sections 6.5, 7); its ruling rides in the report.
+            third_entry = tables.TRANSITION_TABLE_BY_ROW[tables.ROW_THE_ARBITRATORS_THIRD_ENTRY]
+            if guards_hold(third_entry, GuardContext(run, None)):
+                # Row 63: the arbitrator's third entry opens the
+                # investigation (sections 6.5, 7); its ruling rides in the
+                # report, and a resume from here names a destination or
+                # applies that ruling (section 6.6), never re-entering.
                 run.paused_state = tables.TEST_SUITE_ARBITRATING
-                run.investigation_focus = tables.FOCUS_UNKNOWN
-                run.investigation_opened_by = "the arbitrator's third entry in design version %d" % run.design_version
+                run.investigation_focus = third_entry.investigation_focus
+                run.investigation_opened_by = (
+                    "the arbitrator's third entry in design version %d (row %s)" % (
+                        run.design_version, third_entry.row))
+                run.investigation_opened_by_row = third_entry.row
+                run.investigation_held_resume_destination = None
                 run.previous_state = tables.TEST_SUITE_ARBITRATING
-                run.current_state = tables.INVESTIGATE_WORKFLOW
+                run.current_state = third_entry.to_state
                 return
             run.counters.increment("arbitrator-rulings")
         # A work-stream's position is the state it is in, reviewing states
@@ -645,18 +792,50 @@ class DesignToMainStateMachineFlow:
         run.investigation_focus = row.investigation_focus or state_exit.investigation_focus
         run.investigation_opened_by = "%s from %s (row %s)" % (
             state_exit.verdict, state_exit.state, row.row)
+        run.investigation_opened_by_row = row.row
+        # Row 11: the user's redesign goes through the investigation, "then
+        # design-writing as a redesign" — the investigation holds that
+        # destination for its resume, so a plain resume does not return to
+        # the contract check the user just left.
+        run.investigation_held_resume_destination = (
+            tables.DESIGN_WRITING
+            if row.row == tables.ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK else None)
 
     def resolve_resume_destination(self, run, state_exit):
-        """Section 6.6: the destination the user names; else the earliest
-        state downstream of what the diff shows changed; else the state
-        that was paused."""
+        """Section 6.6: the destination the user names; else, from the
+        investigation the arbitrator's third entry opened, the ruling the
+        arbitrator held; else the destination the investigation's opening
+        held (row 11's redesign); else the earliest state downstream of
+        what the diff shows changed; else the state that was paused. The
+        form is checked here (refuse_malformed_resume), before any ruling
+        the resume carries is applied."""
+        refuse_malformed_resume(run, state_exit, state_exit.destination)
         if state_exit.destination:
             return state_exit.destination
+        if run.investigation_opened_by_row == tables.ROW_THE_ARBITRATORS_THIRD_ENTRY:
+            return tables.TO_APPLY_THE_HELD_RULING
+        if run.investigation_held_resume_destination:
+            return run.investigation_held_resume_destination
         derived = None
         if run.investigation_opened_at_commit:
             derived = self.git_record.earliest_state_downstream_of_changes(
                 run.investigation_opened_at_commit)
         return derived or run.paused_state
+
+    def apply_the_held_ruling(self, run, state_exit):
+        """Section 6.6: the ruling the arbitrator held in its report,
+        routed as if test-suite-arbitrating had emitted it — through its
+        rows, with its entry reasons — but without entering the state,
+        whose next entry would be the fourth. Returns the next position."""
+        held = StateExitRecord(state=tables.TEST_SUITE_ARBITRATING,
+                               verdict=state_exit.held_ruling,
+                               package_commit=state_exit.package_commit,
+                               input_named=state_exit.input_named,
+                               investigation_focus=state_exit.investigation_focus)
+        row = find_legal_transition_row(run, held, held_ruling_applied_on_resume=True)
+        next_position, _ = self.apply_transition_row(run, row, held, None)
+        self.held_rulings_applied.append((row, held))
+        return next_position
 
     def apply_transition_row(self, run, row, state_exit, resume_destination):
         """Side effects of a row: counters, flags, positions; returns the
@@ -667,16 +846,21 @@ class DesignToMainStateMachineFlow:
         write_number = None
 
         # The row's counter (section 7: only an emitted state-exit charges
-        # a write counter, and by the three buckets).
+        # a write counter, and by the three buckets). The `Write:` trailer
+        # counts what the writer's counter counts (section 9): the number
+        # that counter reaches, or `forced` when the write spends none of
+        # it. writes_emitted_per_version counts every write, for the
+        # first-write rule.
         if row.counter in tables.COUNTED_WRITING_STATES.values():
             run.writes_emitted_per_version[from_state] = (
                 run.writes_emitted_per_version.get(from_state, 0) + 1)
-            write_number = run.writes_emitted_per_version[from_state]
             charged = write_counter_charged(
                 from_state, run.writing_state_entry_reason.get(
                     from_state, tables.ENTRY_REASON_FIRST_WRITE))
             if charged:
-                run.counters.increment(charged)
+                write_number = run.counters.increment(charged)
+            else:
+                write_number = tables.WRITE_TRAILER_FORCED
         elif row.counter:
             run.counters.increment(row.counter)
 
@@ -689,9 +873,9 @@ class DesignToMainStateMachineFlow:
         # The contract's program check: consecutive failures.
         if state_exit.state == tables.CONTRACT_ACCEPTANCE_BY_PROGRAM:
             if verdict == tables.V_REJECT_CONTRACT:
-                run.consecutive_contract_program_check_failures += 1
+                run.consecutive_program_check_failure_count += 1
             else:
-                run.consecutive_contract_program_check_failures = 0
+                run.consecutive_program_check_failure_count = 0
 
         # The suite's consecutive could-not-run count and the submit retries.
         if from_state == tables.TEST_SUITE_EXECUTING:
@@ -713,29 +897,29 @@ class DesignToMainStateMachineFlow:
         # succeeded, is what the record's guard reads before every discard
         # and commit; it goes to the branch in run-state.json with row 1's
         # own commit, so a successor recovering the run reads it there.
-        if row.row == "1":
+        if row.row == tables.ROW_TOPIC_BRANCH_CUT:
             self.git_record.cut_topic_branch(self.topic_branch_start_point)
             run.topic_branch_cut = True
 
         # Approvals and the work-streams.
-        if row.row == "15":
+        if row.row == tables.ROW_DESIGN_APPROVED:
             run.design_approved = True
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING, self.reason_for_advance(
                 run, tables.IMPLEMENTATION_WRITING, tables.ENTRY_REASON_REDESIGN))
             if run.tests_begun:
                 self.enter_writing_state(run, tables.TEST_DESIGN_WRITING,
                                          tables.ENTRY_REASON_REDESIGN)
-        if row.row == "36":
+        if row.row == tables.ROW_TEST_DESIGN_APPROVED:
             run.test_design_approved = True
             self.enter_writing_state(run, tables.TEST_WRITING, self.reason_for_advance(
                 run, tables.TEST_WRITING, self.upstream_reason_for_test_writing(run)))
-        if row.row == "21":
+        if row.row == tables.ROW_TESTS_BEGIN:
             run.tests_begun = True
             run.set_work_stream_position(tables.IMPLEMENTATION_WORK_STREAM, tables.READY_FOR_TEST_SUITE)
             self.enter_writing_state(run, tables.TEST_DESIGN_WRITING, tables.ENTRY_REASON_FIRST_WRITE)
-        if row.row == "22":
+        if row.row == tables.ROW_IMPLEMENTATION_TO_TEST_SUITE:
             run.set_work_stream_position(tables.IMPLEMENTATION_WORK_STREAM, tables.READY_FOR_TEST_SUITE)
-        if row.row == "42":
+        if row.row == tables.ROW_TESTS_TO_TEST_SUITE:
             run.set_work_stream_position(tables.TEST_WORK_STREAM, tables.READY_FOR_TEST_SUITE)
         if row.to_state == tables.TO_HOLD_READY_FOR_TEST_SUITE:
             held = tables.STATE_TABLE_BY_NAME[from_state].work_stream
@@ -753,13 +937,26 @@ class DesignToMainStateMachineFlow:
                 self.enter_writing_state(run, tables.TEST_DESIGN_WRITING,
                                          tables.ENTRY_REASON_CONTRACT_REVISION)
             next_position = tables.IMPLEMENTATION_WRITING
+        if row.to_state == tables.TO_BOTH_WRITERS_FRESH:
+            # Row 62: both writers, each write the arbitrator's bucket; the
+            # implementation-work-stream runs first, and holds for the
+            # test-work-stream (row 26) at test-writing.
+            self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING,
+                                     tables.ENTRY_REASON_ARBITRATOR_RULING)
+            self.enter_writing_state(run, tables.TEST_WRITING,
+                                     tables.ENTRY_REASON_ARBITRATOR_RULING)
+            next_position = tables.IMPLEMENTATION_WRITING
         if row.to_state == tables.TO_RETRY_SAME_STATE:
             next_position = from_state
+        if row.to_state == tables.TO_THE_NEXT_ACCEPTANCE_CHECK:
+            next_position = next_acceptance_check(run, state_exit)
+        if row.to_state == tables.TO_THE_WRITER_THE_VERDICT_NAMES:
+            next_position = tables.WRITER_STATE_FOR_VERDICT[verdict]
 
         # Re-entering a writing state by a reject, a discuss or the
-        # arbitrator's ruling: why, for the three buckets. (Rows 15 and 36,
+        # arbitrator's ruling: why, for the three buckets. (Rows 18 and 39,
         # the advances from upstream, set their reason above.)
-        if (row.to_state in (tables.IMPLEMENTATION_WRITING, tables.TEST_WRITING)
+        if (next_position in (tables.IMPLEMENTATION_WRITING, tables.TEST_WRITING)
                 and verdict != tables.V_ADVANCE):
             if verdict == tables.V_DISCUSS:
                 reason = tables.ENTRY_REASON_DISCUSS_BY_USER
@@ -767,8 +964,8 @@ class DesignToMainStateMachineFlow:
                 reason = tables.ENTRY_REASON_ARBITRATOR_RULING
             else:
                 reason = tables.ENTRY_REASON_REJECT_FROM_REVIEW
-            self.enter_writing_state(run, row.to_state, reason)
-        if row.to_state == tables.TEST_DESIGN_WRITING and row.row != "21":
+            self.enter_writing_state(run, next_position, reason)
+        if row.to_state == tables.TEST_DESIGN_WRITING and row.row != tables.ROW_TESTS_BEGIN:
             reason = (tables.ENTRY_REASON_TEST_DESIGN_CORRECTION
                       if row.counter == "test-design-corrections"
                       else tables.ENTRY_REASON_REJECT_FROM_REVIEW)
@@ -779,8 +976,11 @@ class DesignToMainStateMachineFlow:
         if row.to_state == tables.ENDED:
             run.outcome = row.outcome
         if row.to_state == tables.TO_RESUME_DESTINATION:
-            next_position = resume_destination
-            self.position_work_streams_for_resume(run, next_position, state_exit)
+            if resume_destination == tables.TO_APPLY_THE_HELD_RULING:
+                next_position = self.apply_the_held_ruling(run, state_exit)
+            else:
+                next_position = resume_destination
+                self.position_work_streams_for_resume(run, next_position, state_exit)
 
         return next_position, write_number
 

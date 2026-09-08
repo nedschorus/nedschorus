@@ -52,7 +52,7 @@ LEGALITY_CASES = [
     ("1", {}, exit_from(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED)),
     ("2", {}, exit_from(T.DESIGN_WRITING, T.V_EMITTED)),
     ("3", {}, exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_REJECT_CONTRACT)),
-    ("4", dict(consecutive_contract_program_check_failures=1),
+    ("4", dict(consecutive_program_check_failure_count=1),
      exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_REJECT_CONTRACT)),
     ("5", {}, exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE)),
     ("6", APPROVED, exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE)),
@@ -64,129 +64,167 @@ LEGALITY_CASES = [
      exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
     ("10", dict(APPROVED, counters={"contract-revisions": 1}),
      exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
-    ("11", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
-    ("12", dict(counters={"design-revisions": 2}),
+    ("11", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN)),
+    ("12", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
+    ("13", dict(counters={"design-revisions": 2}),
      exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
-    ("13a", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
-    ("13b", dict(counters={"design-revisions": 2}),
+    ("14", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("15", dict(counters={"design-revisions": 2}),
      exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
-    ("14", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
-    ("15", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
-    ("16", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_EMITTED)),
-    ("17", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_INPUT_QUICK_CHECK_FAILED,
+    ("17", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
+    ("18", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
+    ("19", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_EMITTED)),
+    ("20", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
-    ("18", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_EMITTED, coverage_type="script")),
-    ("19", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+    ("21", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_EMITTED, coverage_type="script")),
+    ("22", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_COMPONENT_CONTRACT)),
-    ("20", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+    ("23", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
-    ("21", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("21", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
-    ("22", dict(IMPL_IS_SCRIPT, tests_begun=True,
+    ("24", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("24", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
+    ("25", dict(IMPL_IS_SCRIPT, tests_begun=True,
                 test_work_stream_position=T.READY_FOR_TEST_SUITE),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("23", dict(IMPL_IS_SCRIPT, tests_begun=True, test_work_stream_position=T.TEST_WRITING),
+    ("26", dict(IMPL_IS_SCRIPT, tests_begun=True, test_work_stream_position=T.TEST_WRITING),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("24", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION)),
-    ("25", dict(IMPL_IS_SCRIPT, counters={"implementation-writes": 3}),
+    ("27", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION)),
+    ("28", dict(IMPL_IS_SCRIPT, counters={"implementation-writes": 3}),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION)),
-    ("26", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
-    ("27", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
-    ("28", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
-    ("29", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_EMITTED)),
-    ("30", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+    ("29", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("30", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
+    ("31", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
+    ("32", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_EMITTED)),
+    ("33", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_COMPONENT_CONTRACT)),
-    ("31", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+    ("34", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
-    ("32", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN)),
-    ("33", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
-    ("34", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_REJECT_DESIGN)),
-    ("35", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
-    ("36", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
-    ("37", APPROVED, exit_from(T.TEST_WRITING, T.V_EMITTED, coverage_type="prompt")),
-    ("38", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-                               input_named=T.INPUT_TEST_DESIGN)),
-    ("39", dict(APPROVED, counters={"test-design-corrections": 1}),
-     exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_TEST_DESIGN)),
-    ("40", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-                               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("35", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN)),
+    ("36", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("37", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_REJECT_DESIGN)),
+    ("38", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
+    ("39", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
+    ("40", APPROVED, exit_from(T.TEST_WRITING, T.V_EMITTED, coverage_type="prompt")),
     ("41", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+                               input_named=T.INPUT_TEST_DESIGN)),
+    ("42", dict(APPROVED, counters={"test-design-corrections": 1}),
+     exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_TEST_DESIGN)),
+    ("43", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+                               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("44", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
-    ("42", dict(TESTS_ARE_SCRIPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
+    ("45", dict(TESTS_ARE_SCRIPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("42", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
+    ("45", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
      exit_from(T.TEST_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
-    ("43", dict(TESTS_ARE_SCRIPT, implementation_work_stream_position=T.IMPLEMENTATION_WRITING),
+    ("46", dict(TESTS_ARE_SCRIPT, implementation_work_stream_position=T.IMPLEMENTATION_WRITING),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("44", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS)),
-    ("45", dict(TESTS_ARE_SCRIPT, counters={"test-writes": 3}),
+    ("47", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS)),
+    ("48", dict(TESTS_ARE_SCRIPT, counters={"test-writes": 3}),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS)),
-    ("46", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN)),
-    ("47", dict(TESTS_ARE_SCRIPT, counters={"test-design-corrections": 1}),
+    ("49", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN)),
+    ("50", dict(TESTS_ARE_SCRIPT, counters={"test-design-corrections": 1}),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN)),
-    ("48", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
-    ("49", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
-    ("50", TESTS_ARE_PROMPT, exit_from(T.TEST_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
-    ("51", {}, exit_from(T.TEST_SUITE_EXECUTING, T.V_PASS)),
-    ("52", {}, exit_from(T.TEST_SUITE_EXECUTING, T.V_FAIL)),
-    ("53", {}, exit_from(T.TEST_SUITE_EXECUTING, T.V_COULD_NOT_RUN)),
-    ("54", dict(consecutive_could_not_run_count=1), exit_from(T.TEST_SUITE_EXECUTING, T.V_COULD_NOT_RUN)),
-    ("55", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ADVANCE)),
-    ("56", dict(counters={"implementation-writes": 2}),
+    ("51", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("52", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
+    ("53", TESTS_ARE_PROMPT, exit_from(T.TEST_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
+    ("54", {}, exit_from(T.TEST_SUITE_EXECUTING, T.V_PASS)),
+    ("55", {}, exit_from(T.TEST_SUITE_EXECUTING, T.V_FAIL)),
+    ("56", {}, exit_from(T.TEST_SUITE_EXECUTING, T.V_COULD_NOT_RUN)),
+    ("57", dict(consecutive_could_not_run_count=1), exit_from(T.TEST_SUITE_EXECUTING, T.V_COULD_NOT_RUN)),
+    ("58", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ADVANCE)),
+    ("59", dict(counters={"implementation-writes": 2}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
-    ("57", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
-    ("57", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
-    ("58", dict(counters={"implementation-writes": 3}),
+    ("60", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
+    ("60", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
+    # Row 61: the writer at its ceiling, the arbitrator ruling on its first
+    # or its second entry (arbitrator-rulings 1 or 2; a third never rules).
+    ("61", dict(counters={"implementation-writes": 3, "arbitrator-rulings": 1}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
-    ("58", dict(counters={"test-writes": 3}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
-    ("58", dict(counters={"test-writes": 3}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
-    ("59", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
-    ("60", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER)),
-    ("60", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER,
+    ("61", dict(counters={"implementation-writes": 3, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
+    ("61", dict(counters={"test-writes": 3, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
+    # Row 62: both artifacts in one ruling, whatever the writers' counters.
+    ("62", dict(counters={"arbitrator-rulings": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS)),
+    ("62", dict(counters={"implementation-writes": 3, "test-writes": 3, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS)),
+    ("64", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
+    # Row 65: a reject of, or a failed check against, the component-contract
+    # with the contract-revisions counter at its ceiling, from any state.
+    ("65", dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
+               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("65", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, input_named=T.INPUT_COMPONENT_CONTRACT)),
+    ("65", dict(TESTS_ARE_SCRIPT, counters={"contract-revisions": 1}),
+     exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
+    ("65", dict(counters={"contract-revisions": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
+    ("66", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER)),
+    ("66", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER,
                          investigation_focus=T.FOCUS_UNKNOWN)),
-    ("61", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER,
+    ("67", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER,
                          investigation_focus=T.FOCUS_DESIGN)),
-    ("61", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+    ("67", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
                          investigation_focus=T.FOCUS_DESIGN)),
-    ("61", APPROVED, exit_from(T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+    ("67", APPROVED, exit_from(T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
                                investigation_focus=T.FOCUS_DESIGN)),
-    ("61", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+    ("67", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
                                      investigation_focus=T.FOCUS_DESIGN)),
-    ("61", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+    ("67", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
                                investigation_focus=T.FOCUS_TEST_DESIGN)),
-    ("61", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+    ("67", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
                                        investigation_focus=T.FOCUS_TEST_DESIGN)),
-    ("61", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_ESCALATE_TO_USER,
+    ("67", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_ESCALATE_TO_USER,
                                investigation_focus=T.FOCUS_DESIGN)),
-    ("61", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER,
+    ("67", APPROVED, exit_from(T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER,
                                investigation_focus=T.FOCUS_TEST_DESIGN)),
-    ("62", {}, exit_from(T.INVESTIGATE_WORKFLOW, T.V_STOP)),
-    ("63", {}, exit_from(T.INVESTIGATE_WORKFLOW, T.V_SUBMIT_TO_PR_GATE)),
-    ("66", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_ACCEPTED)),
-    ("67", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATE_REJECTION)),
-    ("68", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL,
+    ("68", {}, exit_from(T.INVESTIGATE_WORKFLOW, T.V_STOP)),
+    ("69", {}, exit_from(T.INVESTIGATE_WORKFLOW, T.V_SUBMIT_TO_PR_GATE)),
+    ("72", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_ACCEPTED)),
+    ("73", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATE_REJECTION)),
+    ("74", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL,
                          refusal_class=T.REFUSAL_INFRASTRUCTURE)),
-    ("68", dict(submit_retry_count=3), exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL,
+    ("74", dict(submit_retry_count=3), exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL,
                                                 refusal_class=T.REFUSAL_INFRASTRUCTURE)),
-    ("69", dict(submit_retry_count=4), exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL,
+    ("75", dict(submit_retry_count=4), exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL,
                                                 refusal_class=T.REFUSAL_INFRASTRUCTURE)),
-    ("69", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_INTEGRATION)),
-    ("69", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_SCOPE)),
-    ("70", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_FORM)),
-    # Section 3.1's order of sub-states.
-    ("3.1-a", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("3.1-b", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("3.1-c", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("3.1-d", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
+    ("75", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_INTEGRATION)),
+    ("75", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_SCOPE)),
+    ("76", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_FORM)),
+    # Row 16: the advance between a reviewing state's checks, in the order
+    # section 3.1 lists them.
+    ("16", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    # The contract's checks are the design's own rows: the program check
+    # advances by row 6, and the agent check's advance is row 9 even at the
+    # revisions ceiling — the user's check is reached only by a reject (rows
+    # 8 and 65), never by an advance.
+    ("6", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE)),
+    ("9", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
 ]
 
 # The resume rows take the resolved destination.
 RESUME_CASES = [
-    ("64", {}, exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME), T.IMPLEMENTATION_REVIEWING),
-    ("64", dict(counters={"redesigns": 1}), exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME), T.DESIGN_WRITING),
-    ("64", dict(counters={"redesigns": 2}), exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME), T.TEST_REVIEWING),
-    ("65", dict(counters={"redesigns": 2}),
+    ("70", {}, exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME), T.IMPLEMENTATION_REVIEWING),
+    ("70", dict(counters={"redesigns": 1}), exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME), T.DESIGN_WRITING),
+    ("70", dict(counters={"redesigns": 2}), exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME), T.TEST_REVIEWING),
+    ("71", dict(counters={"redesigns": 2}),
      exit_from(T.INVESTIGATE_WORKFLOW, T.V_RESUME, destination=T.DESIGN_WRITING), T.DESIGN_WRITING),
 ]
 
@@ -207,6 +245,24 @@ ILLEGAL_CASES = [
      {}, exit_from(T.TEST_SUITE_EXECUTING, "green")),
     ("the terminal state emitting anything",
      {}, exit_from(T.ENDED, T.V_ADVANCE)),
+    # Row 65 spans writers and reviewers with two verdicts; the pairing
+    # still holds — a writer has no `reject contract` and a reviewer no
+    # `input-quick-check-failed`, at the ceiling as below it.
+    ("a writer rejecting the contract at the contract-revisions ceiling: writers fail a check, they do not reject",
+     dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_WRITING, T.V_REJECT_CONTRACT)),
+    ("a reviewer failing a check against the contract at the ceiling: reviewers reject, they do not check inputs",
+     dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
+     exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_INPUT_QUICK_CHECK_FAILED,
+               input_named=T.INPUT_COMPONENT_CONTRACT)),
+    # A gap in the design as it reads (reported with this slice): row 60
+    # sends `flaky-test` to test-writing below the test-writes ceiling and
+    # row 61 names only `reject implementation` and `reject tests` at it,
+    # so `flaky-test` with test-writes at three has no row. Pinned so that
+    # the design gaining the row turns this red, not silently green.
+    ("flaky-test with the test-writes counter at its ceiling: no row of section 3.2",
+     dict(counters={"test-writes": 3, "arbitrator-rulings": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
 ]
 
 
@@ -232,19 +288,57 @@ class EveryRowOfSection32(unittest.TestCase):
 
     def test_a_named_destination_that_is_the_row_s_is_accepted(self):
         state_exit = exit_from(T.TEST_SUITE_EXECUTING, T.V_PASS, destination=T.SUBMIT_TO_PR_GATE)
-        self.assertEqual(M.find_legal_transition_row(run_with(), state_exit).row, "51")
+        self.assertEqual(M.find_legal_transition_row(run_with(), state_exit).row, "54")
+
+    def test_row_61_names_the_writer_the_verdict_names_as_its_destination(self):
+        run = run_with(counters={"implementation-writes": 3, "arbitrator-rulings": 1})
+        named = exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION,
+                          destination=T.IMPLEMENTATION_WRITING)
+        self.assertEqual(M.find_legal_transition_row(run, named).row, "61")
+        with self.assertRaises(M.IllegalStateExit):
+            M.find_legal_transition_row(run, exit_from(
+                T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, destination=T.TEST_WRITING))
+
+    def test_row_61_s_ceiling_clause_reads_the_counter_s_value_before_the_entry_the_ruling_comes_from(self):
+        # PR #295, round 1, finding 2. arbitrator-rulings is charged on
+        # entry, so a ruling the arbitrator makes from a charged entry
+        # reads one below the counter; the held ruling applied on a resume
+        # from the row-63 investigation comes from an entry that was NOT
+        # charged (enter() returned before the increment), so there the
+        # counter's value is the pre-entry value itself.
+        run = run_with(counters={"test-writes": 3, "arbitrator-rulings": 2})
+        held = exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)
+        from_a_charged_entry = M.GuardContext(run, held)
+        from_the_held_ruling = M.GuardContext(run, held, held_ruling_applied_on_resume=True)
+        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_a_charged_entry), 1)
+        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_the_held_ruling), 2)
+        run.counters.values["arbitrator-rulings"] = 1
+        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_a_charged_entry), 0)
+
+    def test_row_16_names_the_next_check_as_its_destination(self):
+        state_exit = exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE,
+                               destination=T.DESIGN_ACCEPTANCE_BY_USER)
+        self.assertEqual(M.find_legal_transition_row(run_with(), state_exit).row, "16")
+        with self.assertRaises(M.IllegalStateExit):
+            M.find_legal_transition_row(run_with(), exit_from(
+                T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, destination=T.IMPLEMENTATION_WRITING))
 
     def test_the_cases_cover_every_row_of_the_design_s_table(self):
         hit = {row for row, _, _ in LEGALITY_CASES} | {row for row, _, _, _ in RESUME_CASES}
         design_rows = set(T.DESIGN_TRANSITION_ROWS)
-        self.assertEqual(design_rows - hit, set(), "rows of section 3.2 with no legality case")
+        # Row 63 has no verdict: the arbitrator's third entry is a row the
+        # machine applies on entering test-suite-arbitrating, never on a
+        # state-exit, so no legality case can find it; the counters test
+        # drives it through the machine.
+        entry_rule_rows = {row.row for row in T.TRANSITION_TABLE if not row.verdicts}
+        self.assertEqual(entry_rule_rows, {T.ROW_THE_ARBITRATORS_THIRD_ENTRY})
+        self.assertEqual(design_rows - hit - entry_rule_rows, set(),
+                         "rows of section 3.2 with no legality case")
         self.assertEqual(hit - set(T.TRANSITION_TABLE_BY_ROW), set(), "cases naming no row")
 
     def test_the_rows_are_numbered_in_the_design_s_order(self):
         numbers = [r.row for r in T.TRANSITION_TABLE if r.source == "3.2"]
-        self.assertEqual(numbers[0], "1")
-        self.assertEqual(numbers[-1], "70")
-        self.assertEqual(len(numbers), 71)   # 70 rows; row 13 split in two
+        self.assertEqual(numbers, [str(n) for n in range(1, 77)])
 
     def test_every_guard_named_in_the_table_has_a_predicate(self):
         for row in T.TRANSITION_TABLE:
@@ -252,14 +346,23 @@ class EveryRowOfSection32(unittest.TestCase):
                 self.assertIn(guard, M.GUARD_PREDICATES, "row %s" % row.row)
 
     def test_every_verdict_in_the_transition_table_is_one_the_state_lists(self):
+        # Row 65 is one row across seven states and two verdicts (a reject
+        # of the contract from the reviewing states and the arbitrator, a
+        # failed check against it from the writing states), so the check is
+        # per pairing: every from-state lists one of the row's verdicts, and
+        # every verdict of the row is one some from-state lists.
         for row in T.TRANSITION_TABLE:
+            listed_by_some_state = set()
             for from_state in row.from_states:
                 listed = set(T.STATE_TABLE_BY_NAME[from_state].verdicts)
                 if from_state in (T.CONTRACT_REVISING, T.TEST_DESIGN_WRITING,
                                   T.TEST_SUITE_ARBITRATING) or T.STATE_TABLE_BY_NAME[from_state].work == "composite":
                     listed.add(T.V_ESCALATE_TO_USER)
-                for verdict in row.verdicts:
-                    self.assertIn(verdict, listed, "row %s, %s" % (row.row, from_state))
+                if row.verdicts:
+                    self.assertTrue(listed & set(row.verdicts), "row %s, %s" % (row.row, from_state))
+                listed_by_some_state |= listed
+            for verdict in row.verdicts:
+                self.assertIn(verdict, listed_by_some_state, "row %s" % row.row)
 
     def test_the_counters_the_rows_charge_are_section_7_s(self):
         charged = {row.counter for row in T.TRANSITION_TABLE if row.counter}
