@@ -54,9 +54,9 @@ body (measured on nedschorus#7, 2026-09-08 — the file ends in three
 newlines where the body itself has two), so the caller's file and the
 JSON-parsed body would never compare equal. The CRLF half is cheap
 insurance for a body typed into GitHub's web editor, which stores CRLF; no
-CR appeared in the four bodies sampled here, all of them agent-written
-through `--body-file`. The diff is built from the normalized text too, so a
-refusal shows the other seat's change and not line-ending noise.
+CR appeared in the four bodies sampled here (nedschorus#1, #7, #46, #142).
+The diff is built from the normalized text too, so a refusal shows the
+other seat's change and not line-ending noise.
 
 Exit codes, the cold-read-record-ship.py set:
   0   the body was still what the caller read, and the edit was made
