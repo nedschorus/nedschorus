@@ -136,10 +136,14 @@ LEGALITY_CASES = [
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
     ("60", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
     ("60", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
-    ("61", dict(counters={"implementation-writes": 3}),
+    # Row 61: the writer at its ceiling, the arbitrator ruling on its first
+    # or its second entry (arbitrator-rulings 1 or 2; a third never rules).
+    ("61", dict(counters={"implementation-writes": 3, "arbitrator-rulings": 1}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
-    ("61", dict(counters={"test-writes": 3}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
-    ("61", dict(counters={"test-writes": 3}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
+    ("61", dict(counters={"implementation-writes": 3, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
+    ("61", dict(counters={"test-writes": 3, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
     ("64", {}, exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_CONTRACT)),
     # Row 65: a reject of, or a failed check against, the component-contract
     # with the contract-revisions counter at its ceiling, from any state.
@@ -234,6 +238,14 @@ ILLEGAL_CASES = [
      {}, exit_from(T.TEST_SUITE_EXECUTING, "green")),
     ("the terminal state emitting anything",
      {}, exit_from(T.ENDED, T.V_ADVANCE)),
+    # A gap in the design as it reads (reported with this slice): row 60
+    # sends `flaky-test` to test-writing below the test-writes ceiling and
+    # row 61 names only `reject implementation` and `reject tests` at it,
+    # so `flaky-test` with test-writes at three has no row. Pinned so that
+    # the design gaining the row turns this red, not silently green.
+    ("flaky-test with the test-writes counter at its ceiling: no row of section 3.2",
+     dict(counters={"test-writes": 3, "arbitrator-rulings": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
 ]
 
 
@@ -260,6 +272,15 @@ class EveryRowOfSection32(unittest.TestCase):
     def test_a_named_destination_that_is_the_row_s_is_accepted(self):
         state_exit = exit_from(T.TEST_SUITE_EXECUTING, T.V_PASS, destination=T.SUBMIT_TO_PR_GATE)
         self.assertEqual(M.find_legal_transition_row(run_with(), state_exit).row, "54")
+
+    def test_row_61_names_the_writer_the_verdict_names_as_its_destination(self):
+        run = run_with(counters={"implementation-writes": 3, "arbitrator-rulings": 1})
+        named = exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION,
+                          destination=T.IMPLEMENTATION_WRITING)
+        self.assertEqual(M.find_legal_transition_row(run, named).row, "61")
+        with self.assertRaises(M.IllegalStateExit):
+            M.find_legal_transition_row(run, exit_from(
+                T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, destination=T.TEST_WRITING))
 
     def test_row_16_names_the_next_check_as_its_destination(self):
         state_exit = exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE,

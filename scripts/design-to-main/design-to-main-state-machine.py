@@ -214,6 +214,9 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.run.counters.below_ceiling(_writers_counter(ctx)),
     tables.G_WRITERS_COUNTER_AT_CEILING:
         lambda ctx: ctx.run.counters.at_ceiling(_writers_counter(ctx)),
+    tables.G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE:
+        lambda ctx: (ctx.run.counters.value("arbitrator-rulings") - 1
+                     < ctx.run.counters.rule("arbitrator-rulings").at_ceiling_from_value),
     tables.G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN:
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
     tables.G_FOCUS_NOT_NAMED:
@@ -309,6 +312,8 @@ def derived_destination(row, context):
         return context.resume_destination
     if row.to_state == tables.TO_THE_NEXT_ACCEPTANCE_CHECK:
         return next_acceptance_check(context.run, context.state_exit)
+    if row.to_state == tables.TO_THE_WRITER_THE_VERDICT_NAMES:
+        return tables.WRITER_STATE_FOR_VERDICT[context.state_exit.verdict]
     return row.to_state
 
 
@@ -782,11 +787,13 @@ class DesignToMainStateMachineFlow:
             next_position = from_state
         if row.to_state == tables.TO_THE_NEXT_ACCEPTANCE_CHECK:
             next_position = next_acceptance_check(run, state_exit)
+        if row.to_state == tables.TO_THE_WRITER_THE_VERDICT_NAMES:
+            next_position = tables.WRITER_STATE_FOR_VERDICT[verdict]
 
         # Re-entering a writing state by a reject, a discuss or the
         # arbitrator's ruling: why, for the three buckets. (Rows 18 and 39,
         # the advances from upstream, set their reason above.)
-        if (row.to_state in (tables.IMPLEMENTATION_WRITING, tables.TEST_WRITING)
+        if (next_position in (tables.IMPLEMENTATION_WRITING, tables.TEST_WRITING)
                 and verdict != tables.V_ADVANCE):
             if verdict == tables.V_DISCUSS:
                 reason = tables.ENTRY_REASON_DISCUSS_BY_USER
@@ -794,7 +801,7 @@ class DesignToMainStateMachineFlow:
                 reason = tables.ENTRY_REASON_ARBITRATOR_RULING
             else:
                 reason = tables.ENTRY_REASON_REJECT_FROM_REVIEW
-            self.enter_writing_state(run, row.to_state, reason)
+            self.enter_writing_state(run, next_position, reason)
         if row.to_state == tables.TEST_DESIGN_WRITING and row.row != tables.ROW_TESTS_BEGIN:
             reason = (tables.ENTRY_REASON_TEST_DESIGN_CORRECTION
                       if row.counter == "test-design-corrections"

@@ -105,11 +105,17 @@ V_GATE_REJECTION = "gate-rejection"
 V_GATEKEEPER_REFUSAL = "gatekeeper-refusal"
 
 # The writer's counter that a `reject <artifact>` or `flaky-test` against a
-# counted writer refers to (section 3.2, "any reject whose writer's counter").
+# counted writer refers to (section 3.2, rows 59 to 61, "whose writer's
+# counter"), and the writer the verdict sends the run to.
 WRITER_COUNTER_FOR_VERDICT = {
     V_REJECT_IMPLEMENTATION: "implementation-writes",
     V_REJECT_TESTS: "test-writes",
     V_FLAKY_TEST: "test-writes",
+}
+WRITER_STATE_FOR_VERDICT = {
+    V_REJECT_IMPLEMENTATION: IMPLEMENTATION_WRITING,
+    V_REJECT_TESTS: TEST_WRITING,
+    V_FLAKY_TEST: TEST_WRITING,
 }
 
 
@@ -338,6 +344,7 @@ TO_BOTH_WORK_STREAMS_RE_ENTER = "both work-streams re-enter their writing states
 TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
 TO_RETRY_SAME_STATE = "the same state (retry)"
 TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
+TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
 
 # Guard words. Each is a phrase of the design; the machine holds one
 # predicate per phrase (GUARD_PREDICATES in design-to-main-state-machine.py).
@@ -373,6 +380,16 @@ G_COULD_NOT_RUN_FIRST = "the first of consecutive entries"
 G_COULD_NOT_RUN_SECOND = "the second consecutive"
 G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
 G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
+# Row 61's second guard. arbitrator-rulings is charged on ENTRY (section 7),
+# so while the arbitrator rules the counter already counts the entry it
+# rules from: 1 on its first entry, 2 on its second, and a third entry
+# never rules (row 63 opens the investigation instead). The guard therefore
+# reads the counter before that entry's charge — "below its ceiling" is
+# true of every ruling an arbitrator makes, which is what section 7 means
+# by "two more ordered by the arbitrator": the write is bounded by this
+# counter through the entries, not refused by it at a ruling.
+G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE = (
+    "arbitrator-rulings below its ceiling, read before the entry the arbitrator rules from was charged")
 G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN = "investigation-focus design or test-design as the agent names it"
 G_FOCUS_NOT_NAMED = "no investigation-focus named by the agent"
 G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION = (
@@ -581,10 +598,14 @@ TRANSITION_TABLE = (
          (G_WRITERS_COUNTER_BELOW_CEILING,), IMPLEMENTATION_WRITING),
     _row("60", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
          (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING),
-    _row("61", TEST_SUITE_ARBITRATING,
-         (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_FLAKY_TEST),
-         (G_WRITERS_COUNTER_AT_CEILING,), INVESTIGATE_WORKFLOW,
-         investigation_focus=FOCUS_UNKNOWN, note="the ruling in the report"),
+    _row("61", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS),
+         (G_WRITERS_COUNTER_AT_CEILING,
+          G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE),
+         TO_THE_WRITER_THE_VERDICT_NAMES,
+         counter_note="the writer's counter stops deciding and is not reset; the write "
+                      "is bounded by arbitrator-rulings (section 7)",
+         note="the design names only the two rejects here; flaky-test at the "
+              "test-writes ceiling has no row (reported with this slice)"),
     # Row 63 has no verdict: it is applied when test-suite-arbitrating is
     # ENTERED with arbitrator-rulings at its ceiling (the machine's enter()),
     # before any arbitrator is launched there. Its guard is the entry check.
