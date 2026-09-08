@@ -101,17 +101,17 @@ class GuardContext:
 
 
 def applicable_acceptance_checks(run, composite_state):
-    """The sub-states a reviewing state runs, in order, for this run
+    """The sub-states a reviewing state runs in order, for this run
     (section 3.1): the user's check of an implementation or of tests only
     when they are agent-instructions; the contract's agent check only on a
-    contract-revision, and its user check only at the ceiling."""
+    contract-revision. The contract's user check is not in this order at
+    all: no advance reaches it — it is entered by a reject at the
+    revisions ceiling (rows 8 and 65), and left by rows 9, 10 and 11."""
     row = tables.STATE_TABLE_BY_NAME[composite_state]
     if composite_state == tables.CONTRACT_REVIEWING:
         checks = [tables.CONTRACT_ACCEPTANCE_BY_PROGRAM]
         if run.design_approved:
             checks.append(tables.CONTRACT_ACCEPTANCE_BY_AGENT)
-            if run.counters.at_ceiling("contract-revisions"):
-                checks.append(tables.CONTRACT_ACCEPTANCE_BY_USER)
         return tuple(checks)
     if composite_state == tables.IMPLEMENTATION_REVIEWING:
         if run.is_agent_instructions(run.implementation_coverage_type):
@@ -136,6 +136,12 @@ def _last_acceptance_check(ctx):
 def _earlier_acceptance_check(ctx):
     checks = applicable_acceptance_checks(ctx.run, ctx.state_exit.from_state)
     return ctx.state_exit.state in checks[:-1]
+
+
+def next_acceptance_check(run, state_exit):
+    """Row 16's destination: the check after the one that emitted."""
+    checks = applicable_acceptance_checks(run, state_exit.from_state)
+    return checks[checks.index(state_exit.state) + 1]
 
 
 def _from_an_acceptance_check_by_agent(ctx):
@@ -292,6 +298,8 @@ def derived_destination(row, context):
         return None
     if row.to_state == tables.TO_RESUME_DESTINATION:
         return context.resume_destination
+    if row.to_state == tables.TO_THE_NEXT_ACCEPTANCE_CHECK:
+        return next_acceptance_check(context.run, context.state_exit)
     return row.to_state
 
 
@@ -755,6 +763,8 @@ class DesignToMainStateMachineFlow:
             next_position = tables.IMPLEMENTATION_WRITING
         if row.to_state == tables.TO_RETRY_SAME_STATE:
             next_position = from_state
+        if row.to_state == tables.TO_THE_NEXT_ACCEPTANCE_CHECK:
+            next_position = next_acceptance_check(run, state_exit)
 
         # Re-entering a writing state by a reject, a discuss or the
         # arbitrator's ruling: why, for the three buckets. (Rows 18 and 39,

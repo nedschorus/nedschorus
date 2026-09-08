@@ -52,7 +52,7 @@ class WholeRunThatPasses(unittest.TestCase):
             T.TEST_SUITE_EXECUTING, T.SUBMIT_TO_PR_GATE,
         ])
         rows = [row.row for row, _, _ in self.machine.routed]
-        self.assertEqual(rows, ["1", "2", "5", "3.1-a", "18", "21", "24", "32", "3.1-c", "39",
+        self.assertEqual(rows, ["1", "2", "5", "16", "18", "21", "24", "32", "16", "39",
                                 "40", "45", "54", "72"])
 
     def test_the_machine_cut_the_topic_branch_from_origin_main_named_for_the_component(self):
@@ -154,7 +154,7 @@ class TwoWorkStreams(unittest.TestCase):
             machine, run, record, _ = fixture.make_machine(script, repository)
             self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
             rows = [row.row for row, _, _ in machine.routed]
-            self.assertEqual(rows[-13:], ["51", "19", "6", "9", "21", "26", "32", "3.1-c", "39",
+            self.assertEqual(rows[-13:], ["51", "19", "6", "9", "21", "26", "32", "16", "39",
                                           "40", "45", "54", "72"])
             self.assertEqual(run.counters.value("contract-revisions"), 1)
             self.assertEqual(run.counters.value("implementation-writes"), 1)

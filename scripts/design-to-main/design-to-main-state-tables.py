@@ -5,10 +5,8 @@ Source: docs/design-to-main/design-to-main-state-machine-design.md.
   STATE_TABLE        is section 3.1, one entry per row.
   TRANSITION_TABLE   is section 3.2, one entry per row, numbered in the
                      order the design lists them (row 1 is
-                     `initiate-design-to-main / invoked`). Rows the design
-                     does not list but section 3.1 implies (the sub-states
-                     of a reviewing state "run in order") are numbered
-                     after the design's rows and marked source "3.1".
+                     `initiate-design-to-main / invoked`, row 76 the last
+                     gatekeeper-refusal). Every row has source "3.2".
   COUNTER_TABLE      is section 7, one entry per counter.
 
 Nothing here routes. The machine (design-to-main-state-machine.py) reads
@@ -339,6 +337,7 @@ TO_HOLD_READY_FOR_TEST_SUITE = "hold at ready-for-test-suite"
 TO_BOTH_WORK_STREAMS_RE_ENTER = "both work-streams re-enter their writing states"
 TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
 TO_RETRY_SAME_STATE = "the same state (retry)"
+TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
 
 # Guard words. Each is a phrase of the design; the machine holds one
 # predicate per phrase (GUARD_PREDICATES in design-to-main-state-machine.py).
@@ -395,8 +394,7 @@ def counter_at_ceiling(name):
 
 @dataclass(frozen=True)
 class TransitionTableRow:
-    """One row of section 3.2 (source "3.2") or one the sub-state order of
-    section 3.1 implies (source "3.1")."""
+    """One row of section 3.2."""
     row: str
     from_states: Tuple[str, ...]
     verdicts: Tuple[str, ...]
@@ -461,7 +459,19 @@ TRANSITION_TABLE = (
          note="the same initiator fixes the component-contract; then the program check"),
     _row("15", DESIGN_REVIEWING, V_REJECT_CONTRACT,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_at_ceiling("design-revisions")),
-         DESIGN_WRITING, note="split from row 13 by sections 4 and 7"),
+         DESIGN_WRITING, note="the same initiator brings the user into the conversation"),
+    # Row 16 says "any reviewing state". contract-reviewing is left out
+    # because its checks are the design's own rows: the program check's
+    # advance is row 5 or 6, and the agent check's advance on a revision
+    # is row 9 whatever the revisions counter reads — the user's check is
+    # reached only by a reject (rows 8 and 65), never by an advance
+    # (section 6.6: the ceiling guarantees a FAILED revision reaches him).
+    _row("16", (DESIGN_REVIEWING, IMPLEMENTATION_REVIEWING,
+                TEST_DESIGN_REVIEWING, TEST_REVIEWING),
+         V_ADVANCE, (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), TO_THE_NEXT_ACCEPTANCE_CHECK,
+         note="any reviewing state whose next check the design lists nowhere else; "
+              "the user's check of an implementation or of tests exists only for "
+              "agent-instructions (section 3.1)"),
     _row("17", DESIGN_REVIEWING, V_DISCUSS, (G_FROM_DESIGN_ACCEPTANCE_BY_USER,),
          DESIGN_WRITING, counter_note="the user's own time"),
     _row("18", DESIGN_REVIEWING, V_ADVANCE, (G_FROM_THE_LAST_ACCEPTANCE_CHECK,),
@@ -603,20 +613,6 @@ TRANSITION_TABLE = (
     _row("76", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL, (G_REFUSAL_FORM,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN,
          note="a machine error, the submit state built a bad request"),
-    # Section 3.1: a reviewing state's sub-states run in order; `advance`
-    # from one that is not the last goes to the next. Section 3.2 has no
-    # rows for these; row 6 is the only intra-composite row it lists.
-    _row("3.1-a", DESIGN_REVIEWING, V_ADVANCE,
-         (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT,), DESIGN_ACCEPTANCE_BY_USER, source="3.1"),
-    _row("3.1-b", IMPLEMENTATION_REVIEWING, V_ADVANCE,
-         (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), IMPLEMENTATION_ACCEPTANCE_BY_USER,
-         source="3.1", note="for agent-instructions only"),
-    _row("3.1-c", TEST_DESIGN_REVIEWING, V_ADVANCE,
-         (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_AGENT,), TEST_DESIGN_ACCEPTANCE_BY_USER,
-         source="3.1"),
-    _row("3.1-d", TEST_REVIEWING, V_ADVANCE,
-         (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), TEST_ACCEPTANCE_BY_USER,
-         source="3.1", note="for tests that are agent-instructions only"),
 )
 
 TRANSITION_TABLE_BY_ROW = {row.row: row for row in TRANSITION_TABLE}

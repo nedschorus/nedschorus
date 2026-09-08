@@ -173,12 +173,21 @@ LEGALITY_CASES = [
     ("75", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_INTEGRATION)),
     ("75", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_SCOPE)),
     ("76", {}, exit_from(T.SUBMIT_TO_PR_GATE, T.V_GATEKEEPER_REFUSAL, refusal_class=T.REFUSAL_FORM)),
-    # Section 3.1's order of sub-states.
-    ("3.1-a", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("3.1-b", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("3.1-c", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
-    ("3.1-d", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
+    # Row 16: the advance between a reviewing state's checks, in the order
+    # section 3.1 lists them.
+    ("16", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    # The contract's checks are the design's own rows: the program check
+    # advances by row 6, and the agent check's advance is row 9 even at the
+    # revisions ceiling — the user's check is reached only by a reject (rows
+    # 8 and 65), never by an advance.
+    ("6", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE)),
+    ("9", dict(APPROVED, counters={"contract-revisions": 1}),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
 ]
 
 # The resume rows take the resolved destination.
@@ -233,6 +242,14 @@ class EveryRowOfSection32(unittest.TestCase):
     def test_a_named_destination_that_is_the_row_s_is_accepted(self):
         state_exit = exit_from(T.TEST_SUITE_EXECUTING, T.V_PASS, destination=T.SUBMIT_TO_PR_GATE)
         self.assertEqual(M.find_legal_transition_row(run_with(), state_exit).row, "54")
+
+    def test_row_16_names_the_next_check_as_its_destination(self):
+        state_exit = exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE,
+                               destination=T.DESIGN_ACCEPTANCE_BY_USER)
+        self.assertEqual(M.find_legal_transition_row(run_with(), state_exit).row, "16")
+        with self.assertRaises(M.IllegalStateExit):
+            M.find_legal_transition_row(run_with(), exit_from(
+                T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, destination=T.IMPLEMENTATION_WRITING))
 
     def test_the_cases_cover_every_row_of_the_design_s_table(self):
         hit = {row for row, _, _ in LEGALITY_CASES} | {row for row, _, _, _ in RESUME_CASES}
