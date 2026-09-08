@@ -181,15 +181,18 @@ its bullets came to about twice the source rather than "roughly the length",
 a first data point on the size sentence. The anchor for a heading carried its
 "## " marker, so the splice script must normalize markers as designed.
 
-Open tasks from the rider, each a separate topic and PR, not this one:
-- scripts/cold-read-agy-cell.py pins the fast tier at gemini-3.8-flash-low
-  (user-ruled earlier on 2026-09-07); the user's ruling in this walk moves it to
-  medium. Code and its test (cold-read-agy-cell-test.py expects effort=low).
-- .claude/skills/walk-me-through/SKILL.md still names the codex launcher with
-  gpt-5.6-terra at low as the walk's reviewer command; it should name the fast
-  tier on the Antigravity launcher.
-- scripts/cold-read-fast-read.py's embedded copy of the old prompt: the
-  MD-skills seat's task #57, unchanged by this walk.
+Open tasks from the rider, each a separate topic and PR, not this one
+(corrected after the stop hook merged main into this branch, same day):
+- The fast-tier pin: DONE on main by PR #273 (bee2eca), which pinned
+  scripts/cold-read-agy-cell.py to gemini-3.8-flash-medium, user-ruled the
+  same day. Nothing left here.
+- scripts/cold-read-fast-read.py's embedded prompt: PR #272 (d245328) made it
+  the PR #271 text, so task #57 as filed is done. Once PR #274 merges, that
+  embedded copy is behind again and must be refreshed to the #274 text. OPEN,
+  for the MD-skills seat.
+- .claude/skills/walk-me-through/SKILL.md still names the Codex launcher with
+  gpt-5.6-terra at low as the walk's reviewer command; it should name the
+  fast tier on the Antigravity launcher (--tier fast now yields medium). OPEN.
 
 ## Closing
 
