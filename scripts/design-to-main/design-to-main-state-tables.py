@@ -242,8 +242,10 @@ class CounterCeilingRule:
     counter value at which section 3.2's guard "the counter at its ceiling"
     holds, taken from the row's own words in the "Ceiling" column: "a third
     entry is refused" and "the third write" put it at the ceiling itself;
-    "the second entry is not made" puts it one below (see the build report,
-    finding on contract-revisions and test-design-corrections).
+    "one revision: the user is called after the original and one
+    contract-revision have both failed review, and no second is written"
+    (and the same for test-design-corrections) puts it one below
+    (user-ruled 2026-09-08, the seventh walk, item 2).
     """
     name: str
     increments_when: str
@@ -276,17 +278,24 @@ COUNTER_TABLE = (
     CounterCeilingRule(
         "arbitrator-rulings",
         "`test-suite-arbitrating` is entered",
-        2, 2, "the third entry opens the investigation with the user"),
+        2, 2, "the third entry opens the investigation with the user; the arbitrator's "
+              "ruling rides in the report. A write the arbitrator orders is bounded by "
+              "this counter, not the writer's, whose counter stops deciding once the "
+              "arbitrator is in and is not reset"),
     CounterCeilingRule(
         "contract-revisions",
         "`contract-revising` is entered after a rejection or a failed check against "
         "the component-contract, once the design is approved",
-        2, 1, "`contract-acceptance-by-user`; the second entry is not made"),
+        2, 1, "`contract-acceptance-by-user`: one revision; the user is called after "
+              "the original and one contract-revision have both failed review, and no "
+              "second is written"),
     CounterCeilingRule(
         "test-design-corrections",
         "`test-design-writing` is re-entered after a rejection or a failed check "
         "against the test-design, once the test-design is approved",
-        2, 1, "`test-design-acceptance-by-user`; the second entry is not made"),
+        2, 1, "`test-design-acceptance-by-user`: one correction; the user is called after "
+              "the approved test-design and one correction have both failed, and no "
+              "second is written"),
 )
 
 COUNTER_TABLE_BY_NAME = {rule.name: rule for rule in COUNTER_TABLE}
@@ -337,8 +346,8 @@ WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
     ENTRY_REASON_CONTRACT_REVISION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_TEST_DESIGN_CORRECTION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_REDESIGN: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
-    # The user naming a writing state on resume is his own time (a choice
-    # of this build; see the report).
+    # The user naming a writing state on resume is his own time: uncounted
+    # (user-ruled 2026-09-08, the seventh walk, item 8, kept as built).
     ENTRY_REASON_USER_NAMED_DESTINATION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
 }
 
@@ -492,9 +501,6 @@ TRANSITION_TABLE = (
     _row("13", DESIGN_REVIEWING, V_REJECT_DESIGN,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_at_ceiling("design-revisions")),
          DESIGN_WRITING, note="the same initiator brings the user into the conversation"),
-    # Row 13 has no ceiling guard in the design; sections 4 and 7 give
-    # design-revisions one ceiling for both rejects, so the row is split
-    # here the way rows 12 and 13 are (build report, finding on row 13).
     _row("14", DESIGN_REVIEWING, V_REJECT_CONTRACT,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_below_ceiling("design-revisions")),
          DESIGN_WRITING, "design-revisions",
