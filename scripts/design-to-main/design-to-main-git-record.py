@@ -214,8 +214,18 @@ class TopicBranchGitRecord:
         """Put the whole checkout back to HEAD, the record directory
         included: a process that died before committing a state-exit left
         files that belong to no commit (section 9). `run` is the run being
-        recovered, read from the last commit before this is called."""
+        recovered, read from the last commit before this is called.
+
+        The index too, not only the working tree: commit_state_exit is
+        `add -A` then `commit`, two subprocesses, and paths_changed_since
+        stages the whole checkout on a resume long before the commit, so a
+        process that dies in that window leaves its files STAGED.
+        `checkout -- .` restores from the index and `clean` removes only
+        untracked files; without the `reset` first, what was staged
+        survives both and the next state-exit's `add -A` commits it as
+        that state's work."""
         self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
+        self.git("reset", "-q", check=False)
         self.git("checkout", "--", ".", check=False)
         self.git("clean", "-fdq", check=False)
 

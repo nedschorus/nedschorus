@@ -471,6 +471,49 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
         finally:
             repository.remove()
 
+    def test_a_process_that_dies_after_staging_leaves_nothing_staged_for_the_next_state_exit(self):
+        # The window is the record's own: every state-exit is `add -A` then
+        # `commit` as two subprocesses, and on a resume paths_changed_since
+        # stages the whole checkout well before the commit. A process that
+        # dies inside that window leaves its files STAGED; recovery puts
+        # the index back to HEAD as well as the working tree, so the next
+        # state-exit's `add -A` does not commit the dead process's
+        # leftovers as that state's work.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved()
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+            head_before = record.head_commit()
+            half_written = fixture.COMPONENT_DIRECTORY + "/half-written.py"
+            stray = record.absolute(half_written)
+            stray.parent.mkdir(parents=True, exist_ok=True)
+            stray.write_text("half\n")
+            readme = record.absolute("README.md")
+            readme.write_text("main, edited by the dead process\n")
+            record.git("add", "-A")   # as commit_state_exit would have, then the process dies
+            self.assertEqual(sorted(record.git("status", "--porcelain").stdout.splitlines()),
+                             ["A  " + half_written, "M  README.md"])
+            successor = M.DesignToMainStateMachineFlow(
+                record, M.ScriptedStateExitLauncher([fixture.implementation_write()]),
+                today=lambda: "2026-09-08")
+            recovered = successor.recover()
+            self.assertFalse(stray.exists())
+            self.assertEqual(readme.read_text(), "main\n")
+            self.assertEqual(record.git("status", "--porcelain").stdout, "")
+            self.assertEqual(record.head_commit(), head_before)
+            fixture.drive(successor, recovered)
+            self.assertEqual(recovered.current_state, T.IMPLEMENTATION_REVIEWING)
+            emitted_commit = successor.routed[-1][2]
+            files_in_commit = record.git("show", "--name-only", "--format=", emitted_commit).stdout.split()
+            self.assertNotIn(half_written, files_in_commit)
+            self.assertNotIn("README.md", files_in_commit)
+            self.assertIn(str(record.run_state_path), files_in_commit)
+            self.assertFalse(stray.exists())
+        finally:
+            repository.remove()
+
     def test_the_commit_of_a_resume_into_design_writing_already_carries_the_redesign(self):
         # Entry-charged counters (redesigns, arbitrator-rulings) are applied
         # before the state-exit that enters the state is committed, so a
