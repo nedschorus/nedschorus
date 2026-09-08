@@ -5,14 +5,18 @@ One invocation = one restater class judged. It takes that restater's
 restatements beside the rough drafts they came from, the perfect versions and
 the scrubbed defect lists, launches the two ruled judge runs in parallel
 through scripts/cold-read-restater-judge-cell.py, and writes their two reports
-and one combined result into a record directory of this restater's own.
+and one combined result into a record directory of this restater's own --
+its own, and no earlier judging's: the default directory name takes a -2, -3
+suffix when the day's name is taken, the way scripts/cold-read-grid.py's
+`make_record_dir` does, because the shared module clears a report path before
+every run and a second judging on one name would delete the first's reports.
 
 Usage:
   scripts/cold-read-restater-judge-runner.py --restater gemini-3.8-flash-low \\
       --case <rough draft> <perfect version> <defect list> <restatement> \\
       --case ... --case ...
 
-THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-07, "Opus max is the
+THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"), from item 5 of the walk
 docs/walk/fast-cold-read-perfect-test-cases.md at the cold-read-research seat,
 uncommitted there, which is why the ruling is written out here and in the
@@ -59,9 +63,18 @@ the reading of them. One run failing does not throw the other away: the
 combined result is written from the run that landed, with a marker line at
 the top naming what is missing, and this program exits 1. Both failing leaves
 no combined result at all, because there is nothing to read. A run whose
-report cannot be parsed -- no `## CASE` heading in it -- is a failed run, not
-a restater that caught nothing: zero and unreadable are different answers and
-this program never prints one as the other.
+report cannot be parsed -- no `## CASE` heading in it naming one of the cases
+this run was given -- is a failed run, not a restater that caught nothing:
+zero and unreadable are different answers and this program never prints one
+as the other.
+
+WHERE AN ITEM GOES WHEN ITS CASE IS NOT CERTAIN: into the set-aside section of
+the combined result, named and quoted, never into a case's count. A `## CASE
+4` heading in a three-case run, a `## Summary` heading after the last case, an
+item before the first heading -- each ends this program's certainty about
+which case the items below belong to, and each sends them to that section with
+the heading they sat under. Nothing is dropped and nothing is guessed at; the
+rule and its one cost are written out over `parse_judge_report`.
 
 NO RETRY, deliberately. The fast read retries its cell once because a walk is
 waiting on it. A judge run has already tried both models in the ruled chain
@@ -112,7 +125,7 @@ cell_common = judge_cell.common
 
 PROGRAM = "cold-read-restater-judge-runner"
 
-# Two judge runs per restater (user-ruled 2026-09-07). A constant rather than
+# Two judge runs per restater (user-ruled 2026-09-05). A constant rather than
 # a flag: the number is the ruling, and a run count chosen per invocation
 # would make two restaters' scores incomparable without saying so.
 JUDGE_RUNS = 2
@@ -133,6 +146,13 @@ STUPID_WEIGHT = 0.2
 # that is what the judge was asked for; an item wrapped onto a second line is
 # half an item, and the prompt says so.
 CASE_HEADING_PATTERN = re.compile(r"^#{1,6}\s*CASE\s+(\d+)\s*$", re.IGNORECASE)
+# ANY other markdown heading, which ENDS the case above it. The markdown rule
+# -- hashes, then whitespace, then text -- deliberately, rather than anything
+# opening with a `#`: a judge writing `#3` mid-case means defect 3, and reading
+# that as a heading would orphan the rest of a case that was reported
+# correctly. The CASE pattern above is tested first, so a case heading never
+# reaches this one.
+NON_CASE_HEADING_PATTERN = re.compile(r"^#{1,6}\s+\S")
 CAUGHT_ITEM_PREFIX = "CAUGHT:"
 STUPID_ITEM_PREFIX = "STUPID:"
 NOT_ON_LIST_ITEM_PREFIX = "NOT-ON-LIST:"
@@ -171,21 +191,46 @@ def build_runner_argument_parser():
              "ruled campaign passes three")
     parser.add_argument(
         "--record-dir", metavar="PATH",
-        help="where the two reports and the combined result go; by default "
+        help="where the two reports and the combined result go, used exactly "
+             "as named and created if absent: a caller who names a directory "
+             "owns what is already in it. By default "
              "cold-read-records/<date>-restater-judge-<class>/ under the "
-             "repository root, which is gitignored")
+             "repository root, which is gitignored, with -2, -3 appended when "
+             "that name is taken so a second judging of one restater on one "
+             "day cannot land on the first")
     return parser
 
 
-def record_directory_for(restater_class: str, today: str) -> pathlib.Path:
-    """This restater's record directory: dated, and named for the class.
+def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
+    """This restater's record directory: dated, named for the class, created here.
 
     The date and the class together, because a restater is judged again
     whenever a defect list grows -- the scrub accepting one off-list problem
     rescores every hunter and every restater (the walk, item 5) -- and the
     two sets must not land on each other.
+
+    THE SUFFIX LOOP IS WHY THIS FUNCTION CREATES THE DIRECTORY, and it is
+    `make_record_dir`'s in scripts/cold-read-grid.py, followed rather than
+    reinvented: the first free name of `<base>`, `<base>-2`, `<base>-3` wins,
+    and `mkdir` is called with no `exist_ok`, so the name this returns is one
+    no other judging has written into. The date and the class alone were not
+    enough, because a restater judged twice in one day landed both judgings on
+    one name -- and the shared module clears a report path before every run
+    (`resolve_report_path`, so a failed run cannot pass as a successful one),
+    which made the second judging DELETE the first judging's two reports and
+    overwrite its combined result. The suffix flows into `record_dir.name` and
+    from there into every report's own filename, which is what the shared
+    module's near-miss recovery searches the records tree by, so the two
+    judgings' reports stay as distinguishable as their directories.
     """
-    return RECORDS_DIR / f"{today}-restater-judge-{restater_class}"
+    base = f"{today}-restater-judge-{restater_class}"
+    record_dir = RECORDS_DIR / base
+    suffix = 2
+    while record_dir.exists():
+        record_dir = RECORDS_DIR / f"{base}-{suffix}"
+        suffix += 1
+    record_dir.mkdir(parents=True)
+    return record_dir
 
 
 def judge_report_path(record_dir: pathlib.Path, run_number: int) -> pathlib.Path:
@@ -318,35 +363,78 @@ def provenance_fields(report_text: str) -> dict:
     return fields
 
 
-def parse_judge_report(report_text: str) -> dict:
+def parse_judge_report(report_text: str, case_count: int) -> dict:
     """Read one judge report into items, per case.
 
     Returns {"cases": {case number: {"caught": [defect numbers, in the order
     named, deduplicated], "caught_lines": [...], "stupid": [...],
     "not_on_list": [...], "unnumbered_caught": [...]}},
-    "items_outside_any_case": [...]}.
+    "items_outside_any_case": [(the heading the item sat under, the line)],
+    "case_headings_naming_no_case_of_this_run": [heading lines]}.
 
     DEDUPLICATED BY NUMBER, per the ruling's own wording: the count is of
     problems caught, by defect number, so a judge that names defect 12 twice
     in one case has named one caught defect. The line that repeats it is kept
     in `caught_lines`, so nothing the judge wrote is thrown away.
 
-    An item outside any case heading is kept apart rather than assigned to a
-    case: which case it belonged to is exactly what is missing, and guessing
-    would put a number in a column it may not belong in.
+    ONE RULE DECIDES WHERE AN ITEM GOES: it is counted against a case only
+    while this parser is certain which of THIS RUN's cases it belongs to, and
+    every other item is set aside in `items_outside_any_case` with the heading
+    it sat under. Three headings end that certainty, and two of them used to
+    leave it intact.
+
+      - A `## CASE <n>` naming a case this invocation never passed -- `## CASE
+        4` in a three-case run. Such a heading parsed, and its items were
+        filed under case 4, and `score_run` then iterated 1..3 and never
+        looked at it, so every CAUGHT, STUPID and NOT-ON-LIST line under it
+        vanished from the counts, the tables and the kept-verbatim sections
+        while the run still read as usable. An off-list item lost that way is
+        a problem the ruling sends back to the scrub, and it never arrived.
+        The heading is recorded by name as well, because a judge numbering its
+        cases wrongly is something the reader of the record has to see.
+
+      - Any other markdown heading -- a trailing `## Summary`, a `### Notes`
+        inside a case. The case above it used to keep collecting, so a judge's
+        closing remark was counted against the last case it happened to
+        follow. The cost of the rule as written is the reverse: a judge that
+        nests a sub-heading inside a case has that case's remaining items set
+        aside rather than counted. Set aside is the survivable error -- the
+        items are kept verbatim under the heading they sat under, where a
+        reader of the combined result sees them, and no number lands in a
+        column it may not belong in.
+
+      - No heading at all yet, which was already handled this way.
     """
     cases = {}
     outside = []
+    headings_naming_no_case = []
     current_case = None
+    current_heading = ""
     for raw_line in report_text.splitlines():
         line = raw_line.strip()
-        heading = CASE_HEADING_PATTERN.match(line)
-        if heading:
-            current_case = int(heading.group(1))
-            cases.setdefault(current_case, {
-                "caught": [], "caught_lines": [], "stupid": [],
-                "not_on_list": [], "unnumbered_caught": [],
-            })
+        case_heading = CASE_HEADING_PATTERN.match(line)
+        if case_heading:
+            current_heading = line
+            case_number = int(case_heading.group(1))
+            if 1 <= case_number <= case_count:
+                current_case = case_number
+                cases.setdefault(case_number, {
+                    "caught": [], "caught_lines": [], "stupid": [],
+                    "not_on_list": [], "unnumbered_caught": [],
+                })
+            else:
+                # NOT `setdefault` into `cases`: a report whose only heading is
+                # out of range must leave `cases` empty, so `read_run` calls it
+                # unusable rather than scoring an empty run as a judge that
+                # found nothing. Recorded once however often the judge repeats
+                # the heading.
+                current_case = None
+                if line not in headings_naming_no_case:
+                    headings_naming_no_case.append(line)
+            continue
+        if NON_CASE_HEADING_PATTERN.match(line):
+            current_case = None
+            current_heading = line
             continue
         for prefix, key in (
             (CAUGHT_ITEM_PREFIX, "caught"),
@@ -361,7 +449,7 @@ def parse_judge_report(report_text: str) -> dict:
                 continue
             body = line[len(prefix):].strip()
             if current_case is None:
-                outside.append(line)
+                outside.append((current_heading, line))
                 break
             case = cases[current_case]
             if key != "caught":
@@ -376,7 +464,11 @@ def parse_judge_report(report_text: str) -> dict:
             if defect_number not in case["caught"]:
                 case["caught"].append(defect_number)
             break
-    return {"cases": cases, "items_outside_any_case": outside}
+    return {
+        "cases": cases,
+        "items_outside_any_case": outside,
+        "case_headings_naming_no_case_of_this_run": headings_naming_no_case,
+    }
 
 
 def composite_score(caught_count: int, stupid_count: int) -> float:
@@ -432,9 +524,11 @@ def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict
     THREE OUTCOMES, kept apart. A run that produced no report is a run that
     did not happen -- the cell enforces that and this reads it back from the
     file, not from the exit code alone. A run whose report holds no `## CASE`
-    heading produced text this program cannot place: it is unusable, and
-    saying "0 caught" of it would be inventing a judgment. Only a run with at
-    least one heading is scored.
+    heading naming one of THIS run's own cases produced text this program
+    cannot place: it is unusable, and saying "0 caught" of it would be
+    inventing a judgment. Only a run with at least one such heading is scored
+    -- a report whose every heading is a `## CASE 4` in a three-case run is as
+    unplaceable as one with no heading at all.
     """
     run = {
         "report_path": report_path, "exit_code": exit_code, "model": "",
@@ -452,13 +546,20 @@ def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict
     run["model"] = fields.get("model", "")
     run["effort"] = fields.get("effort", "")
     run["fallback_from"] = fields.get("fallback_from", "")
-    parsed = parse_judge_report(report_text)
+    parsed = parse_judge_report(report_text, case_count)
     run["parsed"] = parsed
     if not parsed["cases"]:
+        naming_no_case = parsed["case_headings_naming_no_case_of_this_run"]
+        found = (
+            " (its heading" + ("s name" if len(naming_no_case) > 1 else " names")
+            + " no case of this run: " + ", ".join(f"`{heading}`"
+                                                   for heading in naming_no_case)
+            + ")" if naming_no_case else "")
         run["why_unusable"] = (
-            f"{report_path.name} holds no `## CASE <number>` heading, so none "
-            "of its text can be placed on a case; that is a report this "
-            "program cannot read, not a restater that caught nothing")
+            f"{report_path.name} holds no `## CASE <number>` heading naming "
+            f"one of this run's {case_count} case(s){found}, so none of its "
+            "text can be placed on a case; that is a report this program "
+            "cannot read, not a restater that caught nothing")
         return run
     run["usable"] = True
     run["score"] = score_run(parsed, case_count)
@@ -498,7 +599,7 @@ def render_combined_result(
     lines.append(f"# Restater judge — {restater_class}")
     lines.append("")
     lines.append(
-        "The ruled restater score (user-ruled 2026-09-07): two judge runs, "
+        "The ruled restater score (user-ruled 2026-09-05): two judge runs, "
         "Claude Fable 5.1 at xhigh with Claude Opus 5 at max as the backup "
         "when Fable is unavailable, over one restater's restatements beside "
         "the rough drafts, the perfect versions and the defect lists. The "
@@ -632,7 +733,7 @@ def render_combined_result(
     lines.append("## Back to the scrub — problems caught that are on no defect list")
     lines.append("")
     lines.append(
-        "NOT SCORED (user-ruled 2026-09-07). These go back to the scrub that "
+        "NOT SCORED (user-ruled 2026-09-05). These go back to the scrub that "
         "built the defect lists; if the scrub accepts one it joins the list, "
         "and every hunter and restater is rescored against the longer list.")
     lines.append("")
@@ -651,20 +752,36 @@ def render_combined_result(
     lines.append("")
 
     stray_items = [
-        (run_number, item)
+        (run_number, heading, item)
         for run_number in sorted(usable_runs)
-        for item in usable_runs[run_number]["parsed"]["items_outside_any_case"]
+        for heading, item in usable_runs[run_number]["parsed"]["items_outside_any_case"]
     ]
-    if stray_items:
-        lines.append("## Items the judge wrote under no case heading")
+    headings_naming_no_case = [
+        (run_number, heading)
+        for run_number in sorted(usable_runs)
+        for heading in usable_runs[run_number]["parsed"][
+            "case_headings_naming_no_case_of_this_run"]
+    ]
+    if stray_items or headings_naming_no_case:
+        lines.append("## Items the judge wrote under no case of this run")
         lines.append("")
         lines.append(
             "Not counted: which case each belongs to is exactly what is "
             "missing, and putting a number in a column it may not belong in "
-            "is worse than leaving it out. Kept as the judge wrote them.")
+            "is worse than leaving it out. Kept as the judge wrote them, with "
+            "the heading each sat under. READ THE NOT-ON-LIST LINES HERE "
+            "BESIDE THE SECTION ABOVE: an off-list problem is one the ruling "
+            "sends back to the scrub whichever heading the judge filed it "
+            "under.")
         lines.append("")
-        for run_number, item in stray_items:
-            lines.append(f"- Run {run_number}: {item}")
+        for run_number, heading in headings_naming_no_case:
+            lines.append(
+                f"- Run {run_number}: `{heading}` names no case of this run, "
+                f"which judged {len(cases)} case(s) numbered 1 to "
+                f"{len(cases)}. Everything the judge wrote under it is below.")
+        for run_number, heading, item in stray_items:
+            under = f"under `{heading}`" if heading else "under no heading"
+            lines.append(f"- Run {run_number}, {under}: {item}")
         lines.append("")
 
     return "\n".join(lines) + "\n"
@@ -687,13 +804,17 @@ def main() -> int:
         print(f"FAILED ({refusal})")
         return EXIT_BAD_INVOCATION
 
-    record_dir = (
-        pathlib.Path(args.record_dir) if args.record_dir
-        else record_directory_for(
-            args.restater, datetime.date.today().strftime("%Y-%m-%d")))
-    if not record_dir.is_absolute():
-        record_dir = REPO_ROOT / record_dir
-    record_dir.mkdir(parents=True, exist_ok=True)
+    if args.record_dir:
+        # The caller named it, so it is used as named: an operator pointing two
+        # judgings at one directory has said what he wants, and the default
+        # path below is where this program chooses for itself.
+        record_dir = pathlib.Path(args.record_dir)
+        if not record_dir.is_absolute():
+            record_dir = REPO_ROOT / record_dir
+        record_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        record_dir = make_record_directory_for(
+            args.restater, datetime.date.today().strftime("%Y-%m-%d"))
 
     print(f"{PROGRAM}: judging restater {args.restater} on {len(cases)} case(s), "
           f"{JUDGE_RUNS} runs, into {record_dir}", file=sys.stderr)

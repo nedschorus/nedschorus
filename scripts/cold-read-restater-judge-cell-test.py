@@ -5,7 +5,7 @@ ever called.
 
 WHAT IS PINNED HERE.
 
-  - The ruled chain and its two efforts (user-ruled 2026-09-07, "Opus max is
+  - The ruled chain and its two efforts (user-ruled 2026-09-05, "Opus max is
     the backup to Fable"): Fable 5.1 judges at xhigh, and the stamp says so,
     with runtime=claude, cell=restater-judge, tier=judge.
 

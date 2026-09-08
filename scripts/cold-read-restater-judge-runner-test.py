@@ -8,7 +8,7 @@ from the launch of two runs to the combined result they are read into.
 
 WHAT IS PINNED HERE.
 
-  - TWO RUNS PER RESTATER (user-ruled 2026-09-07), launched into one record
+  - TWO RUNS PER RESTATER (user-ruled 2026-09-05), launched into one record
     directory named for the restater and the day, their reports named for the
     run so the shared module's near-miss recovery cannot move one run's report
     under the other's stamp.
@@ -32,6 +32,19 @@ WHAT IS PINNED HERE.
     shown in the combined result as judged by Opus at max, with what it fell
     back from, a line saying Fable was unavailable, and -- because the other
     run was judged by Fable -- a line saying the two runs are two judges.
+
+  - AN ITEM WHOSE CASE IS NOT CERTAIN IS SET ASIDE, NEVER COUNTED. A `##
+    CASE 4` heading in a three-case run and a trailing `## Summary` heading
+    each end the parser's certainty: their items are kept verbatim in the
+    set-aside section, under the heading they sat under, and no case's count
+    moves. The out-of-range heading is named in the record besides, and a
+    report whose ONLY heading is out of range is an unusable run rather than a
+    judge that found nothing.
+
+  - A SECOND JUDGING OF ONE RESTATER ON ONE DAY GETS ITS OWN DIRECTORY, `-2`
+    after the day's name, so it cannot delete the first judging's reports --
+    the shared module clears a report path before every run, which is what
+    made one name into a deletion.
 
   - THE FAILURE PATHS. One run producing no report still yields a combined
     result, marked PARTIAL at the top and exiting 1, because the run that
@@ -136,6 +149,39 @@ STUPID: "A third kept sentence." — misread.
 ## CASE 2
 
 CAUGHT: 2 — the gap is reported.
+"""
+
+# A report whose headings run past the cases this run was given, and which
+# ends with a summary heading: `## CASE 4` in a three-case run, and a `##
+# Summary` after it. Case 1's items are the only ones that count -- caught 1
+# and 7, one stupid place -- and the five items below the CASE 4 heading are
+# set aside, the NOT-ON-LIST among them, because that is a problem the ruling
+# sends back to the scrub and losing it is what this fixture exists to catch.
+RUN_REPORT_HEADINGS_PAST_THE_CASES = """\
+## CASE 1
+
+CAUGHT: 1 — the restatement gave both readings of the sentence.
+CAUGHT: 7 — it marked the gap the list names.
+STUPID: "A sentence the perfect version keeps." — read as its opposite.
+
+## CASE 4
+
+CAUGHT: 2 — a catch under a heading this run has no case for.
+STUPID: "A fourth sentence." — a stupid place under the same heading.
+NOT-ON-LIST: the fourth document's title contradicts its first line.
+
+## Summary
+
+CAUGHT: 5 — a closing remark that belongs to no case.
+NOT-ON-LIST: a second off-list problem, written under the summary heading.
+"""
+
+# A report whose ONLY heading names a case this run was never given: nothing
+# in it can be placed, which makes it an unusable run rather than a zero.
+RUN_REPORT_ONLY_HEADING_PAST_THE_CASES = """\
+## CASE 4
+
+CAUGHT: 2 — the only heading in this report names no case of this run.
 """
 
 # A report the runner cannot place: judge text with no case heading in it.
@@ -405,6 +451,109 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the failure is the one line on stdout, naming the record directory",
           result.stdout.startswith("FAILED (no judge run produced a report")
           and str(record_dir) in result.stdout, repr(result.stdout))
+
+    # --- Headings past the cases, and a trailing summary heading -----------
+    repository = build_scratch_repository(scratch)
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_HEADINGS_PAST_THE_CASES}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+    )
+    record_dir = expected_record_directory(repository)
+    combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
+                ).read_text(encoding="utf-8")
+    check("a heading naming no case of this run is not a failure — the run is "
+          "scored on the cases it did name",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr[-2000:]!r}")
+    check("only the in-range case counts: caught 1 and 7, one stupid place",
+          "| 1 | 1 | 2 | 1 | 1.40 |" in combined, repr(combined))
+    check("the items under the out-of-range heading move no count",
+          "| **pooled** | 1 | 2 | 1 | 1.40 |" in combined, repr(combined))
+    check("the out-of-range heading is named in the record, with the case count",
+          "- Run 1: `## CASE 4` names no case of this run, which judged 3 "
+          "case(s) numbered 1 to 3." in combined, repr(combined))
+    check("every item under the out-of-range heading is kept verbatim, under "
+          "that heading",
+          "- Run 1, under `## CASE 4`: CAUGHT: 2 — a catch under a heading "
+          "this run has no case for." in combined
+          and "- Run 1, under `## CASE 4`: STUPID: \"A fourth sentence.\" — a "
+              "stupid place under the same heading." in combined
+          and "- Run 1, under `## CASE 4`: NOT-ON-LIST: the fourth document's "
+              "title contradicts its first line." in combined, repr(combined))
+    check("an item under a trailing summary heading is set aside, not counted "
+          "against the last case",
+          "- Run 1, under `## Summary`: CAUGHT: 5 — a closing remark that "
+          "belongs to no case." in combined
+          and "- Run 1, under `## Summary`: NOT-ON-LIST: a second off-list "
+              "problem, written under the summary heading." in combined,
+          repr(combined))
+    check("the set-aside section sends its off-list lines back to the scrub too",
+          "READ THE NOT-ON-LIST LINES HERE BESIDE THE SECTION ABOVE" in combined,
+          repr(combined))
+
+    # --- A report whose only heading names no case of this run -------------
+    repository = build_scratch_repository(scratch)
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_ONLY_HEADING_PAST_THE_CASES}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+    )
+    record_dir = expected_record_directory(repository)
+    combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
+                ).read_text(encoding="utf-8")
+    check("a report whose only heading names no case of this run is an unusable "
+          "run, and the pair exits 1",
+          result.returncode == 1
+          and "holds no `## CASE <number>` heading naming one of this run's 3 "
+              "case(s) (its heading names no case of this run: `## CASE 4`)"
+              in combined,
+          f"exit {result.returncode}; combined={combined[:600]!r}")
+    check("that run is not scored as a judge that caught nothing",
+          "| **pooled** | 1 |" not in combined, repr(combined))
+
+    # --- A second judging on the same day gets its own directory -----------
+    repository = build_scratch_repository(scratch)
+    first = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+    )
+    first_dir = expected_record_directory(repository)
+    first_files = {
+        path.name: path.read_bytes() for path in sorted(first_dir.glob("*.md"))}
+    second = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_DISAGREEING}},
+         "run2": {"*": {"report": RUN_REPORT_DISAGREEING}}},
+    )
+    second_dir = Path(second.stdout.strip()).parent
+    check("a second judging of one restater on one day lands in its own "
+          "directory, suffixed",
+          first.returncode == 0 and second.returncode == 0
+          and second_dir.name == first_dir.name + "-2",
+          f"first exit {first.returncode}, second exit {second.returncode}, "
+          f"second dir {second_dir}")
+    check("the first judging's two reports and combined result are still there, "
+          "byte for byte",
+          {path.name: path.read_bytes() for path in sorted(first_dir.glob("*.md"))}
+          == first_files,
+          f"{sorted(path.name for path in first_dir.glob('*.md'))}")
+    check("the second judging's reports carry the suffixed name, so the shared "
+          "module's near-miss recovery cannot confuse the two judgings",
+          (second_dir / f"{second_dir.name}--claude-restater-judge-run1.md").is_file()
+          and (second_dir / f"{second_dir.name}--restater-judge-combined.md").is_file(),
+          f"{sorted(path.name for path in second_dir.iterdir())}")
+    check("--record-dir is used exactly as named, with no suffix, because the "
+          "caller named it",
+          run_runner(
+              repository, stubs,
+              {"run1": {"*": {"report": RUN_REPORT_BASE}},
+               "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+              "--record-dir", "cold-read-records/a-directory-the-caller-named",
+          ).stdout.strip().startswith(
+              str(repository / "cold-read-records"
+                  / "a-directory-the-caller-named")),
+          "the named directory was not used as named")
 
     # --- A bad invocation is refused before anything is launched -----------
     repository = build_scratch_repository(scratch)

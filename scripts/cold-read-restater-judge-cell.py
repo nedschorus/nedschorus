@@ -9,7 +9,7 @@ listed defects the restatement caught and where the restatement was stupid.
 Two runs of this cell make one restater's score; the program that launches
 both and scores them is scripts/cold-read-restater-judge-runner.py.
 
-THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-07, "Opus max is the
+THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"). One fresh Claude Fable 5.1 instance at effort xhigh per
 restater class, given the three rough drafts, the three perfect versions, the
 three defect lists and that restater's three restatements. It counts the
@@ -126,7 +126,7 @@ JUDGE_RUNTIME = "claude"
 JUDGE_CELL = "restater-judge"
 JUDGE_TIER = "judge"
 
-# The chain, in order (user-ruled 2026-09-07). Fable 5.1 judges; Opus 5 judges
+# The chain, in order (user-ruled 2026-09-05). Fable 5.1 judges; Opus 5 judges
 # when Fable is unavailable, which the ruling names as the account limit or a
 # safeguard refusal that returned no report -- the two ways the shared chain
 # runner already recognises as an attempt that produced nothing (a non-zero
@@ -140,7 +140,7 @@ JUDGE_TIER = "judge"
 # ruled its backup explicitly, in those words.
 JUDGE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 
-# Model -> the effort it judges at (user-ruled 2026-09-07: "fable at xhigh",
+# Model -> the effort it judges at (user-ruled 2026-09-05: "fable at xhigh",
 # "Opus max is the backup"). Two models, two efforts, which is why the shared
 # chain runner takes this map: the stamp names the effort the model that
 # produced the report actually ran at.
