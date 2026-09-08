@@ -25,14 +25,23 @@ WHAT IS PINNED HERE.
     in the script -- not the skill's prompt file -- with both paths
     substituted and no placeholder left.
 
+  - That embedded template is current: it is byte-for-byte the text of
+    .claude/skills/cold-read/prompts/fast-clarify.md, the editable source of
+    truth the user ruled on 2026-09-07. The constant in the script is a
+    derived copy of that file, and this is the case that holds the two in
+    step.
+
   - A --target that is not a file is refused, exit 64, with FAILED on stdout
     and nothing launched.
 
-Each case builds a throwaway git repository holding a copy of the scripts,
-as scripts/cold-read-cell-common-test.py does, so the read's repository root
--- and with it the docs/walk and cold-read-records paths the rule names --
-is the scratch tree. A stub `agy` first on PATH stands in for the model,
-driven by COLD_READ_AGY_CELL_TEST_STUB_PLAN the way scripts/cold-read-agy-cell-test.py
+Each case that launches the read builds a throwaway git repository holding a
+copy of the scripts, as scripts/cold-read-cell-common-test.py does, so the
+read's repository root -- and with it the docs/walk and cold-read-records
+paths the rule names -- is the scratch tree. The one exception is the case
+that compares the embedded template against the skill's prompt file: both of
+those files live in the real checkout, so it reads them there. A stub `agy`
+first on PATH stands in for the model, driven by
+COLD_READ_AGY_CELL_TEST_STUB_PLAN the way scripts/cold-read-agy-cell-test.py
 drives its stub, plus a counter file so the stub can fail the first N
 launches and succeed after.
 
@@ -58,19 +67,34 @@ SCRIPT_NAMES = (
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
-# The embedded template itself, read from the script under test, so the
-# check below compares what the model received against what the script
-# carries. A fixed phrase was used until 2026-09-07, when the user's rewrite
-# of the instructions (PR #271) dropped the phrase and the check failed on
-# text, not on the mechanism; reading the constant keeps the check honest
-# through every future edit of the instructions.
-def embedded_prompt_template() -> str:
+# The script under test, imported so the cases below read the constants it
+# actually carries instead of restating them. A fixed phrase was used until
+# 2026-09-07, when the user's rewrite of the instructions (PR #271) dropped
+# the phrase and the check failed on text, not on the mechanism; reading the
+# constant keeps the check honest through every future edit of the
+# instructions.
+def script_under_test_module():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "cold_read_fast_read_under_test", SCRIPTS_DIR / "cold-read-fast-read.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.FAST_CLARIFY_PROMPT_TEMPLATE
+    return module
+
+
+# Each pair is (constant name in scripts/cold-read-fast-read.py, path of the
+# prompt file that constant is a derived copy of, relative to the repository
+# root). One pair today, because only the fast cell has a second copy of its
+# prompt: the user's ruling that the reviewer's instructions live in the .py
+# that runs the cell was made about the fast cell. The other cold-read
+# prompts -- defect-hunt.md, restate.md, terminology.md -- are read from the
+# skill at run time and have no second copy anywhere, so nothing about them
+# belongs here. If another cell ever embeds its prompt the same way, the same
+# shape covers it: one more pair, on one more line.
+EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS = (
+    ("FAST_CLARIFY_PROMPT_TEMPLATE",
+     ".claude/skills/cold-read/prompts/fast-clarify.md"),
+)
 
 # The stub `agy`: the model from --model, the prompt from --print's value,
 # the plan from the environment, and a counter file that counts launches so
@@ -297,6 +321,18 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the launcher's recovery line is on the read's stderr",
           STDOUT_RECOVERY_PHRASE in result.stderr, repr(result.stderr))
 
+    # --- The embedded instructions: two cases, and why both are needed ---
+    # The case below and the one after it are a pair. The first proves the
+    # runtime uses the text embedded in the script: that text, and not the
+    # skill's prompt file, is what the model receives. The second proves that
+    # embedded text is current: still byte-for-byte the user's editable
+    # source. Neither covers the other. The first compares the prompt the
+    # cell received against the script's own constant, so it passes just as
+    # happily on stale instructions -- which is how the constant sat stale
+    # for several days after the user rewrote the prompt file (PR #271) with
+    # nothing detecting it. The second says nothing about what the cell does
+    # with the constant at run time.
+
     # --- The embedded instructions are what the model receives ------------
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
@@ -307,7 +343,7 @@ with tempfile.TemporaryDirectory() as scratch:
         suggestions, walk_draft_relative, counter,
     )
     received_prompt = prompt_dump.read_text(encoding="utf-8") if prompt_dump.is_file() else ""
-    expected_prompt = (embedded_prompt_template()
+    expected_prompt = (script_under_test_module().FAST_CLARIFY_PROMPT_TEMPLATE
                        .replace("{TARGET_PATH}", str(repository / walk_draft_relative))
                        .replace("{REPORT_PATH}", str(suggestions)))
     check("the model receives the template embedded in the script",
@@ -322,6 +358,42 @@ with tempfile.TemporaryDirectory() as scratch:
     # The scratch checkout has no .claude/skills/cold-read/prompts/ tree at
     # all, so the case above also proves the read did not need the skill's
     # prompt file to run.
+
+    # --- The embedded instructions are current ----------------------------
+    # This case reads the real checkout, not a scratch one, because both
+    # files it compares live there. REPO_ROOT comes from this test file's own
+    # path, so the case finds them wherever the checkout sits and whatever
+    # the working directory is.
+    #
+    # NOTHING IS NORMALISED, and the string literal is why nothing needs to
+    # be. The constant opens `"""\`, so the backslash eats the newline after
+    # the quotes and the constant's first byte is the file's first byte; its
+    # closing `"""` sits on a line of its own, so the constant ends with
+    # exactly the one trailing newline the file ends with. Measured on main
+    # at ba8d754 (PR #275, which copied the file into the constant), the two
+    # were byte-identical -- 4580 bytes each -- so no leading- or
+    # trailing-newline allowance is needed, and none is made. The comparison
+    # is on bytes rather than on str because read_text() translates line
+    # endings, which would hide a CRLF drift.
+    for constant_name, prompt_file_relative in EMBEDDED_PROMPT_COPY_AND_SOURCE_PAIRS:
+        derived_copy_bytes = getattr(
+            script_under_test_module(), constant_name).encode("utf-8")
+        source_file = REPO_ROOT / prompt_file_relative
+        source_bytes = source_file.read_bytes() if source_file.is_file() else b""
+        check(f"{constant_name} is byte-for-byte the text of {prompt_file_relative}",
+              derived_copy_bytes == source_bytes,
+              "THE DERIVED COPY HAS DRIFTED FROM ITS SOURCE. "
+              f"SOURCE OF TRUTH, the file to edit: {prompt_file_relative}, "
+              f"{len(source_bytes)} bytes"
+              f"{'' if source_file.is_file() else ' (NO SUCH FILE)'}. "
+              "DERIVED COPY, a verbatim copy of that file kept in step by "
+              f"hand: scripts/cold-read-fast-read.py, constant "
+              f"{constant_name}, {len(derived_copy_bytes)} bytes. "
+              "The dependency runs one way only, and the script alone does "
+              f"not say which way: {prompt_file_relative} is the source and "
+              f"{constant_name} is the copy of it. To fix, re-copy "
+              f"{prompt_file_relative} into {constant_name} verbatim -- do "
+              "not edit the .md to match the constant.")
 
     # --- A --target that is not a file ------------------------------------
     repository = build_scratch_repository(scratch)
