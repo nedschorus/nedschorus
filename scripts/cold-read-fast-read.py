@@ -334,6 +334,61 @@ def sentence_id_markup(text: str):
     return "\n".join(marked), sentences
 
 
+# The heading this program appends to the report. Named so a reader can tell
+# the machine-written section from the reviewer's own text, and so a later
+# pass can find it.
+SENTENCE_COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)"
+
+
+def attach_sentences_and_coverage(report_text: str, sentences: dict) -> str:
+    """Put each original sentence under the restatement claiming its id, and
+    append what the restatement missed.
+
+    The reviewer sees only the marked copy, so its report cites ids and not
+    the prose. Attaching the original here is what makes the report readable
+    beside the document without a second window, and the coverage list is the
+    check the four-word anchor could not give: a sentence the reviewer never
+    restated is a sentence it may never have read.
+
+    Only the FIRST mention of an id is treated as its restatement. Sections 2
+    and 3 cite ids too, and attaching the original under each citation would
+    bury the reviewer's own words.
+    """
+    claimed = []
+    unknown = []
+    lines = []
+    for line in report_text.split("\n"):
+        lines.append(line)
+        found = SENTENCE_ID_PATTERN.search(line)
+        if not found:
+            continue
+        name = f"s{found.group(1)}"
+        if name in claimed or name in unknown:
+            continue
+        if name not in sentences:
+            unknown.append(name)
+            continue
+        claimed.append(name)
+        quoted = sentences[name].replace("\n", "\n> ")
+        lines.append(f"> {quoted}")
+
+    missing = [name for name in sentences if name not in claimed]
+    coverage = [
+        "",
+        SENTENCE_COVERAGE_HEADING,
+        "",
+        f"- {len(sentences)} sentences in the document, {len(claimed)} restated.",
+    ]
+    coverage.append(
+        f"- Never restated: {', '.join(missing)}. Check whether the reviewer read them."
+        if missing else "- Every sentence was restated.")
+    if unknown:
+        coverage.append(
+            f"- Cited but not in the document: {', '.join(unknown)}. "
+            "The reviewer invented these ids.")
+    return "\n".join(lines).rstrip("\n") + "\n" + "\n".join(coverage) + "\n"
+
+
 def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
     """record_dir/target/<repository path>, or the absolute path minus its
     leading slash for a target outside the repository -- the grid's rule."""
@@ -422,9 +477,26 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
         prompt_file = pathlib.Path(scratch) / EMBEDDED_PROMPT_FILE_NAME
         prompt_file.write_text(FAST_CLARIFY_PROMPT_TEMPLATE, encoding="utf-8")
+        # What the reviewer actually reads: the document with an id on every
+        # sentence. On the records route it is kept beside the report, as the
+        # evidence of what was put in front of the reviewer; on the walk route
+        # it is scratch and goes with the temporary directory. Either way the
+        # document itself is untouched, and target/ holds its original bytes.
+        marked_text, sentences = sentence_id_markup(
+            target.read_text(encoding="utf-8"))
+        marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
+            f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")
+        marked_copy.write_text(marked_text, encoding="utf-8")
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
-            last_exit_code = run_one_fast_clarify_cell(target, report, prompt_file)
+            last_exit_code = run_one_fast_clarify_cell(marked_copy, report, prompt_file)
             if last_exit_code == 0:
+                # Before anything reads or ships it: put each original
+                # sentence under the restatement claiming its id, and say
+                # which sentences no restatement claimed.
+                report.write_text(
+                    attach_sentences_and_coverage(
+                        report.read_text(encoding="utf-8"), sentences),
+                    encoding="utf-8")
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
                 print(report)
