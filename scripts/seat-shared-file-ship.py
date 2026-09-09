@@ -25,22 +25,36 @@ THERE IS NO NETWORK DRIVE, and this is not one. The store is a directory on
 ned-box's internal disk, snapshotted every ten minutes by Timeshift to a
 separate internal disk. Off-machine, not off-site.
 
-THE THREE RULES ARE THE RECORD SHIPPER'S (scripts/cold-read-record-ship.py),
-because this writes into the same store: ADD-ONLY, so a file already there is
-never replaced; REFUSE ON DIFFERENCE, so a second file of the same name whose
-content differs is refused before anything copies, naming both; FAIL LOUDLY,
-so an unreachable ned-box prints a line opening FAILED and exits non-zero
-with the file still on disk for a later run.
+THE STORE'S RULES HOLD HERE, WITH ONE DIFFERENCE INSIDE `seats/`. FAIL
+LOUDLY is the record shipper's (scripts/cold-read-record-ship.py) and is
+kept: an unreachable ned-box prints a line opening FAILED and exits non-zero
+with the file still on disk for a later run. ADD-ONLY and REFUSE ON
+DIFFERENCE remain the rules of the records kind, which that program still
+enforces unchanged; here a file of the same name whose content differs is
+REPLACED, and the replacement is announced.
 
-    A KNOWN FRICTION, RAISED FOR THE USER'S RULING AND NOT DECIDED HERE.
-    Add-only was ruled for RECORDS, which are immutable logs. A seat's shared
-    file often evolves -- a draft revised twice in an afternoon -- and under
-    add-only each revision needs a new name. The collision add-only exists to
-    prevent (two machines writing one path on one day) cannot arise inside a
-    seat's own directory, where that seat is the only writer, so allowing
-    replacement there is defensible. It is not done unilaterally: the store's
-    rule is the store's rule until the user changes it. `--replace` is the
-    one flag this would take.
+    A SEAT REPLACES ITS OWN FILES. USER-RULED 2026-09-09, verbatim: "seats
+    can replace their own files." Add-only was ruled for RECORDS, which are
+    immutable logs, and the collision it prevents is two writers landing on
+    one path -- two machines reviewing one document on one day. Inside
+    `seats/<seat>/` that seat is the only writer, so that collision cannot
+    arise, and refusing bought nothing while costing friction: a seat's
+    shared file evolves -- a draft revised twice in an afternoon -- and under
+    add-only each revision needed a name of its own. Friction is what drives
+    non-use, and non-use is the problem this shared area exists to solve. So
+    a plain invocation replaces. There is no flag to ask for it, because a
+    flag is the friction again.
+
+    THE REPLACEMENT IS NOT SILENT, AND THAT IS THE POINT. A seat is a series
+    of SESSIONS, not one process. This fleet hands off constantly, and a
+    fresh session can hold an older local copy of a file a previous session
+    already shipped; shipping that copy overwrites the newer stored one, and
+    silence would leave nothing to notice it by. So a replacement prints on
+    stderr that it replaced a file and the sha256 the store held. The event
+    is then visible in the session's own output, and the bytes it displaced
+    are identifiable by that digest in a Timeshift snapshot, the store being
+    snapshotted every ten minutes to a separate internal disk. stdout does
+    not change: one line, the citation.
 
 WHY IT PRINTS THE CITATION. The line this program prints on success is the
 exact text to paste into a document, in the scp form that works from either
@@ -72,10 +86,9 @@ environment. With neither, the program refuses rather than guessing: a
 directory named for the wrong seat is worse than an error, because the file
 is then filed where nobody will look for it.
 
-OUTPUT. Exactly one line on stdout per file -- the citation, or `REFUSED:`,
-or `FAILED:`. Everything else is on stderr. Exit 0 when every file shipped,
-2 when any was refused and none failed, 1 when any failed, 64 for a bad
-invocation.
+OUTPUT. Exactly one line on stdout per file -- the citation, or `FAILED:`.
+Everything else is on stderr, the line announcing a replacement included.
+Exit 0 when every file shipped, 1 when any failed, 64 for a bad invocation.
 
 THE DESTINATION IS DERIVED from the record shipper's one constant, so a move
 of the store is still one edit in one file. The environment variable
@@ -113,7 +126,6 @@ SEAT_NAME_SUFFIX = "-tasks"
 
 EXIT_SHIPPED = shipper.EXIT_SHIPPED
 EXIT_FAILED = shipper.EXIT_FAILED
-EXIT_REFUSED = shipper.EXIT_REFUSED
 EXIT_BAD_INVOCATION = shipper.EXIT_BAD_INVOCATION
 
 # Appended to the store's README when it does not already describe this kind.
@@ -126,7 +138,8 @@ SEATS_README_BULLET = """\
   directory per agent seat, holding the files that seat must cite from the
   other machine and that belong to no other kind. Written by
   scripts/seat-shared-file-ship.py in the nedschorus repository, which prints
-  the citation to paste. Add-only, like the records beside it.
+  the citation to paste. A seat replaces its own files, the records beside it
+  being add-only (user-ruled 2026-09-09).
 """
 
 
@@ -300,9 +313,21 @@ def stored_digest(copy_host, target):
 def rsync_one_file(copy_host, source: pathlib.Path,
                    target) -> subprocess.CompletedProcess:
     """One file into the store. Never --inplace: rsync writes it whole or not
-    at all, so an interrupted copy leaves no half file behind."""
+    at all, so an interrupted copy leaves no half file behind.
+
+    --ignore-times because whether to copy was already decided here, by
+    comparing sha256 on both sides. rsync's own quick check is size and
+    modification time to the second, and it skips a file the two agree on:
+    a revision that kept the file's length and was written in the same
+    second as the stored copy's timestamp would be silently not copied,
+    leaving the store's old bytes behind a printed citation and a line
+    saying they had been replaced. Measured on this Mac's openrsync, which
+    skipped exactly that file. With nothing in the store to skip the flag
+    does nothing.
+    """
     destination = f"{copy_host}:{target}" if copy_host else str(target)
-    command = ["rsync", "-a", "--timeout", shipper.RSYNC_IO_TIMEOUT_SECONDS]
+    command = ["rsync", "-a", "--ignore-times", "--timeout",
+               shipper.RSYNC_IO_TIMEOUT_SECONDS]
     if copy_host:
         command += ["-e", " ".join(shipper.SSH_COMMAND)]
     return subprocess.run(command + [str(source), destination],
@@ -340,20 +365,14 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         return EXIT_FAILED
 
     local_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    replaced_digest = None
     if existing_digest is not None:
         if existing_digest == local_digest:
             print(citation, flush=True)
             print(f"{PROGRAM}: already in the store, byte-identical; nothing "
                   f"copied", file=sys.stderr)
             return EXIT_SHIPPED
-        print(f"REFUSED: {seat}/{stored_name} — a different file of that name "
-              f"is already in the store; nothing was copied", flush=True)
-        print(f"{PROGRAM}: store has sha256 {existing_digest}, local file has "
-              f"{local_digest}.\n"
-              f"{PROGRAM}: the store is add-only. Ship under another name "
-              f"(--as), or read the stored one first:\n"
-              f"  scp {citation} ./", file=sys.stderr)
-        return EXIT_REFUSED
+        replaced_digest = existing_digest
 
     copied = rsync_one_file(destination.copy_host, source, target)
     if copied.returncode != 0:
@@ -362,6 +381,18 @@ def ship_one_file(destination: SeatsStoreDestination, seat: str,
         print(copied.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
     print(citation, flush=True)
+    if replaced_digest is not None:
+        # Never on stdout: that line is the citation and nothing else. See
+        # "THE REPLACEMENT IS NOT SILENT" in this module's docstring for what
+        # this line is for.
+        print(f"{PROGRAM}: REPLACED {seat}/{stored_name} in the store — the "
+              f"content it held was sha256 {replaced_digest}, and what is "
+              f"there now is sha256 {local_digest}.\n"
+              f"{PROGRAM}: a seat replaces its own files (user-ruled "
+              f"2026-09-09). If the displaced bytes were wanted — a fresh "
+              f"session can hold an older copy than the store's — the store "
+              f"is snapshotted every ten minutes by Timeshift, and the "
+              f"digest above says which file to look for.", file=sys.stderr)
     return EXIT_SHIPPED
 
 
@@ -404,11 +435,8 @@ def main() -> int:
     worst = EXIT_SHIPPED
     for source in arguments.files:
         stored_name = arguments.stored_name or source.name
-        outcome = ship_one_file(destination, seat, source, stored_name)
-        if outcome == EXIT_FAILED or worst == EXIT_FAILED:
+        if ship_one_file(destination, seat, source, stored_name) == EXIT_FAILED:
             worst = EXIT_FAILED
-        elif outcome == EXIT_REFUSED:
-            worst = EXIT_REFUSED
     return worst
 
 

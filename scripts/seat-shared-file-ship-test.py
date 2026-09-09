@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Tests for scripts/seat-shared-file-ship.py: the seat name, the three rules,
-the exits, the one-line stdout that IS the citation, and the remote shape.
+"""Tests for scripts/seat-shared-file-ship.py: the seat name, the rules a
+seat's own directory keeps and the one it does not, the exits, the one-line
+stdout that IS the citation, and the remote shape.
 
 Three modes. LOCAL and REMOTE are the record shipper's test's. LOCAL: the
 destination override names a scratch directory and the real rsync copies, so
-add-only, refuse-on-difference and the README writes are exercised for real.
+replacement, the byte-identical short circuit and the README writes are
+exercised for real -- and so is the record shipper's unchanged refusal, run
+against the same scratch store, since the two kinds' rules now differ.
 REMOTE: the override is the ruled scp-form destination and stub `ssh` and
 `rsync` binaries on PATH record what they were asked, so the invocation is
 read without a network. IN-PROCESS: the program is loaded with importlib and
@@ -16,6 +19,7 @@ Run: python3 scripts/seat-shared-file-ship-test.py   (exit 0 = all passed)
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -150,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           and result.stdout.count("\n") == 1,
           repr(result.stdout))
 
-    # --- Rule 1, add-only; rule 2, refuse on difference --------------------
+    # --- Byte-identical copies nothing; a difference REPLACES and says so --
     stored = seats_root / "cold-read-research" / "measurement.md"
     mtime_before = stored.stat().st_mtime_ns
     result = ship(local_destination, str(fresh), "--seat", "cold-read-research")
@@ -161,18 +165,49 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("the identical re-ship still prints the citation, so it is always "
           "obtainable", result.stdout.strip() == expected_citation, result.stdout)
 
+    # The ruling of 2026-09-09: "seats can replace their own files." A plain
+    # invocation replaces, with no flag to ask for it, because the flag would
+    # be the friction the ruling removed.
+    displaced_digest = hashlib.sha256(b"# measurement\n").hexdigest()
     fresh.write_text("# measurement\n\nrevised\n", encoding="utf-8")
     result = ship(local_destination, str(fresh), "--seat", "cold-read-research")
-    check("a different file of the same name is REFUSED with exit 2",
-          result.returncode == 2 and result.stdout.startswith("REFUSED:"),
+    check("a different file of the same name replaces the seat's stored one, "
+          "exit 0",
+          result.returncode == 0
+          and stored.read_text(encoding="utf-8") == "# measurement\n\nrevised\n",
           result.stdout + result.stderr)
-    check("the refusal copied nothing, leaving the stored file as it was",
-          stored.read_text(encoding="utf-8") == "# measurement\n"
-          and stored.stat().st_mtime_ns == mtime_before)
-    check("the refusal prints both digests and the scp command to read the "
-          "stored one",
-          "store has sha256" in result.stderr and "scp " in result.stderr,
+    check("stdout on a replacement is still exactly one line and it is the "
+          "citation",
+          result.stdout.strip() == expected_citation
+          and result.stdout.count("\n") == 1, repr(result.stdout))
+    check("the replacement is announced on stderr, so a session that shipped "
+          "over a newer file has something to notice it by",
+          "REPLACED" in result.stderr and "cold-read-research/measurement.md"
+          in result.stderr, result.stderr)
+    check("the announcement carries the sha256 of the content displaced, so "
+          "those bytes can be found in a Timeshift snapshot",
+          f"the content it held was sha256 {displaced_digest}" in result.stderr,
           result.stderr)
+
+    # rsync's own quick check is size and modification time to the second, and
+    # it skips a file the two agree on. Whether to copy was already decided by
+    # sha256, so a revision of the same length written in the same second must
+    # be copied anyway -- otherwise the store keeps its old bytes behind a
+    # printed citation and a line saying they were replaced.
+    same_length = work / "same-length.md"
+    same_length.write_text("aaaa\n", encoding="utf-8")
+    ship(local_destination, str(same_length), "--seat", "cold-read-research")
+    stored_same_length = seats_root / "cold-read-research" / "same-length.md"
+    stored_stat = stored_same_length.stat()
+    same_length.write_text("bbbb\n", encoding="utf-8")
+    os.utime(same_length, ns=(stored_stat.st_atime_ns, stored_stat.st_mtime_ns))
+    result = ship(local_destination, str(same_length), "--seat",
+                  "cold-read-research")
+    check("a revision of the same length, timestamped the same second, is "
+          "really copied and not skipped by rsync's quick check",
+          result.returncode == 0
+          and stored_same_length.read_text(encoding="utf-8") == "bbbb\n",
+          result.stdout + result.stderr)
 
     result = ship(local_destination, str(fresh), "--seat", "cold-read-research",
                   "--as", "measurement-2.md")
@@ -191,7 +226,40 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("--as with a path separator is a bad invocation, exit 64",
           result.returncode == 64, result.stdout + result.stderr)
 
-    # --- Rule 3, and the not-a-file case -----------------------------------
+    # --- The records kind beside it is still add-only ----------------------
+    # The two kinds' rules differ from 2026-09-09 and must not converge back
+    # by accident: a record is an immutable log, and only a seat replaces its
+    # own files. Run against the same scratch store, so this is a tripwire on
+    # the record shipper and not a reading of its source.
+    record_directory = scratch / "record-work" / "2026-09-09-a-document"
+    record_directory.mkdir(parents=True)
+    (record_directory / "report.md").write_text("# report\n", encoding="utf-8")
+
+    def ship_record():
+        env = dict(os.environ)
+        env[DESTINATION_VARIABLE] = local_destination
+        return subprocess.run(
+            [sys.executable, str(RECORD_SHIP), str(record_directory)],
+            capture_output=True, text=True, check=False, env=env)
+
+    first_record_ship = ship_record()
+    (record_directory / "report.md").write_text("# report\n\nrewritten\n",
+                                                encoding="utf-8")
+    second_record_ship = ship_record()
+    stored_report = (store_root / "cold-read-records" / record_directory.name
+                     / "report.md")
+    check("the record shipper still REFUSES a differing file with exit 2, the "
+          "two kinds' rules having parted",
+          first_record_ship.returncode == 0
+          and second_record_ship.returncode == 2
+          and second_record_ship.stdout.startswith("REFUSED:"),
+          first_record_ship.stdout + second_record_ship.stdout
+          + second_record_ship.stderr)
+    check("the refused record kept the bytes the store already had",
+          stored_report.read_text(encoding="utf-8") == "# report\n",
+          stored_report.read_text(encoding="utf-8"))
+
+    # --- FAIL LOUDLY, and the not-a-file case ------------------------------
     result = ship(local_destination, str(work / "no-such-file.md"),
                   "--seat", "cold-read-research")
     check("a missing file FAILS with exit 1 and says which",
@@ -314,6 +382,9 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
+    check("rsync is told to ignore times, the copy having been decided here "
+          "by sha256 and not by size and timestamp",
+          "--ignore-times" in rsync_calls[0], str(rsync_calls))
     # The store's location is defined once, in the record shipper. This
     # program may READ that constant -- the citation host comes from it --
     # but every mention must be an attribute of the imported shipper, and the
@@ -383,14 +454,22 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
         check("the local copy really happened, with no ssh in it",
               stored_good.is_file())
 
+        displaced_good_digest = hashlib.sha256(good.read_bytes()).hexdigest()
         printed, complained = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(printed), \
                 contextlib.redirect_stderr(complained):
-            refusal = citation_module.ship_one_file(
+            replacement = citation_module.ship_one_file(
                 hosted, "cold-read-research", survey, "good.md")
-        check("the refusal's scp hint carries the host too, so the stored "
-              "file can actually be fetched",
-              refusal == 2 and f"scp {hosted_citation} ./" in complained.getvalue(),
+        check("a local copy that replaces a file still prints the citation "
+              "alone on stdout, host and all",
+              replacement == 0
+              and printed.getvalue().strip() == hosted_citation,
+              printed.getvalue() + complained.getvalue())
+        check("the replacement really happened and its stderr names the "
+              "digest of the content it displaced",
+              stored_good.read_text(encoding="utf-8")
+              == survey.read_text(encoding="utf-8")
+              and f"sha256 {displaced_good_digest}" in complained.getvalue(),
               printed.getvalue() + complained.getvalue())
 
 print()
