@@ -18,6 +18,24 @@ stderr, the stray-write and recovery lines -- is re-emitted on this program's
 stderr, so a caller watching stdout gets the one line and a caller reading
 stderr gets the whole account.
 
+WHAT THE REVIEWER ACTUALLY READS is not the document but a copy of it with an
+id on every sentence, `<name>-with-sentence-ids.md`, written by this program
+before the cell launches (nedschorus#284 step 2). Question 1 asks for a
+restatement under each id, so the author's check stops being an eyeball match
+between a restatement and a four-word anchor. When the report lands, this
+program puts each original sentence under the restatement claiming its id and
+appends a coverage section naming the sentences no restatement claimed and any
+id the reviewer cited that the document does not have. A sentence never
+restated is a sentence the reviewer may never have read, which is the failure
+the four-word anchor could not surface.
+
+The markup never alters the document. sentence_id_markup inserts exactly two
+shapes and strip_sentence_ids removes exactly those two, so the marked copy
+returns the original bytes; the test asserts that round trip. On the records
+route the marked copy is kept beside the report and ships with the record, as
+the evidence of what was put in front of the reviewer, and `target/` still
+holds the document's own bytes. On the walk route it is scratch.
+
 WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md`, gets its
 suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
 the walk reads next. Anything else -- a design, a skill, a record copy, a
