@@ -114,6 +114,11 @@ the system -- good data, never part of the repository (user-ruled
   walk, minutes.
 - `transcripts/` -- Claude Code session transcripts and handoffs, one
   subdirectory per machine (nedschorus#7).
+- `seats/` -- the one kind organized by PRODUCER rather than by kind: one
+  directory per agent seat, holding the files that seat must cite from the
+  other machine and that belong to no other kind. Written by
+  scripts/seat-shared-file-ship.py in the nedschorus repository, which prints
+  the citation to paste. Add-only, like the records beside it.
 
 Cite a file here with its host, in the form scp takes:
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/<kind>/<path>`.
