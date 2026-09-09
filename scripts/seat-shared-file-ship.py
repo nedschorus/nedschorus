@@ -50,6 +50,12 @@ local path from memory. A tool nobody has a reason to run does not get run --
 the same store's `2026-09-05-perfect-test-cases` directory sat unshipped for
 three days with a working shipper on disk.
 
+THE CITATION ALWAYS CARRIES THE HOST, ned-box included, where the copy itself
+is a local one that wants no ssh. The host to COPY to and the host to CITE
+are two different things, and `seats_path_for_this_machine` keeps them apart;
+its docstring says why, because collapsing them back into one host is what
+printed an unusable citation on the machine that writes most of them.
+
 WHAT DOES NOT ENFORCE USE. Nothing here fires on its own. The mechanical
 check that catches an unreachable citation after the fact is filed as a
 caller on nedschorus#42, the reference-integrity checker; a citation is the
@@ -80,11 +86,13 @@ how the tests point at a scratch directory.
 import argparse
 import hashlib
 import importlib.util
+import json
 import os
 import pathlib
 import shlex
 import subprocess
 import sys
+import typing
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROGRAM = "seat-shared-file-ship"
@@ -135,11 +143,52 @@ def seat_name_from_environment():
     return name or None
 
 
-def seats_path_for_this_machine():
-    """(host, <store root>/seats) -- the record shipper's destination with the
-    kind swapped, so the store's location is defined in exactly one place."""
-    host, records_path = shipper.destination_for_this_machine()
-    return host, records_path.parent / SEATS_KIND_DIRECTORY
+class SeatsStoreDestination(typing.NamedTuple):
+    """Where this run copies to, what host its citations name, and the path.
+
+    The two hosts are separate fields rather than one because they differ,
+    and the fields are named so a caller cannot pass them in the wrong
+    order. `seats_path_for_this_machine` is what fills it in.
+    """
+
+    copy_host: typing.Optional[str]
+    citation_host: typing.Optional[str]
+    seats_path: pathlib.PurePosixPath
+
+
+def seats_path_for_this_machine() -> SeatsStoreDestination:
+    """The record shipper's destination with the kind swapped to `seats`, so
+    the store's location stays defined in exactly one place -- and with the
+    copy's host and the citation's host told apart.
+
+    TWO HOSTS, AND THEY ARE NOT THE SAME HOST. The COPY host is what ssh and
+    rsync are handed: on ned-box itself it is None, because the store is a
+    directory on that machine's own disk and no ssh should run. The CITATION
+    host is what the printed line carries, and CLAUDE.md fixes that form --
+    the scp form shown in this module's docstring -- because a citation is
+    pasted into a document that is read from EITHER machine. The seats run
+    ON ned-box, so the machine where the copy needs no host is exactly the
+    machine that writes most of the citations.
+
+    So when the destination comes from the record shipper's constant, the
+    citation host is that constant's host whatever machine we are on, while
+    the copy host stays None on ned-box and the copy stays local. When
+    COLD_READ_RECORD_SHIP_DESTINATION overrides the destination -- which is
+    how the tests point at a scratch directory -- both hosts come from the
+    override, and there a bare local path legitimately has none.
+
+    Do not simplify the two back into one. One host is what this had first,
+    and on ned-box it printed a bare /home/nedlern/... path that resolves
+    from nowhere else.
+    """
+    copy_host, records_path = shipper.destination_for_this_machine()
+    if os.environ.get(shipper.DESTINATION_ENVIRONMENT_VARIABLE):
+        citation_host = copy_host
+    else:
+        citation_host, _ = shipper.split_destination(
+            shipper.LOG_STORE_RECORDS_DESTINATION)
+    return SeatsStoreDestination(copy_host, citation_host,
+                                 records_path.parent / SEATS_KIND_DIRECTORY)
 
 
 def readme_with_seats_bullet(existing: str) -> str:
@@ -166,62 +215,81 @@ def readme_with_seats_bullet(existing: str) -> str:
         lines[last_bullet_end:])
 
 
-def ensure_seat_directory(host, seats_path, seat: str):
-    """The seat's directory exists and the store's README describes the kind.
+def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
+    """The seat's directory exists and the store's root has a README.
 
-    The README is only ever ADDED to: a store whose README predates this
-    program gains the bullet in its list of kinds, and one that already has
-    it is untouched. Remotely the rewrite is done by a Python one-liner over
-    ssh rather than a shell append, because placing the bullet in the list
-    needs more than `cat >>`; the file is written whole to a temporary
-    sibling and renamed, so an interrupted run cannot leave a half README.
+    Two cases, and they match the record shipper's `ensure_store`. NO README
+    AT ALL -- a store whose first writer was this program -- gets the record
+    shipper's whole STORE_README, imported rather than copied; that text
+    already lists the seats kind, so there is no bullet left to append. A
+    README that is already there and predates this program gains the bullet
+    in its list of kinds instead.
+
+    The README is only ever ADDED to: one that already describes the kind is
+    untouched. Remotely both writes are done by a Python one-liner over ssh
+    rather than a shell append, because placing the bullet in the list needs
+    more than `cat >>`; the two texts go over stdin as JSON, and the file is
+    written whole to a temporary sibling and renamed, so an interrupted run
+    cannot leave a half README.
     """
-    seat_directory = seats_path / seat
-    root = seats_path.parent
+    seat_directory = destination.seats_path / seat
+    root = destination.seats_path.parent
     readme_path = f"{root}/README.md"
-    if host is None:
+    if destination.copy_host is None:
         pathlib.Path(seat_directory).mkdir(parents=True, exist_ok=True)
         readme = pathlib.Path(readme_path)
-        existing = readme.read_text(encoding="utf-8") if readme.exists() else ""
-        if existing and f"`{SEATS_KIND_DIRECTORY}/`" not in existing:
-            readme.write_text(readme_with_seats_bullet(existing), encoding="utf-8")
+        if not readme.exists():
+            readme.write_text(shipper.STORE_README, encoding="utf-8")
+        else:
+            existing = readme.read_text(encoding="utf-8")
+            if existing and f"`{SEATS_KIND_DIRECTORY}/`" not in existing:
+                readme.write_text(readme_with_seats_bullet(existing),
+                                  encoding="utf-8")
         return subprocess.CompletedProcess([], 0, "", "")
     remote_program = (
-        "import os,pathlib,sys\n"
+        "import json,os,pathlib,sys\n"
         f"p=pathlib.Path({readme_path!r})\n"
-        "b=sys.stdin.read()\n"
-        "t=p.read_text(encoding='utf-8') if p.exists() else ''\n"
+        "texts=json.loads(sys.stdin.read())\n"
         f"k={'`' + SEATS_KIND_DIRECTORY + '/`'!r}\n"
-        "if t and k not in t:\n"
-        "    lines=t.splitlines(keepends=True); end=None\n"
-        "    for i,l in enumerate(lines):\n"
-        "        if l.startswith('- '): end=i+1\n"
-        "        elif end==i and l.startswith('  ') and l.strip(): end=i+1\n"
-        "    out=(t+b) if end is None else (''.join(lines[:end])+b+''.join(lines[end:]))\n"
+        "out=None\n"
+        "if not p.exists():\n"
+        "    out=texts['store_readme']\n"
+        "else:\n"
+        "    t=p.read_text(encoding='utf-8')\n"
+        "    if t and k not in t:\n"
+        "        b=texts['seats_bullet']\n"
+        "        lines=t.splitlines(keepends=True); end=None\n"
+        "        for i,l in enumerate(lines):\n"
+        "            if l.startswith('- '): end=i+1\n"
+        "            elif end==i and l.startswith('  ') and l.strip(): end=i+1\n"
+        "        out=(t+b) if end is None else (''.join(lines[:end])+b+''.join(lines[end:]))\n"
+        "if out is not None:\n"
         "    tmp=p.with_name(p.name+'.new')\n"
         "    tmp.write_text(out,encoding='utf-8'); os.replace(tmp,p)\n")
     script = (f"mkdir -p -- '{seat_directory}' && "
               f"python3 -c {shlex.quote(remote_program)}")
-    return subprocess.run(shipper.SSH_COMMAND + [host, script],
-                          input=SEATS_README_BULLET,
-                          capture_output=True, text=True, check=False)
+    return subprocess.run(
+        shipper.SSH_COMMAND + [destination.copy_host, script],
+        input=json.dumps({"store_readme": shipper.STORE_README,
+                          "seats_bullet": SEATS_README_BULLET}),
+        capture_output=True, text=True, check=False)
 
 
-def stored_digest(host, target):
+def stored_digest(copy_host, target):
     """(process, digest-or-None) for the store's copy of one file.
 
     None means the file is not there; an unreachable host is the process's
     non-zero return with a digest of None, which the caller separates by
     checking the return code.
     """
-    if host is None:
+    if copy_host is None:
         path = pathlib.Path(target)
         if not path.is_file():
             return subprocess.CompletedProcess([], 0, "", ""), None
         return (subprocess.CompletedProcess([], 0, "", ""),
                 hashlib.sha256(path.read_bytes()).hexdigest())
     script = f"if [ -f '{target}' ]; then sha256sum -- '{target}'; fi"
-    completed = subprocess.run(shipper.SSH_COMMAND + [host, script],
+    completed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
                                capture_output=True, text=True, check=False)
     if completed.returncode != 0:
         return completed, None
@@ -229,35 +297,42 @@ def stored_digest(host, target):
     return completed, digest or None
 
 
-def rsync_one_file(host, source: pathlib.Path, target) -> subprocess.CompletedProcess:
+def rsync_one_file(copy_host, source: pathlib.Path,
+                   target) -> subprocess.CompletedProcess:
     """One file into the store. Never --inplace: rsync writes it whole or not
     at all, so an interrupted copy leaves no half file behind."""
-    destination = f"{host}:{target}" if host else str(target)
+    destination = f"{copy_host}:{target}" if copy_host else str(target)
     command = ["rsync", "-a", "--timeout", shipper.RSYNC_IO_TIMEOUT_SECONDS]
-    if host:
+    if copy_host:
         command += ["-e", " ".join(shipper.SSH_COMMAND)]
     return subprocess.run(command + [str(source), destination],
                           capture_output=True, text=True, check=False)
 
 
-def ship_one_file(host, seats_path, seat: str, source: pathlib.Path,
-                  stored_name: str) -> int:
-    """One file, one stdout line, one exit code."""
-    target = seats_path / seat / stored_name
-    citation = f"{host}:{target}" if host else str(target)
+def ship_one_file(destination: SeatsStoreDestination, seat: str,
+                  source: pathlib.Path, stored_name: str) -> int:
+    """One file, one stdout line, one exit code.
+
+    The copy goes to the destination's copy host and the printed citation
+    names its citation host, which on ned-box is a host the copy did not
+    need. See `seats_path_for_this_machine`.
+    """
+    target = destination.seats_path / seat / stored_name
+    citation = (f"{destination.citation_host}:{target}"
+                if destination.citation_host else str(target))
 
     if not source.is_file():
         print(f"FAILED: {source} is not a file", flush=True)
         return EXIT_FAILED
 
-    prepared = ensure_seat_directory(host, seats_path, seat)
+    prepared = ensure_seat_directory(destination, seat)
     if prepared.returncode != 0:
         print(f"FAILED: {seat}/{stored_name} — the store could not be reached "
               f"or prepared", flush=True)
         print(prepared.stderr.strip(), file=sys.stderr)
         return EXIT_FAILED
 
-    completed, existing_digest = stored_digest(host, target)
+    completed, existing_digest = stored_digest(destination.copy_host, target)
     if completed.returncode != 0:
         print(f"FAILED: {seat}/{stored_name} — the store could not be read",
               flush=True)
@@ -280,7 +355,7 @@ def ship_one_file(host, seats_path, seat: str, source: pathlib.Path,
               f"  scp {citation} ./", file=sys.stderr)
         return EXIT_REFUSED
 
-    copied = rsync_one_file(host, source, target)
+    copied = rsync_one_file(destination.copy_host, source, target)
     if copied.returncode != 0:
         print(f"FAILED: {seat}/{stored_name} — rsync exited "
               f"{copied.returncode}", flush=True)
@@ -325,11 +400,11 @@ def main() -> int:
                   f"{arguments.stored_name!r}", file=sys.stderr)
             return EXIT_BAD_INVOCATION
 
-    host, seats_path = seats_path_for_this_machine()
+    destination = seats_path_for_this_machine()
     worst = EXIT_SHIPPED
     for source in arguments.files:
         stored_name = arguments.stored_name or source.name
-        outcome = ship_one_file(host, seats_path, seat, source, stored_name)
+        outcome = ship_one_file(destination, seat, source, stored_name)
         if outcome == EXIT_FAILED or worst == EXIT_FAILED:
             worst = EXIT_FAILED
         elif outcome == EXIT_REFUSED:

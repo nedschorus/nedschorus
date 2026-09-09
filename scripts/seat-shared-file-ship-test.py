@@ -2,19 +2,26 @@
 """Tests for scripts/seat-shared-file-ship.py: the seat name, the three rules,
 the exits, the one-line stdout that IS the citation, and the remote shape.
 
-Two modes, the record shipper's test's. LOCAL: the destination override names
-a scratch directory and the real rsync copies, so add-only,
-refuse-on-difference and the README append are exercised for real. REMOTE:
-the override is the ruled scp-form destination and stub `ssh` and `rsync`
-binaries on PATH record what they were asked, so the invocation is read
-without a network. Nothing here touches ned-box.
+Three modes. LOCAL and REMOTE are the record shipper's test's. LOCAL: the
+destination override names a scratch directory and the real rsync copies, so
+add-only, refuse-on-difference and the README writes are exercised for real.
+REMOTE: the override is the ruled scp-form destination and stub `ssh` and
+`rsync` binaries on PATH record what they were asked, so the invocation is
+read without a network. IN-PROCESS: the program is loaded with importlib and
+`socket.gethostname` is patched, which is the only way to reach the ned-box
+branch -- a subprocess's hostname cannot be faked -- where the copy is local
+but the citation must still name the host. Nothing here touches ned-box.
 
 Run: python3 scripts/seat-shared-file-ship-test.py   (exit 0 = all passed)
 """
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 import tempfile
@@ -35,6 +42,39 @@ with open(os.environ["SEAT_SHIP_TEST_ARGV_LOG"], "a") as log:
 """
 
 failures = []
+
+# The record shipper is imported for its STORE_README, so the case that checks
+# a store born here compares against the one text rather than a copy of it.
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship_under_test", RECORD_SHIP)
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
+
+
+def load_ship_module(module_name):
+    """The program under test, loaded into this process under its own name.
+
+    Used only where a subprocess cannot reach the behavior: the ned-box
+    branch, which turns on `socket.gethostname`, and the citation a local
+    copy prints.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, SHIP)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def two_hosts_of(destination):
+    """(copy host, citation host), or a description of what came back instead.
+
+    A destination that does not tell the two hosts apart -- the shape this
+    program had when it printed a hostless citation on ned-box -- FAILS the
+    cases below rather than aborting the run with an AttributeError.
+    """
+    try:
+        return destination.copy_host, destination.citation_host
+    except AttributeError:
+        return ("no copy_host/citation_host: " + repr(destination),) * 2
 
 
 def check(case_name, condition, detail=""):
@@ -189,6 +229,23 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("a README that already describes the kind is not appended to twice",
           readme.read_text(encoding="utf-8") == before)
 
+    # --- A store this program writes first is born with the whole README ---
+    born_here_root = scratch / "store-born-here"
+    result = ship(str(born_here_root / "cold-read-records"), str(good),
+                  "--seat", "cold-read-research")
+    born_here_readme = born_here_root / "README.md"
+    born_here_text = (born_here_readme.read_text(encoding="utf-8")
+                      if born_here_readme.is_file() else "")
+    check("a store root with no README gets the record shipper's whole store "
+          "README, not a lone bullet and not nothing",
+          result.returncode == 0
+          and born_here_text == record_shipper.STORE_README,
+          result.stdout + result.stderr + repr(born_here_text[:200]))
+    check("that README already lists the seats kind, so no bullet is appended "
+          "to it",
+          born_here_text.count("`seats/`") == 1
+          and "organized by PRODUCER" in born_here_text, born_here_text)
+
     # --- The two copies of the bullet must not drift -----------------------
     bullet_start = "- `seats/` -- the one kind organized by PRODUCER"
     ship_text = SHIP.read_text(encoding="utf-8")
@@ -257,10 +314,84 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
           str(rsync_calls))
+    # The store's location is defined once, in the record shipper. This
+    # program may READ that constant -- the citation host comes from it --
+    # but every mention must be an attribute of the imported shipper, and the
+    # store's path must not be written out again here in any form.
+    ship_code = ship_text.split('"""', 2)[2]
     check("the seats path is derived from the record shipper's constant, not "
           "written again here",
-          'LOG_STORE' not in ship_text.split('"""', 2)[2],
+          all(before.endswith("shipper.")
+              for before in ship_code.split("LOG_STORE")[:-1])
+          and "nedschorus-logs" not in ship_code,
           "the seats program should hold no store constant of its own")
+
+    # --- IN-PROCESS: on ned-box the copy is local, the citation is not ------
+    saved_gethostname = socket.gethostname
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    try:
+        socket.gethostname = lambda: "ned-box"
+        on_ned_box = load_ship_module(
+            "seat_shared_file_ship_on_ned_box").seats_path_for_this_machine()
+        socket.gethostname = lambda: "some-other-machine"
+        off_the_store = load_ship_module(
+            "seat_shared_file_ship_off_the_store").seats_path_for_this_machine()
+    finally:
+        socket.gethostname = saved_gethostname
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+
+    check("on ned-box the COPY needs no host, the store being a directory on "
+          "that machine's own disk",
+          two_hosts_of(on_ned_box)[0] is None, repr(on_ned_box))
+    check("on ned-box the CITATION still names the host, so the line pasted "
+          "into a document resolves from the Mac as well",
+          two_hosts_of(on_ned_box)[1] == "nedlern@ned-box", repr(on_ned_box))
+    check("what ned-box prints is the ruled scp-form seats citation",
+          f"{two_hosts_of(on_ned_box)[1]}:{on_ned_box[-1]}"
+          == RULED_SEATS_DESTINATION, repr(on_ned_box))
+    check("off the store's machine the two hosts are the same host, the "
+          "store's",
+          two_hosts_of(off_the_store) == ("nedlern@ned-box", "nedlern@ned-box"),
+          repr(off_the_store))
+
+    citation_module = load_ship_module("seat_shared_file_ship_citation_host")
+    check("the program keeps the copy's host and the citation's host apart in "
+          "one named value",
+          hasattr(citation_module, "SeatsStoreDestination"),
+          "a destination with a copy host and a citation host is what stops "
+          "the two being collapsed back into one")
+    if hasattr(citation_module, "SeatsStoreDestination"):
+        # The whole finding, end to end and without a network: a copy made
+        # locally, as it is on ned-box, whose citation carries the host.
+        hosted_root = scratch / "store-hosted-citation"
+        hosted = citation_module.SeatsStoreDestination(
+            copy_host=None,
+            citation_host="nedlern@ned-box",
+            seats_path=hosted_root / "seats")
+        stored_good = hosted_root / "seats" / "cold-read-research" / "good.md"
+        hosted_citation = f"nedlern@ned-box:{stored_good}"
+        printed, complained = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(printed), \
+                contextlib.redirect_stderr(complained):
+            outcome = citation_module.ship_one_file(
+                hosted, "cold-read-research", good, "good.md")
+        check("a copy made locally still prints a citation carrying the host, "
+              "which is what ned-box must print",
+              outcome == 0 and printed.getvalue().strip() == hosted_citation,
+              printed.getvalue() + complained.getvalue())
+        check("the local copy really happened, with no ssh in it",
+              stored_good.is_file())
+
+        printed, complained = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(printed), \
+                contextlib.redirect_stderr(complained):
+            refusal = citation_module.ship_one_file(
+                hosted, "cold-read-research", survey, "good.md")
+        check("the refusal's scp hint carries the host too, so the stored "
+              "file can actually be fetched",
+              refusal == 2 and f"scp {hosted_citation} ./" in complained.getvalue(),
+              printed.getvalue() + complained.getvalue())
 
 print()
 if failures:
