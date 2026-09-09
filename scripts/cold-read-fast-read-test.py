@@ -50,6 +50,7 @@ Run: python3 scripts/cold-read-fast-read-test.py
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -488,6 +489,79 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout.strip() == str(records_report)
           and any("record: FAILED:" in line for line in result.stderr.splitlines()),
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
+
+
+# --- The sentence-id markup (nedschorus#284 step 2) ----------------------
+# Called in-process: it is a pure function of the document's text, so these
+# cases need no cell, no model and no scratch checkout.
+import importlib.util as _importlib_util
+_spec = _importlib_util.spec_from_file_location(
+    "cold_read_fast_read", SCRIPTS_DIR / "cold-read-fast-read.py")
+_fast_read = _importlib_util.module_from_spec(_spec)
+_spec.loader.exec_module(_fast_read)
+sentence_id_markup = _fast_read.sentence_id_markup
+strip_sentence_ids = _fast_read.strip_sentence_ids
+
+MARKUP_SAMPLE = """\
+---
+name: a-skill
+description: Two sentences here. The second one follows.
+---
+
+# A heading with a period. And more
+
+A paragraph sentence one. A second one, which wraps
+onto a second line and ends here.
+
+- A list item. With two sentences.
+- Another item
+
+| a | b |
+|---|---|
+| one cell. still one row | two |
+
+```python
+x = 1  # not a sentence. really
+```
+
+Last line.
+"""
+
+marked, sentences = sentence_id_markup(MARKUP_SAMPLE)
+stripped = strip_sentence_ids(marked)
+check("strip_sentence_ids returns the document unchanged, byte for byte",
+      stripped == MARKUP_SAMPLE,
+      f"{stripped!r}")
+check("ids are numbered from s1 with no gaps",
+      list(sentences) == [f"s{n}" for n in range(1, len(sentences) + 1)],
+      str(list(sentences)))
+check("a heading is one unit, its id after the hashes",
+      "# [s" in marked and sum(1 for s in sentences.values()
+                              if s == "A heading with a period. And more") == 1,
+      marked)
+check("a frontmatter field takes its id after the key",
+      "name: [s1] a-skill" in marked, marked)
+check("a table row is one unit, whatever punctuation it holds",
+      any(s == "one cell. still one row | two |" for s in sentences.values()),
+      str(list(sentences.values())))
+check("a fenced code block is one unit, its id on the opening fence line",
+      any(s.startswith("```python") and "x = 1" in s for s in sentences.values())
+      and "[s" not in marked.split("\n")[marked.split("\n").index(
+          [line for line in marked.split("\n") if line.startswith("x = 1")][0])],
+      marked)
+check("a list item's id follows its marker and a second sentence gets its own",
+      "- [s" in marked and any(s == "A list item." for s in sentences.values())
+      and any(s == "With two sentences." for s in sentences.values()),
+      str(list(sentences.values())))
+check("a sentence wrapped across two lines carries exactly one id",
+      sum(1 for s in sentences.values() if s.startswith("A second one, which wraps")) == 1
+      and "onto a second line" in marked.split("\n")[
+          [i for i, line in enumerate(marked.split("\n")) if "A second one" in line][0] + 1],
+      marked)
+check("every id in the marked copy has an entry in the returned sentences",
+      set(re.findall(r"\[s(\d+)\]", marked)) == {name[1:] for name in sentences},
+      marked)
+
 
 print()
 if failures:
