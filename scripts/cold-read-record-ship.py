@@ -118,7 +118,8 @@ the system -- good data, never part of the repository (user-ruled
   directory per agent seat, holding the files that seat must cite from the
   other machine and that belong to no other kind. Written by
   scripts/seat-shared-file-ship.py in the nedschorus repository, which prints
-  the citation to paste. Add-only, like the records beside it.
+  the citation to paste. A seat replaces its own files, the records beside it
+  being add-only (user-ruled 2026-09-09).
 
 Cite a file here with its host, in the form scp takes:
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/<kind>/<path>`.
