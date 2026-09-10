@@ -155,7 +155,7 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
             fixture.test_write(),
             (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),               # row 45
             (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),                     # row 55
-            (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),  # row 59
+            (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),  # row 60
             fixture.implementation_write(),                             # arbitrator's bucket
         ]
         machine, run, _ = self.drive(script)
@@ -253,7 +253,7 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
         self.assertEqual(run.investigation_focus, T.FOCUS_UNKNOWN)
         self.assertIn("third entry", run.investigation_opened_by)
-        # Row 63 is applied on entry, not on a state-exit: the run records
+        # Row 64 is applied on entry, not on a state-exit: the run records
         # it as the row that opened the investigation, so a resume knows
         # (section 6.6) not to loop back into the arbitrator.
         self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
@@ -266,25 +266,25 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         # Its two rulings did not spend test-writes.
         self.assertEqual(run.counters.value("test-writes"), 1)
 
-    def test_row_61_a_reject_whose_writer_is_at_its_ceiling_goes_to_that_writer_bounded_by_the_arbitrator(self):
+    def test_row_62_a_reject_whose_writer_is_at_its_ceiling_goes_to_that_writer_bounded_by_the_arbitrator(self):
         # Section 7 after the seventh walk: per version and per work-stream
         # at most three writes by review and two more ordered by the
         # arbitrator, then the user — five, not eight. The writer's counter
         # stops deciding once the arbitrator is in and is not reset; a
         # reviewer's reject of a write the arbitrator ordered returns to
         # the arbitrator (row 28), and its third entry opens the
-        # investigation (row 63).
+        # investigation (row 64).
         script = fixture.prefix_to_design_approved()
         for _ in range(3):
             script += [fixture.implementation_write(),
                        (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {})]
         for _ in range(2):
-            script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),      # row 61
+            script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),      # row 62
                        fixture.implementation_write(),                                # forced
                        (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {})]  # row 28
         machine, run, _ = self.drive(script)
         rows = [r.row for r, _, _ in machine.routed]
-        self.assertEqual(rows[-7:], ["28", "61", "21", "28", "61", "21", "28"])
+        self.assertEqual(rows[-7:], ["28", "62", "21", "28", "62", "21", "28"])
         self.assertEqual(run.counters.value("implementation-writes"), 3)      # not reset, not spent
         self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
         self.assertEqual(run.writes_emitted_per_version[T.IMPLEMENTATION_WRITING], 5)
@@ -297,29 +297,29 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.writing_state_entry_reason[T.IMPLEMENTATION_WRITING],
                          T.ENTRY_REASON_ARBITRATOR_RULING)
 
-    def test_row_61_for_the_tests_the_same(self):
+    def test_row_62_for_the_tests_the_same(self):
         script = fixture.prefix_to_test_writing()
         for _ in range(3):
             script += [fixture.test_write(),
                        (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]
-        script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),                # row 61
+        script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),                # row 62
                    fixture.test_write()]                                             # forced
         machine, run, _ = self.drive(script)
-        self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["48", "61", "40"])
+        self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["48", "62", "40"])
         self.assertEqual(run.counters.value("test-writes"), 3)
         self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
 
-    def test_a_held_ruling_at_both_ceilings_routes_by_row_61_pending_the_users_ruling(self):
+    def test_a_held_ruling_at_both_ceilings_routes_by_row_62_pending_the_users_ruling(self):
         # PR #295, round 1, finding 2, pinned AS IT BEHAVES TODAY. The
         # test writer at its ceiling (3) and arbitrator-rulings at its (2):
-        # the third entry opens the investigation (row 63) without a
+        # the third entry opens the investigation (row 64) without a
         # charge, and a resume carrying the held `reject tests` routes by
-        # row 61 to the writer, arbitrator-rulings unmoved — one forced
+        # row 62 to the writer, arbitrator-rulings unmoved — one forced
         # write per resume of the user's, past section 7's three-plus-two.
         # Whether that is the intended reading or the ruling should be
         # refused (no row admits it with arbitrator-rulings at its ceiling,
-        # as row 61's guard text reads) is the design question of
+        # as row 62's guard text reads) is the design question of
         # docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
         # item 5, which the user has not yet ruled on. When he rules, this
         # test changes with the code.
@@ -328,7 +328,7 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
             script += [fixture.test_write(),
                        (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]          # row 47, 47, 48
         for _ in range(2):
-            script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),           # row 61
+            script += [(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),           # row 62
                        fixture.test_write(),                                        # forced
                        (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]          # row 48
         machine, run, _ = self.drive(script)
@@ -339,13 +339,13 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 5)
         for expected_writes in (6, 7):
             machine.launcher.script += [
-                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),  # row 70
+                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),  # row 71
                 fixture.test_write(),                                                    # forced
                 (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {}),                      # row 48
             ]
             fixture.drive(machine, run)
-            self.assertEqual(machine.held_rulings_applied[-1][0].row, "61")
-            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["70", "40", "48"])
+            self.assertEqual(machine.held_rulings_applied[-1][0].row, "62")
+            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["71", "40", "48"])
             self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], expected_writes)
             self.assertEqual(run.counters.value("test-writes"), 3)
             self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
@@ -380,7 +380,7 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         # design-writing as a redesign, not the contract check it left.
         machine.launcher.script += [(T.INVESTIGATE_WORKFLOW, T.V_RESUME, {})]
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(machine.routed[-1][0].row, "71")
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.design_version, 2)
         self.assertEqual(run.counters.value("redesigns"), 1)
@@ -398,17 +398,17 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         run.counters.values["redesigns"] = 2        # as after two redesigns
         machine.launcher.script += self.contract_reaches_the_user()[1:] + [
             (T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN, {}),
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 71
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 72
         ]
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(machine.routed[-1][0].row, "72")
         self.assertEqual(run.current_state, T.ENDED)
         self.assertEqual(run.outcome, T.OUTCOME_FAILED)
 
     def test_redesigns_reset_the_version_and_keep_the_redesigns_counter(self):
         script = fixture.prefix_to_tests_begun() + [
             (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, {"input_named": T.INPUT_DESIGN}),  # row 34
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),               # row 70
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),               # row 71
         ]
         machine, run, _ = self.drive(script)
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
@@ -464,7 +464,7 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.counters.value("redesigns"), 2)
         self.assertEqual(run.current_state, T.ENDED)
         self.assertEqual(run.outcome, T.OUTCOME_FAILED)
-        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(machine.routed[-1][0].row, "72")
 
     def test_the_user_s_reset_lifts_the_redesigns_ceiling_and_is_recorded_as_a_ruling(self):
         redesign_round = [
@@ -487,10 +487,10 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         rulings = record.absolute(record.user_rulings_path).read_text()
         self.assertIn("- reset (user-ruled 2026-09-08)", rulings)
 
-    def test_contract_revisions_a_second_reject_from_any_state_goes_to_the_user_by_row_65(self):
-        # Rows 22, 29, 33, 36, 43, 51 and 64 send a reject of the contract
+    def test_contract_revisions_a_second_reject_from_any_state_goes_to_the_user_by_row_66(self):
+        # Rows 22, 29, 33, 36, 43, 51 and 65 send a reject of the contract
         # to contract-revising only below the ceiling; at the ceiling the
-        # reject goes to contract-acceptance-by-user by row 65, whichever
+        # reject goes to contract-acceptance-by-user by row 66, whichever
         # state rejects — here the implementation's reviewer, then the
         # test-design's writer — and no second revision is written.
         reject_contract_round = [
@@ -502,11 +502,11 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         ]
         script = fixture.prefix_to_design_approved() + [fixture.implementation_write()]
         script += reject_contract_round
-        script += [(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {})]  # row 65
+        script += [(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT, {})]  # row 66
         machine, run, _ = self.drive(script)
         self.assertEqual(run.counters.value("contract-revisions"), 1)
         self.assertEqual(run.current_state, T.CONTRACT_ACCEPTANCE_BY_USER)
-        self.assertEqual(machine.routed[-1][0].row, "65")
+        self.assertEqual(machine.routed[-1][0].row, "66")
         self.assertEqual(machine.machine_errors, [])
         # The user advances the revision as it stands (row 9): both
         # work-streams re-enter, and the run goes on.
@@ -524,14 +524,14 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
             fixture.implementation_write(),
             (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 26: holds
             (T.TEST_DESIGN_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
-             {"input_named": T.INPUT_COMPONENT_CONTRACT}),                    # row 65
+             {"input_named": T.INPUT_COMPONENT_CONTRACT}),                    # row 66
         ]
         self.repository.remove()
         self.repository = fixture.ThrowawayRepository()
         machine, run, _ = self.drive(script)
         self.assertEqual(run.counters.value("contract-revisions"), 1)
         self.assertEqual(run.current_state, T.CONTRACT_ACCEPTANCE_BY_USER)
-        self.assertEqual(machine.routed[-1][0].row, "65")
+        self.assertEqual(machine.routed[-1][0].row, "66")
 
     def test_an_increment_past_a_ceiling_is_a_machine_error_routed_to_the_investigation(self):
         # The one path the table leaves to a counter past its ceiling: the

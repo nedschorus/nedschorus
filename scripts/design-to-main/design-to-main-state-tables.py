@@ -5,7 +5,7 @@ Source: docs/design-to-main/design-to-main-state-machine-design.md.
   STATE_TABLE        is section 3.1, one entry per row.
   TRANSITION_TABLE   is section 3.2, one entry per row, numbered in the
                      order the design lists them (row 1 is
-                     `initiate-design-to-main / invoked`, row 76 the last
+                     `initiate-design-to-main / invoked`, row 77 the last
                      gatekeeper-refusal). Every row has source "3.2".
   COUNTER_TABLE      is section 7, one entry per counter.
 
@@ -111,7 +111,7 @@ V_GATE_REJECTION = "gate-rejection"
 V_GATEKEEPER_REFUSAL = "gatekeeper-refusal"
 
 # The writer's counter that a `reject <artifact>` or `flaky-test` against a
-# counted writer refers to (section 3.2, rows 59 to 61, "whose writer's
+# counted writer refers to (section 3.2, rows 60 to 62, "whose writer's
 # counter"), and the writer the verdict sends the run to.
 WRITER_COUNTER_FOR_VERDICT = {
     V_REJECT_IMPLEMENTATION: "implementation-writes",
@@ -359,7 +359,7 @@ TO_HOLD_READY_FOR_TEST_SUITE = "hold at ready-for-test-suite"
 TO_BOTH_WORK_STREAMS_RE_ENTER = "both work-streams re-enter their writing states"
 TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
 # A resume destination that is not a state: from the investigation the
-# arbitrator's third entry opened (row 63), a resume that names no
+# arbitrator's third entry opened (row 64), a resume that names no
 # destination applies the ruling the arbitrator held in its report,
 # routed through test-suite-arbitrating's rows without entering it.
 TO_APPLY_THE_HELD_RULING = "the ruling the arbitrator held in its report (section 6.6)"
@@ -369,6 +369,13 @@ TO_RETRY_SAME_STATE = "the same state (retry)"
 TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
 TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
 TO_BOTH_WRITERS_FRESH = "both writers, fresh"
+# Row 59: the arbitrator, entered from a reviewer's ceiling, advances —
+# the reviewer was wrong (section 6.5), and the artifact continues as if
+# that reviewer had advanced it: the machine routes an `advance` from the
+# sub-state whose reject entered test-suite-arbitrating, by that reviewing
+# state's own rows.
+TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES = (
+    "wherever that reviewing state's own advance goes")
 
 # Guard words. Each is a phrase of the design; the machine holds one
 # predicate per phrase (GUARD_PREDICATES in design-to-main-state-machine.py).
@@ -402,18 +409,23 @@ G_IMPLEMENTATION_WORK_STREAM_READY = "the implementation-work-stream at ready-fo
 G_IMPLEMENTATION_WORK_STREAM_NOT_READY = "the implementation-work-stream not yet there"
 G_COULD_NOT_RUN_FIRST = "the first of consecutive entries"
 G_COULD_NOT_RUN_SECOND = "the second consecutive"
+# Rows 58 and 59 read why test-suite-arbitrating was entered — the state
+# or sub-state whose state-exit entered it, recorded in the run-state
+# (section 9, "why each state was entered").
+G_ENTERED_ON_A_FAILED_SUITE_OR_A_COULD_NOT_RUN = "entered on a failed suite or a could-not-run"
+G_ENTERED_FROM_A_REVIEWERS_CEILING = "entered from a reviewer's ceiling"
 G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
 G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
-# Row 61's second guard. arbitrator-rulings is charged on ENTRY (section 7),
+# Row 62's second guard. arbitrator-rulings is charged on ENTRY (section 7),
 # so while the arbitrator rules the counter already counts the entry it
 # rules from: 1 on its first entry, 2 on its second, and a third entry
-# never rules (row 63 opens the investigation instead). The guard therefore
+# never rules (row 64 opens the investigation instead). The guard therefore
 # reads the counter before that entry's charge — "below its ceiling" is
 # true of every ruling an arbitrator makes from a charged entry, which is
 # what section 7 means by "two more ordered by the arbitrator": the write
 # is bounded by this counter through the entries, not refused by it at a
 # ruling. The one ruling from an entry that was NOT charged — the held
-# ruling applied on a resume from the investigation row 63 opened — reads
+# ruling applied on a resume from the investigation row 64 opened — reads
 # AT the ceiling, and the machine admits it past this clause today
 # (design-to-main-state-machine.py, the predicate), pending the user's
 # ruling on docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
@@ -500,7 +512,7 @@ TRANSITION_TABLE = (
          counter_note="redesigns, on entry to design-writing",
          note="then design-writing as a redesign: the investigation holds design-writing "
               "as its resume destination (section 6.6), the redesigns ceiling deciding at "
-              "the resume (rows 70, 71)"),
+              "the resume (rows 71, 72)"),
     _row("12", DESIGN_REVIEWING, V_REJECT_DESIGN,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_below_ceiling("design-revisions")),
          DESIGN_WRITING, "design-revisions", note="the same initiator; it revises alone"),
@@ -518,7 +530,7 @@ TRANSITION_TABLE = (
     # because its checks are the design's own rows: the program check's
     # advance is row 5 or 6, and the agent check's advance on a revision
     # is row 9 whatever the revisions counter reads — the user's check is
-    # reached only by a reject (rows 8 and 65), never by an advance
+    # reached only by a reject (rows 8 and 66), never by an advance
     # (section 6.6: the ceiling guarantees a FAILED revision reaches him).
     _row("16", (DESIGN_REVIEWING, IMPLEMENTATION_REVIEWING,
                 TEST_DESIGN_REVIEWING, TEST_REVIEWING),
@@ -627,17 +639,22 @@ TRANSITION_TABLE = (
     _row("57", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_SECOND,),
          TEST_SUITE_ARBITRATING,
          counter_note="as row 55"),
-    _row("58", TEST_SUITE_ARBITRATING, V_ADVANCE, (), SUBMIT_TO_PR_GATE,
+    _row("58", TEST_SUITE_ARBITRATING, V_ADVANCE,
+         (G_ENTERED_ON_A_FAILED_SUITE_OR_A_COULD_NOT_RUN,), SUBMIT_TO_PR_GATE,
          note="a rerun passed and the failure was the environment's"),
-    _row("59", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION,
+    _row("59", TEST_SUITE_ARBITRATING, V_ADVANCE,
+         (G_ENTERED_FROM_A_REVIEWERS_CEILING,), TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES,
+         note="the reviewer was wrong (section 6.5): the artifact continues as if the "
+              "reviewer had advanced it"),
+    _row("60", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION,
          (G_WRITERS_COUNTER_BELOW_CEILING,), IMPLEMENTATION_WRITING,
          counter_note="arbitrator-rulings, charged on entry to test-suite-arbitrating, "
                       "as every row of this state; the write it orders is the "
                       "arbitrator's bucket"),
-    _row("60", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
+    _row("61", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
          (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING,
-         counter_note="as row 59"),
-    _row("61", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS),
+         counter_note="as row 60"),
+    _row("62", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS),
          (G_WRITERS_COUNTER_AT_CEILING,
           G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE),
          TO_THE_WRITER_THE_VERDICT_NAMES,
@@ -645,23 +662,23 @@ TRANSITION_TABLE = (
                       "is bounded by arbitrator-rulings (section 7)",
          note="the design names only the two rejects here; flaky-test at the "
               "test-writes ceiling has no row (reported with this slice)"),
-    _row("62", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION_AND_TESTS,
+    _row("63", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION_AND_TESTS,
          (G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE,),
          TO_BOTH_WRITERS_FRESH,
-         counter_note="each write bounded as row 61",
+         counter_note="each write bounded as row 62",
          note="both artifacts contradicting the component-contract; the "
               "implementation-work-stream runs first (section 3.1)"),
-    # Row 63 has no verdict: it is applied when test-suite-arbitrating is
+    # Row 64 has no verdict: it is applied when test-suite-arbitrating is
     # ENTERED with arbitrator-rulings at its ceiling (the machine's enter()),
     # before any arbitrator is launched there. Its guard is the entry check.
-    _row("63", TEST_SUITE_ARBITRATING, (),
+    _row("64", TEST_SUITE_ARBITRATING, (),
          (G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION,), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN,
          note="the ruling the arbitrator would have made rides in the report; "
               "applied on entry (sections 6.5, 7)"),
-    _row("64", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+    _row("65", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
          CONTRACT_REVISING, "contract-revisions"),
-    _row("65",
+    _row("66",
          (IMPLEMENTATION_WRITING, IMPLEMENTATION_REVIEWING, TEST_DESIGN_WRITING,
           TEST_DESIGN_REVIEWING, TEST_WRITING, TEST_REVIEWING, TEST_SUITE_ARBITRATING),
          (V_REJECT_CONTRACT, V_INPUT_QUICK_CHECK_FAILED),
@@ -670,9 +687,9 @@ TRANSITION_TABLE = (
          CONTRACT_ACCEPTANCE_BY_USER,
          note="any state above (sections 5.3, 6.6); contract-reviewing's own is row 8, "
               "and design-reviewing's rejects of the contract are rows 14 and 15"),
-    _row("66", TEST_SUITE_ARBITRATING, V_ESCALATE_TO_USER, (G_FOCUS_NOT_NAMED,),
+    _row("67", TEST_SUITE_ARBITRATING, V_ESCALATE_TO_USER, (G_FOCUS_NOT_NAMED,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN),
-    _row("67",
+    _row("68",
          (CONTRACT_REVIEWING, DESIGN_REVIEWING, IMPLEMENTATION_REVIEWING,
           TEST_DESIGN_REVIEWING, TEST_REVIEWING,
           CONTRACT_REVISING, TEST_DESIGN_WRITING, TEST_SUITE_ARBITRATING),
@@ -681,27 +698,27 @@ TRANSITION_TABLE = (
          INVESTIGATE_WORKFLOW,
          note="a reviewing sub-state by agent, contract-revising, test-design-writing "
               "or test-suite-arbitrating; investigation-focus as the agent names it"),
-    _row("68", INVESTIGATE_WORKFLOW, V_STOP, (), ENDED, outcome=OUTCOME_STOPPED_BY_USER),
-    _row("69", INVESTIGATE_WORKFLOW, V_SUBMIT_TO_PR_GATE, (), SUBMIT_TO_PR_GATE,
+    _row("69", INVESTIGATE_WORKFLOW, V_STOP, (), ENDED, outcome=OUTCOME_STOPPED_BY_USER),
+    _row("70", INVESTIGATE_WORKFLOW, V_SUBMIT_TO_PR_GATE, (), SUBMIT_TO_PR_GATE,
          note="the user's override; the gate still reviews"),
-    _row("70", INVESTIGATE_WORKFLOW, V_RESUME,
+    _row("71", INVESTIGATE_WORKFLOW, V_RESUME,
          (G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING,),
          TO_RESUME_DESTINATION,
          counter_note="redesigns, if the destination is design-writing; charged on entry"),
-    _row("71", INVESTIGATE_WORKFLOW, V_RESUME,
+    _row("72", INVESTIGATE_WORKFLOW, V_RESUME,
          (G_RESUME_TO_DESIGN_WRITING_AT_REDESIGNS_CEILING,), ENDED,
          outcome=OUTCOME_FAILED,
          note="the user is told in the investigation before it closes"),
-    _row("72", SUBMIT_TO_PR_GATE, V_ACCEPTED, (), ENDED, outcome=OUTCOME_PASSED),
-    _row("73", SUBMIT_TO_PR_GATE, V_GATE_REJECTION, (), INVESTIGATE_WORKFLOW,
+    _row("73", SUBMIT_TO_PR_GATE, V_ACCEPTED, (), ENDED, outcome=OUTCOME_PASSED),
+    _row("74", SUBMIT_TO_PR_GATE, V_GATE_REJECTION, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN, note="the gate's findings in the report"),
-    _row("74", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
+    _row("75", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
          (G_REFUSAL_INFRASTRUCTURE, G_FEWER_THAN_FIVE_ATTEMPTS), TO_RETRY_SAME_STATE,
          note="backed off"),
-    _row("75", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
+    _row("76", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
          (G_FIFTH_INFRASTRUCTURE_ATTEMPT_OR_INTEGRATION_OR_SCOPE_REFUSAL,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN),
-    _row("76", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL, (G_REFUSAL_FORM,),
+    _row("77", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL, (G_REFUSAL_FORM,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN,
          note="a machine error, the submit state built a bad request"),
 )
@@ -717,7 +734,7 @@ ROW_TESTS_BEGIN = "24"                            # sets tests-begun; enters tes
 ROW_IMPLEMENTATION_TO_TEST_SUITE = "25"           # the implementation-work-stream is ready
 ROW_TEST_DESIGN_APPROVED = "39"                   # sets test-design-approved; enters test-writing
 ROW_TESTS_TO_TEST_SUITE = "45"                    # the test-work-stream is ready
-ROW_THE_ARBITRATORS_THIRD_ENTRY = "63"            # applied on entry, no verdict
+ROW_THE_ARBITRATORS_THIRD_ENTRY = "64"            # applied on entry, no verdict
 ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK = "11"  # the investigation holds design-writing
 for _row_number in (ROW_TOPIC_BRANCH_CUT, ROW_DESIGN_APPROVED, ROW_TESTS_BEGIN,
                     ROW_IMPLEMENTATION_TO_TEST_SUITE, ROW_TEST_DESIGN_APPROVED,

@@ -96,7 +96,8 @@ class RunStateRecord:
     tests-begun; whether the design and the test-design are approved; the
     consecutive could-not-run, program-check-failure and submit-retry
     counts; why each state was entered (the writing states' entry reasons,
-    for the three buckets); each artifact's coverage-type; the paused
+    for the three buckets; what entered test-suite-arbitrating, for rows
+    58 and 59); each artifact's coverage-type; the paused
     state and the commit at which an investigation opened; whether row 1
     has cut the topic branch; the outcome once ended.
 
@@ -121,6 +122,7 @@ class RunStateRecord:
         "consecutive-program-check-failure-count",
         "implementation-coverage-type", "tests-coverage-type",
         "writing-state-entry-reason", "writes-emitted-per-version",
+        "test-suite-arbitrating-entered-from",
         "paused-state", "investigation-focus", "investigation-opened-at-commit",
         "investigation-opened-by", "investigation-opened-by-row",
         "investigation-held-resume-destination", "machine-error",
@@ -147,12 +149,18 @@ class RunStateRecord:
         self.tests_coverage_type = None
         self.writing_state_entry_reason = {}
         self.writes_emitted_per_version = {}
+        # Why test-suite-arbitrating was entered, as the state or sub-state
+        # whose state-exit entered it: test-suite-executing on a failed
+        # suite or a could-not-run, a reviewing sub-state on a reviewer's
+        # reject at the writer's ceiling. Rows 58 and 59 route the
+        # arbitrator's `advance` on it (section 6.5).
+        self.test_suite_arbitrating_entered_from = None
         self.paused_state = None
         self.investigation_focus = None
         self.investigation_opened_at_commit = None
         self.investigation_opened_by = None
         # The row of section 3.2 that opened the investigation, or None for
-        # a machine error; row 63 (the arbitrator's third entry) is the one
+        # a machine error; row 64 (the arbitrator's third entry) is the one
         # a resume must not return to (section 6.6).
         self.investigation_opened_by_row = None
         # The destination the investigation's opening held for its resume
@@ -172,6 +180,7 @@ class RunStateRecord:
         self.test_design_approved = False
         self.writes_emitted_per_version = {}
         self.writing_state_entry_reason = {}
+        self.test_suite_arbitrating_entered_from = None
         self.consecutive_program_check_failure_count = 0
 
     # -- work-streams ------------------------------------------------------
@@ -221,6 +230,7 @@ class RunStateRecord:
             "tests-coverage-type": self.tests_coverage_type,
             "writing-state-entry-reason": dict(self.writing_state_entry_reason),
             "writes-emitted-per-version": dict(self.writes_emitted_per_version),
+            "test-suite-arbitrating-entered-from": self.test_suite_arbitrating_entered_from,
             "paused-state": self.paused_state,
             "investigation-focus": self.investigation_focus,
             "investigation-opened-at-commit": self.investigation_opened_at_commit,
@@ -255,6 +265,7 @@ class RunStateRecord:
         run.tests_coverage_type = data.get("tests-coverage-type")
         run.writing_state_entry_reason = dict(data.get("writing-state-entry-reason", {}))
         run.writes_emitted_per_version = dict(data.get("writes-emitted-per-version", {}))
+        run.test_suite_arbitrating_entered_from = data.get("test-suite-arbitrating-entered-from")
         run.paused_state = data.get("paused-state")
         run.investigation_focus = data.get("investigation-focus")
         run.investigation_opened_at_commit = data.get("investigation-opened-at-commit")

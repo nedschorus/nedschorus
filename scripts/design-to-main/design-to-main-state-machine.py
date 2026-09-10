@@ -108,9 +108,9 @@ class GuardContext:
     state_exit: StateExitRecord
     resume_destination: Optional[str] = None
     # True while the machine routes the ruling the arbitrator held in its
-    # report, applied on a resume from the investigation row 63 opened
+    # report, applied on a resume from the investigation row 64 opened
     # (apply_the_held_ruling). That entry was not charged — enter()
-    # returned before the increment — so the ceiling arithmetic of row 61
+    # returned before the increment — so the ceiling arithmetic of row 62
     # reads it differently from a ruling made from a charged entry.
     held_ruling_applied_on_resume: bool = False
 
@@ -121,7 +121,7 @@ def applicable_acceptance_checks(run, composite_state):
     when they are agent-instructions; the contract's agent check only on a
     contract-revision. The contract's user check is not in this order at
     all: no advance reaches it — it is entered by a reject at the
-    revisions ceiling (rows 8 and 65), and left by rows 9, 10 and 11."""
+    revisions ceiling (rows 8 and 66), and left by rows 9, 10 and 11."""
     row = tables.STATE_TABLE_BY_NAME[composite_state]
     if composite_state == tables.CONTRACT_REVIEWING:
         checks = [tables.CONTRACT_ACCEPTANCE_BY_PROGRAM]
@@ -178,7 +178,7 @@ def arbitrator_rulings_before_the_entry_the_ruling_comes_from(ctx):
     """arbitrator-rulings as it stood before the entry the arbitrator rules
     from: one below the counter when that entry was charged (section 7,
     charged on entry), the counter itself when it was not — the held
-    ruling applied on a resume from the investigation row 63 opened, where
+    ruling applied on a resume from the investigation row 64 opened, where
     enter() returned before the charge (PR #295, round 1, finding 2)."""
     value = ctx.run.counters.value("arbitrator-rulings")
     if ctx.held_ruling_applied_on_resume:
@@ -189,7 +189,7 @@ def arbitrator_rulings_before_the_entry_the_ruling_comes_from(ctx):
 def _arbitrator_rulings_below_ceiling_before_this_entrys_charge(ctx):
     # The held ruling applied on a resume is admitted past the ceiling
     # clause: it reads at the ceiling (2 of 2), and the machine today
-    # routes it by row 61 to the writer anyway, one forced write per
+    # routes it by row 62 to the writer anyway, one forced write per
     # resume of the user's. Whether that is intended or the ruling should
     # be refused is a design question the user has not yet ruled on
     # (docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md, item
@@ -236,7 +236,7 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_COMPONENT_CONTRACT,
     tables.G_AGAINST_THE_TEST_DESIGN:
         lambda ctx: ctx.state_exit.input_named == tables.INPUT_TEST_DESIGN,
-    # Row 65 is one row across writers and reviewers, so the verdict must
+    # Row 66 is one row across writers and reviewers, so the verdict must
     # also be one the emitting state has (section 3.1): a writer fails a
     # check, a reviewer rejects, and the other way round is a machine error
     # at the ceiling as it is below it.
@@ -258,6 +258,13 @@ GUARD_PREDICATES = {
         lambda ctx: not ctx.run.work_stream_ready(tables.IMPLEMENTATION_WORK_STREAM),
     tables.G_COULD_NOT_RUN_FIRST: lambda ctx: ctx.run.consecutive_could_not_run_count == 0,
     tables.G_COULD_NOT_RUN_SECOND: lambda ctx: ctx.run.consecutive_could_not_run_count >= 1,
+    # Neither holds when the run-state records nothing (the user named
+    # test-suite-arbitrating on a resume before it was ever entered): the
+    # arbitrator's advance is then a machine error, not a guess.
+    tables.G_ENTERED_ON_A_FAILED_SUITE_OR_A_COULD_NOT_RUN:
+        lambda ctx: ctx.run.test_suite_arbitrating_entered_from == tables.TEST_SUITE_EXECUTING,
+    tables.G_ENTERED_FROM_A_REVIEWERS_CEILING:
+        lambda ctx: ctx.run.test_suite_arbitrating_entered_from in tables.COMPOSITE_STATE_OF_SUB_STATE,
     tables.G_WRITERS_COUNTER_BELOW_CEILING:
         lambda ctx: ctx.run.counters.below_ceiling(_writers_counter(ctx)),
     tables.G_WRITERS_COUNTER_AT_CEILING:
@@ -268,7 +275,7 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
     tables.G_FOCUS_NOT_NAMED:
         lambda ctx: ctx.state_exit.investigation_focus not in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
-    # Row 63's guard is read on ENTRY to test-suite-arbitrating (enter()),
+    # Row 64's guard is read on ENTRY to test-suite-arbitrating (enter()),
     # not on a state-exit; it is here so that every guard phrase of the
     # table has its predicate, evaluated on the run alone.
     tables.G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION:
@@ -309,7 +316,7 @@ def refuse_malformed_resume(run, state_exit, resume_destination):
     pause is unchanged (route_machine_error).
 
     Three forms are refused. A destination the user typed that names no
-    state or sub-state (row 70's guard would hold for any string, and a
+    state or sub-state (row 71's guard would hold for any string, and a
     row applied to a name the tables do not know would escape as a
     KeyError). A destination of `ended` or `initiate-design-to-main`,
     which section 6.1 forbids (PR #287's round-6 review reproduced the
@@ -365,7 +372,7 @@ def find_legal_transition_row(run, state_exit, resume_destination=None,
                 [r.row for r in matches], state_exit.verdict, from_state))
     row = matches[0]
     # On `resume` the destination is the user's input to the guard, not a
-    # claim about the row: row 71 overrides it with `ended`.
+    # claim about the row: row 72 overrides it with `ended`.
     if state_exit.destination is not None and state_exit.verdict != tables.V_RESUME:
         derived = derived_destination(row, context)
         if derived is not None and state_exit.destination != derived:
@@ -391,7 +398,21 @@ def derived_destination(row, context):
         return next_acceptance_check(context.run, context.state_exit)
     if row.to_state == tables.TO_THE_WRITER_THE_VERDICT_NAMES:
         return tables.WRITER_STATE_FOR_VERDICT[context.state_exit.verdict]
+    if row.to_state == tables.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES:
+        advance = the_reviewers_advance_the_arbitrator_stands_in_for(context.run, context.state_exit)
+        return derived_destination(find_legal_transition_row(context.run, advance),
+                                   GuardContext(context.run, advance))
     return row.to_state
+
+
+def the_reviewers_advance_the_arbitrator_stands_in_for(run, state_exit):
+    """Row 59: the `advance` the reviewer would have emitted — from the
+    sub-state whose reject entered test-suite-arbitrating, with the
+    arbitrator's package-commit — routed by that reviewing state's own
+    rows (row 16 to a later check, or the state's last-check rows)."""
+    return StateExitRecord(state=run.test_suite_arbitrating_entered_from,
+                           verdict=tables.V_ADVANCE,
+                           package_commit=state_exit.package_commit)
 
 
 # --- The launcher stub -------------------------------------------------------
@@ -500,6 +521,7 @@ class DesignToMainStateMachineFlow:
         self.discarded = []         # stale state-exits
         self.machine_errors = []
         self.held_rulings_applied = []   # (row, the arbitrator's held state-exit) on a resume
+        self.reviewers_advances_applied = []   # (row, the reviewer's advance) by row 59
 
     # -- starting and recovering ---------------------------------------------
 
@@ -597,7 +619,7 @@ class DesignToMainStateMachineFlow:
                 # carries is applied (refuse_malformed_resume).
                 resume_destination = self.resolve_resume_destination(run, state_exit)
             # A `reset` ruling takes effect on the counters before the row
-            # is looked up (row 71 guards on the redesigns ceiling); the
+            # is looked up (row 72 guards on the redesigns ceiling); the
             # rulings themselves are written to the branch with the commit,
             # below, after the guard — nothing is on disk if this
             # state-exit is refused.
@@ -754,7 +776,7 @@ class DesignToMainStateMachineFlow:
         if position == tables.TEST_SUITE_ARBITRATING:
             third_entry = tables.TRANSITION_TABLE_BY_ROW[tables.ROW_THE_ARBITRATORS_THIRD_ENTRY]
             if guards_hold(third_entry, GuardContext(run, None)):
-                # Row 63: the arbitrator's third entry opens the
+                # Row 64: the arbitrator's third entry opens the
                 # investigation (sections 6.5, 7); its ruling rides in the
                 # report, and a resume from here names a destination or
                 # applies that ruling (section 6.6), never re-entering.
@@ -835,6 +857,16 @@ class DesignToMainStateMachineFlow:
         row = find_legal_transition_row(run, held, held_ruling_applied_on_resume=True)
         next_position, _ = self.apply_transition_row(run, row, held, None)
         self.held_rulings_applied.append((row, held))
+        return next_position
+
+    def apply_the_reviewers_advance(self, run, state_exit):
+        """Row 59: apply the reviewer's own advance row — its side effects
+        too (tests begin, a work-stream's position, the hold) — and return
+        where it goes. The row is recorded beside the held rulings."""
+        advance = the_reviewers_advance_the_arbitrator_stands_in_for(run, state_exit)
+        row = find_legal_transition_row(run, advance)
+        next_position, _ = self.apply_transition_row(run, row, advance, None)
+        self.reviewers_advances_applied.append((row, advance))
         return next_position
 
     def apply_transition_row(self, run, row, state_exit, resume_destination):
@@ -938,7 +970,7 @@ class DesignToMainStateMachineFlow:
                                          tables.ENTRY_REASON_CONTRACT_REVISION)
             next_position = tables.IMPLEMENTATION_WRITING
         if row.to_state == tables.TO_BOTH_WRITERS_FRESH:
-            # Row 62: both writers, each write the arbitrator's bucket; the
+            # Row 63: both writers, each write the arbitrator's bucket; the
             # implementation-work-stream runs first, and holds for the
             # test-work-stream (row 26) at test-writing.
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING,
@@ -952,6 +984,14 @@ class DesignToMainStateMachineFlow:
             next_position = next_acceptance_check(run, state_exit)
         if row.to_state == tables.TO_THE_WRITER_THE_VERDICT_NAMES:
             next_position = tables.WRITER_STATE_FOR_VERDICT[verdict]
+        if row.to_state == tables.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES:
+            next_position = self.apply_the_reviewers_advance(run, state_exit)
+        # What entered test-suite-arbitrating, for rows 58 and 59 (and the
+        # third-entry rule, which reads nothing of it but is applied on
+        # this same entry). Recorded here, where the state-exit is in
+        # hand, before enter() runs.
+        if next_position == tables.TEST_SUITE_ARBITRATING:
+            run.test_suite_arbitrating_entered_from = state_exit.state
 
         # Re-entering a writing state by a reject, a discuss or the
         # arbitrator's ruling: why, for the three buckets. (Rows 18 and 39,
