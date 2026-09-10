@@ -50,6 +50,8 @@ Run: python3 scripts/cold-read-fast-read-test.py
 
 import json
 import os
+import re
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -351,15 +353,27 @@ with tempfile.TemporaryDirectory() as scratch:
         suggestions, walk_draft_relative, counter,
     )
     received_prompt = prompt_dump.read_text(encoding="utf-8") if prompt_dump.is_file() else ""
+    # The reviewer is pointed at the marked copy, never at the document
+    # itself (nedschorus#284 step 2). On the walk route that copy is scratch,
+    # so the path is only known by its name.
+    marked_copy_name = (pathlib.Path(walk_draft_relative).stem
+                        + script_under_test_module().SENTENCE_ID_MARKED_COPY_SUFFIX)
+    target_line = received_prompt.split("\n", 1)[0]
     expected_prompt = (script_under_test_module().FAST_CLARIFY_PROMPT_TEMPLATE
-                       .replace("{TARGET_PATH}", str(repository / walk_draft_relative))
+                       .replace("{TARGET_PATH}", "{TARGET_PATH}")
                        .replace("{REPORT_PATH}", str(suggestions)))
     check("the model receives the template embedded in the script",
-          result.returncode == 0 and received_prompt.strip() == expected_prompt.strip(),
+          result.returncode == 0
+          and received_prompt.strip().replace(
+              target_line.split(" in full", 1)[0][len("Read "):], "{TARGET_PATH}")
+          == expected_prompt.strip(),
           f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
+    check("the reviewer is pointed at the marked copy, not at the document",
+          marked_copy_name in received_prompt
+          and str(repository / walk_draft_relative) not in received_prompt,
+          repr(received_prompt[:300]))
     check("both paths are substituted and no placeholder remains",
-          str(repository / walk_draft_relative) in received_prompt
-          and str(suggestions) in received_prompt
+          str(suggestions) in received_prompt
           and "{TARGET_PATH}" not in received_prompt
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
@@ -432,6 +446,20 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and frozen.is_file()
           and frozen.read_bytes() == (repository / other_relative).read_bytes(),
           f"exit {result.returncode}; frozen present={frozen.exists()}; stderr={result.stderr[-300:]!r}")
+    marked_copy = records_report.parent / (
+        "a-design" + script_under_test_module().SENTENCE_ID_MARKED_COPY_SUFFIX)
+    check("the marked copy the reviewer read is kept beside the report as evidence",
+          marked_copy.is_file()
+          and script_under_test_module().strip_sentence_ids(
+              marked_copy.read_text(encoding="utf-8"))
+          == (repository / other_relative).read_text(encoding="utf-8"),
+          f"marked copy present={marked_copy.exists()}")
+    check("the document itself is not touched by the markup",
+          (repository / other_relative).read_bytes() == frozen.read_bytes())
+    check("the report comes back carrying the coverage section",
+          script_under_test_module().SENTENCE_COVERAGE_HEADING
+          in records_report.read_text(encoding="utf-8"),
+          records_report.read_text(encoding="utf-8")[-300:])
     record_lines = [line for line in result.stderr.splitlines() if "record: " in line]
     check("the read reports the shipping on stderr, and it shipped",
           len(record_lines) == 1 and "record: shipped:" in record_lines[0],
@@ -488,6 +516,109 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout.strip() == str(records_report)
           and any("record: FAILED:" in line for line in result.stderr.splitlines()),
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
+
+
+# --- The sentence-id markup (nedschorus#284 step 2) ----------------------
+# Called in-process: it is a pure function of the document's text, so these
+# cases need no cell, no model and no scratch checkout.
+import importlib.util as _importlib_util
+_spec = _importlib_util.spec_from_file_location(
+    "cold_read_fast_read", SCRIPTS_DIR / "cold-read-fast-read.py")
+_fast_read = _importlib_util.module_from_spec(_spec)
+_spec.loader.exec_module(_fast_read)
+sentence_id_markup = _fast_read.sentence_id_markup
+strip_sentence_ids = _fast_read.strip_sentence_ids
+
+MARKUP_SAMPLE = """\
+---
+name: a-skill
+description: Two sentences here. The second one follows.
+---
+
+# A heading with a period. And more
+
+A paragraph sentence one. A second one, which wraps
+onto a second line and ends here.
+
+- A list item. With two sentences.
+- Another item
+
+| a | b |
+|---|---|
+| one cell. still one row | two |
+
+```python
+x = 1  # not a sentence. really
+```
+
+Last line.
+"""
+
+marked, sentences = sentence_id_markup(MARKUP_SAMPLE)
+stripped = strip_sentence_ids(marked)
+check("strip_sentence_ids returns the document unchanged, byte for byte",
+      stripped == MARKUP_SAMPLE,
+      f"{stripped!r}")
+check("ids are numbered from s1 with no gaps",
+      list(sentences) == [f"s{n}" for n in range(1, len(sentences) + 1)],
+      str(list(sentences)))
+check("a heading is one unit, its id after the hashes",
+      "# [s" in marked and sum(1 for s in sentences.values()
+                              if s == "A heading with a period. And more") == 1,
+      marked)
+check("a frontmatter field takes its id after the key",
+      "name: [s1] a-skill" in marked, marked)
+check("a table row is one unit, whatever punctuation it holds",
+      any(s == "one cell. still one row | two |" for s in sentences.values()),
+      str(list(sentences.values())))
+check("a fenced code block is one unit, its id on the opening fence line",
+      any(s.startswith("```python") and "x = 1" in s for s in sentences.values())
+      and "[s" not in marked.split("\n")[marked.split("\n").index(
+          [line for line in marked.split("\n") if line.startswith("x = 1")][0])],
+      marked)
+check("a list item's id follows its marker and a second sentence gets its own",
+      "- [s" in marked and any(s == "A list item." for s in sentences.values())
+      and any(s == "With two sentences." for s in sentences.values()),
+      str(list(sentences.values())))
+check("a sentence wrapped across two lines carries exactly one id",
+      sum(1 for s in sentences.values() if s.startswith("A second one, which wraps")) == 1
+      and "onto a second line" in marked.split("\n")[
+          [i for i, line in enumerate(marked.split("\n")) if "A second one" in line][0] + 1],
+      marked)
+check("every id in the marked copy has an entry in the returned sentences",
+      set(re.findall(r"\[s(\d+)\]", marked)) == {name[1:] for name in sentences},
+      marked)
+
+
+
+# --- Attaching the originals and the coverage list -----------------------
+attach = _fast_read.attach_sentences_and_coverage
+SENTENCES = {"s1": "The first sentence.", "s2": "The second one.",
+             "s3": "A third, never restated."}
+
+attached = attach("## Question 1\n\n[s1]\n- a point\n\n[s2]\n- another\n", SENTENCES)
+check("each original sentence is quoted under the restatement claiming its id",
+      "[s1]\n> The first sentence." in attached
+      and "[s2]\n> The second one." in attached, attached)
+check("a sentence no restatement claimed is named in the coverage list",
+      "Never restated: s3" in attached and "3 sentences in the document, 2 restated" in attached,
+      attached)
+check("the coverage section carries the heading that says a machine wrote it",
+      _fast_read.SENTENCE_COVERAGE_HEADING in attached, attached)
+
+full = attach("[s1]\n- a\n\n[s2]\n- b\n\n[s3]\n- c\n", SENTENCES)
+check("a report that restates every sentence says so instead of listing none",
+      "Every sentence was restated." in full and "Never restated" not in full, full)
+
+invented = attach("[s1]\n- a\n\n[s9]\n- from nowhere\n", SENTENCES)
+check("an id the document does not have is reported as invented, not attached",
+      "Cited but not in the document: s9" in invented
+      and "> from nowhere" not in invented, invented)
+
+repeated = attach("[s1]\n- a\n\nSection 2: [s1] is unclear.\n", SENTENCES)
+check("only the first mention of an id gets the original under it",
+      repeated.count("> The first sentence.") == 1, repeated)
+
 
 print()
 if failures:

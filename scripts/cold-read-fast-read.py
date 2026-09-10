@@ -18,6 +18,24 @@ stderr, the stray-write and recovery lines -- is re-emitted on this program's
 stderr, so a caller watching stdout gets the one line and a caller reading
 stderr gets the whole account.
 
+WHAT THE REVIEWER ACTUALLY READS is not the document but a copy of it with an
+id on every sentence, `<name>-with-sentence-ids.md`, written by this program
+before the cell launches (nedschorus#284 step 2). Question 1 asks for a
+restatement under each id, so the author's check stops being an eyeball match
+between a restatement and a four-word anchor. When the report lands, this
+program puts each original sentence under the restatement claiming its id and
+appends a coverage section naming the sentences no restatement claimed and any
+id the reviewer cited that the document does not have. A sentence never
+restated is a sentence the reviewer may never have read, which is the failure
+the four-word anchor could not surface.
+
+The markup never alters the document. sentence_id_markup inserts exactly two
+shapes and strip_sentence_ids removes exactly those two, so the marked copy
+returns the original bytes; the test asserts that round trip. On the records
+route the marked copy is kept beside the report and ships with the record, as
+the evidence of what was put in front of the reviewer, and `target/` still
+holds the document's own bytes. On the walk route it is scratch.
+
 WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md`, gets its
 suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
 the walk reads next. Anything else -- a design, a skill, a record copy, a
@@ -57,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -97,7 +116,7 @@ Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three que
 
 ## Question 1: What it says
 
-Restate each document or source text as follows. For each sentence, write its first four words, exactly as written, on a line of their own, then one bullet per point, action, fact, idea, concept or claim in that sentence, in the order they were originally presented. A heading or a table row counts as a sentence; a list item is split into its sentences like any paragraph. A sentence may contain many points. Do not merge or omit details. Restate each point in your own plain, succinct words, literally and precisely. If a sentence or point does not make sense to you, your restatement may also not make sense, in which case add ?nonsense? to the end of that line or bullet. If there is a clear gap in the source text, note that gap with a bullet that says ?gap? followed by what is missing. In frontmatter, a data field such as a name, ids or dates gets no bullets; a prose field such as a description is treated like any other sentence. Your bullets, taken together, should be roughly the length of the original. This question exists so the author can check whether you understood what they meant, which is why you should be literal, and not try to guess a coherent meaning if there is none. Your rewrite helps the author determine if other agents correctly parse their text.
+Restate each document or source text as follows. For each sentence, write its id — the bracketed marker `[s12]` that begins it, brackets and all — on a line of its own, then one bullet per point, action, fact, idea, concept or claim in that sentence, in the order they were originally presented. The ids mark where each sentence begins: restate the text under the id it carries, and never merge two ids into one restatement or split one id into two. A heading, a table row or a fenced code block counts as a sentence; a list item is split into its sentences like any paragraph. A sentence may contain many points. Do not merge or omit details. Restate each point in your own plain, succinct words, literally and precisely. If a sentence or point does not make sense to you, your restatement may also not make sense, in which case add ?nonsense? to the end of that line or bullet. If there is a clear gap in the source text, note that gap with a bullet that says ?gap? followed by what is missing. In frontmatter, a data field such as a name, ids or dates gets no bullets; a prose field such as a description is treated like any other sentence. Your bullets, taken together, should be roughly the length of the original. This question exists so the author can check whether you understood what they meant, which is why you should be literal, and not try to guess a coherent meaning if there is none. Your rewrite helps the author determine if other agents correctly parse their text.
 
 ## Question 2: Where you struggled
 
@@ -163,6 +182,229 @@ def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
         record_dir = base.with_name(f"{base.name}-{suffix}")
         suffix += 1
     return record_dir
+
+
+# --- Sentence ids -------------------------------------------------------
+#
+# nedschorus#284 step 2. The reader is handed a copy of the document with an
+# id on every sentence, and Question 1 asks it to restate each sentence under
+# its id. That replaces the four-word anchor, which the 2026-09-07
+# measurement found suppresses paraphrase but still leaves the author matching
+# restatements to sentences by eye. With ids the match is mechanical, so this
+# program can attach each original sentence to the restatement that claims it
+# and name the sentences no restatement claimed.
+#
+# THE SPLIT IS MECHANICAL AND IMPERFECT BY RULING (the user, 2026-09-07: "I'm
+# fine with 1 and 2", accepting a marked temporary copy and an imperfect
+# split). A wrong boundary costs one mismatched id; it never loses text,
+# because every line of the original is emitted unchanged apart from the
+# inserted ids.
+SENTENCE_ID_MARKED_COPY_SUFFIX = "-with-sentence-ids.md"
+SENTENCE_ID_PATTERN = re.compile(r"\[s(\d+)\]")
+
+# A sentence ends at . ! or ? plus any closing quote or bracket, then
+# whitespace, then a character that can open a sentence. Abbreviations and
+# decimals are the known misses and are accepted.
+SENTENCE_END_PATTERN = re.compile(r"""[.!?]["')\]]*\s+""")
+SENTENCE_OPENERS = "\"'(`[*_"
+
+# Structures that are one unit each, whatever punctuation they contain: a
+# heading, a table row, a fenced code block. Splitting a heading at its colon
+# or a table row at a cell boundary would produce ids for fragments no reader
+# thinks of as sentences.
+HEADING_PATTERN = re.compile(r"^(\s*#{1,6}\s+)(.*)$")
+TABLE_ROW_PATTERN = re.compile(r"^(\s*\|)(.*)$")
+LIST_ITEM_PATTERN = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$")
+BLOCKQUOTE_PATTERN = re.compile(r"^(\s*>+\s*)(.*)$")
+FRONTMATTER_FIELD_PATTERN = re.compile(r"^(\s*[A-Za-z0-9_.-]+:\s+)(\S.*)$")
+CODE_FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
+
+
+def split_into_sentences(text: str) -> list:
+    """Split one line's prose into sentences, keeping every character.
+
+    The pieces rejoin to exactly the input, trailing spaces included, so a
+    marked line differs from the original only by the ids inserted into it.
+    """
+    pieces = []
+    start = 0
+    for match in SENTENCE_END_PATTERN.finditer(text):
+        following = text[match.end():match.end() + 1]
+        if following and (following.isupper() or following.isdigit()
+                          or following in SENTENCE_OPENERS):
+            pieces.append(text[start:match.end()])
+            start = match.end()
+    pieces.append(text[start:])
+    return [piece for piece in pieces if piece.strip()] or [text]
+
+
+def strip_sentence_ids(text: str) -> str:
+    """The inverse of sentence_id_markup: return the document as it was.
+
+    Exactly two shapes are ever inserted -- `[sN] ` immediately before a
+    sentence, and ` [sN]` at the end of a code block's opening fence line --
+    so removing exactly those two returns the original bytes. That invariant
+    is what lets the marked copy be thrown away and the ids be trusted: a
+    marked copy that does not strip back has altered the document under
+    review.
+    """
+    text = re.sub(r"\[s\d+\] ", "", text)
+    return re.sub(r" \[s\d+\]$", "", text, flags=re.MULTILINE)
+
+
+def sentence_id_markup(text: str):
+    """Return (the marked copy, {id: original sentence}).
+
+    Every line of the input survives in the output. Ids are inserted after a
+    heading's hashes, after a list item's marker, after a table row's opening
+    pipe, after a frontmatter field's key, and before each sentence of a
+    paragraph. A fenced code block gets its id on a line of its own above the
+    fence, because there is nowhere inside it to put one that markdown would
+    not treat as code.
+
+    A paragraph wrapped across several lines is not re-flowed. A line whose
+    predecessor ended mid-sentence continues that sentence and gets no id of
+    its own, so a wrapped sentence carries exactly one id.
+    """
+    lines = text.split("\n")
+    marked = []
+    sentences = {}
+    counter = 0
+    index = 0
+    in_frontmatter = bool(lines) and lines[0].strip() == "---"
+    continues_previous = False
+
+    def take(sentence: str) -> str:
+        nonlocal counter
+        counter += 1
+        name = f"s{counter}"
+        sentences[name] = sentence.strip()
+        return f"[{name}]"
+
+    def mark_prose(content: str, already_open: bool) -> str:
+        """Insert an id before each sentence of one line's content."""
+        out = []
+        for position, piece in enumerate(split_into_sentences(content)):
+            if position == 0 and already_open:
+                out.append(piece)
+                continue
+            leading = len(piece) - len(piece.lstrip())
+            out.append(f"{piece[:leading]}{take(piece)} {piece.lstrip()}")
+        return "".join(out)
+
+    def ends_open(content: str) -> bool:
+        """True when this line's last sentence is unfinished, so the next
+        line continues it."""
+        stripped = content.rstrip()
+        return bool(stripped) and stripped[-1] not in ".!?:;|"
+
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+
+        if in_frontmatter:
+            if index > 0 and stripped == "---":
+                in_frontmatter = False
+                marked.append(line)
+            elif index == 0:
+                marked.append(line)
+            else:
+                field = FRONTMATTER_FIELD_PATTERN.match(line)
+                marked.append(f"{field.group(1)}{take(field.group(2))} {field.group(2)}"
+                              if field else line)
+            index += 1
+            continue
+
+        if CODE_FENCE_PATTERN.match(line):
+            closing = index + 1
+            while closing < len(lines) and not CODE_FENCE_PATTERN.match(lines[closing]):
+                closing += 1
+            block = lines[index:closing + 1]
+            marked.append(f"{line} {take(chr(10).join(block))}")
+            marked.extend(block[1:])
+            index = closing + 1
+            continues_previous = False
+            continue
+
+        if not stripped:
+            marked.append(line)
+            continues_previous = False
+            index += 1
+            continue
+
+        heading = HEADING_PATTERN.match(line)
+        table_row = TABLE_ROW_PATTERN.match(line)
+        if heading:
+            marked.append(f"{heading.group(1)}{take(heading.group(2))} {heading.group(2)}")
+            continues_previous = False
+        elif table_row:
+            marked.append(f"{table_row.group(1)}{take(table_row.group(2))} {table_row.group(2)}")
+            continues_previous = False
+        else:
+            prefix_match = LIST_ITEM_PATTERN.match(line) or BLOCKQUOTE_PATTERN.match(line)
+            prefix = prefix_match.group(1) if prefix_match else ""
+            content = prefix_match.group(2) if prefix_match else line
+            open_here = continues_previous and not prefix_match
+            marked.append(prefix + mark_prose(content, open_here))
+            continues_previous = ends_open(content)
+        index += 1
+
+    return "\n".join(marked), sentences
+
+
+# The heading this program appends to the report. Named so a reader can tell
+# the machine-written section from the reviewer's own text, and so a later
+# pass can find it.
+SENTENCE_COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)"
+
+
+def attach_sentences_and_coverage(report_text: str, sentences: dict) -> str:
+    """Put each original sentence under the restatement claiming its id, and
+    append what the restatement missed.
+
+    The reviewer sees only the marked copy, so its report cites ids and not
+    the prose. Attaching the original here is what makes the report readable
+    beside the document without a second window, and the coverage list is the
+    check the four-word anchor could not give: a sentence the reviewer never
+    restated is a sentence it may never have read.
+
+    Only the FIRST mention of an id is treated as its restatement. Sections 2
+    and 3 cite ids too, and attaching the original under each citation would
+    bury the reviewer's own words.
+    """
+    claimed = []
+    unknown = []
+    lines = []
+    for line in report_text.split("\n"):
+        lines.append(line)
+        found = SENTENCE_ID_PATTERN.search(line)
+        if not found:
+            continue
+        name = f"s{found.group(1)}"
+        if name in claimed or name in unknown:
+            continue
+        if name not in sentences:
+            unknown.append(name)
+            continue
+        claimed.append(name)
+        quoted = sentences[name].replace("\n", "\n> ")
+        lines.append(f"> {quoted}")
+
+    missing = [name for name in sentences if name not in claimed]
+    coverage = [
+        "",
+        SENTENCE_COVERAGE_HEADING,
+        "",
+        f"- {len(sentences)} sentences in the document, {len(claimed)} restated.",
+    ]
+    coverage.append(
+        f"- Never restated: {', '.join(missing)}. Check whether the reviewer read them."
+        if missing else "- Every sentence was restated.")
+    if unknown:
+        coverage.append(
+            f"- Cited but not in the document: {', '.join(unknown)}. "
+            "The reviewer invented these ids.")
+    return "\n".join(lines).rstrip("\n") + "\n" + "\n".join(coverage) + "\n"
 
 
 def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
@@ -253,9 +495,26 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
         prompt_file = pathlib.Path(scratch) / EMBEDDED_PROMPT_FILE_NAME
         prompt_file.write_text(FAST_CLARIFY_PROMPT_TEMPLATE, encoding="utf-8")
+        # What the reviewer actually reads: the document with an id on every
+        # sentence. On the records route it is kept beside the report, as the
+        # evidence of what was put in front of the reviewer; on the walk route
+        # it is scratch and goes with the temporary directory. Either way the
+        # document itself is untouched, and target/ holds its original bytes.
+        marked_text, sentences = sentence_id_markup(
+            target.read_text(encoding="utf-8"))
+        marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
+            f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")
+        marked_copy.write_text(marked_text, encoding="utf-8")
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
-            last_exit_code = run_one_fast_clarify_cell(target, report, prompt_file)
+            last_exit_code = run_one_fast_clarify_cell(marked_copy, report, prompt_file)
             if last_exit_code == 0:
+                # Before anything reads or ships it: put each original
+                # sentence under the restatement claiming its id, and say
+                # which sentences no restatement claimed.
+                report.write_text(
+                    attach_sentences_and_coverage(
+                        report.read_text(encoding="utf-8"), sentences),
+                    encoding="utf-8")
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
                 print(report)
