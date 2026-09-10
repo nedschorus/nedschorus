@@ -310,19 +310,15 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
 
-    def test_a_held_ruling_at_both_ceilings_routes_by_row_62_pending_the_users_ruling(self):
-        # PR #295, round 1, finding 2, pinned AS IT BEHAVES TODAY. The
-        # test writer at its ceiling (3) and arbitrator-rulings at its (2):
-        # the third entry opens the investigation (row 64) without a
-        # charge, and a resume carrying the held `reject tests` routes by
-        # row 62 to the writer, arbitrator-rulings unmoved — one forced
-        # write per resume of the user's, past section 7's three-plus-two.
-        # Whether that is the intended reading or the ruling should be
-        # refused (no row admits it with arbitrator-rulings at its ceiling,
-        # as row 62's guard text reads) is the design question of
-        # docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
-        # item 5, which the user has not yet ruled on. When he rules, this
-        # test changes with the code.
+    def test_past_both_ceilings_every_further_cycle_is_gated_by_the_users_resume(self):
+        # The eighth walk, item 5 (user-ruled 2026-09-09), answering PR
+        # #295's reviewer: the test writer at its ceiling (3) and
+        # arbitrator-rulings at its (2), the third entry opens the
+        # investigation (row 64) without a charge, and a resume carrying
+        # the held `reject tests` routes by row 62 to the writer — the
+        # writer's counter stops deciding and is not reset, and each
+        # further cycle costs the user one resume. No admission, no
+        # arbitrator clause: row 62 reads the writer's counter alone.
         script = fixture.prefix_to_test_writing()
         for _ in range(3):
             script += [fixture.test_write(),

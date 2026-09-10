@@ -416,22 +416,11 @@ G_ENTERED_ON_A_FAILED_SUITE_OR_A_COULD_NOT_RUN = "entered on a failed suite or a
 G_ENTERED_FROM_A_REVIEWERS_CEILING = "entered from a reviewer's ceiling"
 G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
 G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
-# Row 62's second guard. arbitrator-rulings is charged on ENTRY (section 7),
-# so while the arbitrator rules the counter already counts the entry it
-# rules from: 1 on its first entry, 2 on its second, and a third entry
-# never rules (row 64 opens the investigation instead). The guard therefore
-# reads the counter before that entry's charge — "below its ceiling" is
-# true of every ruling an arbitrator makes from a charged entry, which is
-# what section 7 means by "two more ordered by the arbitrator": the write
-# is bounded by this counter through the entries, not refused by it at a
-# ruling. The one ruling from an entry that was NOT charged — the held
-# ruling applied on a resume from the investigation row 64 opened — reads
-# AT the ceiling, and the machine admits it past this clause today
-# (design-to-main-state-machine.py, the predicate), pending the user's
-# ruling on docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
-# item 5.
-G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE = (
-    "arbitrator-rulings below its ceiling, read before the entry the arbitrator rules from was charged")
+# Row 62 reads the writer's counter and nothing else: arbitrator-rulings is
+# charged on entry and bounds the arbitrator's entries (row 64 opens the
+# investigation on the third), and past the ceilings every further cycle
+# is gated by the user's resume (section 7; user-ruled 2026-09-09, the
+# eighth walk, item 5).
 G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN = "investigation-focus design or test-design as the agent names it"
 G_FOCUS_NOT_NAMED = "no investigation-focus named by the agent"
 G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION = (
@@ -654,16 +643,14 @@ TRANSITION_TABLE = (
     _row("61", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
          (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING,
          counter_note="as row 60"),
-    _row("62", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS),
-         (G_WRITERS_COUNTER_AT_CEILING,
-          G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE),
+    _row("62", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_FLAKY_TEST),
+         (G_WRITERS_COUNTER_AT_CEILING,),
          TO_THE_WRITER_THE_VERDICT_NAMES,
          counter_note="the writer's counter stops deciding and is not reset; the write "
-                      "is bounded by arbitrator-rulings (section 7)",
-         note="the design names only the two rejects here; flaky-test at the "
-              "test-writes ceiling has no row (reported with this slice)"),
+                      "is bounded by arbitrator-rulings, and past that by the user's "
+                      "resume (section 7)"),
     _row("63", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION_AND_TESTS,
-         (G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE,),
+         (),
          TO_BOTH_WRITERS_FRESH,
          counter_note="each write bounded as row 62",
          note="both artifacts contradicting the component-contract; the "

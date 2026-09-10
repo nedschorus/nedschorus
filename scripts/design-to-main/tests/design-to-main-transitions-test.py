@@ -148,14 +148,21 @@ LEGALITY_CASES = [
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
     ("61", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
     ("61", dict(counters={"test-writes": 2}), exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
-    # Row 62: the writer at its ceiling, the arbitrator ruling on its first
-    # or its second entry (arbitrator-rulings 1 or 2; a third never rules).
+    # Row 62: the writer at or above its ceiling, whatever arbitrator-rulings
+    # reads (the eighth walk, item 5: past the ceilings every cycle is gated
+    # by the user's resume, so the row carries no arbitrator clause); the
+    # three verdicts that send work to a counted writer, flaky-test included
+    # (item 4).
     ("62", dict(counters={"implementation-writes": 3, "arbitrator-rulings": 1}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
     ("62", dict(counters={"implementation-writes": 3, "arbitrator-rulings": 2}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION)),
     ("62", dict(counters={"test-writes": 3, "arbitrator-rulings": 2}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)),
+    ("62", dict(counters={"test-writes": 3, "arbitrator-rulings": 1}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
+    ("62", dict(counters={"test-writes": 4, "arbitrator-rulings": 2}),
+     exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
     # Row 63: both artifacts in one ruling, whatever the writers' counters.
     ("63", dict(counters={"arbitrator-rulings": 1}),
      exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS)),
@@ -271,14 +278,6 @@ ILLEGAL_CASES = [
      dict(IMPL_IS_SCRIPT, counters={"contract-revisions": 1}),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_INPUT_QUICK_CHECK_FAILED,
                input_named=T.INPUT_COMPONENT_CONTRACT)),
-    # A gap in the design as it reads (reported with this slice): row 61
-    # sends `flaky-test` to test-writing below the test-writes ceiling and
-    # row 62 names only `reject implementation` and `reject tests` at it,
-    # so `flaky-test` with test-writes at three has no row. Pinned so that
-    # the design gaining the row turns this red, not silently green.
-    ("flaky-test with the test-writes counter at its ceiling: no row of section 3.2",
-     dict(counters={"test-writes": 3, "arbitrator-rulings": 1}),
-     exit_from(T.TEST_SUITE_ARBITRATING, T.V_FLAKY_TEST)),
 ]
 
 
@@ -315,39 +314,16 @@ class EveryRowOfSection32(unittest.TestCase):
             M.find_legal_transition_row(run, exit_from(
                 T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, destination=T.TEST_WRITING))
 
-    def test_row_62_s_ceiling_clause_reads_the_counter_s_value_before_the_entry_the_ruling_comes_from(self):
-        # PR #295, round 1, finding 2. arbitrator-rulings is charged on
-        # entry, so a ruling the arbitrator makes from a charged entry
-        # reads one below the counter; the held ruling applied on a resume
-        # from the row-64 investigation comes from an entry that was NOT
-        # charged (enter() returned before the increment), so there the
-        # counter's value is the pre-entry value itself.
-        run = run_with(counters={"test-writes": 3, "arbitrator-rulings": 2})
-        held = exit_from(T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS)
-        from_a_charged_entry = M.GuardContext(run, held)
-        from_the_held_ruling = M.GuardContext(run, held, held_ruling_applied_on_resume=True)
-        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_a_charged_entry), 1)
-        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_the_held_ruling), 2)
-        run.counters.values["arbitrator-rulings"] = 1
-        self.assertEqual(M.arbitrator_rulings_before_the_entry_the_ruling_comes_from(from_a_charged_entry), 0)
-
-    def test_row_59_names_the_reviewers_own_advance_destination(self):
-        # The implementation reviewer rejected at the ceiling, tests not
-        # yet begun: the reviewer's advance is row 24, to test-design-writing.
-        run = run_with(**IMPL_IS_SCRIPT,
-                       test_suite_arbitrating_entered_from=T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
-        named = exit_from(T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, destination=T.TEST_DESIGN_WRITING)
-        self.assertEqual(M.find_legal_transition_row(run, named).row, "59")
-        with self.assertRaises(M.IllegalStateExit):
-            M.find_legal_transition_row(run, exit_from(
-                T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, destination=T.SUBMIT_TO_PR_GATE))
-        # An implementation that is agent-instructions: the agent check's
-        # advance is row 16, to the user's check.
-        run = run_with(**IMPL_IS_PROMPT,
-                       test_suite_arbitrating_entered_from=T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
-        named = exit_from(T.TEST_SUITE_ARBITRATING, T.V_ADVANCE,
-                          destination=T.IMPLEMENTATION_ACCEPTANCE_BY_USER)
-        self.assertEqual(M.find_legal_transition_row(run, named).row, "59")
+    def test_rows_62_and_63_read_the_writers_counter_only_never_the_arbitrators(self):
+        # The eighth walk, item 5: past the ceilings every further cycle is
+        # gated by the user's resume, so the "arbitrator-rulings below its
+        # ceiling" clause the code once carried on these rows is gone, and
+        # with it the admission that let a held ruling past it.
+        self.assertEqual(T.TRANSITION_TABLE_BY_ROW["62"].guards, (T.G_WRITERS_COUNTER_AT_CEILING,))
+        self.assertEqual(T.TRANSITION_TABLE_BY_ROW["63"].guards, ())
+        self.assertEqual(set(T.TRANSITION_TABLE_BY_ROW["62"].verdicts),
+                         {T.V_REJECT_IMPLEMENTATION, T.V_REJECT_TESTS, T.V_FLAKY_TEST})
+        self.assertFalse(hasattr(M.GuardContext(run_with(), None), "held_ruling_applied_on_resume"))
 
     def test_row_16_names_the_next_check_as_its_destination(self):
         state_exit = exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE,
