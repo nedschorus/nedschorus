@@ -5,10 +5,8 @@ Source: docs/design-to-main/design-to-main-state-machine-design.md.
   STATE_TABLE        is section 3.1, one entry per row.
   TRANSITION_TABLE   is section 3.2, one entry per row, numbered in the
                      order the design lists them (row 1 is
-                     `initiate-design-to-main / invoked`). Rows the design
-                     does not list but section 3.1 implies (the sub-states
-                     of a reviewing state "run in order") are numbered
-                     after the design's rows and marked source "3.1".
+                     `initiate-design-to-main / invoked`, row 76 the last
+                     gatekeeper-refusal). Every row has source "3.2".
   COUNTER_TABLE      is section 7, one entry per counter.
 
 Nothing here routes. The machine (design-to-main-state-machine.py) reads
@@ -92,7 +90,13 @@ V_REJECT_DESIGN = "reject design"
 V_REJECT_IMPLEMENTATION = "reject implementation"
 V_REJECT_TESTS = "reject tests"
 V_REJECT_TEST_DESIGN = "reject test-design"
+# The arbitrator's one ruling against both sibling artifacts (sections 3.1
+# and 6.1: "one or both of the implementation and the tests"; "both are
+# named and both are re-entered"). The design fixes no spelling for the
+# word; this one is reported with the slice.
+V_REJECT_IMPLEMENTATION_AND_TESTS = "reject implementation and tests"
 V_DISCUSS = "discuss"
+V_REDESIGN = "redesign"          # the user's, at contract-acceptance-by-user only
 V_INPUT_QUICK_CHECK_FAILED = "input-quick-check-failed"
 V_ESCALATE_TO_USER = "escalate-to-user"
 V_PASS = "pass"
@@ -107,11 +111,17 @@ V_GATE_REJECTION = "gate-rejection"
 V_GATEKEEPER_REFUSAL = "gatekeeper-refusal"
 
 # The writer's counter that a `reject <artifact>` or `flaky-test` against a
-# counted writer refers to (section 3.2, "any reject whose writer's counter").
+# counted writer refers to (section 3.2, rows 59 to 61, "whose writer's
+# counter"), and the writer the verdict sends the run to.
 WRITER_COUNTER_FOR_VERDICT = {
     V_REJECT_IMPLEMENTATION: "implementation-writes",
     V_REJECT_TESTS: "test-writes",
     V_FLAKY_TEST: "test-writes",
+}
+WRITER_STATE_FOR_VERDICT = {
+    V_REJECT_IMPLEMENTATION: IMPLEMENTATION_WRITING,
+    V_REJECT_TESTS: TEST_WRITING,
+    V_FLAKY_TEST: TEST_WRITING,
 }
 
 
@@ -139,7 +149,7 @@ STATE_TABLE = (
                   (CONTRACT_ACCEPTANCE_BY_PROGRAM, CONTRACT_ACCEPTANCE_BY_AGENT,
                    CONTRACT_ACCEPTANCE_BY_USER),
                   "the previous version and the notes, on a revision",
-                  (V_ADVANCE, V_REJECT_CONTRACT, V_DISCUSS), "composite"),
+                  (V_ADVANCE, V_REJECT_CONTRACT, V_DISCUSS, V_REDESIGN), "composite"),
     StateTableRow(DESIGN_REVIEWING,
                   (DESIGN_ACCEPTANCE_BY_AGENT, DESIGN_ACCEPTANCE_BY_USER),
                   "",
@@ -188,6 +198,7 @@ STATE_TABLE = (
                   "the implementation-work-stream's last state-package and files; "
                   "the test-work-stream's; the whole branch",
                   (V_ADVANCE, V_REJECT_IMPLEMENTATION, V_REJECT_TESTS,
+                   V_REJECT_IMPLEMENTATION_AND_TESTS,
                    V_REJECT_CONTRACT, V_FLAKY_TEST, V_ESCALATE_TO_USER),
                   "agent"),
     StateTableRow(INVESTIGATE_WORKFLOW, (),
@@ -231,8 +242,10 @@ class CounterCeilingRule:
     counter value at which section 3.2's guard "the counter at its ceiling"
     holds, taken from the row's own words in the "Ceiling" column: "a third
     entry is refused" and "the third write" put it at the ceiling itself;
-    "the second entry is not made" puts it one below (see the build report,
-    finding on contract-revisions and test-design-corrections).
+    "one revision: the user is called after the original and one
+    contract-revision have both failed review, and no second is written"
+    (and the same for test-design-corrections) puts it one below
+    (user-ruled 2026-09-08, the seventh walk, item 2).
     """
     name: str
     increments_when: str
@@ -265,17 +278,24 @@ COUNTER_TABLE = (
     CounterCeilingRule(
         "arbitrator-rulings",
         "`test-suite-arbitrating` is entered",
-        2, 2, "the third entry opens the investigation with the user"),
+        2, 2, "the third entry opens the investigation with the user; the arbitrator's "
+              "ruling rides in the report. A write the arbitrator orders is bounded by "
+              "this counter, not the writer's, whose counter stops deciding once the "
+              "arbitrator is in and is not reset"),
     CounterCeilingRule(
         "contract-revisions",
         "`contract-revising` is entered after a rejection or a failed check against "
         "the component-contract, once the design is approved",
-        2, 1, "`contract-acceptance-by-user`; the second entry is not made"),
+        2, 1, "`contract-acceptance-by-user`: one revision; the user is called after "
+              "the original and one contract-revision have both failed review, and no "
+              "second is written"),
     CounterCeilingRule(
         "test-design-corrections",
         "`test-design-writing` is re-entered after a rejection or a failed check "
         "against the test-design, once the test-design is approved",
-        2, 1, "`test-design-acceptance-by-user`; the second entry is not made"),
+        2, 1, "`test-design-acceptance-by-user`: one correction; the user is called after "
+              "the approved test-design and one correction have both failed, and no "
+              "second is written"),
 )
 
 COUNTER_TABLE_BY_NAME = {rule.name: rule for rule in COUNTER_TABLE}
@@ -326,8 +346,8 @@ WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
     ENTRY_REASON_CONTRACT_REVISION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_TEST_DESIGN_CORRECTION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
     ENTRY_REASON_REDESIGN: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
-    # The user naming a writing state on resume is his own time (a choice
-    # of this build; see the report).
+    # The user naming a writing state on resume is his own time: uncounted
+    # (user-ruled 2026-09-08, the seventh walk, item 8, kept as built).
     ENTRY_REASON_USER_NAMED_DESTINATION: BUCKET_UPSTREAM_DOCUMENT_CHANGED,
 }
 
@@ -338,7 +358,17 @@ WRITING_STATE_ENTRY_REASON_TO_BUCKET = {
 TO_HOLD_READY_FOR_TEST_SUITE = "hold at ready-for-test-suite"
 TO_BOTH_WORK_STREAMS_RE_ENTER = "both work-streams re-enter their writing states"
 TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
+# A resume destination that is not a state: from the investigation the
+# arbitrator's third entry opened (row 63), a resume that names no
+# destination applies the ruling the arbitrator held in its report,
+# routed through test-suite-arbitrating's rows without entering it.
+TO_APPLY_THE_HELD_RULING = "the ruling the arbitrator held in its report (section 6.6)"
+# The two names of section 3.1 a resume may not name (section 6.1).
+RESUME_MAY_NOT_NAME = (ENDED, INITIATE_DESIGN_TO_MAIN)
 TO_RETRY_SAME_STATE = "the same state (retry)"
+TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
+TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
+TO_BOTH_WRITERS_FRESH = "both writers, fresh"
 
 # Guard words. Each is a phrase of the design; the machine holds one
 # predicate per phrase (GUARD_PREDICATES in design-to-main-state-machine.py).
@@ -362,6 +392,8 @@ G_FROM_AN_EARLIER_ACCEPTANCE_CHECK = "from an acceptance-check that is not the l
 G_AGAINST_THE_DESIGN = "against the design"
 G_AGAINST_THE_COMPONENT_CONTRACT = "against the component-contract"
 G_AGAINST_THE_TEST_DESIGN = "against the test-design"
+G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT = (
+    "a reject of, or a failed check against, the component-contract")
 G_TESTS_NOT_YET_BEGUN = "tests not yet begun"
 G_TESTS_BEGUN = "tests begun"
 G_TEST_WORK_STREAM_READY = "the test-work-stream at ready-for-test-suite"
@@ -372,8 +404,26 @@ G_COULD_NOT_RUN_FIRST = "the first of consecutive entries"
 G_COULD_NOT_RUN_SECOND = "the second consecutive"
 G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
 G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
+# Row 61's second guard. arbitrator-rulings is charged on ENTRY (section 7),
+# so while the arbitrator rules the counter already counts the entry it
+# rules from: 1 on its first entry, 2 on its second, and a third entry
+# never rules (row 63 opens the investigation instead). The guard therefore
+# reads the counter before that entry's charge — "below its ceiling" is
+# true of every ruling an arbitrator makes from a charged entry, which is
+# what section 7 means by "two more ordered by the arbitrator": the write
+# is bounded by this counter through the entries, not refused by it at a
+# ruling. The one ruling from an entry that was NOT charged — the held
+# ruling applied on a resume from the investigation row 63 opened — reads
+# AT the ceiling, and the machine admits it past this clause today
+# (design-to-main-state-machine.py, the predicate), pending the user's
+# ruling on docs/walk/design-to-main-design-gaps-from-slices-1b-and-2.md,
+# item 5.
+G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE = (
+    "arbitrator-rulings below its ceiling, read before the entry the arbitrator rules from was charged")
 G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN = "investigation-focus design or test-design as the agent names it"
 G_FOCUS_NOT_NAMED = "no investigation-focus named by the agent"
+G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION = (
+    "entered for the third time in the design version")
 G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING = (
     "the redesigns counter below its ceiling or the destination not design-writing")
 G_RESUME_TO_DESIGN_WRITING_AT_REDESIGNS_CEILING = (
@@ -395,8 +445,7 @@ def counter_at_ceiling(name):
 
 @dataclass(frozen=True)
 class TransitionTableRow:
-    """One row of section 3.2 (source "3.2") or one the sub-state order of
-    section 3.1 implies (source "3.1")."""
+    """One row of section 3.2."""
     row: str
     from_states: Tuple[str, ...]
     verdicts: Tuple[str, ...]
@@ -446,132 +495,184 @@ TRANSITION_TABLE = (
          TO_BOTH_WORK_STREAMS_RE_ENTER, note="the revised-contract invalidation rule"),
     _row("10", CONTRACT_REVIEWING, V_DISCUSS, (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
          CONTRACT_REVISING, counter_note="the user's own time"),
-    _row("11", DESIGN_REVIEWING, V_REJECT_DESIGN,
+    _row("11", CONTRACT_REVIEWING, V_REDESIGN, (G_FROM_CONTRACT_ACCEPTANCE_BY_USER,),
+         INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_CONTRACT,
+         counter_note="redesigns, on entry to design-writing",
+         note="then design-writing as a redesign: the investigation holds design-writing "
+              "as its resume destination (section 6.6), the redesigns ceiling deciding at "
+              "the resume (rows 70, 71)"),
+    _row("12", DESIGN_REVIEWING, V_REJECT_DESIGN,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_below_ceiling("design-revisions")),
          DESIGN_WRITING, "design-revisions", note="the same initiator; it revises alone"),
-    _row("12", DESIGN_REVIEWING, V_REJECT_DESIGN,
+    _row("13", DESIGN_REVIEWING, V_REJECT_DESIGN,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_at_ceiling("design-revisions")),
          DESIGN_WRITING, note="the same initiator brings the user into the conversation"),
-    # Row 13 has no ceiling guard in the design; sections 4 and 7 give
-    # design-revisions one ceiling for both rejects, so the row is split
-    # here the way rows 11 and 12 are (build report, finding on row 13).
-    _row("13a", DESIGN_REVIEWING, V_REJECT_CONTRACT,
+    _row("14", DESIGN_REVIEWING, V_REJECT_CONTRACT,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_below_ceiling("design-revisions")),
          DESIGN_WRITING, "design-revisions",
          note="the same initiator fixes the component-contract; then the program check"),
-    _row("13b", DESIGN_REVIEWING, V_REJECT_CONTRACT,
+    _row("15", DESIGN_REVIEWING, V_REJECT_CONTRACT,
          (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT, counter_at_ceiling("design-revisions")),
-         DESIGN_WRITING, note="split from row 13 by sections 4 and 7"),
-    _row("14", DESIGN_REVIEWING, V_DISCUSS, (G_FROM_DESIGN_ACCEPTANCE_BY_USER,),
+         DESIGN_WRITING, note="the same initiator brings the user into the conversation"),
+    # Row 16 says "any reviewing state". contract-reviewing is left out
+    # because its checks are the design's own rows: the program check's
+    # advance is row 5 or 6, and the agent check's advance on a revision
+    # is row 9 whatever the revisions counter reads — the user's check is
+    # reached only by a reject (rows 8 and 65), never by an advance
+    # (section 6.6: the ceiling guarantees a FAILED revision reaches him).
+    _row("16", (DESIGN_REVIEWING, IMPLEMENTATION_REVIEWING,
+                TEST_DESIGN_REVIEWING, TEST_REVIEWING),
+         V_ADVANCE, (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), TO_THE_NEXT_ACCEPTANCE_CHECK,
+         note="any reviewing state whose next check the design lists nowhere else; "
+              "the user's check of an implementation or of tests exists only for "
+              "agent-instructions (section 3.1)"),
+    _row("17", DESIGN_REVIEWING, V_DISCUSS, (G_FROM_DESIGN_ACCEPTANCE_BY_USER,),
          DESIGN_WRITING, counter_note="the user's own time"),
-    _row("15", DESIGN_REVIEWING, V_ADVANCE, (G_FROM_THE_LAST_ACCEPTANCE_CHECK,),
+    _row("18", DESIGN_REVIEWING, V_ADVANCE, (G_FROM_THE_LAST_ACCEPTANCE_CHECK,),
          IMPLEMENTATION_WRITING,
          note="and, if tests have begun in this design version, test-design-writing"),
-    _row("16", CONTRACT_REVISING, V_EMITTED, (), CONTRACT_REVIEWING,
+    _row("19", CONTRACT_REVISING, V_EMITTED, (), CONTRACT_REVIEWING,
          counter_note="counted on entry"),
-    _row("17", CONTRACT_REVISING, V_INPUT_QUICK_CHECK_FAILED, (G_AGAINST_THE_DESIGN,),
+    _row("20", CONTRACT_REVISING, V_INPUT_QUICK_CHECK_FAILED, (G_AGAINST_THE_DESIGN,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
-    _row("18", IMPLEMENTATION_WRITING, V_EMITTED, (), IMPLEMENTATION_REVIEWING,
+    _row("21", IMPLEMENTATION_WRITING, V_EMITTED, (), IMPLEMENTATION_REVIEWING,
          "implementation-writes",
-         counter_note="charged by the three buckets of section 7: only a first write, "
-                      "or one after a reject from review or the user's discuss"),
-    _row("19", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT,), CONTRACT_REVISING, "contract-revisions"),
-    _row("20", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+         counter_note="only when the state was entered by a reject implementation from "
+                      "review (or the user's discuss, counted like any other) or as the "
+                      "first write; a write forced by an upstream change or ordered by "
+                      "the arbitrator charges nothing here (section 7, the three buckets)"),
+    _row("22", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("23", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_DESIGN,), INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
-    _row("21", IMPLEMENTATION_REVIEWING, V_ADVANCE,
+    _row("24", IMPLEMENTATION_REVIEWING, V_ADVANCE,
          (G_FROM_THE_LAST_ACCEPTANCE_CHECK, G_TESTS_NOT_YET_BEGUN), TEST_DESIGN_WRITING),
-    _row("22", IMPLEMENTATION_REVIEWING, V_ADVANCE,
+    _row("25", IMPLEMENTATION_REVIEWING, V_ADVANCE,
          (G_FROM_THE_LAST_ACCEPTANCE_CHECK, G_TESTS_BEGUN, G_TEST_WORK_STREAM_READY),
          TEST_SUITE_EXECUTING),
-    _row("23", IMPLEMENTATION_REVIEWING, V_ADVANCE,
+    _row("26", IMPLEMENTATION_REVIEWING, V_ADVANCE,
          (G_FROM_THE_LAST_ACCEPTANCE_CHECK, G_TESTS_BEGUN, G_TEST_WORK_STREAM_NOT_READY),
          TO_HOLD_READY_FOR_TEST_SUITE),
-    _row("24", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
+    _row("27", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
          (counter_below_ceiling("implementation-writes"),), IMPLEMENTATION_WRITING),
-    _row("25", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
+    _row("28", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
          (counter_at_ceiling("implementation-writes"),), TEST_SUITE_ARBITRATING,
          counter_note="arbitrator-rulings, on entry"),
-    _row("26", IMPLEMENTATION_REVIEWING, V_REJECT_CONTRACT, (), CONTRACT_REVISING,
-         "contract-revisions"),
-    _row("27", IMPLEMENTATION_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
+    _row("29", IMPLEMENTATION_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("30", IMPLEMENTATION_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_DESIGN),
-    _row("28", IMPLEMENTATION_REVIEWING, V_DISCUSS,
+    _row("31", IMPLEMENTATION_REVIEWING, V_DISCUSS,
          (G_FROM_IMPLEMENTATION_ACCEPTANCE_BY_USER,), IMPLEMENTATION_WRITING,
          counter_note="the user's own time; the write it forces is counted like any other"),
-    _row("29", TEST_DESIGN_WRITING, V_EMITTED, (), TEST_DESIGN_REVIEWING),
-    _row("30", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT,), CONTRACT_REVISING, "contract-revisions"),
-    _row("31", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+    _row("32", TEST_DESIGN_WRITING, V_EMITTED, (), TEST_DESIGN_REVIEWING),
+    _row("33", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("34", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_DESIGN,), INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
-    _row("32", TEST_DESIGN_REVIEWING, V_REJECT_TEST_DESIGN,
+    _row("35", TEST_DESIGN_REVIEWING, V_REJECT_TEST_DESIGN,
          (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_AGENT,), TEST_DESIGN_WRITING,
          counter_note="a re-write before approval", note="fresh, with the notes"),
-    _row("33", TEST_DESIGN_REVIEWING, V_REJECT_CONTRACT, (), CONTRACT_REVISING,
-         "contract-revisions"),
-    _row("34", TEST_DESIGN_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
+    _row("36", TEST_DESIGN_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("37", TEST_DESIGN_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_DESIGN),
-    _row("35", TEST_DESIGN_REVIEWING, V_DISCUSS, (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_USER,),
+    _row("38", TEST_DESIGN_REVIEWING, V_DISCUSS, (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_USER,),
          TEST_DESIGN_WRITING),
-    _row("36", TEST_DESIGN_REVIEWING, V_ADVANCE, (G_FROM_THE_LAST_ACCEPTANCE_CHECK,),
+    _row("39", TEST_DESIGN_REVIEWING, V_ADVANCE, (G_FROM_THE_LAST_ACCEPTANCE_CHECK,),
          TEST_WRITING),
-    _row("37", TEST_WRITING, V_EMITTED, (), TEST_REVIEWING, "test-writes",
-         counter_note="charged by the three buckets of section 7, as row 18"),
-    _row("38", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+    _row("40", TEST_WRITING, V_EMITTED, (), TEST_REVIEWING, "test-writes",
+         counter_note="on the same rule as row 21"),
+    _row("41", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_TEST_DESIGN, counter_below_ceiling("test-design-corrections")),
          TEST_DESIGN_WRITING, "test-design-corrections"),
-    _row("39", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+    _row("42", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_TEST_DESIGN, counter_at_ceiling("test-design-corrections")),
          TEST_DESIGN_ACCEPTANCE_BY_USER),
-    _row("40", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
-         (G_AGAINST_THE_COMPONENT_CONTRACT,), CONTRACT_REVISING, "contract-revisions"),
-    _row("41", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+    _row("43", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
+         (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("44", TEST_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_DESIGN,), INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_DESIGN),
-    _row("42", TEST_REVIEWING, V_ADVANCE,
+    _row("45", TEST_REVIEWING, V_ADVANCE,
          (G_FROM_THE_LAST_ACCEPTANCE_CHECK, G_IMPLEMENTATION_WORK_STREAM_READY),
          TEST_SUITE_EXECUTING),
-    _row("43", TEST_REVIEWING, V_ADVANCE,
+    _row("46", TEST_REVIEWING, V_ADVANCE,
          (G_FROM_THE_LAST_ACCEPTANCE_CHECK, G_IMPLEMENTATION_WORK_STREAM_NOT_READY),
          TO_HOLD_READY_FOR_TEST_SUITE),
-    _row("44", TEST_REVIEWING, V_REJECT_TESTS,
+    _row("47", TEST_REVIEWING, V_REJECT_TESTS,
          (counter_below_ceiling("test-writes"),), TEST_WRITING),
-    _row("45", TEST_REVIEWING, V_REJECT_TESTS,
+    _row("48", TEST_REVIEWING, V_REJECT_TESTS,
          (counter_at_ceiling("test-writes"),), TEST_SUITE_ARBITRATING,
          counter_note="arbitrator-rulings, on entry"),
-    _row("46", TEST_REVIEWING, V_REJECT_TEST_DESIGN,
+    _row("49", TEST_REVIEWING, V_REJECT_TEST_DESIGN,
          (counter_below_ceiling("test-design-corrections"),), TEST_DESIGN_WRITING,
          "test-design-corrections"),
-    _row("47", TEST_REVIEWING, V_REJECT_TEST_DESIGN,
+    _row("50", TEST_REVIEWING, V_REJECT_TEST_DESIGN,
          (counter_at_ceiling("test-design-corrections"),), TEST_DESIGN_ACCEPTANCE_BY_USER),
-    _row("48", TEST_REVIEWING, V_REJECT_CONTRACT, (), CONTRACT_REVISING, "contract-revisions"),
-    _row("49", TEST_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
+    _row("51", TEST_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("52", TEST_REVIEWING, V_REJECT_DESIGN, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_DESIGN),
-    _row("50", TEST_REVIEWING, V_DISCUSS, (G_FROM_TEST_ACCEPTANCE_BY_USER,), TEST_WRITING,
+    _row("53", TEST_REVIEWING, V_DISCUSS, (G_FROM_TEST_ACCEPTANCE_BY_USER,), TEST_WRITING,
          counter_note="the user's own time"),
-    _row("51", TEST_SUITE_EXECUTING, V_PASS, (), SUBMIT_TO_PR_GATE),
-    _row("52", TEST_SUITE_EXECUTING, V_FAIL, (), TEST_SUITE_ARBITRATING,
-         counter_note="the design's column says none; arbitrator-rulings is charged "
-                      "on entry (sections 6.5 and 7)"),
-    _row("53", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_FIRST,),
+    _row("54", TEST_SUITE_EXECUTING, V_PASS, (), SUBMIT_TO_PR_GATE),
+    _row("55", TEST_SUITE_EXECUTING, V_FAIL, (), TEST_SUITE_ARBITRATING,
+         counter_note="arbitrator-rulings, charged on entry to test-suite-arbitrating "
+                      "(sections 6.5 and 7; COUNTER_CHARGED_ON_ENTRY)"),
+    _row("56", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_FIRST,),
          TO_RETRY_SAME_STATE),
-    _row("54", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_SECOND,),
+    _row("57", TEST_SUITE_EXECUTING, V_COULD_NOT_RUN, (G_COULD_NOT_RUN_SECOND,),
          TEST_SUITE_ARBITRATING,
-         counter_note="as row 52"),
-    _row("55", TEST_SUITE_ARBITRATING, V_ADVANCE, (), SUBMIT_TO_PR_GATE,
+         counter_note="as row 55"),
+    _row("58", TEST_SUITE_ARBITRATING, V_ADVANCE, (), SUBMIT_TO_PR_GATE,
          note="a rerun passed and the failure was the environment's"),
-    _row("56", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION,
-         (G_WRITERS_COUNTER_BELOW_CEILING,), IMPLEMENTATION_WRITING),
-    _row("57", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
-         (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING),
-    _row("58", TEST_SUITE_ARBITRATING,
-         (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_FLAKY_TEST),
-         (G_WRITERS_COUNTER_AT_CEILING,), INVESTIGATE_WORKFLOW,
-         investigation_focus=FOCUS_UNKNOWN, note="the ruling in the report"),
-    _row("59", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (), CONTRACT_REVISING,
-         "contract-revisions"),
-    _row("60", TEST_SUITE_ARBITRATING, V_ESCALATE_TO_USER, (G_FOCUS_NOT_NAMED,),
+    _row("59", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION,
+         (G_WRITERS_COUNTER_BELOW_CEILING,), IMPLEMENTATION_WRITING,
+         counter_note="arbitrator-rulings, charged on entry to test-suite-arbitrating, "
+                      "as every row of this state; the write it orders is the "
+                      "arbitrator's bucket"),
+    _row("60", TEST_SUITE_ARBITRATING, (V_REJECT_TESTS, V_FLAKY_TEST),
+         (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING,
+         counter_note="as row 59"),
+    _row("61", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS),
+         (G_WRITERS_COUNTER_AT_CEILING,
+          G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE),
+         TO_THE_WRITER_THE_VERDICT_NAMES,
+         counter_note="the writer's counter stops deciding and is not reset; the write "
+                      "is bounded by arbitrator-rulings (section 7)",
+         note="the design names only the two rejects here; flaky-test at the "
+              "test-writes ceiling has no row (reported with this slice)"),
+    _row("62", TEST_SUITE_ARBITRATING, V_REJECT_IMPLEMENTATION_AND_TESTS,
+         (G_ARBITRATOR_RULINGS_BELOW_CEILING_BEFORE_THIS_ENTRYS_CHARGE,),
+         TO_BOTH_WRITERS_FRESH,
+         counter_note="each write bounded as row 61",
+         note="both artifacts contradicting the component-contract; the "
+              "implementation-work-stream runs first (section 3.1)"),
+    # Row 63 has no verdict: it is applied when test-suite-arbitrating is
+    # ENTERED with arbitrator-rulings at its ceiling (the machine's enter()),
+    # before any arbitrator is launched there. Its guard is the entry check.
+    _row("63", TEST_SUITE_ARBITRATING, (),
+         (G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION,), INVESTIGATE_WORKFLOW,
+         investigation_focus=FOCUS_UNKNOWN,
+         note="the ruling the arbitrator would have made rides in the report; "
+              "applied on entry (sections 6.5, 7)"),
+    _row("64", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
+         CONTRACT_REVISING, "contract-revisions"),
+    _row("65",
+         (IMPLEMENTATION_WRITING, IMPLEMENTATION_REVIEWING, TEST_DESIGN_WRITING,
+          TEST_DESIGN_REVIEWING, TEST_WRITING, TEST_REVIEWING, TEST_SUITE_ARBITRATING),
+         (V_REJECT_CONTRACT, V_INPUT_QUICK_CHECK_FAILED),
+         (G_A_REJECT_OF_OR_A_FAILED_CHECK_AGAINST_THE_COMPONENT_CONTRACT,
+          counter_at_ceiling("contract-revisions")),
+         CONTRACT_ACCEPTANCE_BY_USER,
+         note="any state above (sections 5.3, 6.6); contract-reviewing's own is row 8, "
+              "and design-reviewing's rejects of the contract are rows 14 and 15"),
+    _row("66", TEST_SUITE_ARBITRATING, V_ESCALATE_TO_USER, (G_FOCUS_NOT_NAMED,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN),
-    _row("61",
+    _row("67",
          (CONTRACT_REVIEWING, DESIGN_REVIEWING, IMPLEMENTATION_REVIEWING,
           TEST_DESIGN_REVIEWING, TEST_REVIEWING,
           CONTRACT_REVISING, TEST_DESIGN_WRITING, TEST_SUITE_ARBITRATING),
@@ -580,46 +681,49 @@ TRANSITION_TABLE = (
          INVESTIGATE_WORKFLOW,
          note="a reviewing sub-state by agent, contract-revising, test-design-writing "
               "or test-suite-arbitrating; investigation-focus as the agent names it"),
-    _row("62", INVESTIGATE_WORKFLOW, V_STOP, (), ENDED, outcome=OUTCOME_STOPPED_BY_USER),
-    _row("63", INVESTIGATE_WORKFLOW, V_SUBMIT_TO_PR_GATE, (), SUBMIT_TO_PR_GATE,
+    _row("68", INVESTIGATE_WORKFLOW, V_STOP, (), ENDED, outcome=OUTCOME_STOPPED_BY_USER),
+    _row("69", INVESTIGATE_WORKFLOW, V_SUBMIT_TO_PR_GATE, (), SUBMIT_TO_PR_GATE,
          note="the user's override; the gate still reviews"),
-    _row("64", INVESTIGATE_WORKFLOW, V_RESUME,
+    _row("70", INVESTIGATE_WORKFLOW, V_RESUME,
          (G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING,),
          TO_RESUME_DESTINATION,
          counter_note="redesigns, if the destination is design-writing; charged on entry"),
-    _row("65", INVESTIGATE_WORKFLOW, V_RESUME,
+    _row("71", INVESTIGATE_WORKFLOW, V_RESUME,
          (G_RESUME_TO_DESIGN_WRITING_AT_REDESIGNS_CEILING,), ENDED,
          outcome=OUTCOME_FAILED,
          note="the user is told in the investigation before it closes"),
-    _row("66", SUBMIT_TO_PR_GATE, V_ACCEPTED, (), ENDED, outcome=OUTCOME_PASSED),
-    _row("67", SUBMIT_TO_PR_GATE, V_GATE_REJECTION, (), INVESTIGATE_WORKFLOW,
+    _row("72", SUBMIT_TO_PR_GATE, V_ACCEPTED, (), ENDED, outcome=OUTCOME_PASSED),
+    _row("73", SUBMIT_TO_PR_GATE, V_GATE_REJECTION, (), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN, note="the gate's findings in the report"),
-    _row("68", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
+    _row("74", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
          (G_REFUSAL_INFRASTRUCTURE, G_FEWER_THAN_FIVE_ATTEMPTS), TO_RETRY_SAME_STATE,
          note="backed off"),
-    _row("69", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
+    _row("75", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL,
          (G_FIFTH_INFRASTRUCTURE_ATTEMPT_OR_INTEGRATION_OR_SCOPE_REFUSAL,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN),
-    _row("70", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL, (G_REFUSAL_FORM,),
+    _row("76", SUBMIT_TO_PR_GATE, V_GATEKEEPER_REFUSAL, (G_REFUSAL_FORM,),
          INVESTIGATE_WORKFLOW, investigation_focus=FOCUS_UNKNOWN,
          note="a machine error, the submit state built a bad request"),
-    # Section 3.1: a reviewing state's sub-states run in order; `advance`
-    # from one that is not the last goes to the next. Section 3.2 has no
-    # rows for these; row 6 is the only intra-composite row it lists.
-    _row("3.1-a", DESIGN_REVIEWING, V_ADVANCE,
-         (G_FROM_DESIGN_ACCEPTANCE_BY_AGENT,), DESIGN_ACCEPTANCE_BY_USER, source="3.1"),
-    _row("3.1-b", IMPLEMENTATION_REVIEWING, V_ADVANCE,
-         (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), IMPLEMENTATION_ACCEPTANCE_BY_USER,
-         source="3.1", note="for agent-instructions only"),
-    _row("3.1-c", TEST_DESIGN_REVIEWING, V_ADVANCE,
-         (G_FROM_TEST_DESIGN_ACCEPTANCE_BY_AGENT,), TEST_DESIGN_ACCEPTANCE_BY_USER,
-         source="3.1"),
-    _row("3.1-d", TEST_REVIEWING, V_ADVANCE,
-         (G_FROM_AN_EARLIER_ACCEPTANCE_CHECK,), TEST_ACCEPTANCE_BY_USER,
-         source="3.1", note="for tests that are agent-instructions only"),
 )
 
 TRANSITION_TABLE_BY_ROW = {row.row: row for row in TRANSITION_TABLE}
+
+# The rows the machine applies by number, beyond the row's own destination
+# and counter: named here so that the machine never carries a bare number
+# that the design's next renumbering would silently mis-aim.
+ROW_TOPIC_BRANCH_CUT = "1"                        # row 1 cuts the topic branch first
+ROW_DESIGN_APPROVED = "18"                        # sets design-approved; enters the writers
+ROW_TESTS_BEGIN = "24"                            # sets tests-begun; enters test-design-writing
+ROW_IMPLEMENTATION_TO_TEST_SUITE = "25"           # the implementation-work-stream is ready
+ROW_TEST_DESIGN_APPROVED = "39"                   # sets test-design-approved; enters test-writing
+ROW_TESTS_TO_TEST_SUITE = "45"                    # the test-work-stream is ready
+ROW_THE_ARBITRATORS_THIRD_ENTRY = "63"            # applied on entry, no verdict
+ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK = "11"  # the investigation holds design-writing
+for _row_number in (ROW_TOPIC_BRANCH_CUT, ROW_DESIGN_APPROVED, ROW_TESTS_BEGIN,
+                    ROW_IMPLEMENTATION_TO_TEST_SUITE, ROW_TEST_DESIGN_APPROVED,
+                    ROW_TESTS_TO_TEST_SUITE, ROW_THE_ARBITRATORS_THIRD_ENTRY,
+                    ROW_REDESIGN_ORDERED_AT_THE_CONTRACT_CHECK):
+    assert _row_number in TRANSITION_TABLE_BY_ROW, _row_number
 
 # The design's own row numbers (source 3.2), for the coverage assertion in
 # the transitions test: every one must be hit by a legality case.
@@ -637,6 +741,9 @@ def contract_path_while_no_code_exists(component):
 
 
 RECORD_DIRECTORY_NAME = "design-to-main-record"
+# The `Write:` trailer of a write the writer's counter does not count — one
+# forced by an upstream change or ordered by the arbitrator (section 9).
+WRITE_TRAILER_FORCED = "forced"
 RUN_STATE_FILE_NAME = "run-state.json"
 USER_RULINGS_FILE_NAME = "user-rulings.md"
 
