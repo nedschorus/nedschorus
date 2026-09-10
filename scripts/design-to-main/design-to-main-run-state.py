@@ -56,9 +56,13 @@ class RunCounters:
         self.values[name] += 1
         return self.values[name]
 
-    def reset_for_new_design_version(self):
-        """A redesign resets the version (section 3.2): every per-design-
-        version counter starts from zero; the redesigns counter does not."""
+    def zero_the_six_per_version_counters(self):
+        """The six per-version counters start from zero; the redesigns
+        counter does not. A redesign does this (section 3.2, "A redesign
+        resets the version"), and so does every resume from an
+        investigation (section 7, row 71; user-ruled 2026-09-09, the
+        eighth walk: "if I intervene all the agents get their chance
+        again")."""
         for rule in tables.COUNTER_TABLE:
             if rule.per_design_version:
                 self.values[rule.name] = 0
@@ -172,7 +176,7 @@ class RunStateRecord:
 
     def start_new_design_version(self):
         self.design_version += 1
-        self.counters.reset_for_new_design_version()
+        self.counters.zero_the_six_per_version_counters()
         self.tests_begun = False
         self.implementation_work_stream_position = None
         self.test_work_stream_position = None

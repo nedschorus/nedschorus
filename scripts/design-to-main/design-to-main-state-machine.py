@@ -1017,6 +1017,12 @@ class DesignToMainStateMachineFlow:
         if row.to_state == tables.ENDED:
             run.outcome = row.outcome
         if row.to_state == tables.TO_RESUME_DESTINATION:
+            # Row 71: every resume zeroes the six per-version counters, as a
+            # redesign does — the user has intervened, and every agent gets
+            # its chance again (section 7). Before the held ruling is
+            # applied, so that it reads the zeroed counters; a refused
+            # resume never reaches here (route_machine_error).
+            run.counters.zero_the_six_per_version_counters()
             if resume_destination == tables.TO_APPLY_THE_HELD_RULING:
                 next_position = self.apply_the_held_ruling(run, state_exit)
             else:

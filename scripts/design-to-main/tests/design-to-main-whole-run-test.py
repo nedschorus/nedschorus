@@ -246,7 +246,8 @@ class TwoWorkStreams(unittest.TestCase):
         # advances, and row 26 holds the implementation and sends the run to
         # the test-work-stream's position: test-reviewing, not the
         # test-writing it was in before the tests were reviewed. No test
-        # write is forced, and the test-writes counter does not move.
+        # write is forced; the resume zeroed test-writes (section 7) and
+        # nothing charges it after.
         repository = fixture.ThrowawayRepository()
         try:
             script = fixture.prefix_to_test_writing() + [
@@ -269,7 +270,7 @@ class TwoWorkStreams(unittest.TestCase):
             self.assertEqual(run.current_state, T.TEST_REVIEWING)
             self.assertEqual(run.test_work_stream_position, T.TEST_REVIEWING)
             self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
-            self.assertEqual(run.counters.value("test-writes"), 1)
+            self.assertEqual(run.counters.value("test-writes"), 0)
             self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 1)
             self.assertEqual(
                 sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_WRITING), 1)
@@ -812,7 +813,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         self.assertEqual(run.counters.value("redesigns"), 2)
         self.assertFalse(record.absolute(record.user_rulings_path).exists())
         # Without the reset a resume to design-writing is row 72; with it,
-        # said again on the correct resume, row 70.
+        # said again on the correct resume, row 71.
         machine.launcher.script.append(
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING, "rulings": ("reset",)}))
         fixture.drive(machine, run)
@@ -879,12 +880,13 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         ]
         fixture.drive(machine, run)
         self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["71", "40"])
-        # test-writes is 1: the arbitrator's two earlier writes were its
-        # bucket, so the held ruling routes by row 61, not 61.
+        # The resume zeroed the six per-version counters (section 7), so
+        # the held ruling routes by row 61; the write it orders is still
+        # the arbitrator's bucket, and test-writes stays at zero.
         self.assertEqual(machine.held_rulings_applied[-1][0].row, "61")
         self.assertEqual(self.arbitrator_launches(machine), 2)
-        self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
-        self.assertEqual(run.counters.value("test-writes"), 1)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 0)
+        self.assertEqual(run.counters.value("test-writes"), 0)
         self.assertEqual(run.writing_state_entry_reason[T.TEST_WRITING], T.ENTRY_REASON_ARBITRATOR_RULING)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
         self.assertEqual(machine.machine_errors, [])
@@ -898,47 +900,34 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
         self.assertEqual(self.arbitrator_launches(machine), 2)
 
-    def test_an_investigation_opened_by_a_resume_is_opened_whole_with_its_own_commit(self):
-        # PR #295, round 2, finding 1: an investigation opened by a
-        # state-exit routed from investigate-workflow itself — here a
-        # resume naming test-suite-arbitrating while arbitrator-rulings is
-        # at its ceiling, so that enter() applies row 64 again — was
-        # half-opened: the paused state, the row and the focus rewritten,
-        # the commit it opened at not refreshed, so the next resume routed
-        # on the first investigation's edits. The opening is keyed on the
-        # openers now, not on the state-exit's from-state.
+    def test_a_resume_naming_the_arbitrator_launches_it_with_a_fresh_budget_and_carries_the_users_edit(self):
+        # PR #295, round 2, finding 1 reproduced a resume naming
+        # test-suite-arbitrating at the arbitrator's ceiling re-opening the
+        # investigation half-way. Since the eighth walk's ruling that every
+        # resume zeroes the six per-version counters, that resume finds
+        # arbitrator-rulings at zero: the arbitrator is launched a third
+        # time on a fresh budget, and nothing re-opens. The resume's
+        # commit still carries the user's edit. (The opening is keyed on
+        # the openers regardless, so a future row that did open one from
+        # a resume would open it whole.)
         machine, run, record = self.open_the_third_entry_investigation()
-        first_opened_at = run.investigation_opened_at_commit
         edited = record.absolute(fixture.COMPONENT_DIRECTORY + "/widget_counter.py")
         edited.parent.mkdir(parents=True, exist_ok=True)
-        edited.write_text("# the implementation, edited by the user in the first investigation\n")
-        machine.launcher.script.append(
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.TEST_SUITE_ARBITRATING}))
-        fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "71")
-        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
-        self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
-        self.assertEqual(self.arbitrator_launches(machine), 2)
-        # The resume's commit is the second investigation's opening commit:
-        # it carries the user's edit, and the investigation opened at its
-        # parent, not at the first investigation's.
-        opening_commit = machine.routed[-1][2]
-        self.assertNotEqual(run.investigation_opened_at_commit, first_opened_at)
-        self.assertEqual(run.investigation_opened_at_commit,
-                         record.git("rev-parse", opening_commit + "^").stdout.strip())
-        self.assertIn(fixture.COMPONENT_DIRECTORY + "/widget_counter.py",
-                      record.git("show", "--name-only", "--format=", opening_commit).stdout.split())
-        self.assertEqual(record.git("status", "--porcelain").stdout, "")
-        self.assertEqual(record.paths_changed_since(machine.commit_the_investigation_opened_with(run)), [])
-        # A resume with nothing edited applies the held ruling, and does
-        # not route on the first investigation's edit.
+        edited.write_text("# the implementation, edited by the user in the investigation\n")
         machine.launcher.script += [
-            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.TEST_SUITE_ARBITRATING}),  # row 71
+            (T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),                                # row 61
         ]
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["71", "61"])
         self.assertEqual(run.current_state, T.TEST_WRITING)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
+        self.assertEqual(self.arbitrator_launches(machine), 3)
         self.assertEqual(machine.machine_errors, [])
+        resume_commit = machine.routed[-2][2]
+        self.assertIn(fixture.COMPONENT_DIRECTORY + "/widget_counter.py",
+                      record.git("show", "--name-only", "--format=", resume_commit).stdout.split())
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
 
 
 class RecoveryFromTheLastCommit(unittest.TestCase):

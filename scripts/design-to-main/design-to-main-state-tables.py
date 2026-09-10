@@ -691,7 +691,8 @@ TRANSITION_TABLE = (
     _row("71", INVESTIGATE_WORKFLOW, V_RESUME,
          (G_RESUME_BELOW_REDESIGNS_CEILING_OR_NOT_TO_DESIGN_WRITING,),
          TO_RESUME_DESTINATION,
-         counter_note="redesigns, if the destination is design-writing; charged on entry"),
+         counter_note="redesigns, if the destination is design-writing; charged on entry. "
+                      "The six per-version counters start from zero on every resume (section 7)"),
     _row("72", INVESTIGATE_WORKFLOW, V_RESUME,
          (G_RESUME_TO_DESIGN_WRITING_AT_REDESIGNS_CEILING,), ENDED,
          outcome=OUTCOME_FAILED,
