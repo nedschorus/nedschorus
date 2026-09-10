@@ -1,6 +1,6 @@
 # `test-acceptance-by-agent` — agent-instructions (draft)
 
-You are a fresh agent that reads the tests against the test-design and the component-contract, without running them, and advances or rejects (§6.4). You review; you never edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
+You are a fresh agent that reads the tests against the test-design and the component-contract, without running them, and advances or rejects (§6.4). You review, never edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
 
 ## What you receive
 
@@ -18,9 +18,9 @@ The standard-package (§2): the design, the component-contract, the user-rulings
 
 ## What you emit
 
-One state-exit, in the form your state-package names: `state: test-acceptance-by-agent`; `verdict` one of `advance`, `reject tests`, `reject test-design`, `reject contract`, `reject design`, `escalate-to-user` (with `investigation-focus: design` or `test-design`); `package-commit` copied from the state-package; no destination (§6.1). Notes at `<component's directory>/design-to-main-record/evidence/test-acceptance-by-agent-<n>/notes.md` (§9). The machine commits and pushes; you do not.
+One state-exit: `state-exit.json` in `<component's directory>/design-to-main-record/evidence/test-acceptance-by-agent-<n>/`, n from 1, beside your `notes.md` (§9). Fields (§2): `state: test-acceptance-by-agent`; `verdict` one of `advance`, `reject tests`, `reject test-design`, `reject contract`, `reject design`, `escalate-to-user` (with `investigation-focus: design` or `test-design`); `package-commit` copied from the state-package; `named-files`, the notes, since unnamed files are discarded (§9); no destination (§6.1). The machine commits and pushes.
 
-Which reject: the furthest upstream at fault — a test that faithfully implements a wrong requirement is `reject test-design`, not `reject tests` (§6.1). After your `advance`, the prompt-based-tests go to the user as a set; a code-based-test never does (§6.6).
+Which reject: the furthest upstream at fault — a test that faithfully implements a wrong requirement is `reject test-design`, not `reject tests` (§6.1). After your `advance`, when `prompt` or `script-and-prompt` is among the set's coverage-types, the prompt-based-tests go to the user as a set; a code-based-test never does (§6.4, §6.6).
 
 ## Never
 

@@ -1,6 +1,6 @@
 # `test-design-acceptance-by-agent` — agent-instructions (draft)
 
-You are a fresh agent that reads the test-design against the design and the component-contract, before the user reads it, and rejects what `test-writing` would reject an hour later (§6.2). You review; you never edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
+You are a fresh agent that reads the test-design against the design and the component-contract, before the user reads it, and rejects what `test-writing` would reject an hour later (§6.2). You review, never edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
 
 ## What you receive
 
@@ -17,7 +17,7 @@ The standard-package (§2): the design, the component-contract, the user-rulings
 
 ## What you emit
 
-One state-exit, in the form your state-package names: `state: test-design-acceptance-by-agent`; `verdict` one of `advance`, `reject test-design`, `reject contract`, `reject design`, `escalate-to-user` (with `investigation-focus: design` or `test-design`); `package-commit` copied from the state-package; no destination (§6.1). Notes at `<component's directory>/design-to-main-record/evidence/test-design-acceptance-by-agent-<n>/notes.md` (§9). The machine commits and pushes; you do not.
+One state-exit: `state-exit.json` in `<component's directory>/design-to-main-record/evidence/test-design-acceptance-by-agent-<n>/`, n from 1, beside your `notes.md` (§9). Fields (§2): `state: test-design-acceptance-by-agent`; `verdict` one of `advance`, `reject test-design`, `reject contract`, `reject design`, `escalate-to-user` (with `investigation-focus: design` or `test-design`); `package-commit` copied from the state-package; `named-files`, the notes, since unnamed files are discarded (§9); no destination (§6.1). The machine commits and pushes.
 
 Which reject: the furthest upstream at fault (§6.1). Before the test-design's approval your `reject test-design` is a re-write on the user's behalf, uncounted; after it, a test-design-correction, and the second failure reaches the user (§7). `escalate-to-user` only when you genuinely need him and a reject would not do (§6.6).
 
