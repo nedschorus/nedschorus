@@ -17,7 +17,7 @@ The user's invocation, naming the component and its directory (§3.1, §6.6); on
 
 ## What you emit
 
-One state-exit per instance: `state-exit.json` in `<component's directory>/design-to-main-record/evidence/design-writing-<n>/`, n from 1, beside your `notes.md` (§9). Fields (§2): `state: design-writing`; `verdict: emitted`; `package-commit`, copied from the state-package; `named-files`, both documents and the notes, since unnamed files are discarded (§9); `rulings`, his words verbatim, `reset` included, for the machine to append to the user-rulings file; no destination (§6.1). In an investigation you hold, `state: investigate-workflow`, `verdict` `stop`, `submit-to-PR-gate` or `resume`, `destination` where he names one, `rulings` (§3.1, §6.6). The machine commits and pushes.
+One state-exit per instance: `state-exit.json` in `<component's directory>/design-to-main-record/evidence/design-writing-<n>/`, n from 1, beside your `notes.md` (§9). Fields (§2): `state: design-writing`; `verdict: emitted`; `package-commit`, copied from the state-package; `named-files`, both documents and the notes, since unnamed files are discarded (§9); `rulings`, his words verbatim, `reset` included, for the machine to append to the user-rulings file; no destination (§6.1). In an investigation you hold, `state: investigate-workflow`, `verdict` `stop`, `submit-to-PR-gate` or `resume`, `destination` where he names one, `named-files` the report, `rulings` (§3.1, §6.6). The machine commits and pushes.
 
 ## Never
 
