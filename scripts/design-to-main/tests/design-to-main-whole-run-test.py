@@ -898,6 +898,48 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
         self.assertEqual(self.arbitrator_launches(machine), 2)
 
+    def test_an_investigation_opened_by_a_resume_is_opened_whole_with_its_own_commit(self):
+        # PR #295, round 2, finding 1: an investigation opened by a
+        # state-exit routed from investigate-workflow itself — here a
+        # resume naming test-suite-arbitrating while arbitrator-rulings is
+        # at its ceiling, so that enter() applies row 64 again — was
+        # half-opened: the paused state, the row and the focus rewritten,
+        # the commit it opened at not refreshed, so the next resume routed
+        # on the first investigation's edits. The opening is keyed on the
+        # openers now, not on the state-exit's from-state.
+        machine, run, record = self.open_the_third_entry_investigation()
+        first_opened_at = run.investigation_opened_at_commit
+        edited = record.absolute(fixture.COMPONENT_DIRECTORY + "/widget_counter.py")
+        edited.parent.mkdir(parents=True, exist_ok=True)
+        edited.write_text("# the implementation, edited by the user in the first investigation\n")
+        machine.launcher.script.append(
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.TEST_SUITE_ARBITRATING}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+        self.assertEqual(self.arbitrator_launches(machine), 2)
+        # The resume's commit is the second investigation's opening commit:
+        # it carries the user's edit, and the investigation opened at its
+        # parent, not at the first investigation's.
+        opening_commit = machine.routed[-1][2]
+        self.assertNotEqual(run.investigation_opened_at_commit, first_opened_at)
+        self.assertEqual(run.investigation_opened_at_commit,
+                         record.git("rev-parse", opening_commit + "^").stdout.strip())
+        self.assertIn(fixture.COMPONENT_DIRECTORY + "/widget_counter.py",
+                      record.git("show", "--name-only", "--format=", opening_commit).stdout.split())
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        self.assertEqual(record.paths_changed_since(machine.commit_the_investigation_opened_with(run)), [])
+        # A resume with nothing edited applies the held ruling, and does
+        # not route on the first investigation's edit.
+        machine.launcher.script += [
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}),
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.TEST_WRITING)
+        self.assertEqual(machine.machine_errors, [])
+
 
 class RecoveryFromTheLastCommit(unittest.TestCase):
 

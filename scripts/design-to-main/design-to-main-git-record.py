@@ -103,6 +103,15 @@ class TopicBranchGitRecord:
         span = "%s..HEAD" % since if since else "HEAD"
         return self.git("log", "--format=%H", span).stdout.split()
 
+    def first_commit_after(self, commit):
+        """The commit that follows `commit` on the branch, or None when
+        HEAD is `commit`. run-state.json records the PARENT of the commit
+        that opened an investigation (a commit's own SHA cannot be written
+        into a file it contains), and the resume diff of section 6.6 runs
+        against the opening commit itself: this is how it is found."""
+        commits = self.commits_on_branch(since=commit)
+        return commits[-1] if commits else None
+
     # -- section 9: the topic branch ----------------------------------------
 
     def cut_topic_branch(self, start_point="origin/main"):

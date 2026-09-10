@@ -618,10 +618,16 @@ class DesignToMainStateMachineFlow:
             rulings_refused = True
             next_position = self.route_machine_error(run, state_exit, error)
         run.previous_state = state_exit.from_state
+        # The user's edits a resume carries are read against the commit the
+        # investigation it leaves opened at — before enter() and the
+        # opening below can refresh that commit for an investigation this
+        # same state-exit opens (PR #295, round 2, finding 1).
+        files_beyond_the_named = self.paths_the_user_changed_in_the_investigation(
+            run, state_exit, row)
         # Entry-charged counters and entry rules apply before the commit, so
         # that run-state.json on the branch is the state the run is in.
         self.enter(run, next_position)
-        if self.investigation_opens_with(run, state_exit):
+        if self.investigation_opens_with(run):
             # Section 6.6: the investigation pauses the run — the agent
             # that was working is ended and its uncommitted work discarded,
             # its state re-run on resume. Discarded here, before the
@@ -629,33 +635,50 @@ class DesignToMainStateMachineFlow:
             # carries the state-exit and the record (run-state.json, a
             # ruling appended, a reviewer's notes) and nothing the paused
             # agent half-wrote; that is what makes the resume diff the
-            # user's edits and only those.
-            self.git_record.discard_uncommitted_work_outside_the_record(run)
-            # The commit the resume diff runs against (section 6.6): the
-            # branch head now, the PARENT of the opening commit, not the
-            # opening commit itself. The parent, because the value must be
-            # in run-state.json inside the opening commit for the branch
-            # to carry it through the pause (a successor recovering from
-            # investigate-workflow reads it there), and a commit's own SHA
-            # cannot be written into a file it contains. The diff is the
-            # same against either: after the discard, the opening commit
-            # touches only the record directory, which the diff ignores.
+            # user's edits and only those. Opened by a resume, there is no
+            # paused agent: the worktree is the user's, and the resume's
+            # commit carries it (files_beyond_the_named), so nothing is
+            # discarded.
+            if state_exit.from_state != tables.INVESTIGATE_WORKFLOW:
+                self.git_record.discard_uncommitted_work_outside_the_record(run)
+            # The branch head now: the PARENT of the opening commit, from
+            # which commit_the_investigation_opened_with finds the opening
+            # commit the resume diff runs against (section 6.6). The
+            # parent, because the value must be in run-state.json inside
+            # the opening commit for the branch to carry it through the
+            # pause (a successor recovering from investigate-workflow reads
+            # it there), and a commit's own SHA cannot be written into a
+            # file it contains.
             run.investigation_opened_at_commit = self.git_record.head_commit()
         commit = self.commit_state_exit(
             run, state_exit, write_number, record_rulings=not rulings_refused,
-            files_beyond_the_named=self.paths_the_user_changed_in_the_investigation(
-                run, state_exit, row))
+            files_beyond_the_named=files_beyond_the_named)
         self.routed.append((row, state_exit, commit))
         return run.current_state
 
-    def investigation_opens_with(self, run, state_exit):
-        """Whether this state-exit is the one that opens an investigation:
-        the run is now paused in investigate-workflow and the state-exit
-        came from somewhere else. A state-exit from investigate-workflow
-        itself that leaves the run there (a stray verdict, below) does
-        not open a new investigation over the one in progress."""
+    def mark_investigation_opening(self, run):
+        """Every opener of an investigation — open_investigation, enter()'s
+        third-entry rule, route_machine_error for a state-exit from
+        outside the investigation — marks the opening here: the commit it
+        opens at is not yet known (it is the branch head just before the
+        opening commit, set in route_state_exit), and the None is what
+        tells route_state_exit that this state-exit opened one. Keyed on
+        the openers, not on the state-exit's from-state, so that an
+        investigation opened by a state-exit routed from
+        investigate-workflow itself (a resume naming a destination that
+        lands on the third-entry rule) is opened whole — its paused state,
+        row, focus and commit all this opening's (PR #295, round 2,
+        finding 1). A stray verdict or a refused resume from within an
+        investigation marks nothing, and the pause stays the one in
+        progress."""
+        run.investigation_opened_at_commit = None
+
+    def investigation_opens_with(self, run):
+        """Whether the state-exit being routed is the one that opens an
+        investigation: the run is now paused in investigate-workflow and
+        an opener has marked the opening (mark_investigation_opening)."""
         return (run.current_state == tables.INVESTIGATE_WORKFLOW
-                and state_exit.from_state != tables.INVESTIGATE_WORKFLOW)
+                and run.investigation_opened_at_commit is None)
 
     def route_machine_error(self, run, state_exit, error):
         """Section 3.2: any other state-exit is a machine error; the run
@@ -672,6 +695,7 @@ class DesignToMainStateMachineFlow:
         self.machine_errors.append((state_exit, error))
         run.machine_error = str(error)
         if state_exit.from_state != tables.INVESTIGATE_WORKFLOW:
+            self.mark_investigation_opening(run)
             run.paused_state = state_exit.from_state
             run.investigation_focus = tables.FOCUS_UNKNOWN
             run.investigation_opened_by = "%s from %s: %s" % (
@@ -708,7 +732,18 @@ class DesignToMainStateMachineFlow:
         if (row is None or state_exit.verdict != tables.V_RESUME
                 or not run.investigation_opened_at_commit):
             return ()
-        return tuple(self.git_record.paths_changed_since(run.investigation_opened_at_commit))
+        return tuple(self.git_record.paths_changed_since(
+            self.commit_the_investigation_opened_with(run)))
+
+    def commit_the_investigation_opened_with(self, run):
+        """The commit the resume diff runs against (section 6.6): the
+        opening commit, which is the first commit after the parent the
+        run-state records (route_state_exit, on the opening). The opening
+        commit may carry files — the user's edits a resume that opened
+        this investigation committed, a writer's partial work named by the
+        state-exit that opened it — and those are not the user's edits IN
+        this investigation, so the diff must not start below them."""
+        return self.git_record.first_commit_after(run.investigation_opened_at_commit)
 
     def commit_state_exit(self, run, state_exit, write_number, record_rulings=True,
                           files_beyond_the_named=()):
@@ -744,6 +779,7 @@ class DesignToMainStateMachineFlow:
                 # investigation (sections 6.5, 7); its ruling rides in the
                 # report, and a resume from here names a destination or
                 # applies that ruling (section 6.6), never re-entering.
+                self.mark_investigation_opening(run)
                 run.paused_state = tables.TEST_SUITE_ARBITRATING
                 run.investigation_focus = third_entry.investigation_focus
                 run.investigation_opened_by = (
@@ -774,6 +810,7 @@ class DesignToMainStateMachineFlow:
             run.set_work_stream_position(work_stream, state)
 
     def open_investigation(self, run, row, state_exit):
+        self.mark_investigation_opening(run)
         run.paused_state = state_exit.from_state
         run.investigation_focus = row.investigation_focus or state_exit.investigation_focus
         run.investigation_opened_by = "%s from %s (row %s)" % (
@@ -805,7 +842,7 @@ class DesignToMainStateMachineFlow:
         derived = None
         if run.investigation_opened_at_commit:
             derived = self.git_record.earliest_state_downstream_of_changes(
-                run.investigation_opened_at_commit)
+                self.commit_the_investigation_opened_with(run))
         return derived or run.paused_state
 
     def apply_the_held_ruling(self, run, state_exit):
