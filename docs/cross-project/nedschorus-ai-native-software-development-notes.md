@@ -1,6 +1,6 @@
 # Notes behind the objective: AI-native software development at Nedschorus
 
-**What this file is, in the user's words: instructional or explanatory, possible implementation details, not prescriptive, not vetted, and not maintained to match reality.** It is the detail behind the project's objective, which is [the objective page](../wiki/queue/nedschorus-ai-native-software-development-objective.md). The objective states each subject at a level a reader can follow end to end; this file carries the mechanism behind the same subjects, in the same order. A subject with no detail yet simply has no section here.
+**What this file is, in the user's words: instructional or explanatory, possible implementation details, not prescriptive, not vetted, and not maintained to match reality.** It is the detail behind the project's objective, which is [the objective page](../wiki/nedschorus-ai-native-software-development-objective.md). The objective states each subject at a level a reader can follow end to end; this file carries the mechanism behind the same subjects, in the same order. A subject with no detail yet simply has no section here.
 
 **How to use it.** Read the objective for what the project is trying to be, and read this for one way a piece of it might work. A design that departs from a section here is not blocked and should say why it departs. A design that contradicts the objective is blocked, because the objective's standing decisions are ruled.
 

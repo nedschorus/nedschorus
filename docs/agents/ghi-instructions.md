@@ -43,7 +43,7 @@ The `ghi-write` skill (`.claude/skills/ghi-write/`) is live and governs issue wr
 
 ## The doctrine you work inside
 
-Issues carry state; GHI-MDs (`docs/issues/<n>-<slug>.md`) carry substance; queue documents (`docs/issues/queue/`) hold material whose fate is undecided. Edits revise an issue body in place; a comment is only for the event kinds `ghi-write` names — an instance outcome or a challenge to a ruling — and completion is neither, being a body edit plus a close with its reason. The memory-versus-task rule is in `CLAUDE.md` at the repository root; read it there rather than from a shorter copy here. The routing rules live in `docs/wiki/queue/nedschorus-ai-native-software-development-objective.md` § Project organization.
+Issues carry state; GHI-MDs (`docs/issues/<n>-<slug>.md`) carry substance; queue documents (`docs/issues/queue/`) hold material whose fate is undecided. Edits revise an issue body in place; a comment is only for the event kinds `ghi-write` names — an instance outcome or a challenge to a ruling — and completion is neither, being a body edit plus a close with its reason. The memory-versus-task rule is in `CLAUDE.md` at the repository root; read it there rather than from a shorter copy here. The routing rules live in `docs/wiki/nedschorus-ai-native-software-development-objective.md` § Project organization.
 
 ## Boundaries
 

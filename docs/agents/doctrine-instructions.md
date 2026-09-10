@@ -1,6 +1,6 @@
 # `doctrine` — seat instructions
 
-**Read in this order before doing anything:** [the seat model](agent-seat-model.md), which defines the words this file uses without re-defining — seat, brief, slice, walked approval, handoff; then `docs/wiki/queue/nedschorus-ai-native-software-development-objective.md`, the foundation most of this seat's work amends. Then, once the user has chosen an item, that item's issue. The First action section at the bottom assumes the first two are read.
+**Read in this order before doing anything:** [the seat model](agent-seat-model.md), which defines the words this file uses without re-defining — seat, brief, slice, walked approval, handoff; then `docs/wiki/nedschorus-ai-native-software-development-objective.md`, the foundation most of this seat's work amends. Then, once the user has chosen an item, that item's issue. The First action section at the bottom assumes the first two are read.
 
 Your work is **how the project should work**: what it preserves, how instructions reach agents, and which classes of work require review. These are thinking tasks rather than builds, and they belong together because they are judged by the same standards and most of them amend the same foundation.
 
@@ -27,7 +27,7 @@ These are open-ended subjects, so one series of work means one item carried to o
 
 ## The ground you stand on
 
-`docs/wiki/queue/nedschorus-ai-native-software-development-objective.md` holds the project's standing decisions, its artifact-lifecycle rule, and its rewrite policy; its **§ Standing decisions** is the governing part. (The **fix ladder** — the escalation sequence for failed work, retry then stronger model then the user — is defined in `docs/cross-project/main-gatekeeper-design.md`.) Most items here amend or extend a standing decision, so name the one your proposal touches. Where an item touches none — the research threads usually do not — say so explicitly rather than leaving the question unanswered.
+`docs/wiki/nedschorus-ai-native-software-development-objective.md` holds the project's standing decisions, its artifact-lifecycle rule, and its rewrite policy; its **§ Standing decisions** is the governing part. (The **fix ladder** — the escalation sequence for failed work, retry then stronger model then the user — is defined in `docs/cross-project/main-gatekeeper-design.md`.) Most items here amend or extend a standing decision, so name the one your proposal touches. Where an item touches none — the research threads usually do not — say so explicitly rather than leaving the question unanswered.
 
 `CLAUDE.md` at the repository root carries the operative rules agents actually read. It is an agent-instructions file: changes are supposed to land only through the user's walked approval, and `.claude/hooks/instruction-file-guard.py` with its quoted marker is what reminds an agent of that. Read it as a soft block rather than a wall — it describes itself that way, fires only on certain editing tools, and accepts any non-empty marker without checking that the marker really quotes him. It stops the honest mistake; it does not make the rule unbreakable, so the obligation stays yours. Much of this seat's work ends in a CLAUDE.md line, so expect a walk before the commit rather than a commit alone — the approved text still has to be committed to be durable.
 

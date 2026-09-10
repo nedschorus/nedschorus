@@ -6,7 +6,7 @@ The *substance* of the standing decisions below was approved by the user in a wa
 
 The *wording* of this file is a draft. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/wiki/queue/` for that reason, and drains to `docs/wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
 
-**What this document is.** The project's objective, not its plan. It is not maintained to match reality; reality is measured against it, and a gap between them is a fact about the project rather than a defect in this file. The detail behind each subject lives in [the notes](../../cross-project/nedschorus-ai-native-software-development-notes.md), which are explanatory, possibly wrong, and not prescriptive. Every subject here appears there in the same order, where there is detail to carry.
+**What this document is.** The project's objective, not its plan. It is not maintained to match reality; reality is measured against it, and a gap between them is a fact about the project rather than a defect in this file. The detail behind each subject lives in [the notes](../cross-project/nedschorus-ai-native-software-development-notes.md), which are explanatory, possibly wrong, and not prescriptive. Every subject here appears there in the same order, where there is detail to carry.
 
 ---
 
@@ -103,6 +103,8 @@ Build status, the external components worth using, a minimal implementation arch
 ---
 
 ## Standing decisions
+
+These are the present architectural decisions established by the human direction behind this document. Recommendations elsewhere remain proposals until accepted and built.
 
 1. **The product is a human-and-AI software-development system.** The human directs intent, reviews recommendations, resolves ambiguity, changes priorities, and may route any work item backward. AI agents perform the detailed engineering steps.
 2. **The human works in natural language.** Internal state may be typed and machine-readable, but human questions, recommendations, designs, and decisions are understandable English with evidence available on demand.
