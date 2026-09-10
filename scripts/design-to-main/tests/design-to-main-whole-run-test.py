@@ -891,6 +891,38 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
         self.assertEqual(machine.machine_errors, [])
 
+    def test_a_held_escalate_to_user_is_refused_as_a_malformed_resume(self):
+        # Section 6.6 after the eighth walk (item 5): the held ruling is
+        # one of the arbitrator's six rulings, never escalate-to-user —
+        # the arbitrator is already talking to the user, and applying it
+        # would open a second investigation whose plain resume returns to
+        # the same ceiling. Refused like a resume naming `ended`: a
+        # machine error, the pause unchanged, the counters untouched, the
+        # next resume routed.
+        machine, run, record = self.open_the_third_entry_investigation()
+        opened_at = run.investigation_opened_at_commit
+        opening_commit = machine.routed[-1][2]
+        for held in (T.V_ESCALATE_TO_USER, "reject desgin"):
+            with self.subTest(held_ruling=held):
+                machine.launcher.script.append(
+                    (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": held}))
+                fixture.drive(machine, run)
+                self.assertIsNone(machine.routed[-1][0])
+                self.assertIn(held, run.machine_error)
+                self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+                self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
+                self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+                self.assertEqual(run.investigation_opened_at_commit, opened_at)
+                self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+                self.assertEqual(self.arbitrator_launches(machine), 2)
+        self.assertEqual(len(machine.machine_errors), 2)
+        self.assertEqual(len(record.commits_on_branch(since=opening_commit)), 2)
+        machine.launcher.script.append(
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.TEST_WRITING)
+
     def test_a_resume_naming_a_destination_goes_there(self):
         machine, run, record = self.open_the_third_entry_investigation()
         machine.launcher.script.append(

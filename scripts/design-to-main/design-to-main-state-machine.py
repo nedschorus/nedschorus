@@ -280,20 +280,35 @@ def refuse_malformed_resume(run, state_exit, resume_destination):
     illegal state-exit (section 3.2, "any other state-exit"), and the
     pause is unchanged (route_machine_error).
 
-    Three forms are refused. A destination the user typed that names no
+    Four forms are refused. A destination the user typed that names no
     state or sub-state (row 71's guard would hold for any string, and a
     row applied to a name the tables do not know would escape as a
     KeyError). A destination of `ended` or `initiate-design-to-main`,
     which section 6.1 forbids (PR #287's round-6 review reproduced the
     first ending the run with no outcome and the second crashing after
-    the cut). And, from the investigation the arbitrator's third entry
-    opened, a resume that neither names a destination nor carries the
-    ruling the arbitrator held — the paused state is the arbitrator at
-    its ceiling, and returning there would open the investigation again.
+    the cut). A held ruling that is not one of the arbitrator's six —
+    `escalate-to-user` above all, which section 6.6 rules out because the
+    arbitrator is already talking to the user, and which applied would
+    open a second investigation whose plain resume returns to the same
+    ceiling (PR #295, round 2). And, from the investigation the
+    arbitrator's third entry opened, a resume that neither names a
+    destination nor carries the ruling the arbitrator held — the design
+    keeps this refusal (section 6.6, "returning to the arbitrator would
+    open it again"), though since every resume zeroes the six
+    per-version counters (section 7) a return would in fact launch the
+    arbitrator on a fresh budget; built as the design says, reported
+    with this slice.
     """
     if state_exit.verdict != tables.V_RESUME:
         return
     from_state = state_exit.from_state
+    if (state_exit.held_ruling is not None
+            and state_exit.held_ruling not in tables.HELD_RULINGS_A_RESUME_MAY_CARRY):
+        raise IllegalStateExit(
+            "%r from %s carries %r as its held ruling; a held ruling is one of %s, never "
+            "escalate-to-user (section 6.6)" % (
+                state_exit.verdict, from_state, state_exit.held_ruling,
+                ", ".join(tables.HELD_RULINGS_A_RESUME_MAY_CARRY)))
     if state_exit.destination is not None:
         if (resume_destination not in tables.STATE_TABLE_BY_NAME
                 and resume_destination not in tables.COMPOSITE_STATE_OF_SUB_STATE):

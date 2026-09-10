@@ -365,6 +365,13 @@ TO_RESUME_DESTINATION = "the resume destination (section 6.6)"
 TO_APPLY_THE_HELD_RULING = "the ruling the arbitrator held in its report (section 6.6)"
 # The two names of section 3.1 a resume may not name (section 6.1).
 RESUME_MAY_NOT_NAME = (ENDED, INITIATE_DESIGN_TO_MAIN)
+# The rulings a resume from that investigation may carry as `held-ruling`
+# (section 6.6): the arbitrator's six, never escalate-to-user, since the
+# arbitrator is already talking to the user (user-ruled 2026-09-09, the
+# eighth walk, item 5).
+HELD_RULINGS_A_RESUME_MAY_CARRY = (
+    V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_REJECT_IMPLEMENTATION_AND_TESTS,
+    V_FLAKY_TEST, V_REJECT_CONTRACT, V_ADVANCE)
 TO_RETRY_SAME_STATE = "the same state (retry)"
 TO_THE_NEXT_ACCEPTANCE_CHECK = "the state's next acceptance-check, in the order section 3.1 lists"
 TO_THE_WRITER_THE_VERDICT_NAMES = "that writer anyway, fresh"
