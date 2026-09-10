@@ -41,15 +41,24 @@ class RunCounters:
         return tables.COUNTER_TABLE_BY_NAME[name]
 
     def at_ceiling(self, name):
-        """Section 3.2's guard "the <name> counter at its ceiling"."""
+        """Section 3.2's guard "the <name> counter at its ceiling" — and,
+        for the two write counters a discuss may take past it, "at or
+        above its ceiling": one predicate, read as >=."""
         return self.values[name] >= self.rule(name).at_ceiling_from_value
 
     def below_ceiling(self, name):
         return not self.at_ceiling(name)
 
-    def increment(self, name):
+    def increment(self, name, forced_by_the_users_discuss=False):
+        """One more; past the ceiling only for a write counter and only
+        when the write was forced by the user's discuss (section 7 after
+        the eighth walk, item 6: counted like any other, and the guards
+        read at or above). Any other increment past a ceiling is a
+        machine error."""
         rule = self.rule(name)
-        if self.values[name] + 1 > rule.ceiling:
+        past_the_ceiling_allowed = (
+            forced_by_the_users_discuss and rule.may_be_taken_past_its_ceiling_by_the_users_discuss)
+        if self.values[name] + 1 > rule.ceiling and not past_the_ceiling_allowed:
             raise CounterCeilingExceeded(
                 "%s is %d; its ceiling is %d (%s)" % (
                     name, self.values[name], rule.ceiling, rule.at_the_ceiling))

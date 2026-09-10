@@ -253,6 +253,11 @@ class CounterCeilingRule:
     at_ceiling_from_value: int
     at_the_ceiling: str
     per_design_version: bool = True
+    # Section 7 after the eighth walk (item 6, user-ruled 2026-09-09): a
+    # write the user's discuss forces is counted like any other and may
+    # take the two write counters past their ceiling, which the ceiling
+    # guards then read as "at or above". No other counter goes past.
+    may_be_taken_past_its_ceiling_by_the_users_discuss: bool = False
 
 
 COUNTER_TABLE = (
@@ -269,12 +274,16 @@ COUNTER_TABLE = (
         "implementation-writes",
         "`implementation-writing` emits `emitted` after a `reject implementation` "
         "from review, or as the first write",
-        3, 3, "the third write, when it fails review, goes to `test-suite-arbitrating`"),
+        3, 3, "the third write, when it fails review, goes to `test-suite-arbitrating`; "
+              "a write the user's discuss forces may take it past three, and "
+              "\"at its ceiling\" reads at or above",
+        may_be_taken_past_its_ceiling_by_the_users_discuss=True),
     CounterCeilingRule(
         "test-writes",
         "`test-writing` emits `emitted` after a `reject tests` from review, "
         "or as the first write",
-        3, 3, "the same"),
+        3, 3, "the same; at or above, as above",
+        may_be_taken_past_its_ceiling_by_the_users_discuss=True),
     CounterCeilingRule(
         "arbitrator-rulings",
         "`test-suite-arbitrating` is entered",
@@ -422,7 +431,7 @@ G_COULD_NOT_RUN_SECOND = "the second consecutive"
 G_ENTERED_ON_A_FAILED_SUITE_OR_A_COULD_NOT_RUN = "entered on a failed suite or a could-not-run"
 G_ENTERED_FROM_A_REVIEWERS_CEILING = "entered from a reviewer's ceiling"
 G_WRITERS_COUNTER_BELOW_CEILING = "the writer's counter below its ceiling"
-G_WRITERS_COUNTER_AT_CEILING = "the writer's counter at its ceiling"
+G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING = "the writer's counter at or above its ceiling"
 # Row 62 reads the writer's counter and nothing else: arbitrator-rulings is
 # charged on entry and bounds the arbitrator's entries (row 64 opens the
 # investigation on the third), and past the ceilings every further cycle
@@ -449,6 +458,14 @@ def counter_below_ceiling(name):
 
 def counter_at_ceiling(name):
     return "the %s counter at its ceiling" % name
+
+
+def counter_at_or_above_ceiling(name):
+    """The write counters' ceiling guard (section 3.2, rows 28 and 48; the
+    eighth walk, item 6): the same predicate as counter_at_ceiling — the
+    machine reads every ceiling as ">=" — under the design's words for
+    the two counters a discuss may take past their ceiling."""
+    return "the %s counter at or above its ceiling" % name
 
 
 @dataclass(frozen=True)
@@ -546,9 +563,9 @@ TRANSITION_TABLE = (
     _row("21", IMPLEMENTATION_WRITING, V_EMITTED, (), IMPLEMENTATION_REVIEWING,
          "implementation-writes",
          counter_note="only when the state was entered by a reject implementation from "
-                      "review (or the user's discuss, counted like any other) or as the "
-                      "first write; a write forced by an upstream change or ordered by "
-                      "the arbitrator charges nothing here (section 7, the three buckets)"),
+                      "review, by the user's discuss, or as the first write; a write "
+                      "forced by an upstream change or ordered by the arbitrator charges "
+                      "nothing here (section 7, the three buckets)"),
     _row("22", IMPLEMENTATION_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
          CONTRACT_REVISING, "contract-revisions"),
@@ -565,7 +582,7 @@ TRANSITION_TABLE = (
     _row("27", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
          (counter_below_ceiling("implementation-writes"),), IMPLEMENTATION_WRITING),
     _row("28", IMPLEMENTATION_REVIEWING, V_REJECT_IMPLEMENTATION,
-         (counter_at_ceiling("implementation-writes"),), TEST_SUITE_ARBITRATING,
+         (counter_at_or_above_ceiling("implementation-writes"),), TEST_SUITE_ARBITRATING,
          counter_note="arbitrator-rulings, on entry"),
     _row("29", IMPLEMENTATION_REVIEWING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
          CONTRACT_REVISING, "contract-revisions"),
@@ -573,7 +590,8 @@ TRANSITION_TABLE = (
          investigation_focus=FOCUS_DESIGN),
     _row("31", IMPLEMENTATION_REVIEWING, V_DISCUSS,
          (G_FROM_IMPLEMENTATION_ACCEPTANCE_BY_USER,), IMPLEMENTATION_WRITING,
-         counter_note="the user's own time; the write it forces is counted like any other"),
+         counter_note="the user's own time; the write it forces is counted like any other, "
+                      "and may take the counter past its ceiling (section 6.6)"),
     _row("32", TEST_DESIGN_WRITING, V_EMITTED, (), TEST_DESIGN_REVIEWING),
     _row("33", TEST_DESIGN_WRITING, V_INPUT_QUICK_CHECK_FAILED,
          (G_AGAINST_THE_COMPONENT_CONTRACT, counter_below_ceiling("contract-revisions")),
@@ -613,7 +631,7 @@ TRANSITION_TABLE = (
     _row("47", TEST_REVIEWING, V_REJECT_TESTS,
          (counter_below_ceiling("test-writes"),), TEST_WRITING),
     _row("48", TEST_REVIEWING, V_REJECT_TESTS,
-         (counter_at_ceiling("test-writes"),), TEST_SUITE_ARBITRATING,
+         (counter_at_or_above_ceiling("test-writes"),), TEST_SUITE_ARBITRATING,
          counter_note="arbitrator-rulings, on entry"),
     _row("49", TEST_REVIEWING, V_REJECT_TEST_DESIGN,
          (counter_below_ceiling("test-design-corrections"),), TEST_DESIGN_WRITING,
@@ -651,7 +669,7 @@ TRANSITION_TABLE = (
          (G_WRITERS_COUNTER_BELOW_CEILING,), TEST_WRITING,
          counter_note="as row 60"),
     _row("62", TEST_SUITE_ARBITRATING, (V_REJECT_IMPLEMENTATION, V_REJECT_TESTS, V_FLAKY_TEST),
-         (G_WRITERS_COUNTER_AT_CEILING,),
+         (G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING,),
          TO_THE_WRITER_THE_VERDICT_NAMES,
          counter_note="the writer's counter stops deciding and is not reset; the write "
                       "is bounded by arbitrator-rulings, and past that by the user's "

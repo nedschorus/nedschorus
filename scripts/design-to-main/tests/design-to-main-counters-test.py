@@ -59,6 +59,24 @@ class CounterCeilingsInIsolation(unittest.TestCase):
             counters.increment(name)
             self.assertTrue(counters.at_ceiling(name), name)
 
+    def test_the_two_write_counters_may_be_taken_past_their_ceiling_by_the_users_discuss_only(self):
+        # Section 7 after the eighth walk (item 6, user-ruled 2026-09-09):
+        # a write the user's discuss forces may take implementation-writes
+        # or test-writes past three, and "at its ceiling" reads at or above.
+        # No other counter, and no other cause, goes past a ceiling.
+        for name in ("implementation-writes", "test-writes"):
+            counters = RunCounters({name: 3})
+            self.assertEqual(counters.increment(name, forced_by_the_users_discuss=True), 4)
+            self.assertTrue(counters.at_ceiling(name))
+            self.assertFalse(counters.below_ceiling(name))
+            with self.assertRaises(CounterCeilingExceeded):
+                counters.increment(name)
+        for name in ("redesigns", "design-revisions", "arbitrator-rulings",
+                     "contract-revisions", "test-design-corrections"):
+            counters = RunCounters({name: T.COUNTER_TABLE_BY_NAME[name].ceiling})
+            with self.assertRaises(CounterCeilingExceeded, msg=name):
+                counters.increment(name, forced_by_the_users_discuss=True)
+
     def test_a_redesign_resets_every_per_version_counter_but_not_redesigns(self):
         counters = RunCounters({name: 1 for name in T.COUNTER_NAMES})
         counters.zero_the_six_per_version_counters()
@@ -569,11 +587,14 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         self.assertEqual(run.current_state, T.CONTRACT_ACCEPTANCE_BY_USER)
         self.assertEqual(machine.routed[-1][0].row, "66")
 
-    def test_an_increment_past_a_ceiling_is_a_machine_error_routed_to_the_investigation(self):
-        # The one path the table leaves to a counter past its ceiling: the
-        # user's discuss at implementation-acceptance-by-user (row 31) with
-        # implementation-writes at three — "the write it forces is counted
-        # like any other", and a fourth write has no counter to spend.
+    def test_a_write_the_users_discuss_forces_past_the_ceiling_is_counted_and_a_reject_of_it_goes_to_the_arbitrator(self):
+        # The eighth walk, item 6 (user-ruled 2026-09-09): the user's
+        # discuss at implementation-acceptance-by-user (row 31) with
+        # implementation-writes at three forces a fourth write, counted
+        # like any other (section 6.6), and the counter reads four; a
+        # reject of that write goes to the arbitrator by row 28, whose
+        # guard reads "at or above its ceiling". (Before the ruling this
+        # was a machine error: no counter to spend.)
         script = fixture.prefix_to_design_approved()
         for _ in range(2):
             script += [fixture.implementation_write(coverage_type="prompt"),
@@ -581,12 +602,40 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
         script += [fixture.implementation_write(coverage_type="prompt"),
                    (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),      # row 16
                    (T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_DISCUSS, {}),       # row 31
-                   fixture.implementation_write(coverage_type="prompt")]         # the fourth
-        machine, run, _ = self.drive(script)
-        self.assertEqual(run.counters.value("implementation-writes"), 3)
-        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
-        self.assertEqual(len(machine.machine_errors), 1)
-        self.assertIn("ceiling", run.machine_error)
+                   fixture.implementation_write(coverage_type="prompt")]         # the fourth: counted
+        machine, run, record = self.drive(script)
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.counters.value("implementation-writes"), 4)
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+        self.assertEqual(run.writing_state_entry_reason[T.IMPLEMENTATION_WRITING],
+                         T.ENTRY_REASON_DISCUSS_BY_USER)
+        trailer = fixture.git_record_module.parse_state_exit_trailer(record.commit_message("HEAD"))
+        self.assertEqual(trailer["Write"], "4")
+        self.assertEqual(trailer["Counter-implementation-writes"], "4")
+        machine.launcher.script += [
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),  # row 28
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "28")
+        self.assertEqual(run.current_state, T.TEST_SUITE_ARBITRATING)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
+        self.assertEqual(machine.machine_errors, [])
+
+    def test_the_same_for_the_tests_at_test_acceptance_by_user(self):
+        script = fixture.prefix_to_test_writing()
+        for _ in range(2):
+            script += [fixture.test_write(coverage_type="prompt"),
+                       (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]
+        script += [fixture.test_write(coverage_type="prompt"),
+                   (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),               # row 16
+                   (T.TEST_ACCEPTANCE_BY_USER, T.V_DISCUSS, {}),                # row 53
+                   fixture.test_write(coverage_type="prompt"),                  # the fourth: counted
+                   (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]          # row 48
+        machine, run, record = self.drive(script)
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.counters.value("test-writes"), 4)
+        self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["53", "40", "48"])
+        self.assertEqual(run.current_state, T.TEST_SUITE_ARBITRATING)
 
 
 if __name__ == "__main__":

@@ -92,6 +92,8 @@ LEGALITY_CASES = [
     ("27", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION)),
     ("28", dict(IMPL_IS_SCRIPT, counters={"implementation-writes": 3}),
      exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION)),
+    ("28", dict(IMPL_IS_PROMPT, counters={"implementation-writes": 4}),
+     exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION)),
     ("29", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_CONTRACT)),
     ("30", IMPL_IS_SCRIPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
     ("31", IMPL_IS_PROMPT, exit_from(T.IMPLEMENTATION_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
@@ -122,6 +124,8 @@ LEGALITY_CASES = [
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
     ("47", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS)),
     ("48", dict(TESTS_ARE_SCRIPT, counters={"test-writes": 3}),
+     exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS)),
+    ("48", dict(TESTS_ARE_PROMPT, counters={"test-writes": 4}),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS)),
     ("49", TESTS_ARE_SCRIPT, exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN)),
     ("50", dict(TESTS_ARE_SCRIPT, counters={"test-design-corrections": 1}),
@@ -319,11 +323,44 @@ class EveryRowOfSection32(unittest.TestCase):
         # gated by the user's resume, so the "arbitrator-rulings below its
         # ceiling" clause the code once carried on these rows is gone, and
         # with it the admission that let a held ruling past it.
-        self.assertEqual(T.TRANSITION_TABLE_BY_ROW["62"].guards, (T.G_WRITERS_COUNTER_AT_CEILING,))
+        self.assertEqual(T.TRANSITION_TABLE_BY_ROW["62"].guards, (T.G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING,))
         self.assertEqual(T.TRANSITION_TABLE_BY_ROW["63"].guards, ())
         self.assertEqual(set(T.TRANSITION_TABLE_BY_ROW["62"].verdicts),
                          {T.V_REJECT_IMPLEMENTATION, T.V_REJECT_TESTS, T.V_FLAKY_TEST})
         self.assertFalse(hasattr(M.GuardContext(run_with(), None), "held_ruling_applied_on_resume"))
+
+    def test_the_write_ceiling_guards_read_at_or_above(self):
+        # The eighth walk, item 6: the guards on implementation-writes and
+        # test-writes read "at or above its ceiling", because a write the
+        # user's discuss forces may take the counter past it; every other
+        # ceiling guard keeps the design's "at its ceiling".
+        self.assertEqual(T.TRANSITION_TABLE_BY_ROW["28"].guards,
+                         (T.counter_at_or_above_ceiling("implementation-writes"),))
+        self.assertEqual(T.TRANSITION_TABLE_BY_ROW["48"].guards,
+                         (T.counter_at_or_above_ceiling("test-writes"),))
+        at_or_above = {g for row in T.TRANSITION_TABLE for g in row.guards if "at or above" in g}
+        self.assertEqual(at_or_above, {
+            T.counter_at_or_above_ceiling("implementation-writes"),
+            T.counter_at_or_above_ceiling("test-writes"),
+            T.G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING})
+
+    def test_row_59_names_the_reviewers_own_advance_destination(self):
+        # The implementation reviewer rejected at the ceiling, tests not
+        # yet begun: the reviewer's advance is row 24, to test-design-writing.
+        run = run_with(**IMPL_IS_SCRIPT,
+                       test_suite_arbitrating_entered_from=T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
+        named = exit_from(T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, destination=T.TEST_DESIGN_WRITING)
+        self.assertEqual(M.find_legal_transition_row(run, named).row, "59")
+        with self.assertRaises(M.IllegalStateExit):
+            M.find_legal_transition_row(run, exit_from(
+                T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, destination=T.SUBMIT_TO_PR_GATE))
+        # An implementation that is agent-instructions: the agent check's
+        # advance is row 16, to the user's check.
+        run = run_with(**IMPL_IS_PROMPT,
+                       test_suite_arbitrating_entered_from=T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
+        named = exit_from(T.TEST_SUITE_ARBITRATING, T.V_ADVANCE,
+                          destination=T.IMPLEMENTATION_ACCEPTANCE_BY_USER)
+        self.assertEqual(M.find_legal_transition_row(run, named).row, "59")
 
     def test_row_16_names_the_next_check_as_its_destination(self):
         state_exit = exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE,

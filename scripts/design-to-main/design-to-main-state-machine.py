@@ -234,7 +234,7 @@ GUARD_PREDICATES = {
         lambda ctx: ctx.run.test_suite_arbitrating_entered_from in tables.COMPOSITE_STATE_OF_SUB_STATE,
     tables.G_WRITERS_COUNTER_BELOW_CEILING:
         lambda ctx: ctx.run.counters.below_ceiling(_writers_counter(ctx)),
-    tables.G_WRITERS_COUNTER_AT_CEILING:
+    tables.G_WRITERS_COUNTER_AT_OR_ABOVE_CEILING:
         lambda ctx: ctx.run.counters.at_ceiling(_writers_counter(ctx)),
     tables.G_FOCUS_NAMED_DESIGN_OR_TEST_DESIGN:
         lambda ctx: ctx.state_exit.investigation_focus in (tables.FOCUS_DESIGN, tables.FOCUS_TEST_DESIGN),
@@ -265,6 +265,8 @@ for _name in tables.COUNTER_NAMES:
     GUARD_PREDICATES[tables.counter_below_ceiling(_name)] = (
         lambda ctx, n=_name: ctx.run.counters.below_ceiling(n))
     GUARD_PREDICATES[tables.counter_at_ceiling(_name)] = (
+        lambda ctx, n=_name: ctx.run.counters.at_ceiling(n))
+    GUARD_PREDICATES[tables.counter_at_or_above_ceiling(_name)] = (
         lambda ctx, n=_name: ctx.run.counters.at_ceiling(n))
 
 
@@ -902,11 +904,13 @@ class DesignToMainStateMachineFlow:
         if row.counter in tables.COUNTED_WRITING_STATES.values():
             run.writes_emitted_per_version[from_state] = (
                 run.writes_emitted_per_version.get(from_state, 0) + 1)
-            charged = write_counter_charged(
-                from_state, run.writing_state_entry_reason.get(
-                    from_state, tables.ENTRY_REASON_FIRST_WRITE))
+            entry_reason = run.writing_state_entry_reason.get(
+                from_state, tables.ENTRY_REASON_FIRST_WRITE)
+            charged = write_counter_charged(from_state, entry_reason)
             if charged:
-                write_number = run.counters.increment(charged)
+                write_number = run.counters.increment(
+                    charged,
+                    forced_by_the_users_discuss=(entry_reason == tables.ENTRY_REASON_DISCUSS_BY_USER))
             else:
                 write_number = tables.WRITE_TRAILER_FORCED
         elif row.counter:
