@@ -110,7 +110,8 @@ class RunStateRecord:
     consecutive could-not-run, program-check-failure and submit-retry
     counts; why each state was entered (the writing states' entry reasons,
     for the three buckets; what entered test-suite-arbitrating, for rows
-    58 and 59); each artifact's coverage-type; the paused
+    58 and 59); the implementation's coverage-type and the coverage-types
+    of the set of tests; the paused
     state and the commit at which an investigation opened; whether row 1
     has cut the topic branch; the outcome once ended.
 
@@ -133,7 +134,7 @@ class RunStateRecord:
         "implementation-work-stream-position", "test-work-stream-position",
         "consecutive-could-not-run-count", "submit-retry-count",
         "consecutive-program-check-failure-count",
-        "implementation-coverage-type", "tests-coverage-type",
+        "implementation-coverage-type", "tests-coverage-types",
         "writing-state-entry-reason", "writes-emitted-per-version",
         "test-suite-arbitrating-entered-from",
         "paused-state", "investigation-focus", "investigation-opened-at-commit",
@@ -159,7 +160,9 @@ class RunStateRecord:
         self.submit_retry_count = 0
         self.consecutive_program_check_failure_count = 0
         self.implementation_coverage_type = None
-        self.tests_coverage_type = None
+        # Every coverage-type present in the set of tests, as the test
+        # writer's emitted carried it (sections 3.1 and 6.4): a tuple.
+        self.tests_coverage_types = ()
         self.writing_state_entry_reason = {}
         self.writes_emitted_per_version = {}
         # Why test-suite-arbitrating was entered, as the state or sub-state
@@ -219,6 +222,11 @@ class RunStateRecord:
     def is_agent_instructions(self, coverage_type):
         return coverage_type in tables.COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS
 
+    def tests_are_agent_instructions(self):
+        """Section 6.4: whether prompt or script-and-prompt is among the
+        coverage-types of the set — then the tests go to the user."""
+        return any(self.is_agent_instructions(t) for t in self.tests_coverage_types)
+
     # -- the file -----------------------------------------------------------
 
     def as_dict(self):
@@ -240,7 +248,7 @@ class RunStateRecord:
             "consecutive-program-check-failure-count":
                 self.consecutive_program_check_failure_count,
             "implementation-coverage-type": self.implementation_coverage_type,
-            "tests-coverage-type": self.tests_coverage_type,
+            "tests-coverage-types": list(self.tests_coverage_types),
             "writing-state-entry-reason": dict(self.writing_state_entry_reason),
             "writes-emitted-per-version": dict(self.writes_emitted_per_version),
             "test-suite-arbitrating-entered-from": self.test_suite_arbitrating_entered_from,
@@ -275,7 +283,7 @@ class RunStateRecord:
         run.consecutive_program_check_failure_count = data[
             "consecutive-program-check-failure-count"]
         run.implementation_coverage_type = data.get("implementation-coverage-type")
-        run.tests_coverage_type = data.get("tests-coverage-type")
+        run.tests_coverage_types = tuple(data.get("tests-coverage-types", ()))
         run.writing_state_entry_reason = dict(data.get("writing-state-entry-reason", {}))
         run.writes_emitted_per_version = dict(data.get("writes-emitted-per-version", {}))
         run.test_suite_arbitrating_entered_from = data.get("test-suite-arbitrating-entered-from")

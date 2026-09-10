@@ -131,7 +131,7 @@ class WholeRunThatPasses(unittest.TestCase):
                 "consecutive-could-not-run-count", "consecutive-program-check-failure-count",
                 "submit-retry-count",
                 "writing-state-entry-reason",
-                "implementation-coverage-type", "tests-coverage-type",
+                "implementation-coverage-type", "tests-coverage-types",
                 "paused-state", "investigation-opened-at-commit",
                 "topic-branch-cut", "outcome"):
             self.assertIn(key, on_disk, key)
@@ -312,6 +312,73 @@ class TheArbitratorRejectsBothArtifactsInOneRuling(unittest.TestCase):
                              T.ENTRY_REASON_ARBITRATOR_RULING)
         finally:
             repository.remove()
+
+
+class TheCoverageTypesOfASetOfTests(unittest.TestCase):
+    """The eighth walk, item 8 (user-ruled 2026-09-09; sections 3.1 and
+    6.4): test-writing's `emitted` carries every coverage-type present in
+    the set — `script, prompt` for nine scripts and one prompt-based-test
+    — as a tuple on the state-exit record and a comma-separated string
+    in state-exit.json; the machine records the set, and the tests go to
+    test-acceptance-by-user when prompt or script-and-prompt is among
+    them. An implementation's coverage-type is one thing (section 2)."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_the_set_is_recorded_and_routes_the_tests_to_the_user_when_any_is_agent_instructions(self):
+        script = fixture.prefix_to_test_writing() + [
+            fixture.test_write("script", "prompt"),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                          # row 16
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "16")
+        self.assertEqual(run.current_state, T.TEST_ACCEPTANCE_BY_USER)
+        self.assertEqual(run.tests_coverage_types, ("script", "prompt"))
+        self.assertTrue(run.tests_are_agent_instructions())
+        on_disk = json.loads(record.absolute(record.run_state_path).read_text())
+        self.assertEqual(on_disk["tests-coverage-types"], ["script", "prompt"])
+        self.assertNotIn("tests-coverage-type", on_disk)
+        read_back = RunStateRecord.read_from(record.absolute(record.run_state_path))
+        self.assertEqual(read_back.tests_coverage_types, ("script", "prompt"))
+
+    def test_scripts_alone_skip_the_users_check(self):
+        script = fixture.prefix_to_test_writing() + [
+            fixture.test_write("script"),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                          # row 45
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "45")
+        self.assertEqual(run.tests_coverage_types, ("script",))
+        self.assertFalse(run.tests_are_agent_instructions())
+
+    def test_the_json_field_is_a_comma_separated_string_and_the_record_a_tuple(self):
+        self.assertEqual(M.coverage_types_from_json_field("script, prompt"), ("script", "prompt"))
+        self.assertEqual(M.coverage_types_from_json_field("script"), ("script",))
+        self.assertEqual(M.coverage_types_from_json_field(" script-and-prompt ,prompt "),
+                         ("script-and-prompt", "prompt"))
+        self.assertEqual(M.coverage_types_as_json_field(("script", "prompt")), "script, prompt")
+        self.assertEqual(M.coverage_types_as_json_field(("script",)), "script")
+
+    def test_an_implementation_emitting_more_than_one_coverage_type_is_a_machine_error(self):
+        # Section 2: the coverage-type of an implementation says what kind
+        # of thing it is — one of three. Two is not one: a machine error,
+        # routed like any illegal state-exit (reported with this slice).
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {"coverage_types": ("script", "prompt")}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.IMPLEMENTATION_WRITING)
+        self.assertIsNone(run.implementation_coverage_type)
+        self.assertEqual(run.counters.value("implementation-writes"), 0)
 
 
 class TheArbitratorOverrulesAReviewer(unittest.TestCase):
@@ -571,7 +638,7 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         try:
             script = fixture.prefix_to_design_approved() + [
                 (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
-                    "coverage_type": "script",
+                    "coverage_types": ("script",),
                     "named_files": (self.IMPLEMENTATION,),
                     fixture.FILES_WRITTEN_BEFORE_EMITTING: {
                         self.IMPLEMENTATION: "# the implementation\n",
@@ -630,7 +697,7 @@ class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
         first entry)."""
         script = fixture.prefix_to_design_approved() + [
             (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
-                "coverage_type": "script",
+                "coverage_types": ("script",),
                 "named_files": (self.IMPLEMENTATION,),
                 fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
             (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),

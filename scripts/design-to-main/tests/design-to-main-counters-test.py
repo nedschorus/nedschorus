@@ -624,12 +624,12 @@ class CountersDrivenThroughTheMachine(unittest.TestCase):
     def test_the_same_for_the_tests_at_test_acceptance_by_user(self):
         script = fixture.prefix_to_test_writing()
         for _ in range(2):
-            script += [fixture.test_write(coverage_type="prompt"),
+            script += [fixture.test_write("prompt"),
                        (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]
-        script += [fixture.test_write(coverage_type="prompt"),
+        script += [fixture.test_write("prompt"),
                    (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),               # row 16
                    (T.TEST_ACCEPTANCE_BY_USER, T.V_DISCUSS, {}),                # row 53
-                   fixture.test_write(coverage_type="prompt"),                  # the fourth: counted
+                   fixture.test_write("prompt"),                  # the fourth: counted
                    (T.TEST_ACCEPTANCE_BY_AGENT, T.V_REJECT_TESTS, {})]          # row 48
         machine, run, record = self.drive(script)
         self.assertEqual(machine.machine_errors, [])

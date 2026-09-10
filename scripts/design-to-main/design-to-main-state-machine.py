@@ -61,9 +61,17 @@ class StateExitRecord:
     report on rows whose destination depends on the machine's own state).
     The other fields carry what a guard of section 3.2 reads off the
     state-exit: the input an input-quick-check-failed names, the
-    investigation-focus an escalate-to-user names, the coverage-type an
+    investigation-focus an escalate-to-user names, the coverage-types an
     emitted write carries, the class of a gatekeeper-refusal, and any user
     rulings given in a dialog (`reset` among them).
+
+    `coverage_types` is the state-exit's `coverage-type` field (section
+    2): every coverage-type present in what the writer emitted, as a
+    tuple here and a comma-separated string in state-exit.json —
+    `script, prompt` for nine scripts and one prompt-based-test (section
+    3.1, user-ruled 2026-09-09, the eighth walk, item 8). An
+    implementation's is one value, since an implementation is one thing
+    (section 2); a set of tests carries one entry per type present.
     """
     state: str
     verdict: str
@@ -71,7 +79,7 @@ class StateExitRecord:
     destination: Optional[str] = None
     input_named: Optional[str] = None
     investigation_focus: Optional[str] = None
-    coverage_type: Optional[str] = None
+    coverage_types: Tuple[str, ...] = ()
     refusal_class: Optional[str] = None
     rulings: Tuple[str, ...] = ()
     # On a `resume` from the investigation the arbitrator's third entry
@@ -89,6 +97,17 @@ class StateExitRecord:
         """The state of section 3.1 this state-exit leaves: the composite
         state when a sub-state emitted it."""
         return tables.COMPOSITE_STATE_OF_SUB_STATE.get(self.state, self.state)
+
+
+def coverage_types_from_json_field(text):
+    """The `coverage-type` field of state-exit.json, `script, prompt`, as
+    the record's tuple: split on commas, blanks trimmed, empties dropped."""
+    return tuple(part.strip() for part in text.split(",") if part.strip())
+
+
+def coverage_types_as_json_field(coverage_types):
+    """The record's tuple as the `coverage-type` field of state-exit.json."""
+    return ", ".join(coverage_types)
 
 
 class IllegalStateExit(Exception):
@@ -127,7 +146,10 @@ def applicable_acceptance_checks(run, composite_state):
             return row.sub_states
         return row.sub_states[:1]
     if composite_state == tables.TEST_REVIEWING:
-        if run.is_agent_instructions(run.tests_coverage_type):
+        # Section 6.4: the user's check runs when prompt or
+        # script-and-prompt is among the coverage-types the test writer's
+        # emitted carries for the set.
+        if run.tests_are_agent_instructions():
             return row.sub_states
         return row.sub_states[:1]
     return row.sub_states
@@ -331,12 +353,29 @@ def refuse_malformed_resume(run, state_exit, resume_destination):
                                tables.ROW_THE_ARBITRATORS_THIRD_ENTRY, run.paused_state))
 
 
+def the_one_coverage_type_of_an_implementation(state_exit):
+    """Section 2: the coverage-type of an implementation says what kind of
+    thing it is — script, prompt, or script-and-prompt — one value. An
+    implementation-writing `emitted` carrying more than one is a machine
+    error, routed like any illegal state-exit; the design does not say
+    this in so many words (reported with this slice)."""
+    if len(state_exit.coverage_types) != 1:
+        raise IllegalStateExit(
+            "%r from %s carries %r as its coverage-type; an implementation has one "
+            "(section 2)" % (state_exit.verdict, state_exit.state,
+                             coverage_types_as_json_field(state_exit.coverage_types)))
+    return state_exit.coverage_types[0]
+
+
 def find_legal_transition_row(run, state_exit, resume_destination=None):
     """Given a state and a state-exit, the row of section 3.2 that allows
     it; IllegalStateExit when none does."""
     context = GuardContext(run, state_exit, resume_destination)
     from_state = state_exit.from_state
     refuse_malformed_resume(run, state_exit, resume_destination)
+    if (from_state == tables.IMPLEMENTATION_WRITING and state_exit.verdict == tables.V_EMITTED
+            and state_exit.coverage_types):
+        the_one_coverage_type_of_an_implementation(state_exit)
     matches = [
         row for row in tables.TRANSITION_TABLE
         if from_state in row.from_states
@@ -916,11 +955,20 @@ class DesignToMainStateMachineFlow:
         elif row.counter:
             run.counters.increment(row.counter)
 
-        if state_exit.coverage_type:
+        if state_exit.coverage_types:
             if from_state == tables.IMPLEMENTATION_WRITING:
-                run.implementation_coverage_type = state_exit.coverage_type
+                run.implementation_coverage_type = the_one_coverage_type_of_an_implementation(
+                    state_exit)
             elif from_state == tables.TEST_WRITING:
-                run.tests_coverage_type = state_exit.coverage_type
+                # Recorded as the writer emitted it. Section 6.4 has the
+                # machine check the set against the test-design's
+                # per-requirement types; the run-state does not carry
+                # those today (no test-design parser exists), so the
+                # cross-check is left here by name:
+                # TODO(section 6.4): check state_exit.coverage_types
+                # against the test-design's per-requirement coverage-types
+                # once the run-state knows them.
+                run.tests_coverage_types = tuple(state_exit.coverage_types)
 
         # The contract's program check: consecutive failures.
         if state_exit.state == tables.CONTRACT_ACCEPTANCE_BY_PROGRAM:

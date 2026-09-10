@@ -44,8 +44,13 @@ def exit_from(state, verdict, **fields):
 APPROVED = dict(design_approved=True)
 IMPL_IS_SCRIPT = dict(design_approved=True, implementation_coverage_type="script")
 IMPL_IS_PROMPT = dict(design_approved=True, implementation_coverage_type="prompt")
-TESTS_ARE_SCRIPT = dict(design_approved=True, tests_coverage_type="script", tests_begun=True)
-TESTS_ARE_PROMPT = dict(design_approved=True, tests_coverage_type="prompt", tests_begun=True)
+TESTS_ARE_SCRIPT = dict(design_approved=True, tests_coverage_types=("script",), tests_begun=True)
+TESTS_ARE_PROMPT = dict(design_approved=True, tests_coverage_types=("prompt",), tests_begun=True)
+# The eighth walk, item 8: test-writing's emitted carries every
+# coverage-type present in the set; the user's check runs when prompt or
+# script-and-prompt is among them.
+TESTS_ARE_SCRIPT_AND_PROMPT = dict(design_approved=True, tests_coverage_types=("script", "prompt"),
+                                   tests_begun=True)
 
 # (expected row, run-state fields, state-exit) — one or more per row.
 LEGALITY_CASES = [
@@ -77,7 +82,7 @@ LEGALITY_CASES = [
     ("19", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_EMITTED)),
     ("20", APPROVED, exit_from(T.CONTRACT_REVISING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_DESIGN)),
-    ("21", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_EMITTED, coverage_type="script")),
+    ("21", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_EMITTED, coverage_types=("script",))),
     ("22", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_COMPONENT_CONTRACT)),
     ("23", APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
@@ -107,7 +112,7 @@ LEGALITY_CASES = [
     ("37", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_REJECT_DESIGN)),
     ("38", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
     ("39", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
-    ("40", APPROVED, exit_from(T.TEST_WRITING, T.V_EMITTED, coverage_type="prompt")),
+    ("40", APPROVED, exit_from(T.TEST_WRITING, T.V_EMITTED, coverage_types=("prompt",))),
     ("41", APPROVED, exit_from(T.TEST_WRITING, T.V_INPUT_QUICK_CHECK_FAILED,
                                input_named=T.INPUT_TEST_DESIGN)),
     ("42", dict(APPROVED, counters={"test-design-corrections": 1}),
@@ -230,6 +235,11 @@ LEGALITY_CASES = [
     ("16", APPROVED, exit_from(T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
     ("16", dict(TESTS_ARE_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
      exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("16", dict(TESTS_ARE_SCRIPT_AND_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
+     exit_from(T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE)),
+    ("45", dict(TESTS_ARE_SCRIPT_AND_PROMPT, implementation_work_stream_position=T.READY_FOR_TEST_SUITE),
+     exit_from(T.TEST_ACCEPTANCE_BY_USER, T.V_ADVANCE)),
+    ("40", APPROVED, exit_from(T.TEST_WRITING, T.V_EMITTED, coverage_types=("script", "prompt"))),
     # The contract's checks are the design's own rows: the program check
     # advances by row 6, and the agent check's advance is row 9 even at the
     # revisions ceiling — the user's check is reached only by a reject (rows
@@ -266,6 +276,8 @@ ILLEGAL_CASES = [
      {}, exit_from(T.TEST_SUITE_EXECUTING, "green")),
     ("the terminal state emitting anything",
      {}, exit_from(T.ENDED, T.V_ADVANCE)),
+    ("an implementation emitting two coverage-types: an implementation is one thing (section 2)",
+     APPROVED, exit_from(T.IMPLEMENTATION_WRITING, T.V_EMITTED, coverage_types=("script", "prompt"))),
     # The run-state does not say what entered test-suite-arbitrating (the
     # user named it on a resume before it was ever entered, section 6.6):
     # neither row 58's guard nor row 59's holds, and the advance is a
@@ -431,7 +443,7 @@ class WithinTheMachine(unittest.TestCase):
     def test_a_stale_state_exit_is_discarded_and_the_state_re_run(self):
         script = fixture.prefix_to_design_approved() + [
             (T.IMPLEMENTATION_WRITING, T.V_EMITTED,
-             {"coverage_type": "script", "package_commit": "f" * 40}),
+             {"coverage_types": ("script",), "package_commit": "f" * 40}),
             fixture.implementation_write(),
         ]
         machine, run, _, _ = fixture.make_machine(script, self.repository)
