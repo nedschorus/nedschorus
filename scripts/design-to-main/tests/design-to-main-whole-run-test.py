@@ -1478,6 +1478,34 @@ class TheRecordsLayout(unittest.TestCase):
         self.assertEqual(str(first["evidence-directory"]),
                          str(record.record_directory / "evidence" / "initiate-design-to-main-1"))
 
+    def test_a_merged_runs_trailers_in_mains_history_do_not_count_toward_this_runs_instances(self):
+        # GHI #313: instances are counted over this run's commits above
+        # the branch's cut from origin/main, not over all of HEAD's
+        # ancestry. A design-to-main run that reached main by merge left
+        # its State: trailers in main's history; the next run's first
+        # instance of each state is still its first.
+        checkout = self.repository.checkout
+        other_component_file = checkout / "scripts" / "gadget-tally" / "gadget-tally.py"
+        other_component_file.parent.mkdir(parents=True)
+        other_component_file.write_text("# the other component's implementation\n")
+        trailer = G.compose_state_exit_trailer(
+            T.IMPLEMENTATION_WRITING, T.V_EMITTED, "0", {name: 0 for name in T.COUNTER_NAMES})
+        fixture.git(checkout, "add", "-A")
+        fixture.git(checkout, "commit", "-q", "-m",
+                    "gadget-tally: implementation-writing emitted\n\n" + trailer)
+        fixture.git(checkout, "push", "-q", "origin", "main")
+        script = fixture.prefix_to_design_approved() + [fixture.implementation_write()]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        self.assertEqual(record.instances_of_state_so_far(T.IMPLEMENTATION_WRITING), 0)
+        fixture.drive(machine, run)
+        self.assertEqual(record.instances_of_state_so_far(T.IMPLEMENTATION_WRITING), 1)
+        packages = [p for p in machine.launcher.launched if p["state"] == T.IMPLEMENTATION_WRITING]
+        self.assertEqual([str(p["evidence-directory"]) for p in packages],
+                         [str(record.record_directory / "evidence" / "implementation-writing-1")])
+        first = [p for p in machine.launcher.launched if p["state"] == T.INITIATE_DESIGN_TO_MAIN][0]
+        self.assertEqual(str(first["evidence-directory"]),
+                         str(record.record_directory / "evidence" / "initiate-design-to-main-1"))
+
 
 class TheStateExitFile(unittest.TestCase):
     """Section 2: the state-exit is a file, state-exit.json, in the

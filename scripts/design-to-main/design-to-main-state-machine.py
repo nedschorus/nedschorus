@@ -673,7 +673,7 @@ class DesignToMainStateMachineFlow:
             "design-version": run.design_version,
             # Where this instance writes its notes.md and state-exit.json
             # (section 9): evidence/<state or sub-state>-<n>/, n counted
-            # from 1 over the branch's State: trailers.
+            # from 1 over the State: trailers of the branch above its cut.
             "evidence-directory": self.git_record.evidence_directory_for_the_next_instance(state),
         }
 
@@ -1069,7 +1069,7 @@ class DesignToMainStateMachineFlow:
         # and commit; it goes to the branch in run-state.json with row 1's
         # own commit, so a successor recovering the run reads it there.
         if row.row == tables.ROW_TOPIC_BRANCH_CUT:
-            self.git_record.cut_topic_branch(self.topic_branch_start_point)
+            self.git_record.cut_topic_branch()
             run.topic_branch_cut = True
 
         # Approvals and the work-streams.
@@ -1197,5 +1197,3 @@ class DesignToMainStateMachineFlow:
             run.set_work_stream_position(work_stream, composite)
         if composite in tables.WRITING_STATES and state_exit.destination:
             run.writing_state_entry_reason[composite] = tables.ENTRY_REASON_USER_NAMED_DESTINATION
-
-    topic_branch_start_point = "origin/main"
