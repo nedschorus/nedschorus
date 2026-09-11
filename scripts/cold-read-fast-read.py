@@ -384,7 +384,8 @@ SENTENCE_COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)
 
 
 def attach_sentences_and_coverage(report_text: str, sentences: dict,
-                                  document: pathlib.Path = None) -> str:
+                                  document: pathlib.Path = None,
+                                  marked_copy_kept: pathlib.Path = None) -> str:
     """Put each original sentence under the restatement claiming its id, and
     append what the restatement missed.
 
@@ -431,12 +432,18 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
         if missing else "- Every sentence was restated.")
     if document is not None:
         # The provenance stamp at the top of the report names the marked copy
-        # the reviewer read, which on the walk route is a temporary file that
-        # is gone by the time anyone opens the report. Naming the document
-        # here is what keeps that citation followable (reviewer of PR #303).
+        # the reviewer read, not the document, so this line says which
+        # document that was (reviewer of PR #303). Whether the copy is still
+        # there depends on the route, and saying it is gone when it is not was
+        # the defect the reviewer of PR #307 caught: the records route keeps it
+        # beside the report as evidence, and only the walk route's copy is
+        # temporary.
         coverage.append(
+            f"- The reviewer read `{marked_copy_kept}`, the marked copy of "
+            f"`{document}`, kept beside this report."
+            if marked_copy_kept is not None else
             f"- The reviewer read a marked copy of `{document}`; the `target=` "
-            "stamp above names that copy, which no longer exists.")
+            "stamp above names that copy, which was temporary and is gone.")
     if unknown:
         coverage.append(
             f"- Cited but not in the document: {', '.join(unknown)}. "
@@ -550,7 +557,8 @@ def main() -> int:
                 # which sentences no restatement claimed.
                 report.write_text(
                     attach_sentences_and_coverage(
-                        report.read_text(encoding="utf-8"), sentences, target),
+                        report.read_text(encoding="utf-8"), sentences, target,
+                        marked_copy if on_records_route else None),
                     encoding="utf-8")
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
