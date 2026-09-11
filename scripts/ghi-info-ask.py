@@ -111,6 +111,15 @@ GHI_INFO_MODEL = os.environ.get("GHI_INFO_MODEL", "claude-sonnet-5")
 # NM's three-watchdog machinery is deliberately not carried over (design:
 # "version 1 here starts with one timeout").
 ASK_TIMEOUT_SECONDS = int(os.environ.get("GHI_INFO_ASK_TIMEOUT_SECONDS", "300"))
+
+# A claude that cannot authenticate says so in its JSON result's `result` field
+# ("Failed to authenticate: OAuth session expired and could not be refreshed",
+# seen box-side 2026-09-11 after the login there lapsed). Nothing in this script
+# can repair that: the remedy is an interactive login on the box, so the message
+# names it rather than leaving the caller to fall down the fallback ladder blind.
+LOGGED_OUT_PATTERN = re.compile(r"authenticat|oauth", re.IGNORECASE)
+LOGGED_OUT_REMEDY = (f" — the claude on {AGENT_BOX} is logged out; run `claude auth login` "
+                     f"there (from the Mac: `ssh -t {AGENT_BOX} claude auth login`), then retry")
 # The box gets the ask's own budget plus room for the ssh round trip and a
 # routine refresh. This does NOT guarantee the Mac outlasts every box-side
 # run: the ask's deadline bounds only the claude turns, while the mirror
@@ -323,15 +332,32 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
         return None, f"claude was silent for {timeout_seconds}s and was killed"
     except OSError as error:
         return None, f"could not run claude: {error}"
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "no output").strip()[:500]
-        return None, f"claude exited {completed.returncode}: {detail}"
+    # Parse stdout BEFORE branching on the exit code: a failing claude exits 1
+    # and still writes a complete JSON result, with the diagnosis in `result`
+    # (2026-09-11: the box's expired login). Reporting the raw blob cut at 500
+    # characters showed usage counters and hid the cause, which sits ~1100
+    # bytes in.
+    result = None
     try:
-        result = json.loads(completed.stdout)
+        parsed = json.loads(completed.stdout)
     except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        result = parsed
+    if completed.returncode != 0 or (result is not None and result.get("is_error")):
+        if result is not None and result.get("result") is not None:
+            detail = str(result.get("result")).strip()[:500]
+            message = (f"claude exited {completed.returncode}: {detail}"
+                       if completed.returncode != 0
+                       else f"claude reported an error: {detail}")
+        else:
+            detail = (completed.stderr or completed.stdout or "no output").strip()[:500]
+            message = f"claude exited {completed.returncode}: {detail}"
+        if LOGGED_OUT_PATTERN.search(detail):
+            message += LOGGED_OUT_REMEDY
+        return None, message
+    if result is None:
         return None, f"claude produced no parseable result: {completed.stdout[:500]!r}"
-    if result.get("is_error"):
-        return None, f"claude reported an error: {str(result.get('result'))[:500]}"
     return result, None
 
 

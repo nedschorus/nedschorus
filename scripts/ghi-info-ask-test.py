@@ -27,6 +27,8 @@ SCRIPT_PATH = Path(__file__).with_name("ghi-info-ask.py")
 _spec = importlib.util.spec_from_file_location("ghi_info_ask", SCRIPT_PATH)
 ghi_ask = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ghi_ask)
+# The real run_claude, captured before any case installs a fake over it.
+run_claude_real = ghi_ask.run_claude
 
 failures = []
 
@@ -474,6 +476,73 @@ finally:
     patch_module_function(ghi_ask.mirror_refresh, "refresh", mirror_orig)
     patch("run_claude", run_claude_orig)
 
+
+# --- run_claude(): a failing claude's diagnosis is reported, not a truncated blob --
+# Behavior this pins, seen 2026-09-11: the box's claude login had expired. claude
+# exited 1 AND wrote a complete JSON result whose `result` field carried the
+# diagnosis ("Failed to authenticate: OAuth session expired ..."), ~1100 bytes in.
+# run_claude checked the exit code first and reported the raw blob cut at 500
+# characters, so the caller saw usage counters and never the cause.
+LOGGED_OUT_STDOUT = json.dumps({
+    "duration_api_ms": 0, "stop_reason": "stop_sequence", "session_id": "c637480c",
+    "total_cost_usd": 0,
+    "usage": {"input_tokens": 0, "output_tokens": 0, "server_tool_use": {},
+              "cache_creation": {"ephemeral_1h_input_tokens": 0,
+                                 "ephemeral_5m_input_tokens": 0},
+              "padding": "x" * 700},
+    "modelUsage": {}, "permission_denials": [], "terminal_reason": "api_error",
+    "is_error": True, "num_turns": 1, "subtype": "success", "api_error_status": None,
+    "result": "Failed to authenticate: OAuth session expired and could not be refreshed",
+    "type": "result", "duration_ms": 133,
+})
+assert LOGGED_OUT_STDOUT.index('"result"') > 500, "the fixture must put the diagnosis past the old cut"
+
+
+class FakeCompletedProcess:
+    def __init__(self, returncode, stdout, stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def fake_subprocess_run_returning(completed):
+    def fake_run(command, **kwargs):
+        return completed
+    return fake_run
+
+
+subprocess_run_orig = ghi_ask.subprocess.run
+try:
+    with tempfile.TemporaryDirectory() as temporary:
+        seat = Path(temporary)
+        ghi_ask.subprocess.run = fake_subprocess_run_returning(
+            FakeCompletedProcess(1, LOGGED_OUT_STDOUT))
+        result, error = run_claude_real("q", None, seat, 5)
+        check("run_claude: exit 1 with a JSON result reports the result text, not the blob",
+              result is None and "OAuth session expired" in error
+              and "duration_api_ms" not in error, (result, error))
+        check("run_claude: a logged-out box names the login command and the machine",
+              error is not None and "claude auth login" in error
+              and ghi_ask.AGENT_BOX in error, error)
+
+        ghi_ask.subprocess.run = fake_subprocess_run_returning(
+            FakeCompletedProcess(1, "", stderr="boom"))
+        result, error = run_claude_real("q", None, seat, 5)
+        check("run_claude: exit 1 without JSON keeps the exit-code message",
+              result is None and error == "claude exited 1: boom", (result, error))
+
+        ghi_ask.subprocess.run = fake_subprocess_run_returning(
+            FakeCompletedProcess(0, json.dumps({"is_error": True, "result": "rate limited"})))
+        result, error = run_claude_real("q", None, seat, 5)
+        check("run_claude: exit 0 with is_error reports the result, and no login remedy",
+              result is None and "rate limited" in error and "auth login" not in error,
+              (result, error))
+
+        ghi_ask.subprocess.run = fake_subprocess_run_returning(
+            FakeCompletedProcess(0, json.dumps({"session_id": "s", "result": "read #1"})))
+        result, error = run_claude_real("q", None, seat, 5)
+        check("run_claude: a clean result is returned unchanged",
+              error is None and result["result"] == "read #1", (result, error))
+finally:
+    ghi_ask.subprocess.run = subprocess_run_orig
 
 print()
 if failures:
