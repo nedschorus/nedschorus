@@ -16,12 +16,14 @@ Run: python3 scripts/recover-crashed-seats-test.py
 """
 
 import importlib.util
+import io
 import json
 import os
 import shlex
 import sys
 import tempfile
 import time
+from contextlib import redirect_stderr
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -774,6 +776,367 @@ with tempfile.TemporaryDirectory() as temporary:
           dialog_prompt[:120])
     check("REVIEW-2: a brief that only quotes the opener is not a handoff successor",
           not recovery.is_unreplied_reincarnation_successor(quoted))
+
+    # --- recover into a window (nedschorus#242 change 6, #116 build step 3) --
+    # --open-iterm-window-per-seat launches the seat ATTACHED in its own iTerm
+    # window, through open-iterm-window-running-command. The trap the design
+    # names: the window's process is a child of iTerm, not of this script, so
+    # the supervisor arguments cannot ride the environment — they are encoded
+    # into the command text, `/usr/bin/env 'NAME=value' <launcher> <seat>`.
+    window_launches, detached_launches = [], []
+    def capture_window_launch(name, seat_directory, handoff_directory,
+                              extra_arguments, first_prompt_file=None):
+        window_launches.append((name, extra_arguments, first_prompt_file))
+        return 0
+    def capture_detached_launch(name, seat_directory, handoff_directory,
+                                extra_arguments, first_prompt_file=None):
+        detached_launches.append((name, extra_arguments, first_prompt_file))
+        return 0
+    real_open_seat_in_iterm_window = recovery.open_seat_in_iterm_window
+    real_launcher_path = recovery.launcher_path
+
+    workspace = Workspace(root / "window-command-text")
+    prompt_file = workspace.handoffs / f"{workspace.name}-resume-recovery-prompt.md"
+    try:
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        command_text = recovery.iterm_window_command_text(
+            workspace.name, workspace.seat_directory, workspace.handoffs,
+            "--resume-session-id abc-123", first_prompt_file=prompt_file)
+    finally:
+        recovery.launcher_path = real_launcher_path
+    # iTerm2 splits its command shell-style, one level of quoting; shlex.split
+    # reads it the same way for text with no backslash or double quote.
+    check("WINDOW: the command text carries the supervisor arguments and agents root",
+          shlex.split(command_text) == [
+              "/usr/bin/env",
+              f"LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=--handoff-dir "
+              f"{workspace.handoffs} --resume-session-id abc-123",
+              f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}",
+              "/fake/scripts/launch-claude-mac", workspace.name,
+              "--first-prompt-file", str(prompt_file)],
+          command_text)
+    check("WINDOW: the seat is launched attached, not --no-attach",
+          "--no-attach" not in command_text, command_text)
+
+    # The real opener accepts the text: its dry-run seam prints the AppleScript
+    # it would run, and refuses a command it could not deliver intact.
+    import subprocess as real_subprocess_for_window
+    opener = SCRIPT_PATH.with_name("open-iterm-window-running-command")
+    opened = real_subprocess_for_window.run(
+        [str(opener), command_text], capture_output=True, text=True,
+        env={**os.environ, "OPEN_ITERM_WINDOW_DRY_RUN": "1"})
+    check("WINDOW: open-iterm-window-running-command accepts the command text",
+          opened.returncode == 0
+          and "create window with default profile command" in opened.stdout
+          and "--resume-session-id abc-123" in opened.stdout,
+          (opened.returncode, opened.stdout, opened.stderr))
+
+    # open_seat_in_iterm_window hands that text, as one argument, to the opener.
+    captured_window_run = []
+    def capture_window_subprocess_run(command, check=False):
+        captured_window_run.append(command)
+        class Done:
+            returncode = 0
+        return Done()
+    real_run = recovery.subprocess.run
+    try:
+        recovery.subprocess.run = capture_window_subprocess_run
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        exit_code = recovery.open_seat_in_iterm_window(
+            workspace.name, workspace.seat_directory, workspace.handoffs,
+            "--resume-session-id abc-123", first_prompt_file=prompt_file)
+    finally:
+        recovery.subprocess.run = real_run
+        recovery.launcher_path = real_launcher_path
+    check("WINDOW: the opener gets the whole command as one argument",
+          exit_code == 0 and len(captured_window_run) == 1
+          and Path(captured_window_run[0][0]).name == "open-iterm-window-running-command"
+          and Path(captured_window_run[0][0]).is_absolute()
+          and captured_window_run[0][1:] == [command_text],
+          captured_window_run)
+
+    # Through recover_seat: every launching path opens a window instead of
+    # the detached launch.
+    try:
+        patch("open_seat_in_iterm_window", capture_window_launch)
+        patch("launch_seat", capture_detached_launch)
+
+        workspace = Workspace(root / "window-resume")
+        all_dead()
+        write_transcript(workspace.project_directory(), "resume-in-window",
+                         "real work", records=5)
+        report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                       workspace.handoffs, workspace.projects,
+                                       False, False, open_iterm_window=True)
+        check("WINDOW: a resume opens a window carrying --resume-session-id",
+              window_launches
+              and window_launches[-1][1] == "--resume-session-id resume-in-window"
+              and window_launches[-1][2] is not None
+              and "relaunched resuming resume-in-window" in report
+              and "iTerm window" in report and not detached_launches,
+              (window_launches, detached_launches, report))
+
+        dry_report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                           workspace.handoffs, workspace.projects,
+                                           True, False, open_iterm_window=True)
+        check("WINDOW: --dry-run prints the window command and opens nothing",
+              len(window_launches) == 1
+              and "would open an iTerm window running:" in dry_report
+              and "--resume-session-id resume-in-window" in dry_report
+              and "resume-recovery-prompt.md" in dry_report,
+              dry_report)
+
+        workspace = Workspace(root / "window-ignite")
+        all_dead()
+        write_transcript(workspace.project_directory(), "resume-in-window",
+                         "real work", records=5)
+        (workspace.handoffs / f"{workspace.name}-dialog-0004.md").write_text(
+            "dialog", encoding="utf-8")
+        report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                       workspace.handoffs, workspace.projects,
+                                       False, True, open_iterm_window=True)
+        check("WINDOW: --ignite-fallback opens the window fresh, reading the extract",
+              window_launches[-1][1] == ""
+              and window_launches[-1][2] is not None
+              and window_launches[-1][2].name == f"{workspace.name}-recovery-ignition-prompt.md"
+              and "iTerm window" in report and not detached_launches,
+              (window_launches[-1], report))
+
+        workspace = Workspace(root / "window-defer")
+        all_dead()
+        (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+        report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                       workspace.handoffs, workspace.projects,
+                                       False, False, open_iterm_window=True)
+        check("WINDOW: a waiting handoff opens a plain window for boot-ignition",
+              window_launches[-1][1] == "" and window_launches[-1][2] is None
+              and "relaunched plain" in report and "iTerm window" in report
+              and not detached_launches,
+              (window_launches[-1], report))
+
+        # main(): the flag reaches recover_seat, and is refused where it
+        # cannot work.
+        workspace = Workspace(root / "window-main")
+        all_dead()
+        write_transcript(workspace.project_directory(), "main-window",
+                         "real work", records=5)
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
+                                   "--agents-root", str(workspace.agents_root),
+                                   "--handoff-dir", str(workspace.handoffs),
+                                   "--projects-root", str(workspace.projects)])
+        check("WINDOW: main passes --open-iterm-window-per-seat through",
+              exit_code == 0
+              and window_launches[-1][1] == "--resume-session-id main-window",
+              window_launches[-1])
+
+        # The Ubuntu box is headless and has no iTerm2 or launch-claude-mac:
+        # refused with the reason, never silently downgraded to detached.
+        recovery.launcher_path = lambda: None
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            try:
+                exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(workspace.handoffs),
+                                           "--projects-root", str(workspace.projects)])
+            except SystemExit as stop_request:
+                exit_code = stop_request.code
+        check("WINDOW: refused off macOS, with the reason",
+              exit_code == 2 and "macOS" in errors.getvalue(),
+              (exit_code, errors.getvalue()))
+
+        # iTerm2's parser takes one level of quoting and has no POSIX '\''
+        # escape (measured 2026-09-02, open-iterm-window-running-command), so
+        # a path holding an apostrophe cannot be carried into the window. The
+        # suite's own apostrophe workspace (r21, PR #134 round 2) is that path.
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        apostrophe_handoffs = root / "agent's window handoffs"
+        errors = io.StringIO()
+        launches_before = len(window_launches)
+        with redirect_stderr(errors):
+            try:
+                exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(apostrophe_handoffs),
+                                           "--projects-root", str(workspace.projects)])
+            except SystemExit as stop_request:
+                exit_code = stop_request.code
+        check("WINDOW: a path with an apostrophe is refused before anything launches",
+              exit_code == 2 and "agent's window handoffs" in errors.getvalue()
+              and len(window_launches) == launches_before,
+              (exit_code, errors.getvalue()))
+    finally:
+        recovery.launcher_path = real_launcher_path
+        patch("open_seat_in_iterm_window", real_open_seat_in_iterm_window)
+
+    # Review of e55904d, finding 1: a handoff directory holding a SPACE is
+    # shell-quoted into the supervisor arguments (shlex.quote), and the single
+    # quotes it adds are exactly what iTerm2 cannot carry. The refusal must
+    # catch it up front: composing anyway raised from inside the composer,
+    # which under --all aborts every seat after it, logs nothing, and leaves
+    # the written resume prompt behind with no window. Paths of this class are
+    # already in this suite (r21's "agent's r21", PR #134's apostrophe
+    # handoff directory).
+    workspace = Workspace(root / "window-space-handoff-dir")
+    all_dead()
+    write_transcript(workspace.project_directory(), "space-dir-resume",
+                     "real work", records=5)
+    spaced_handoffs = root / "window handoffs with spaces"
+    spaced_handoffs.mkdir(parents=True, exist_ok=True)
+    window_launches.clear()
+    errors = io.StringIO()
+    try:
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        patch("open_seat_in_iterm_window", capture_window_launch)
+        with redirect_stderr(errors):
+            try:
+                exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(spaced_handoffs),
+                                           "--projects-root", str(workspace.projects)])
+            except SystemExit as stop_request:
+                exit_code = stop_request.code
+            except ValueError as raised:
+                exit_code = f"ValueError: {raised}"
+    finally:
+        recovery.launcher_path = real_launcher_path
+        patch("open_seat_in_iterm_window", real_open_seat_in_iterm_window)
+    check("WINDOW: a handoff directory needing shell quoting is refused up front",
+          exit_code == 2 and "window handoffs with spaces" in errors.getvalue()
+          and not window_launches
+          and not list(spaced_handoffs.glob("*-resume-recovery-prompt.md")),
+          (exit_code, errors.getvalue(), window_launches))
+
+    # The agents root and the launcher path keep the apostrophe rule, and are
+    # refused through main() the same way. Covered here because the handoff
+    # directory moved to its own check above, and nothing else exercised this
+    # loop (review of dd4df6a, the coverage gap it left).
+    workspace = Workspace(root / "window-apostrophe-paths")
+    all_dead()
+    write_transcript(workspace.project_directory(), "apostrophe-path-resume",
+                     "real work", records=5)
+    for label, agents_root_argument, launcher in (
+            ("the agents root", str(root / "agent's agents"),
+             Path("/fake/scripts/launch-claude-mac")),
+            ("the launcher path", str(workspace.agents_root),
+             Path("/fake/agent's scripts/launch-claude-mac"))):
+        window_launches.clear()
+        errors = io.StringIO()
+        try:
+            recovery.launcher_path = lambda pinned=launcher: pinned
+            patch("open_seat_in_iterm_window", capture_window_launch)
+            with redirect_stderr(errors):
+                try:
+                    exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
+                                               "--agents-root", agents_root_argument,
+                                               "--handoff-dir", str(workspace.handoffs),
+                                               "--projects-root", str(workspace.projects)])
+                except SystemExit as stop_request:
+                    exit_code = stop_request.code
+                except ValueError as raised:
+                    exit_code = f"ValueError: {raised}"
+        finally:
+            recovery.launcher_path = real_launcher_path
+            patch("open_seat_in_iterm_window", real_open_seat_in_iterm_window)
+        check(f"WINDOW: an apostrophe in {label} is refused up front",
+              exit_code == 2 and "apostrophe" in errors.getvalue()
+              and not window_launches,
+              (exit_code, errors.getvalue(), window_launches))
+
+    # A space elsewhere is carried, not refused: the reviewer measured the
+    # agents root, launcher path and prompt file arriving intact through the
+    # opener's AppleScript, the login shell and into the launcher, because
+    # those are whole words this composer quotes itself.
+    workspace = Workspace(root / "window space agents root")
+    all_dead()
+    write_transcript(workspace.project_directory(), "space-root-resume",
+                     "real work", records=5)
+    plain_handoffs = root / "window-plain-handoffs"
+    plain_handoffs.mkdir(parents=True, exist_ok=True)
+    try:
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                       plain_handoffs, workspace.projects,
+                                       True, False, open_iterm_window=True)
+    finally:
+        recovery.launcher_path = real_launcher_path
+    check("WINDOW: a space in the agents root is carried into the command, not refused",
+          f"'NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}'" in report, report)
+
+    # --dry-run promises to change nothing: no prompt file, no window.
+    workspace = Workspace(root / "window-dry-run-changes-nothing")
+    all_dead()
+    write_transcript(workspace.project_directory(), "dry-run-resume",
+                     "real work", records=5)
+    (workspace.handoffs / f"{workspace.name}-dialog-0002.md").write_text(
+        "dialog", encoding="utf-8")
+    before = sorted(path.name for path in workspace.handoffs.iterdir())
+    window_launches.clear()
+    detached_launches.clear()
+    try:
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        patch("open_seat_in_iterm_window", capture_window_launch)
+        patch("launch_seat", capture_detached_launch)
+        for fallback in (False, True):
+            recovery.recover_seat(workspace.name, workspace.agents_root,
+                                  workspace.handoffs, workspace.projects,
+                                  True, fallback, open_iterm_window=True)
+    finally:
+        recovery.launcher_path = real_launcher_path
+        patch("open_seat_in_iterm_window", real_open_seat_in_iterm_window)
+    check("WINDOW: --dry-run writes no prompt file and opens no window",
+          sorted(path.name for path in workspace.handoffs.iterdir()) == before
+          and not window_launches and not detached_launches,
+          (before, sorted(path.name for path in workspace.handoffs.iterdir()),
+           window_launches, detached_launches))
+
+    # The opener's exit code is the seat's: a window that could not be opened
+    # is reported, never claimed as a recovery.
+    def failing_window_subprocess_run(command, check=False):
+        class Done:
+            returncode = 3
+        return Done()
+    workspace = Workspace(root / "window-opener-fails")
+    all_dead()
+    write_transcript(workspace.project_directory(), "opener-fails-resume",
+                     "real work", records=5)
+    try:
+        recovery.subprocess.run = failing_window_subprocess_run
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        report = recovery.recover_seat(workspace.name, workspace.agents_root,
+                                       workspace.handoffs, workspace.projects,
+                                       False, False, open_iterm_window=True)
+    finally:
+        recovery.subprocess.run = real_run
+        recovery.launcher_path = real_launcher_path
+    check("WINDOW: a failing opener reports LAUNCH FAILED, never 'relaunched'",
+          "LAUNCH FAILED (exit 3)" in report and "relaunched" not in report, report)
+
+    # An iTerm window's command starts in / with a bare PATH, and this script
+    # is normally run by a relative path (`python3 scripts/...`), so both the
+    # launcher and the opener must be absolutized rather than inherited from
+    # __file__ as given.
+    if sys.platform == "darwin":
+        real_module_file = recovery.__file__
+        captured_window_run.clear()
+        try:
+            recovery.__file__ = "scripts/recover-crashed-seats.py"
+            recovery.subprocess.run = capture_window_subprocess_run
+            launcher_from_relative = recovery.launcher_path()
+            recovery.open_seat_in_iterm_window(workspace.name, workspace.seat_directory,
+                                               workspace.handoffs, "")
+        finally:
+            recovery.__file__ = real_module_file
+            recovery.subprocess.run = real_run
+        check("WINDOW: launcher and opener stay absolute when the script is run by a relative path",
+              launcher_from_relative.is_absolute()
+              and captured_window_run
+              and Path(captured_window_run[-1][0]).is_absolute()
+              and str(launcher_from_relative) in captured_window_run[-1][1],
+              (launcher_from_relative,
+               captured_window_run[-1] if captured_window_run else None))
 
     # Round 4 codex finding A (handoff dir) and finding B (agents root):
     # probed through the REAL launch_seat on the launcher branch, in codex's

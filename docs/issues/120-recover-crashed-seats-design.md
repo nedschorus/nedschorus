@@ -1,5 +1,5 @@
 ---
-status: overview of the tool as built; six changes ruled 2026-09-02, none built — listed in § What this document proposes
+status: overview of the tool as built; six changes ruled 2026-09-02, change 6 built 2026-09-11 — listed in § What this document proposes
 design-as-of: 2026-09-02
 ---
 
@@ -36,8 +36,8 @@ waiting-handoff branch below.
 
 ## What this document proposes
 
-Six changes, all ruled 2026-09-02, none built. Each is specified in the section
-named.
+Six changes, all ruled 2026-09-02. Change 6 was built on 2026-09-11; the other
+five are not built. Each is specified in the section named.
 
 1. **Judge the supervisor by its process, confirmed by command line**, not by the
    age of its heartbeat — § Two defects that test found.
@@ -51,8 +51,8 @@ named.
    it did not** — § Ruled: what happens when a restart fails.
 5. **A by-hand launch resumes a crashed seat** instead of minting an empty
    session — the same section.
-6. **Recover into a window**, `--open-iterm-window-per-seat` — § Proposed
-   change: recover into a window.
+6. **Recover into a window**, `--open-iterm-window-per-seat` — built
+   2026-09-11; § Recover into a window.
 
 ## Why it exists
 
@@ -345,7 +345,20 @@ under a by-hand launch is reported in the terminal, where the degraded restart
 can be offered as ruled. This is a further change to the supervisor's
 first-launch path, and the launchers inherit it without change of their own.
 
-## Proposed change, not built: recover into a window
+## Recover into a window (built 2026-09-11)
+
+**Built 2026-09-11 as specified below**, with two refusals the specification
+implies rather than states: off macOS the flag is refused with its reason, and
+so is a path iTerm2 cannot carry into the window — one holding an apostrophe,
+or a handoff directory holding a space, which is shell-quoted into the
+supervisor arguments and so arrives wrapped in the quotes iTerm2 cannot carry.
+A space in the agents root, the launcher path or the prompt file is carried
+intact.
+`--dry-run` prints the command each window would run. **Not verified live:**
+that a real iTerm2 window delivers the quoted `NAME=value` words to
+`/usr/bin/env` intact. The opener's own measurement — a quoted `'seat a'`
+arriving as one argument — stands in until the test seat of #116's build step 4
+runs with the user present.
 
 **The problem.** The tool leaves a recovered seat headless. The launcher is
 called with a hardcoded `--no-attach`, so the seat lives in tmux with no window

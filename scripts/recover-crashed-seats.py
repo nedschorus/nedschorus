@@ -50,10 +50,15 @@ Recovering box seats from the Mac is `ssh ned` plus this script there.
 
 Usage:
   recover-crashed-seats.py <seat-name>... [--dry-run] [--ignite-fallback]
+                           [--open-iterm-window-per-seat]
   recover-crashed-seats.py --all [--dry-run] [--ignite-fallback]
+                           [--open-iterm-window-per-seat]
 
 --all assesses every seat with a home under the agents root. --dry-run
-reports every decision and launches nothing.
+reports every decision and launches nothing. --open-iterm-window-per-seat
+(macOS only) launches each recovered seat attached, in its own iTerm window,
+instead of detached; with --dry-run it prints the command each window would
+run.
 """
 
 import argparse
@@ -338,6 +343,10 @@ def newest_real_transcript(project_directory: Path):
                   "worth resuming")
 
 
+def resume_prompt_path(handoff_directory: Path, name: str) -> Path:
+    return handoff_directory / f"{name}-resume-recovery-prompt.md"
+
+
 def write_resume_prompt(handoff_directory: Path, name: str,
                         unreplied_successor: bool = False) -> Path:
     """The resumed session's first turn (PR #131 review, finding 2): without
@@ -352,7 +361,7 @@ def write_resume_prompt(handoff_directory: Path, name: str,
     # after assessment already chose to resume (PR #134 review, finding 2);
     # created the same way the supervisor creates its own on startup.
     handoff_directory.mkdir(parents=True, exist_ok=True)
-    prompt_path = handoff_directory / f"{name}-resume-recovery-prompt.md"
+    prompt_path = resume_prompt_path(handoff_directory, name)
     if unreplied_successor:
         prompt = (
             "This session was resumed by crash recovery (nedschorus#120). You "
@@ -389,8 +398,21 @@ def launcher_path():
     Mac-side wrapper that drives the box over ssh, so it is not the box-local
     answer; there, the launch is composed directly (see launch_seat)."""
     if sys.platform == "darwin":
-        return Path(__file__).with_name("launch-claude-mac")
+        # Absolute, because an iTerm window's command starts in / with a bare
+        # PATH (--open-iterm-window-per-seat), and this script is usually run
+        # by a relative path.
+        return Path(__file__).resolve().with_name("launch-claude-mac")
     return None
+
+
+def compose_supervisor_arguments_for_seat_launch(handoff_directory: Path,
+                                                 extra_supervisor_arguments: str) -> str:
+    """The supervisor's arguments for a recovery launch: always the handoff
+    directory this recovery assessed with (see launch_seat), then the rest."""
+    supervisor_arguments = f"--handoff-dir {shlex.quote(str(handoff_directory))}"
+    if extra_supervisor_arguments:
+        supervisor_arguments += f" {extra_supervisor_arguments}"
+    return supervisor_arguments
 
 
 def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
@@ -422,9 +444,8 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     # path breaks a hand-quoted string — the kill has already happened by
     # then, so the seat stays down while the output says otherwise (PR #134
     # review, finding 1).
-    supervisor_arguments = f"--handoff-dir {shlex.quote(str(handoff_directory))}"
-    if extra_supervisor_arguments:
-        supervisor_arguments += f" {extra_supervisor_arguments}"
+    supervisor_arguments = compose_supervisor_arguments_for_seat_launch(
+        handoff_directory, extra_supervisor_arguments)
     if launcher is not None:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = supervisor_arguments
         environment["NEDSCHORUS_AGENTS_ROOT"] = str(seat_directory.parent)
@@ -467,6 +488,56 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         supervisor_command, socket_name=name,
     )
     return 1 if completed is None else completed.returncode
+
+
+def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory: Path,
+                             extra_supervisor_arguments: str,
+                             first_prompt_file: Path = None) -> str:
+    """The command an iTerm window runs to launch this seat ATTACHED
+    (nedschorus#242 change 6; the #120 overview, § recover into a window).
+
+    The window's process is a child of iTerm, not of this script, so it
+    inherits iTerm's environment. What launch_seat passes through the
+    environment — the supervisor arguments and the agents root — is written
+    into the command instead, `/usr/bin/env 'NAME=value' <launcher> <seat>`;
+    written naively, each window would start a fresh seat while looking like
+    a recovery. iTerm2 splits the text shell-style with one level of quoting,
+    so every word is single-quoted. It has no POSIX '\\'' escape (measured
+    2026-09-02, recorded in open-iterm-window-running-command), so no word
+    here may contain a single quote — an apostrophe in a path, or the shell
+    quoting shlex.quote adds around a handoff directory holding a space.
+    main() refuses both before anything launches; this raises rather than
+    open a window whose command iTerm would split wrong.
+    """
+    words = ["/usr/bin/env",
+             "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
+             + compose_supervisor_arguments_for_seat_launch(
+                 handoff_directory, extra_supervisor_arguments),
+             f"NEDSCHORUS_AGENTS_ROOT={seat_directory.parent}",
+             str(launcher_path()), name]
+    if first_prompt_file is not None:
+        words += ["--first-prompt-file", str(first_prompt_file)]
+    for word in words:
+        if "'" in word:
+            raise ValueError("an iTerm window command cannot carry a word holding a "
+                             f"single quote: {word!r}")
+    return " ".join(f"'{word}'" for word in words)
+
+
+def open_seat_in_iterm_window(name: str, seat_directory: Path, handoff_directory: Path,
+                              extra_supervisor_arguments: str,
+                              first_prompt_file: Path = None):
+    """launch_seat's twin for --open-iterm-window-per-seat: the seat is born
+    attached in its own iTerm window, through open-iterm-window-running-command
+    (the only sanctioned way to open a window that runs a command,
+    nedschorus#27). Born attached, its pane drops to a shell in the seat's
+    directory when the supervisor exits, instead of closing. Returns the
+    opener's exit code, which says the window was asked for — not that the
+    seat came up inside it (#242 change 4 is that check)."""
+    opener = Path(__file__).resolve().with_name("open-iterm-window-running-command")
+    command_text = iterm_window_command_text(name, seat_directory, handoff_directory,
+                                             extra_supervisor_arguments, first_prompt_file)
+    return subprocess.run([str(opener), command_text], check=False).returncode
 
 
 def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
@@ -542,21 +613,35 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
 
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
-                 projects_root: Path, dry_run: bool, ignite_fallback: bool) -> str:
-    """One seat's recovery. Returns a one-line report."""
+                 projects_root: Path, dry_run: bool, ignite_fallback: bool,
+                 open_iterm_window: bool = False) -> str:
+    """One seat's recovery. Returns a one-line report. With open_iterm_window
+    the seat is launched attached in its own iTerm window instead of
+    detached (--open-iterm-window-per-seat); nothing else changes — not the
+    deadness checks, the transcript choice, or the resume decision."""
     verdict, detail = assess_seat(name, agents_root, handoff_directory, projects_root)
     seat_directory = agents_root / name
+    launch = open_seat_in_iterm_window if open_iterm_window else launch_seat
+    in_window = " in a new iTerm window" if open_iterm_window else ""
+
+    def would_open(extra_supervisor_arguments: str, first_prompt_file: Path = None) -> str:
+        """The dry run's view of the window: the command it would run."""
+        if not open_iterm_window:
+            return ""
+        return "; would open an iTerm window running: " + iterm_window_command_text(
+            name, seat_directory, handoff_directory, extra_supervisor_arguments,
+            first_prompt_file)
 
     if verdict == "refuse":
         return f"{name}: REFUSED — {detail}"
 
     if verdict == "defer-to-boot-ignition":
         if dry_run:
-            return f"{name}: would relaunch plain ({detail})"
-        exit_code = launch_seat(name, seat_directory, handoff_directory, "")
+            return f"{name}: would relaunch plain ({detail}){would_open('')}"
+        exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
-        return f"{name}: relaunched plain — {detail}"
+        return f"{name}: relaunched plain{in_window} — {detail}"
 
     if verdict == "resume" and not ignite_fallback:
         session_id, transcript = detail
@@ -565,17 +650,18 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         # In the report, so the recovery log records which prompt was sent.
         unreplied_note = ("; it is the successor its handoff started, which "
                           "never replied" if unreplied_successor else "")
+        resume_arguments = f"--resume-session-id {shlex.quote(session_id)}"
         if dry_run:
             return (f"{name}: would resume session {session_id} "
-                    f"({size_kb}KB transcript) under a supervisor{unreplied_note}")
-        exit_code = launch_seat(name, seat_directory, handoff_directory,
-                                f"--resume-session-id {shlex.quote(session_id)}",
-                                first_prompt_file=write_resume_prompt(
-                                    handoff_directory, name, unreplied_successor))
+                    f"({size_kb}KB transcript) under a supervisor{unreplied_note}"
+                    f"{would_open(resume_arguments, resume_prompt_path(handoff_directory, name))}")
+        exit_code = launch(name, seat_directory, handoff_directory, resume_arguments,
+                           first_prompt_file=write_resume_prompt(
+                               handoff_directory, name, unreplied_successor))
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return (f"{name}: relaunched resuming {session_id} "
-                f"({size_kb}KB transcript){unreplied_note}")
+                f"({size_kb}KB transcript){in_window}{unreplied_note}")
 
     # ignite: fresh session reading the newest dialog extract — the degraded
     # mode (user-directed 2026-08-21), and the only path when nothing real
@@ -583,11 +669,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     extract = newest_dialog_extract(handoff_directory, name)
     if extract is None:
         if dry_run:
-            return f"{name}: would launch fresh — nothing to resume, no extract to read"
-        exit_code = launch_seat(name, seat_directory, handoff_directory, "")
+            return (f"{name}: would launch fresh — nothing to resume, no extract to "
+                    f"read{would_open('')}")
+        exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
-        return f"{name}: relaunched fresh (nothing to resume, no extract to read)"
+        return f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
     prompt = (
         f"Read {extract} — it is the dialog from this seat's last recorded "
         "session; the session that followed it died without a handoff (crash "
@@ -595,15 +682,15 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         "checking the repository's current state before trusting any of the "
         "dialog's in-flight assumptions."
     )
-    if dry_run:
-        return f"{name}: would launch fresh igniting from {extract.name}"
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
+    if dry_run:
+        return f"{name}: would launch fresh igniting from {extract.name}{would_open('', prompt_path)}"
     prompt_path.write_text(prompt, encoding="utf-8")
-    exit_code = launch_seat(name, seat_directory, handoff_directory, "",
-                            first_prompt_file=prompt_path)
+    exit_code = launch(name, seat_directory, handoff_directory, "",
+                       first_prompt_file=prompt_path)
     if exit_code != 0:
         return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
-    return f"{name}: relaunched fresh igniting from {extract.name}"
+    return f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
 
 
 def append_to_recovery_log(handoff_directory: Path, report: str):
@@ -648,6 +735,9 @@ def main(argv=None) -> int:
                         help="handoff directory (default ~/.claude/handoffs)")
     parser.add_argument("--projects-root", default="",
                         help="harness transcript root (default ~/.claude/projects)")
+    parser.add_argument("--open-iterm-window-per-seat", action="store_true",
+                        help="launch each recovered seat attached, in its own iTerm "
+                             "window (macOS only; nedschorus#242 change 6)")
     arguments = parser.parse_args(argv)
 
     agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
@@ -656,6 +746,31 @@ def main(argv=None) -> int:
                          else default_handoff_directory())
     projects_root = (Path(arguments.projects_root).expanduser() if arguments.projects_root
                      else Path("~/.claude/projects").expanduser())
+
+    if arguments.open_iterm_window_per_seat:
+        # Refused with the reason, never silently downgraded to a detached
+        # launch: the Ubuntu box is headless, with no iTerm2 and no
+        # launch-claude-mac.
+        if launcher_path() is None:
+            parser.error("--open-iterm-window-per-seat needs macOS: it opens iTerm2 "
+                         "windows running launch-claude-mac, and neither exists here")
+        # Every path the window's command carries; see iterm_window_command_text
+        # for why a single quote cannot be carried. The handoff directory is
+        # the strict one: it travels INSIDE the supervisor arguments, where
+        # shlex.quote wraps a space in the very quotes iTerm2 cannot carry, so
+        # a handoff directory needing any shell quoting is refused (review of
+        # e55904d, finding 1: composing anyway raised from inside the composer,
+        # which under --all abandons the seats after it and leaves a written
+        # resume prompt with no window). The rest are whole words this composer
+        # quotes itself, so a space in them is carried intact.
+        if shlex.quote(str(handoff_directory)) != str(handoff_directory):
+            parser.error("--open-iterm-window-per-seat cannot carry a handoff directory "
+                         "that needs shell quoting — a space or an apostrophe in it — "
+                         f"into an iTerm window: {handoff_directory}")
+        for path in (agents_root, launcher_path()):
+            if "'" in str(path):
+                parser.error("--open-iterm-window-per-seat cannot carry a path holding "
+                             f"an apostrophe into an iTerm window: {path}")
 
     if arguments.all:
         # A directory under the agents root is a SEAT only if something ever
@@ -683,7 +798,8 @@ def main(argv=None) -> int:
     not_recovered = 0
     for name in names:
         report = recover_seat(name, agents_root, handoff_directory, projects_root,
-                              arguments.dry_run, arguments.ignite_fallback)
+                              arguments.dry_run, arguments.ignite_fallback,
+                              open_iterm_window=arguments.open_iterm_window_per_seat)
         print(f"recover-crashed-seats: {report}")
         if not arguments.dry_run:
             append_to_recovery_log(handoff_directory, report)
