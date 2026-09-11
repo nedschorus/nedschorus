@@ -32,6 +32,12 @@ The weight means **consequence if the draft is obeyed as written**, not how like
 
 **One number differs from the records published before 2026-09-10, deliberately.** Those reported flat recall over 33 rows, because they predate the ruling that row 22 is not a defect. This program divides by the 32 scored rows, so its flat recall reads one to three points higher for the same reviewer. **Every weighted figure is unchanged**, and the weighted figure is the one to read. The per-reviewer weights, the best four-reviewer union at 100 of 102, and the single unfound row are all pinned by `scripts/cold-read-reviewer-score-test.py` against what those records published, so the scoring math cannot drift under them unnoticed.
 
+## The citations here are frozen, and every checker must skip this directory
+
+The three files cite paths, name scripts and quote sentences as they stood when each file was written, and several of those targets have since been retired, renamed or revised on main. Those citations are correct as data: they record what the documents said at the time, and bringing one up to date would change the text the scores were measured against, which is exactly the edit the header forbids. So every mechanical reference or drift check must exclude this directory rather than report it: the existing drift lint, `scripts/md-drift-lint.py`, and the reference-integrity checker to be built under [nedschorus#42](https://github.com/nedschorus/nedschorus/issues/42), which carries the exclusion as a requirement.
+
+Measured 2026-09-11: the drift lint run over the three trio files produces nine findings, and every one is a frozen citation — a retired doctrine path, a renamed script, a quotation checked against today's copy of a design. None is a defect. A triager who fixes a finding here silently re-tunes every published score.
+
 ## What makes a pair worth turning into a trio
 
 Measured 2026-09-10 over the six draft-and-landed pairs then held. A defect row exists only where the landed text FIXES something the draft got wrong, so a pair is usable only when the landed version REVISED the draft rather than replacing or expanding it. Two numbers separate the shapes:
