@@ -25,7 +25,10 @@ What it does, per seat:
      directory: newest *.jsonl by mtime, skipping failed successors — small
      sessions whose first turn this machinery itself composed and which
      never produced work — the shape the 2026-08-21 relaunches minted,
-     which must never shadow the real transcript they were born beside.
+     which must never shadow the real transcript they were born beside. A
+     successor the supervisor started from a handoff is never skipped,
+     even one that never replied: its parent handed off and is retired
+     (the 2026-09-10 reboot).
   4. Relaunch the seat through its launcher with the supervisor resuming
      that session id (handoff-supervisor.py --resume-session-id, riding the
      launcher's LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS hook): the
@@ -57,6 +60,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -77,29 +81,48 @@ watcher = importlib.util.module_from_spec(_watcher_spec)
 _watcher_spec.loader.exec_module(watcher)
 
 # First-turn shapes of sessions this machinery itself composes — the
-# supervisor's no-handoff prompt, its reincarnation ignition opener, and this
-# script's own ignition and resume prompts. A marker alone writes nothing
-# off: a first-ever session legitimately opens with the no-handoff prompt
-# and then works (observed live 2026-08-22), and a reincarnated or ignited
-# successor can crash mid-work — both must be resumed, not skipped for an
-# older parent. What marks a failed successor is a marker AND no work:
-# substantive_turn_count() below measures work, and the gate applies to
-# every marker uniformly (PR #131 review round 3 P2 gated the opener;
-# round 4 finding 1 extended the gate to the rest — markers 1 and 2 were
-# measured skipping real work on size alone). The supervisor-owned
-# literals are asserted against the supervisor's actual source in the
-# test suite, so a wording change there fails loudly.
+# supervisor's no-handoff prompt and this script's own ignition and resume
+# prompts. A marker alone writes nothing off: a first-ever session
+# legitimately opens with the no-handoff prompt and then works (observed
+# live 2026-08-22), and an ignited successor can crash mid-work — both must
+# be resumed, not skipped for an older parent. What marks a failed successor
+# is a marker AND no work: substantive_turn_count() below measures work, and
+# the gate applies to every marker uniformly (round 4 finding 1 — markers
+# were measured skipping real work on size alone). The supervisor-owned
+# literals are asserted against the supervisor's actual source in the test
+# suite, so a wording change there fails loudly.
 EMPTY_SUCCESSOR_MARKERS = (
     "No handoff exists yet",            # handoff-supervisor's default first prompt
-    # Its reincarnation opener, shortened to the span both eras share: openers
-    # before 2026-08-30 read "it is the dialog from the session you are
-    # continuing, written N minutes ago" and sit in transcripts on disk;
-    # openers since read "— the dialog from the session you are continuing,
-    # written at <UTC>Z". Do not lengthen it back to either full sentence.
-    "the dialog from the session you are continuing",
     "crash recovery, nedschorus#120",   # this script's ignition (initial agent instructions)
     "resumed by crash recovery",        # this script's resume prompt
 )
+# The supervisor's reincarnation opener is deliberately NOT a skip marker.
+# The supervisor composes it only after marking the handoff consumed — on
+# both its boot-ignition and in-cycle paths — so the transcript before a
+# successor carrying it is a parent that handed off and is retired. A
+# successor that never worked is still the seat's current incarnation, and
+# is resumed (the 2026-09-10 Mac reboot, nedschorus#116, comment of
+# 2026-09-11: two successors whose only reply was a session-limit notice
+# were passed over for their retired parents). Shortened to the span both
+# eras share: openers before 2026-08-30 read "it is the dialog from the
+# session you are continuing, written N minutes ago" and sit in transcripts
+# on disk; openers since read "— the dialog from the session you are
+# continuing, written at <UTC>Z". Do not lengthen it back to either full
+# sentence.
+REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
+# Anchored where the supervisor puts it — the start of the first turn,
+# "Read <extract path> — ", in both eras — because the marker text alone
+# also turns up quoted inside a hand-written first brief (this seat's own,
+# 2026-09-11; PR review of 7e33908, finding 2). Measured 2026-09-11: all 80
+# supervisor openers on this Mac match, and the hand brief does not.
+REINCARNATION_OPENER_PATTERN = re.compile(
+    r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
+# The supervisor's other ignition shape: a boot that finds an unconsumed
+# handoff but no dialog to extract (BootRecoveryIgnitionPlan) puts the next
+# step first and then this note. It is composed in the same consumed-handoff
+# block as the opener, and fired four times on this Mac, 2026-08-16/17
+# (review finding 1).
+BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
 SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
 # The size guard: a seat's first-ever session legitimately starts with the
 # no-handoff prompt and can then do real work (observed live 2026-08-22 —
@@ -109,6 +132,13 @@ SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
 # user turn is missing or unreadable — a 0-byte or no-user-turn file is
 # not the seat's real work either (finding 3's second shape).
 EMPTY_SUCCESSOR_MAX_BYTES = 100_000
+# The model name the harness writes on assistant turns it authors itself —
+# API error notices (a session limit, "Not logged in", 529 Overloaded,
+# "Prompt is too long") and the "No response requested." filler that a
+# resume of an interrupted session appends. None of them is work. Measured
+# 2026-09-11 across forty days of this Mac's transcripts: every such record
+# is text-only.
+SYNTHETIC_ASSISTANT_MODEL = "<synthetic>"
 
 
 def default_agents_root() -> Path:
@@ -237,7 +267,9 @@ def substantive_turn_count(transcript_path: Path) -> int:
     first reply; a crashed-but-working one replied or called tools after the
     opener. Tool calls count because a terse tool-heavy stint is an ordinary
     seat shape (PR #131 review round 3, finding 2: text-only counting wrote
-    off a successor whose work was 12 tool calls and one reply)."""
+    off a successor whose work was 12 tool calls and one reply). The
+    harness's own turns are not counted (SYNTHETIC_ASSISTANT_MODEL): on
+    2026-09-10 a session-limit notice was a successor's only "reply"."""
     count = 0
     try:
         with transcript_path.open(encoding="utf-8") as stream:
@@ -248,7 +280,10 @@ def substantive_turn_count(transcript_path: Path) -> int:
                     continue
                 if record.get("type") != "assistant":
                     continue
-                content = (record.get("message") or {}).get("content")
+                message = record.get("message") or {}
+                if message.get("model") == SYNTHETIC_ASSISTANT_MODEL:
+                    continue
+                content = message.get("content")
                 if isinstance(content, str) and content.strip():
                     count += 1
                 elif isinstance(content, list) and any(
@@ -259,6 +294,21 @@ def substantive_turn_count(transcript_path: Path) -> int:
     except OSError:
         pass
     return count
+
+
+def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
+    """A successor the supervisor started from a handoff that never replied:
+    no substantive turn at all once the harness's own turns are set aside.
+    The 2026-09-10 shape — ignited at 20:09 PDT, its only turn the
+    session-limit notice, then the Mac rebooted. Both of the supervisor's
+    ignition shapes count, the dialog opener and the boot-recovery note.
+    Either way it is the seat's current incarnation (see
+    REINCARNATION_OPENER_MARKER), so it is resumed, and its resume prompt
+    says its first reply never happened rather than that it crashed."""
+    first_turn = first_user_turn_text(transcript_path)
+    return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
+             or BOOT_RECOVERY_IGNITION_MARKER in first_turn)
+            and substantive_turn_count(transcript_path) == 0)
 
 
 def newest_real_transcript(project_directory: Path):
@@ -288,26 +338,42 @@ def newest_real_transcript(project_directory: Path):
                   "worth resuming")
 
 
-def write_resume_prompt(handoff_directory: Path, name: str) -> Path:
+def write_resume_prompt(handoff_directory: Path, name: str,
+                        unreplied_successor: bool = False) -> Path:
     """The resumed session's first turn (PR #131 review, finding 2): without
     this, the supervisor's default first prompt tells a mid-task agent that
     no handoff exists and to ask for work — pointing it away from the
     context the resume just restored. The hand recovery sent no prompt; a
-    supervised launch must send one, so it says what actually happened."""
+    supervised launch must send one, so it says what actually happened.
+    An unreplied reincarnation successor did not die mid-work — it never
+    started — so "died without writing a handoff" would be false for it
+    (the 2026-09-10 reboot); it is told to act on its ignition prompt."""
     # A --handoff-dir that does not exist yet must not crash the recovery
     # after assessment already chose to resume (PR #134 review, finding 2);
     # created the same way the supervisor creates its own on startup.
     handoff_directory.mkdir(parents=True, exist_ok=True)
     prompt_path = handoff_directory / f"{name}-resume-recovery-prompt.md"
-    prompt_path.write_text(
-        "This session was resumed by crash recovery (nedschorus#120): your "
-        "previous incarnation died without writing a handoff — a crash, not a "
-        "reincarnation — and your transcript was resumed under a fresh supervisor. "
-        "Re-verify any in-flight state before trusting it (files you were "
-        "mid-edit in, processes you were watching, messages you were owed), "
-        "then continue the work you were doing.",
-        encoding="utf-8",
-    )
+    if unreplied_successor:
+        prompt = (
+            "This session was resumed by crash recovery (nedschorus#120). You "
+            "are the successor your predecessor's handoff started, and your "
+            "first reply never happened: the session ended before you did any "
+            "work (if the harness recorded why, its notice is above). The "
+            "handoff was consumed when you were started, so nothing else will "
+            "act on it. Act on your first prompt above now, re-verifying the "
+            "repository's current state before trusting anything it says, "
+            "since time has passed since the handoff was written."
+        )
+    else:
+        prompt = (
+            "This session was resumed by crash recovery (nedschorus#120): your "
+            "previous incarnation died without writing a handoff — a crash, not a "
+            "reincarnation — and your transcript was resumed under a fresh supervisor. "
+            "Re-verify any in-flight state before trusting it (files you were "
+            "mid-edit in, processes you were watching, messages you were owed), "
+            "then continue the work you were doing."
+        )
+    prompt_path.write_text(prompt, encoding="utf-8")
     return prompt_path
 
 
@@ -495,17 +561,21 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "resume" and not ignite_fallback:
         session_id, transcript = detail
         size_kb = transcript.stat().st_size // 1024
+        unreplied_successor = is_unreplied_reincarnation_successor(transcript)
+        # In the report, so the recovery log records which prompt was sent.
+        unreplied_note = ("; it is the successor its handoff started, which "
+                          "never replied" if unreplied_successor else "")
         if dry_run:
             return (f"{name}: would resume session {session_id} "
-                    f"({size_kb}KB transcript) under a supervisor")
+                    f"({size_kb}KB transcript) under a supervisor{unreplied_note}")
         exit_code = launch_seat(name, seat_directory, handoff_directory,
                                 f"--resume-session-id {shlex.quote(session_id)}",
                                 first_prompt_file=write_resume_prompt(
-                                    handoff_directory, name))
+                                    handoff_directory, name, unreplied_successor))
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
         return (f"{name}: relaunched resuming {session_id} "
-                f"({size_kb}KB transcript)")
+                f"({size_kb}KB transcript){unreplied_note}")
 
     # ignite: fresh session reading the newest dialog extract — the degraded
     # mode (user-directed 2026-08-21), and the only path when nothing real

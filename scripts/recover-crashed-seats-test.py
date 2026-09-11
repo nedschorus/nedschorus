@@ -42,10 +42,19 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+# The two harness-authored assistant shapes the 2026-09-10 reboot left in its
+# successors (measured 2026-09-11): the session-limit notice that was each
+# successor's only reply, and the filler a resume of an interrupted session
+# appends. Both carry model "<synthetic>".
+SESSION_LIMIT_NOTICE_TEXT = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+RESUME_FILLER_TEXT = "No response requested."
+
+
 def write_transcript(directory: Path, session_id: str, first_user_text: str,
                      age_seconds: float = 0.0, records: int = 3,
-                     tool_turns: int = 0):
+                     tool_turns: int = 0, synthetic_texts=()):
     """One harness transcript whose first user turn says first_user_text.
+    Then one harness-authored assistant turn per synthetic_texts entry,
     records-1 text-bearing assistant turns, then tool_turns assistant turns
     carrying only tool_use blocks (the terse tool-heavy shape, round 3
     finding 2)."""
@@ -53,6 +62,11 @@ def write_transcript(directory: Path, session_id: str, first_user_text: str,
     path = directory / f"{session_id}.jsonl"
     lines = [json.dumps({"type": "user", "isMeta": False,
                          "message": {"content": first_user_text}})]
+    for text in synthetic_texts:
+        lines.append(json.dumps({
+            "type": "assistant", "isApiErrorMessage": text != RESUME_FILLER_TEXT,
+            "message": {"model": "<synthetic>",
+                        "content": [{"type": "text", "text": text}]}}))
     for index in range(records - 1):
         lines.append(json.dumps({"type": "assistant",
                                  "message": {"content": f"turn {index}"}}))
@@ -393,13 +407,17 @@ with tempfile.TemporaryDirectory() as temporary:
     # The PRE-2026-08-30 opener shape, kept deliberately: transcripts written
     # before the wariness template sit on disk and must still match the
     # shortened marker. The post-change shape is covered at P2 below.
+    # Reversed 2026-09-11 (the 2026-09-10 reboot, nedschorus#116): the
+    # supervisor composes this opener only after marking its handoff
+    # consumed, so the transcript beside it is a retired parent, and the
+    # successor is resumed even when it never worked.
     ignition_shape = write_transcript(
         workspace.project_directory(), "supervisor-ignition",
         "Read /x/y-dialog-0002.md — it is the dialog from the session you are "
         "continuing, written 0 minutes ago.", records=1)  # died before working
     verdict, detail = workspace.assess()
-    check("F3/P2: a supervisor-ignition successor that died before working is skipped",
-          verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
+    check("F3/P2: a pre-2026-08-30 reincarnation successor that never worked is resumed",
+          verdict == "resume" and detail[0] == "supervisor-ignition", (verdict, detail))
 
     # F8: every cross-file literal the filter relies on is asserted against
     # the supervisor's actual source, so a wording change there fails HERE
@@ -410,10 +428,13 @@ with tempfile.TemporaryDirectory() as temporary:
           and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
           recovery.EMPTY_SUCCESSOR_MARKERS)
     check("F8: the ignition-opener literal is verbatim in handoff-supervisor.py",
-          "the dialog from the session you are continuing" in source
-          and "the dialog from the session you are continuing"
-              in recovery.EMPTY_SUCCESSOR_MARKERS,
-          "opener literal missing from supervisor source or the marker set")
+          recovery.REINCARNATION_OPENER_MARKER in source
+          and recovery.REINCARNATION_OPENER_MARKER
+              == "the dialog from the session you are continuing",
+          "opener literal missing from supervisor source, or the marker changed")
+    check("F8: the reincarnation opener is not a skip marker (2026-09-10 reboot)",
+          recovery.REINCARNATION_OPENER_MARKER not in recovery.EMPTY_SUCCESSOR_MARKERS,
+          recovery.EMPTY_SUCCESSOR_MARKERS)
 
     # Q2: an unparseable handoff counter refuses with both paths named.
     workspace = Workspace(root / "r7")
@@ -508,8 +529,12 @@ with tempfile.TemporaryDirectory() as temporary:
           verdict == "resume" and detail[0] == "underscore-real", (verdict, detail))
 
     # Round 3 P2: a reincarnated successor that crashed AFTER doing real work is
-    # resumed, not skipped for its handed-off parent; one that died before
-    # doing anything is skipped. Both under 100KB — turns decide, not bytes.
+    # resumed, not skipped for its handed-off parent. Its second half — one
+    # that died before doing anything was skipped for the parent — was
+    # reversed 2026-09-11 after the 2026-09-10 Mac reboot (nedschorus#116,
+    # comment of 2026-09-11): the parent had handed off, so it is retired, and
+    # resuming it would have told it that it "died without writing a handoff".
+    # Both under 100KB.
     # The opener is the post-2026-08-30 shape the supervisor now composes —
     # written-at stamp, gap computed by the reader from `date`, the wariness
     # tail cut and the open-walks duty added in the user's second round the
@@ -540,8 +565,8 @@ with tempfile.TemporaryDirectory() as temporary:
     write_transcript(workspace.project_directory(), "generation-4-stillborn",
                      ignition_opener, records=1)  # no assistant turns at all
     verdict, detail = workspace.assess()
-    check("P2: a reincarnated successor that died before working is skipped for its parent",
-          verdict == "resume" and detail[0] == "generation-3-handed-off",
+    check("P2: a reincarnated successor that died before working is resumed, not its retired parent",
+          verdict == "resume" and detail[0] == "generation-4-stillborn",
           (verdict, detail))
 
     # P3-4: the supervisor's own default prompt on a resume launch is the
@@ -623,6 +648,132 @@ with tempfile.TemporaryDirectory() as temporary:
     check("R4-2: a terse tool-heavy successor is resumed, not its parent",
           verdict == "resume" and detail[0] == "tool-heavy-crashed",
           (verdict, detail))
+
+    # --- the 2026-09-10 Mac reboot (nedschorus#116, comment of 2026-09-11) ---
+    # Two seats handed off at 20:09 PDT; each successor's only reply was the
+    # harness's session-limit notice, and the Mac rebooted at 22:07. The dry
+    # run the next morning chose each seat's retired parent, and would have
+    # told it that it "died without writing a handoff". The shape exactly: a
+    # consumed handoff, a successor holding the reincarnation opener and one
+    # synthetic notice, and the older parent beside it.
+    workspace = Workspace(root / "r23")
+    all_dead()
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        "# Handoff\nrestart-counter: 16\nnext-step: continue\n", encoding="utf-8")
+    (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
+        json.dumps({"consumed_counter": 16,
+                    "session_id": "successor-hit-session-limit",
+                    "generation": 16}), encoding="utf-8")
+    write_transcript(workspace.project_directory(), "handed-off-parent",
+                     "older real work", age_seconds=7200, records=8)
+    write_transcript(workspace.project_directory(), "successor-hit-session-limit",
+                     ignition_opener, records=1,
+                     synthetic_texts=(SESSION_LIMIT_NOTICE_TEXT,))
+    verdict, detail = workspace.assess()
+    check("REBOOT-0910: the successor that never replied is resumed, not its retired parent",
+          verdict == "resume" and detail[0] == "successor-hit-session-limit",
+          (verdict, detail))
+    dry_report = workspace.recover(dry_run=True)
+    check("REBOOT-0910: the dry run names the successor and says it never replied",
+          "would resume session successor-hit-session-limit" in dry_report
+          and "never replied" in dry_report, dry_report)
+    capture_launches(workspace)
+    report = workspace.recover()
+    check("REBOOT-0910: the launch resumes the successor, and the report says it never replied",
+          workspace.launches
+          and "--resume-session-id successor-hit-session-limit" in workspace.launches[0][1]
+          and "never replied" in report, (workspace.launches, report))
+    unreplied_prompt = (workspace.launches[0][2].read_text(encoding="utf-8")
+                        if workspace.launches and workspace.launches[0][2] else "")
+    check("REBOOT-0910: the resume prompt says the first reply never happened, not a crash",
+          "first reply never happened" in unreplied_prompt
+          and "first prompt above" in unreplied_prompt
+          and "died without writing a handoff" not in unreplied_prompt,
+          unreplied_prompt)
+
+    # Harness-authored turns are not work. Counted, the notice made the
+    # successor above look half-working, and the filler a resume appends
+    # makes any resumed successor look as if it replied.
+    synthetic_only = write_transcript(
+        root / "r24-transcripts", "synthetic-turns-only", ignition_opener,
+        records=1, synthetic_texts=(SESSION_LIMIT_NOTICE_TEXT, RESUME_FILLER_TEXT))
+    check("REBOOT-0910: substantive_turn_count ignores the harness's <synthetic> turns",
+          recovery.substantive_turn_count(synthetic_only) == 0,
+          recovery.substantive_turn_count(synthetic_only))
+
+    # The 2026-08-21 shape keeps its skip: a plain relaunch's no-handoff
+    # session beside a crashed parent that did real work. Two notices must not
+    # read as two turns of work (merge-lane and reboot-test each carried
+    # several notices on 2026-09-10).
+    workspace = Workspace(root / "r25")
+    all_dead()
+    write_transcript(workspace.project_directory(), "pre-crash-real", "real work",
+                     age_seconds=3600, records=6)
+    write_transcript(workspace.project_directory(), "no-handoff-stillborn",
+                     "You are seat-a. No handoff exists yet; ask what to work on.",
+                     records=1, synthetic_texts=(SESSION_LIMIT_NOTICE_TEXT,
+                                                 SESSION_LIMIT_NOTICE_TEXT))
+    verdict, detail = workspace.assess()
+    check("REBOOT-0910: a no-handoff session with two notices is still skipped for the pre-crash one",
+          verdict == "resume" and detail[0] == "pre-crash-real", (verdict, detail))
+
+    # A successor that was resumed after the notice, worked, and then crashed
+    # is an ordinary crash: it gets the crash prompt, not the never-replied one.
+    workspace = Workspace(root / "r26")
+    all_dead()
+    write_transcript(workspace.project_directory(), "handed-off-parent",
+                     "older real work", age_seconds=7200, records=8)
+    write_transcript(workspace.project_directory(), "resumed-successor-then-crashed",
+                     ignition_opener, records=6,
+                     synthetic_texts=(SESSION_LIMIT_NOTICE_TEXT, RESUME_FILLER_TEXT))
+    capture_launches(workspace)
+    report = workspace.recover()
+    crash_prompt = (workspace.launches[0][2].read_text(encoding="utf-8")
+                    if workspace.launches and workspace.launches[0][2] else "")
+    check("REBOOT-0910: a successor that worked after its resume gets the crash prompt",
+          "relaunched resuming resumed-successor-then-crashed" in report
+          and "never replied" not in report
+          and "died without writing a handoff" in crash_prompt
+          and "first reply never happened" not in crash_prompt,
+          (report, crash_prompt))
+
+    # PR review of 7e33908, finding 1: the supervisor's other ignition shape,
+    # a boot that found an unconsumed handoff but no dialog to extract
+    # (fired four times on this Mac, 2026-08-16/17). Composed through the
+    # supervisor's own plan, so a wording change there fails here.
+    boot_recovery_prompt = supervisor_module.BootRecoveryIgnitionPlan(
+        "Finish the walk.").compose("")
+    workspace = Workspace(root / "r27")
+    all_dead()
+    write_transcript(workspace.project_directory(), "boot-recovery-successor",
+                     boot_recovery_prompt, records=1,
+                     synthetic_texts=(SESSION_LIMIT_NOTICE_TEXT,))
+    capture_launches(workspace)
+    report = workspace.recover()
+    boot_prompt_sent = (workspace.launches[0][2].read_text(encoding="utf-8")
+                        if workspace.launches and workspace.launches[0][2] else "")
+    check("REVIEW-1: a boot-recovery successor that never replied gets the never-replied prompt",
+          "relaunched resuming boot-recovery-successor" in report
+          and "never replied" in report
+          and "first reply never happened" in boot_prompt_sent,
+          (report, boot_prompt_sent))
+
+    # Finding 2: the opener counts only where the supervisor puts it, at the
+    # start of the first turn. A hand-written brief that quotes it (this
+    # seat's own first brief, 2026-09-11) is not a handoff successor.
+    dialog_prompt = supervisor_module.build_ignition_prompt(
+        Path("/x/seat-a-dialog-0016.md"), {"written-at": "2026-09-11T03:09:55Z"})
+    composed = write_transcript(root / "r28-transcripts", "composed-opener",
+                                dialog_prompt, records=1)
+    quoted = write_transcript(
+        root / "r28-transcripts", "brief-quoting-opener",
+        "# a first brief\n\nThe successor's opener carries \"the dialog from "
+        "the session you are continuing\".", records=1)
+    check("REVIEW-2: the supervisor's composed dialog opener is recognized",
+          recovery.is_unreplied_reincarnation_successor(composed),
+          dialog_prompt[:120])
+    check("REVIEW-2: a brief that only quotes the opener is not a handoff successor",
+          not recovery.is_unreplied_reincarnation_successor(quoted))
 
     # Round 4 codex finding A (handoff dir) and finding B (agents root):
     # probed through the REAL launch_seat on the launcher branch, in codex's

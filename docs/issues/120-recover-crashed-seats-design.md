@@ -93,10 +93,22 @@ the last check and the launch:
 - **Otherwise, resume.** It takes the newest transcript for that seat by file
   modification time, skipping the shape of a failed successor — a small session
   whose first turn this machinery itself composed **and** that holds fewer than
-  two substantive assistant turns. Both conditions, so a prior successful
-  recovery, which carries the composed opener and then real work, is not skipped
-  on a second crash. That is a heuristic, not a proof: a large failed successor,
-  or a transcript whose timestamps were disturbed, can still win.
+  two substantive assistant turns. Turns the harness writes itself, such as a
+  session-limit notice or the filler a resume appends, do not count. Both
+  conditions, so a prior successful recovery, which carries the composed opener
+  and then real work, is not skipped on a second crash. That is a heuristic, not
+  a proof: a large failed successor, or a transcript whose timestamps were
+  disturbed, can still win.
+  One composed opener is exempt: the supervisor's reincarnation opener. The
+  supervisor writes it only after marking the handoff consumed, so the session
+  before it handed off and is retired, and the successor is resumed even if it
+  never replied. Its resume prompt then says its first reply never happened
+  rather than calling it a crash. The same prompt goes to a successor the
+  supervisor started at boot from a handoff with no dialog to hand over, if it
+  never replied. This is from the 2026-09-10 Mac reboot,
+  recorded on [#116](https://github.com/nedschorus/nedschorus/issues/116).
+  Not covered: a successor whose launch failed before the harness wrote its
+  transcript, where the retired parent is still the newest transcript.
 - **No usable transcript** → ignite: launch fresh, with a first prompt pointing
   at the newest dialog extract.
 
