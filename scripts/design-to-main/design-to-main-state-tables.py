@@ -287,8 +287,9 @@ COUNTER_TABLE = (
     CounterCeilingRule(
         "arbitrator-rulings",
         "`test-suite-arbitrating` is entered",
-        2, 2, "the third entry opens the investigation with the user; the arbitrator's "
-              "ruling rides in the report. A write the arbitrator orders is bounded by "
+        2, 2, "the third entry opens the investigation with the user, launching no "
+              "arbitrator here; the investigation's arbitrator rules, and its ruling rides "
+              "in the report and on its resume. A write the arbitrator orders is bounded by "
               "this counter, not the writer's, whose counter stops deciding once the "
               "arbitrator is in and is not reset"),
     CounterCeilingRule(
@@ -686,8 +687,9 @@ TRANSITION_TABLE = (
     _row("64", TEST_SUITE_ARBITRATING, (),
          (G_ENTERED_FOR_THE_THIRD_TIME_IN_THE_DESIGN_VERSION,), INVESTIGATE_WORKFLOW,
          investigation_focus=FOCUS_UNKNOWN,
-         note="the ruling the arbitrator would have made rides in the report; "
-              "applied on entry (sections 6.5, 7)"),
+         note="no arbitrator launched here; the investigation's arbitrator rules, and "
+              "the ruling it would have made rides in its report and on its resume "
+              "state-exit as held-ruling (section 6.6); applied on entry (sections 6.5, 7)"),
     _row("65", TEST_SUITE_ARBITRATING, V_REJECT_CONTRACT, (counter_below_ceiling("contract-revisions"),),
          CONTRACT_REVISING, "contract-revisions"),
     _row("66",
