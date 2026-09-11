@@ -349,7 +349,11 @@ first-launch path, and the launchers inherit it without change of their own.
 
 **Built 2026-09-11 as specified below**, with two refusals the specification
 implies rather than states: off macOS the flag is refused with its reason, and
-so is a path holding an apostrophe, which iTerm2 cannot carry into the window.
+so is a path iTerm2 cannot carry into the window — one holding an apostrophe,
+or a handoff directory holding a space, which is shell-quoted into the
+supervisor arguments and so arrives wrapped in the quotes iTerm2 cannot carry.
+A space in the agents root, the launcher path or the prompt file is carried
+intact.
 `--dry-run` prints the command each window would run. **Not verified live:**
 that a real iTerm2 window delivers the quoted `NAME=value` words to
 `/usr/bin/env` intact. The opener's own measurement — a quoted `'seat a'`

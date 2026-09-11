@@ -503,10 +503,11 @@ def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory
     written naively, each window would start a fresh seat while looking like
     a recovery. iTerm2 splits the text shell-style with one level of quoting,
     so every word is single-quoted. It has no POSIX '\\'' escape (measured
-    2026-09-02, recorded in open-iterm-window-running-command), so a word
-    holding an apostrophe cannot be carried: main() refuses such a path
-    before anything launches, and this raises rather than open a window
-    whose command iTerm would split wrong.
+    2026-09-02, recorded in open-iterm-window-running-command), so no word
+    here may contain a single quote — an apostrophe in a path, or the shell
+    quoting shlex.quote adds around a handoff directory holding a space.
+    main() refuses both before anything launches; this raises rather than
+    open a window whose command iTerm would split wrong.
     """
     words = ["/usr/bin/env",
              "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
@@ -518,7 +519,8 @@ def iterm_window_command_text(name: str, seat_directory: Path, handoff_directory
         words += ["--first-prompt-file", str(first_prompt_file)]
     for word in words:
         if "'" in word:
-            raise ValueError(f"an iTerm window command cannot carry an apostrophe: {word!r}")
+            raise ValueError("an iTerm window command cannot carry a word holding a "
+                             f"single quote: {word!r}")
     return " ".join(f"'{word}'" for word in words)
 
 
@@ -753,8 +755,19 @@ def main(argv=None) -> int:
             parser.error("--open-iterm-window-per-seat needs macOS: it opens iTerm2 "
                          "windows running launch-claude-mac, and neither exists here")
         # Every path the window's command carries; see iterm_window_command_text
-        # for why an apostrophe cannot be carried.
-        for path in (agents_root, handoff_directory, launcher_path()):
+        # for why a single quote cannot be carried. The handoff directory is
+        # the strict one: it travels INSIDE the supervisor arguments, where
+        # shlex.quote wraps a space in the very quotes iTerm2 cannot carry, so
+        # a handoff directory needing any shell quoting is refused (review of
+        # e55904d, finding 1: composing anyway raised from inside the composer,
+        # which under --all abandons the seats after it and leaves a written
+        # resume prompt with no window). The rest are whole words this composer
+        # quotes itself, so a space in them is carried intact.
+        if shlex.quote(str(handoff_directory)) != str(handoff_directory):
+            parser.error("--open-iterm-window-per-seat cannot carry a handoff directory "
+                         "that needs shell quoting — a space or an apostrophe in it — "
+                         f"into an iTerm window: {handoff_directory}")
+        for path in (agents_root, launcher_path()):
             if "'" in str(path):
                 parser.error("--open-iterm-window-per-seat cannot carry a path holding "
                              f"an apostrophe into an iTerm window: {path}")
