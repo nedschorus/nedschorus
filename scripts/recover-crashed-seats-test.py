@@ -1009,6 +1009,42 @@ with tempfile.TemporaryDirectory() as temporary:
           and not list(spaced_handoffs.glob("*-resume-recovery-prompt.md")),
           (exit_code, errors.getvalue(), window_launches))
 
+    # The agents root and the launcher path keep the apostrophe rule, and are
+    # refused through main() the same way. Covered here because the handoff
+    # directory moved to its own check above, and nothing else exercised this
+    # loop (review of dd4df6a, the coverage gap it left).
+    workspace = Workspace(root / "window-apostrophe-paths")
+    all_dead()
+    write_transcript(workspace.project_directory(), "apostrophe-path-resume",
+                     "real work", records=5)
+    for label, agents_root_argument, launcher in (
+            ("the agents root", str(root / "agent's agents"),
+             Path("/fake/scripts/launch-claude-mac")),
+            ("the launcher path", str(workspace.agents_root),
+             Path("/fake/agent's scripts/launch-claude-mac"))):
+        window_launches.clear()
+        errors = io.StringIO()
+        try:
+            recovery.launcher_path = lambda pinned=launcher: pinned
+            patch("open_seat_in_iterm_window", capture_window_launch)
+            with redirect_stderr(errors):
+                try:
+                    exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
+                                               "--agents-root", agents_root_argument,
+                                               "--handoff-dir", str(workspace.handoffs),
+                                               "--projects-root", str(workspace.projects)])
+                except SystemExit as stop_request:
+                    exit_code = stop_request.code
+                except ValueError as raised:
+                    exit_code = f"ValueError: {raised}"
+        finally:
+            recovery.launcher_path = real_launcher_path
+            patch("open_seat_in_iterm_window", real_open_seat_in_iterm_window)
+        check(f"WINDOW: an apostrophe in {label} is refused up front",
+              exit_code == 2 and "apostrophe" in errors.getvalue()
+              and not window_launches,
+              (exit_code, errors.getvalue(), window_launches))
+
     # A space elsewhere is carried, not refused: the reviewer measured the
     # agents root, launcher path and prompt file arriving intact through the
     # opener's AppleScript, the login shell and into the launcher, because
