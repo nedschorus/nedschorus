@@ -737,6 +737,44 @@ with tempfile.TemporaryDirectory() as temporary:
           and "first reply never happened" not in crash_prompt,
           (report, crash_prompt))
 
+    # PR review of 7e33908, finding 1: the supervisor's other ignition shape,
+    # a boot that found an unconsumed handoff but no dialog to extract
+    # (fired four times on this Mac, 2026-08-16/17). Composed through the
+    # supervisor's own plan, so a wording change there fails here.
+    boot_recovery_prompt = supervisor_module.BootRecoveryIgnitionPlan(
+        "Finish the walk.").compose("")
+    workspace = Workspace(root / "r27")
+    all_dead()
+    write_transcript(workspace.project_directory(), "boot-recovery-successor",
+                     boot_recovery_prompt, records=1,
+                     synthetic_texts=(SESSION_LIMIT_NOTICE_TEXT,))
+    capture_launches(workspace)
+    report = workspace.recover()
+    boot_prompt_sent = (workspace.launches[0][2].read_text(encoding="utf-8")
+                        if workspace.launches and workspace.launches[0][2] else "")
+    check("REVIEW-1: a boot-recovery successor that never replied gets the never-replied prompt",
+          "relaunched resuming boot-recovery-successor" in report
+          and "never replied" in report
+          and "first reply never happened" in boot_prompt_sent,
+          (report, boot_prompt_sent))
+
+    # Finding 2: the opener counts only where the supervisor puts it, at the
+    # start of the first turn. A hand-written brief that quotes it (this
+    # seat's own first brief, 2026-09-11) is not a handoff successor.
+    dialog_prompt = supervisor_module.build_ignition_prompt(
+        Path("/x/seat-a-dialog-0016.md"), {"written-at": "2026-09-11T03:09:55Z"})
+    composed = write_transcript(root / "r28-transcripts", "composed-opener",
+                                dialog_prompt, records=1)
+    quoted = write_transcript(
+        root / "r28-transcripts", "brief-quoting-opener",
+        "# a first brief\n\nThe successor's opener carries \"the dialog from "
+        "the session you are continuing\".", records=1)
+    check("REVIEW-2: the supervisor's composed dialog opener is recognized",
+          recovery.is_unreplied_reincarnation_successor(composed),
+          dialog_prompt[:120])
+    check("REVIEW-2: a brief that only quotes the opener is not a handoff successor",
+          not recovery.is_unreplied_reincarnation_successor(quoted))
+
     # Round 4 codex finding A (handoff dir) and finding B (agents root):
     # probed through the REAL launch_seat on the launcher branch, in codex's
     # own scenario — the defer path with an override handoff directory.

@@ -60,6 +60,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -109,6 +110,19 @@ EMPTY_SUCCESSOR_MARKERS = (
 # continuing, written at <UTC>Z". Do not lengthen it back to either full
 # sentence.
 REINCARNATION_OPENER_MARKER = "the dialog from the session you are continuing"
+# Anchored where the supervisor puts it — the start of the first turn,
+# "Read <extract path> — ", in both eras — because the marker text alone
+# also turns up quoted inside a hand-written first brief (this seat's own,
+# 2026-09-11; PR review of 7e33908, finding 2). Measured 2026-09-11: all 80
+# supervisor openers on this Mac match, and the hand brief does not.
+REINCARNATION_OPENER_PATTERN = re.compile(
+    r"Read .+? — (?:it is )?" + re.escape(REINCARNATION_OPENER_MARKER))
+# The supervisor's other ignition shape: a boot that finds an unconsumed
+# handoff but no dialog to extract (BootRecoveryIgnitionPlan) puts the next
+# step first and then this note. It is composed in the same consumed-handoff
+# block as the opener, and fired four times on this Mac, 2026-08-16/17
+# (review finding 1).
+BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
 SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
 # The size guard: a seat's first-ever session legitimately starts with the
 # no-handoff prompt and can then do real work (observed live 2026-08-22 —
@@ -286,11 +300,14 @@ def is_unreplied_reincarnation_successor(transcript_path: Path) -> bool:
     """A successor the supervisor started from a handoff that never replied:
     no substantive turn at all once the harness's own turns are set aside.
     The 2026-09-10 shape — ignited at 20:09 PDT, its only turn the
-    session-limit notice, then the Mac rebooted. It is the seat's current
-    incarnation (see REINCARNATION_OPENER_MARKER), so it is resumed, and its
-    resume prompt says its first reply never happened rather than that it
-    crashed."""
-    return (REINCARNATION_OPENER_MARKER in first_user_turn_text(transcript_path)
+    session-limit notice, then the Mac rebooted. Both of the supervisor's
+    ignition shapes count, the dialog opener and the boot-recovery note.
+    Either way it is the seat's current incarnation (see
+    REINCARNATION_OPENER_MARKER), so it is resumed, and its resume prompt
+    says its first reply never happened rather than that it crashed."""
+    first_turn = first_user_turn_text(transcript_path)
+    return ((REINCARNATION_OPENER_PATTERN.match(first_turn) is not None
+             or BOOT_RECOVERY_IGNITION_MARKER in first_turn)
             and substantive_turn_count(transcript_path) == 0)
 
 

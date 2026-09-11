@@ -103,7 +103,9 @@ the last check and the launch:
   supervisor writes it only after marking the handoff consumed, so the session
   before it handed off and is retired, and the successor is resumed even if it
   never replied. Its resume prompt then says its first reply never happened
-  rather than calling it a crash. This is from the 2026-09-10 Mac reboot,
+  rather than calling it a crash. The same prompt goes to a successor the
+  supervisor started at boot from a handoff with no dialog to hand over, if it
+  never replied. This is from the 2026-09-10 Mac reboot,
   recorded on [#116](https://github.com/nedschorus/nedschorus/issues/116).
   Not covered: a successor whose launch failed before the harness wrote its
   transcript, where the retired parent is still the newest transcript.
