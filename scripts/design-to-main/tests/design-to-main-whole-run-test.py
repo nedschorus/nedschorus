@@ -11,6 +11,8 @@ Run: python3 scripts/design-to-main/tests/design-to-main-whole-run-test.py
 import importlib.util
 import json
 import pathlib
+import shutil
+import tempfile
 import unittest
 
 _fixture_spec = importlib.util.spec_from_file_location(
@@ -1384,6 +1386,147 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             self.assertEqual(recovered.counters.value("redesigns"), 1)
         finally:
             repository.remove()
+
+
+class TheRecordsLayout(unittest.TestCase):
+    """Section 9 after the eighth walk (item 3, user-ruled 2026-09-08):
+    the component's directory is created by the machine when it cuts the
+    topic branch, holding only `design-to-main-record/` until code
+    exists; a reviewer's or a writer's notes are `notes.md` and its
+    state-exit `state-exit.json` in `evidence/<state or sub-state>-<n>/`,
+    for the nth instance of that state or sub-state, counted from 1."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_the_cut_creates_the_components_directory_holding_only_the_record(self):
+        machine, run, record, _ = fixture.make_machine([], self.repository)
+        record.cut_topic_branch()
+        component_directory = record.absolute(record.component_directory)
+        self.assertTrue(record.absolute(record.record_directory).is_dir())
+        self.assertEqual([p.name for p in component_directory.iterdir()], [T.RECORD_DIRECTORY_NAME])
+
+    def test_after_row_1_the_components_directory_holds_only_the_record(self):
+        machine, run, record, _ = fixture.make_machine(
+            [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})], self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        component_directory = record.absolute(record.component_directory)
+        self.assertEqual([p.name for p in component_directory.iterdir()], [T.RECORD_DIRECTORY_NAME])
+        self.assertEqual(sorted(p.name for p in record.absolute(record.record_directory).iterdir()),
+                         [T.RUN_STATE_FILE_NAME])
+
+    def test_an_instances_evidence_directory_is_named_for_the_state_and_counted_from_1(self):
+        machine, run, record, _ = fixture.make_machine([], self.repository)
+        self.assertEqual(
+            record.evidence_directory_for_instance(T.IMPLEMENTATION_WRITING, 1),
+            record.record_directory / "evidence" / "implementation-writing-1")
+        self.assertEqual(
+            record.evidence_directory_for_instance(T.TEST_ACCEPTANCE_BY_AGENT, 2),
+            record.record_directory / "evidence" / "test-acceptance-by-agent-2")
+        self.assertEqual(
+            record.notes_path_for_instance(T.IMPLEMENTATION_WRITING, 1),
+            record.record_directory / "evidence" / "implementation-writing-1" / "notes.md")
+        self.assertEqual(
+            record.state_exit_path_for_instance(T.IMPLEMENTATION_WRITING, 1),
+            record.record_directory / "evidence" / "implementation-writing-1" / "state-exit.json")
+
+    def test_the_next_instance_is_counted_from_the_branchs_state_trailers_and_named_in_the_package(self):
+        script = fixture.prefix_to_design_approved() + [
+            fixture.implementation_write(),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),
+            fixture.implementation_write(),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(record.instances_of_state_so_far(T.IMPLEMENTATION_WRITING), 2)
+        self.assertEqual(record.instances_of_state_so_far(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT), 1)
+        self.assertEqual(record.instances_of_state_so_far(T.TEST_WRITING), 0)
+        self.assertEqual(
+            record.evidence_directory_for_the_next_instance(T.IMPLEMENTATION_WRITING),
+            record.record_directory / "evidence" / "implementation-writing-3")
+        packages = [p for p in machine.launcher.launched if p["state"] == T.IMPLEMENTATION_WRITING]
+        self.assertEqual([str(p["evidence-directory"]) for p in packages], [
+            str(record.record_directory / "evidence" / "implementation-writing-1"),
+            str(record.record_directory / "evidence" / "implementation-writing-2")])
+        first = [p for p in machine.launcher.launched if p["state"] == T.INITIATE_DESIGN_TO_MAIN][0]
+        self.assertEqual(str(first["evidence-directory"]),
+                         str(record.record_directory / "evidence" / "initiate-design-to-main-1"))
+
+
+class TheStateExitFile(unittest.TestCase):
+    """Section 2: the state-exit is a file, state-exit.json, in the
+    instance's evidence directory, its fields spelled with hyphens —
+    `state`, `verdict`, `package-commit`, `destination`, `input-named`,
+    `investigation-focus`, `coverage-type`, `refusal-class`,
+    `held-ruling`, `named-files`, `rulings`. The reader parses it into
+    the machine's StateExitRecord."""
+
+    def setUp(self):
+        self.directory = pathlib.Path(tempfile.mkdtemp(prefix="design-to-main-state-exit-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def write(self, fields):
+        path = self.directory / T.STATE_EXIT_FILE_NAME
+        path.write_text(json.dumps(fields, indent=2) + "\n")
+        return path
+
+    def test_every_field_of_section_2_reads_into_the_record(self):
+        path = self.write({
+            "state": T.TEST_WRITING, "verdict": T.V_EMITTED, "package-commit": "a" * 40,
+            "destination": T.TEST_REVIEWING, "coverage-type": "script, prompt",
+            "named-files": ["scripts/widget-counter/tests/a-test.py",
+                            "scripts/widget-counter/tests/b-prompt-test.md"],
+        })
+        record = M.state_exit_record_from_json_file(path)
+        self.assertEqual(record, M.StateExitRecord(
+            state=T.TEST_WRITING, verdict=T.V_EMITTED, package_commit="a" * 40,
+            destination=T.TEST_REVIEWING, coverage_types=("script", "prompt"),
+            named_files=("scripts/widget-counter/tests/a-test.py",
+                         "scripts/widget-counter/tests/b-prompt-test.md")))
+        path = self.write({
+            "state": T.INVESTIGATE_WORKFLOW, "verdict": T.V_RESUME, "package-commit": "b" * 40,
+            "held-ruling": T.V_REJECT_TESTS, "rulings": ["reset", "the exit status of a refusal is 3"],
+        })
+        record = M.state_exit_record_from_json_file(path)
+        self.assertEqual(record.held_ruling, T.V_REJECT_TESTS)
+        self.assertEqual(record.rulings, ("reset", "the exit status of a refusal is 3"))
+        self.assertEqual(record.coverage_types, ())
+        path = self.write({
+            "state": T.IMPLEMENTATION_WRITING, "verdict": T.V_INPUT_QUICK_CHECK_FAILED,
+            "package-commit": "c" * 40, "input-named": T.INPUT_DESIGN,
+        })
+        self.assertEqual(M.state_exit_record_from_json_file(path).input_named, T.INPUT_DESIGN)
+        path = self.write({
+            "state": T.TEST_SUITE_ARBITRATING, "verdict": T.V_ESCALATE_TO_USER,
+            "package-commit": "d" * 40, "investigation-focus": T.FOCUS_DESIGN,
+        })
+        self.assertEqual(M.state_exit_record_from_json_file(path).investigation_focus, T.FOCUS_DESIGN)
+        path = self.write({
+            "state": T.SUBMIT_TO_PR_GATE, "verdict": T.V_GATEKEEPER_REFUSAL,
+            "package-commit": "e" * 40, "refusal-class": T.REFUSAL_FORM,
+        })
+        self.assertEqual(M.state_exit_record_from_json_file(path).refusal_class, T.REFUSAL_FORM)
+
+    def test_a_field_the_design_does_not_name_or_a_required_one_missing_is_refused(self):
+        # An agent wrote `input_named` (the underscore spelling PR #292's
+        # drafts once had) or left out the verdict: refused with the
+        # field's name, so that the machine can route it as a malformed
+        # state-exit rather than read half a record.
+        path = self.write({"state": T.IMPLEMENTATION_WRITING, "verdict": T.V_INPUT_QUICK_CHECK_FAILED,
+                           "package-commit": "a" * 40, "input_named": T.INPUT_DESIGN})
+        with self.assertRaises(M.MalformedStateExitFile) as refused:
+            M.state_exit_record_from_json_file(path)
+        self.assertIn("input_named", str(refused.exception))
+        path = self.write({"state": T.IMPLEMENTATION_WRITING, "package-commit": "a" * 40})
+        with self.assertRaises(M.MalformedStateExitFile) as refused:
+            M.state_exit_record_from_json_file(path)
+        self.assertIn("verdict", str(refused.exception))
 
 
 class TopicBranchRefusedAtRow1(unittest.TestCase):

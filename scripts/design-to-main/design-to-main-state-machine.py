@@ -99,6 +99,55 @@ class StateExitRecord:
         return tables.COMPOSITE_STATE_OF_SUB_STATE.get(self.state, self.state)
 
 
+class MalformedStateExitFile(ValueError):
+    """state-exit.json does not have the form section 2 fixes: a field the
+    design does not name, a required one missing, or a value of the wrong
+    shape. Raised by the reader with the field's name; routing it as a
+    machine error is the launcher's, once one launches agents."""
+
+
+def state_exit_record_from_json_file(path):
+    """Read an instance's state-exit.json (section 2) into a
+    StateExitRecord: the hyphenated field names of the design mapped by
+    STATE_EXIT_JSON_FIELDS, `coverage-type` split into the tuple of
+    coverage-types, `named-files` and `rulings` as tuples. The launcher
+    that reads agents' files is not in this slice; this is the reader it
+    will call."""
+    path = pathlib.Path(path)
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise MalformedStateExitFile("%s: %s" % (path, error)) from error
+    if not isinstance(data, dict):
+        raise MalformedStateExitFile("%s: not a JSON object" % path)
+    unknown = sorted(set(data) - set(tables.STATE_EXIT_JSON_FIELDS))
+    if unknown:
+        raise MalformedStateExitFile(
+            "%s: fields section 2 does not name: %s" % (path, ", ".join(unknown)))
+    missing = [f for f in tables.STATE_EXIT_JSON_FIELDS_REQUIRED if f not in data]
+    if missing:
+        raise MalformedStateExitFile(
+            "%s: required fields missing: %s" % (path, ", ".join(missing)))
+    fields = {}
+    for json_name, value in data.items():
+        record_name = tables.STATE_EXIT_JSON_FIELDS[json_name]
+        if json_name == "coverage-type":
+            if not isinstance(value, str):
+                raise MalformedStateExitFile(
+                    "%s: coverage-type is a comma-separated string, not %r" % (path, value))
+            value = coverage_types_from_json_field(value)
+        elif json_name in ("named-files", "rulings"):
+            if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+                raise MalformedStateExitFile(
+                    "%s: %s is a list of strings, not %r" % (path, json_name, value))
+            value = tuple(value)
+        elif not isinstance(value, str):
+            raise MalformedStateExitFile(
+                "%s: %s is a string, not %r" % (path, json_name, value))
+        fields[record_name] = value
+    return StateExitRecord(**fields)
+
+
 def coverage_types_from_json_field(text):
     """The `coverage-type` field of state-exit.json, `script, prompt`, as
     the record's tuple: split on commas, blanks trimmed, empties dropped."""
@@ -620,6 +669,10 @@ class DesignToMainStateMachineFlow:
             "beyond-the-standard-package": row.package_beyond_standard,
             "package-commit": self.git_record.head_commit(),
             "design-version": run.design_version,
+            # Where this instance writes its notes.md and state-exit.json
+            # (section 9): evidence/<state or sub-state>-<n>/, n counted
+            # from 1 over the branch's State: trailers.
+            "evidence-directory": self.git_record.evidence_directory_for_the_next_instance(state),
         }
 
     # -- routing -----------------------------------------------------------------

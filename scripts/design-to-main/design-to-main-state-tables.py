@@ -776,6 +776,31 @@ RECORD_DIRECTORY_NAME = "design-to-main-record"
 WRITE_TRAILER_FORCED = "forced"
 RUN_STATE_FILE_NAME = "run-state.json"
 USER_RULINGS_FILE_NAME = "user-rulings.md"
+# `<record>/evidence/<state or sub-state>-<n>/`, for the nth instance of
+# that state or sub-state counted from 1 (`implementation-writing-1` is
+# the first), holding the instance's notes and its state-exit (section 9;
+# user-ruled 2026-09-08, the eighth walk, item 3).
+EVIDENCE_DIRECTORY_NAME = "evidence"
+NOTES_FILE_NAME = "notes.md"
+STATE_EXIT_FILE_NAME = "state-exit.json"
+
+# The fields of state-exit.json (section 2), spelled with hyphens, mapped
+# to StateExitRecord's fields (design-to-main-state-machine.py). The
+# reader is state_exit_record_from_json_file there.
+STATE_EXIT_JSON_FIELDS = {
+    "state": "state",
+    "verdict": "verdict",
+    "package-commit": "package_commit",
+    "destination": "destination",
+    "input-named": "input_named",
+    "investigation-focus": "investigation_focus",
+    "coverage-type": "coverage_types",       # a comma-separated string: every type in the set
+    "refusal-class": "refusal_class",
+    "held-ruling": "held_ruling",
+    "named-files": "named_files",            # a list
+    "rulings": "rulings",                    # a list, the user's words verbatim
+}
+STATE_EXIT_JSON_FIELDS_REQUIRED = ("state", "verdict", "package-commit")
 
 # On `resume`, the earliest state downstream of what the user changed
 # (section 6.6), in the order the design lists the documents.

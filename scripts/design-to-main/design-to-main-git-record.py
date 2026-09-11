@@ -126,6 +126,11 @@ class TopicBranchGitRecord:
             raise TopicBranchCutRefused(
                 "git refused to cut the topic branch %r from %s: %s" % (
                     self.component, start_point, cut.stderr.strip()))
+        # Section 9: the component's directory is created when the branch
+        # is cut, holding only the record until code exists (user-ruled
+        # 2026-09-08, the eighth walk, item 3). After the cut, so that a
+        # refused cut leaves nothing behind.
+        self.absolute(self.record_directory).mkdir(parents=True, exist_ok=True)
         return self.head_commit()
 
     def topic_branch_is_checked_out(self):
@@ -168,6 +173,37 @@ class TopicBranchGitRecord:
     @property
     def user_rulings_path(self):
         return self.record_directory / tables.USER_RULINGS_FILE_NAME
+
+    # -- section 9: evidence/<state or sub-state>-<n>/ ------------------------
+
+    def evidence_directory_for_instance(self, state_or_sub_state, instance_number):
+        """The evidence directory of the nth instance of a state or
+        sub-state, n counted from 1: `implementation-writing-1` is the
+        first. Relative to the repository, like every path here."""
+        return (self.record_directory / tables.EVIDENCE_DIRECTORY_NAME
+                / ("%s-%d" % (state_or_sub_state, instance_number)))
+
+    def notes_path_for_instance(self, state_or_sub_state, instance_number):
+        return self.evidence_directory_for_instance(state_or_sub_state, instance_number) / tables.NOTES_FILE_NAME
+
+    def state_exit_path_for_instance(self, state_or_sub_state, instance_number):
+        return (self.evidence_directory_for_instance(state_or_sub_state, instance_number)
+                / tables.STATE_EXIT_FILE_NAME)
+
+    def instances_of_state_so_far(self, state_or_sub_state):
+        """How many instances of a state or sub-state the branch has
+        committed: its `State:` trailers (section 9). Counted over the
+        run, not per design version — the design counts "the nth
+        instance of that state or sub-state" and says nothing of
+        versions (reported with this slice). A stale or refused state-exit
+        is committed too, so an instance that was re-run counts once per
+        launch, as its directories should."""
+        states = self.git("log", "--format=%(trailers:key=State,valueonly)", "HEAD").stdout.split("\n")
+        return sum(1 for line in states if line.strip() == state_or_sub_state)
+
+    def evidence_directory_for_the_next_instance(self, state_or_sub_state):
+        return self.evidence_directory_for_instance(
+            state_or_sub_state, self.instances_of_state_so_far(state_or_sub_state) + 1)
 
     def absolute(self, relative):
         return self.repository_dir / relative
