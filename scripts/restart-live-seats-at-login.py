@@ -52,7 +52,9 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     reads the stop back from it instead of deriving it, and then the
     amendment above does not apply: the recorded stop is the stop whatever
     the restarted seats have stamped over since, so a seat that did not come
-    back is restarted rather than merely offered. Lines are matched by boot.
+    back is restarted rather than merely offered. Lines are matched to this
+    boot within a few seconds, because each machine recomputes its boot
+    instant from a clock NTP may have stepped since.
     A line that cannot be read is skipped and a log that cannot be written is
     reported, because the record must never block the restart.
 
@@ -88,6 +90,18 @@ SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
 # "a log ... not a single file"). It lives beside the state files, as
 # recover-crashed-seats-log.txt does.
 RUN_LOG_FILE_NAME = "restart-live-seats-at-login-log.txt"
+# A run log line is matched to this boot within a few seconds rather than
+# exactly, because neither machine stores its boot instant — both recompute it
+# from a realtime clock that NTP may have corrected since (measured
+# 2026-09-11, in review). The Mac adjusts kern.boottime when the clock is
+# corrected: the same boot read sec=1789103232 usec=162719 in the morning and
+# usec=223179 that evening. The box computes `uptime -s` as now minus
+# /proc/uptime and prints whole seconds (procps-ng 4.0.4, NTP active), so a
+# clock step of half a second flips the second it prints — and a step right
+# after boot is exactly when this program runs. Five seconds is far below the
+# shortest interval two real boots can be apart, shutdown and POST included,
+# so the tolerance cannot reach a different boot.
+BOOT_MATCH_TOLERANCE_SECONDS = 5
 
 
 def parse_darwin_kern_boottime(text: str) -> datetime:
@@ -161,7 +175,10 @@ def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
 
     Boots are matched as instants, not as strings: the box reads its boot
     time from `uptime -s` in local time, so the same boot can be written with
-    a different offset. The first line recorded for this boot wins — it saw
+    a different offset. They are matched within BOOT_MATCH_TOLERANCE_SECONDS
+    rather than exactly, because each machine recomputes the instant from a
+    clock that may have been corrected since. The first line recorded for
+    this boot wins — it saw
     the least disturbed state. A line that cannot be read is skipped, and a
     log that cannot be read at all is simply no recorded stop: the record
     must never block the restart.
@@ -188,7 +205,7 @@ def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
             continue
         if boot_of_line.tzinfo is None or stop_of_line.tzinfo is None:
             continue
-        if boot_of_line == boot_at:
+        if abs((boot_of_line - boot_at).total_seconds()) <= BOOT_MATCH_TOLERANCE_SECONDS:
             return stop_of_line
     return None
 

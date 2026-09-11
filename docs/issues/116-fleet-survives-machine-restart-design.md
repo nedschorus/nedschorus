@@ -452,8 +452,14 @@ the project's synthetic-keystroke guard hook blocks that form outright
   whatever has been stamped since, so a seat still sitting at it is one that
   did not come back, and it is restarted rather than merely offered. Boots are
   matched as instants, not as strings, because the box reads its boot time
-  from `uptime -s` in local time; the first line recorded for a boot wins,
-  having seen the least disturbed state. A line that cannot be read is skipped
+  from `uptime -s` in local time — and within a few seconds rather than
+  exactly, because neither machine *stores* its boot instant: the Mac adjusts
+  `kern.boottime` when the clock is corrected, and the box computes `uptime
+  -s` as now minus `/proc/uptime` and prints whole seconds, so an NTP step of
+  half a second flips it, and a step right after boot is exactly when this
+  program runs (measured 2026-09-11, in review). The tolerance is far below
+  the shortest interval two real boots can be apart. The first line recorded
+  for a boot wins, having seen the least disturbed state. A line that cannot be read is skipped
   and a log that cannot be written is reported and nothing more: a machine
   that has just booted needs its seats back more than it needs the record.
   **A run that cannot tell where the stop was records none:** when the seats

@@ -108,13 +108,14 @@ def run_log_entry(boot_at=BOOT_AT, stop_at=STOP, run_at=NOW, seats=None):
         "seats": seats if seats is not None else {"A": "restart"}})
 
 
-def run_main(arguments):
-    """main() with this machine's boot time replaced by BOOT_AT and its clock
-    by NOW; (exit code, stdout, stderr)."""
+def run_main(arguments, boot_at=BOOT_AT):
+    """main() with this machine's boot time replaced by boot_at (BOOT_AT
+    unless a case is exercising the boot instant moving between runs) and its
+    clock by NOW; (exit code, stdout, stderr)."""
     printed, errors = io.StringIO(), io.StringIO()
     real_machine_boot_time, real_current_time = restart.machine_boot_time, restart.current_time
     try:
-        restart.machine_boot_time = lambda: BOOT_AT
+        restart.machine_boot_time = lambda: boot_at
         restart.current_time = lambda: NOW
         with redirect_stdout(printed), redirect_stderr(errors):
             try:
@@ -373,6 +374,26 @@ with tempfile.TemporaryDirectory() as temporary:
           restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
           restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
 
+    # Neither machine stores its boot instant: the Mac adjusts kern.boottime
+    # when the clock is corrected, and the box computes `uptime -s` as now
+    # minus /proc/uptime and prints whole seconds, so a clock step of half a
+    # second flips it (measured 2026-09-11, in review). A boot written a
+    # second or two apart is the same boot; five seconds is still far below
+    # the shortest interval two real boots can be apart.
+    handoffs = root / "run-log-boot-drifted-by-a-second"
+    write_run_log_line(handoffs, run_log_entry(boot_at=BOOT_AT - timedelta(seconds=1)))
+    check("a boot instant that has drifted by a second is still this boot",
+          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
+          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+    for drift_seconds, is_this_boot in ((5, True), (6, False)):
+        handoffs = root / f"run-log-boot-drifted-by-{drift_seconds}"
+        write_run_log_line(handoffs, run_log_entry(
+            boot_at=BOOT_AT + timedelta(seconds=drift_seconds)))
+        read_back = restart.read_recorded_stop_for_boot(handoffs, BOOT_AT)
+        check(f"a boot instant {drift_seconds} seconds off "
+              f"{'is' if is_this_boot else 'is not'} this boot",
+              (read_back == STOP) == is_this_boot, read_back)
+
     # A log failure never blocks a run: a line that cannot be read is skipped.
     handoffs = root / "run-log-malformed"
     write_run_log_line(handoffs, "not json at all")
@@ -480,6 +501,11 @@ with tempfile.TemporaryDirectory() as temporary:
           and run_log_lines(handoffs)[0]["anchor_at"] is None,
           run_log_lines(handoffs))
 
+    handoffs = root / "run-log-directory-absent" / "handoffs"
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
+    check("the appender creates the handoff directory when it is not there",
+          len(run_log_lines(handoffs)) == 1, run_log_lines(handoffs))
+
     handoffs = root / "run-log-unwritable"
     write_state(handoffs, "MD-skills", STOP)
     run_log_path(handoffs).mkdir()
@@ -559,8 +585,38 @@ with tempfile.TemporaryDirectory() as temporary:
           "Z-died-before-stop: not-running-at-the-stop" in second_report
           and "A: stamped-since-boot" in second_report,
           second_report)
+    check("and does not claim this boot's restart left no line in the run log",
+          "already run" not in second_report, second_report)
     check("each run is one line in the log",
           len(run_log_lines(handoffs)) == 2, run_log_lines(handoffs))
+
+    # The same round trip with the boot instant a second later on run 2, which
+    # is what a clock correction after boot produces. Without the tolerance
+    # the read-back is silently lost and the seat that did not come back drops
+    # from restart to offer — back to the behaviour the ruling moved past.
+    handoffs = root / "run-log-round-trip-with-the-boot-drifting"
+    write_state(handoffs, "A", STOP)
+    write_state(handoffs, "C-never-came-back", STOP - timedelta(seconds=4))
+    run_main(["--handoff-dir", str(handoffs)])
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    exit_code, drifted_report, errors = run_main(["--handoff-dir", str(handoffs)],
+                                                 boot_at=BOOT_AT + timedelta(seconds=1))
+    check("a run whose boot instant drifted a second still reads the stop back",
+          "C-never-came-back: restart" in drifted_report and "read back" in drifted_report,
+          drifted_report)
+
+    # Real stamps carry microseconds (handoff-supervisor.py writes
+    # datetime.now(timezone.utc).isoformat()), so the stop written down and
+    # the stop read back have to agree to the microsecond.
+    handoffs = root / "run-log-microsecond-stop"
+    precise_stop = STOP + timedelta(microseconds=123456)
+    write_state(handoffs, "A", precise_stop)
+    write_state(handoffs, "B", precise_stop - timedelta(seconds=6))
+    run_main(["--handoff-dir", str(handoffs)])
+    check("a stop carrying microseconds is recorded and read back exactly",
+          run_log_lines(handoffs)[0]["stop_at"] == precise_stop.isoformat()
+          and restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == precise_stop,
+          run_log_lines(handoffs))
 
     exit_code, report, errors = run_main(["--dry-run", "--handoff-dir",
                                           str(root / "measured-2026-09-01")])
