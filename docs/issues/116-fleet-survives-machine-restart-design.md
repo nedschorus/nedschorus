@@ -1,6 +1,6 @@
 ---
 status: design of record; build tracked in nedschorus#116
-design-as-of: 2026-09-02
+design-as-of: 2026-09-11
 ---
 
 # Fleet survives a machine restart (design)
@@ -393,7 +393,9 @@ the project's synthetic-keystroke guard hook blocks that form outright
 2. **Heartbeat selection** — read every
    `~/.claude/handoffs/<seat>-supervisor-state.json`, take the newest
    `last_poll_at` across all of them, validate it against boot time, and select
-   the seats stamped within 20 seconds of it, as ruled above.
+   the seats stamped within 20 seconds of it, as ruled above. Each run records
+   what it selected in the run log ruled below, and a later run in the same
+   boot takes the stop from there rather than deriving it again.
 3. **Window-opening recovery** — `--open-iterm-window-per-seat` on
    `recover-crashed-seats.py`, specified in the #120 overview, so a recovered
    seat is born attached in its own iTerm window. Independently useful: it is
@@ -436,8 +438,45 @@ the project's synthetic-keystroke guard hook blocks that form outright
   that died earlier and restart it. So once any seat has been written since
   boot, the selector offers instead of restarting. The cost: every later login
   in the same boot offers whichever seat holds the newest remaining heartbeat
-  from before boot. If that grates, the fix is to persist the first run's
-  anchor.
+  from before boot.
+- **Ruled 2026-09-11, on that cost: a run log.** The user, reading the
+  amendment above: *"sounds like we need a log here ... not a single file."*
+  So every run that is not a dry run appends one line to
+  `<handoff-dir>/restart-live-seats-at-login-log.txt` — the run, the boot, the
+  stop, and the verdict per seat — and a later run in the same boot reads the
+  stop back from it instead of deriving it from heartbeats the restarted seats
+  have since stamped over. A log rather than one overwritten file, so the runs
+  of a boot can be read in order afterwards, as
+  `recover-crashed-seats-log.txt` is (ruled 2026-08-22). With the stop read
+  back, the degradation above does not apply: the recorded stop is the stop
+  whatever has been stamped since, so a seat still sitting at it is one that
+  did not come back, and it is restarted rather than merely offered. Boots are
+  matched as instants, not as strings, because the box reads its boot time
+  from `uptime -s` in local time — and within a few seconds rather than
+  exactly, because neither machine *stores* its boot instant: the Mac adjusts
+  `kern.boottime` when the clock is corrected, and the box computes `uptime
+  -s` as now minus `/proc/uptime` and prints whole seconds, so an NTP step of
+  half a second flips it, and a step right after boot is exactly when this
+  program runs (measured 2026-09-11, in review). The tolerance is far below
+  the shortest interval two real boots can be apart. The first line recorded
+  for a boot wins, having seen the least disturbed state. **Each line records
+  what was launched as well as what was decided** (the user, 2026-09-11, on
+  whether to defer the field: *"If so why wait"*): a verdict is a decision,
+  and once step 4 lands a decided restart can still fail to come up, so
+  `launched` carries null while this program cannot launch at all and the list
+  of seats it launched once it can. A cold reader can then tell a seat that
+  was never launched from one whose launch failed. A line that cannot be read is skipped
+  and a log that cannot be written is reported and nothing more: a machine
+  that has just booted needs its seats back more than it needs the record.
+  **A run that cannot tell where the stop was records none:** when the seats
+  brought back earlier in this boot have already stamped over the derived
+  anchor — the 2026-09-10 shape, where the user recovered seats by hand before
+  this program ever ran — the line carries `stop_at` null and keeps what the
+  run worked from in `anchor_at`, visible to an investigator and trusted by no
+  later run. Otherwise that degraded anchor would be read back as the stop,
+  the degradation would be dropped because a stop had been "recorded", and a
+  seat that died before the real stop would be restarted. Built 2026-09-11,
+  with `--dry-run` reading the log and never writing it.
 
 ## Provenance
 

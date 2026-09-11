@@ -4,8 +4,9 @@ running when this machine stopped (nedschorus#116).
 
 Built in the order the #116 design lays out (§ The build, in order). This
 first piece is the selection alone: which seats were running at the stop,
-read from their supervisors' heartbeats. It launches nothing; until the
-restart step lands it runs only with --dry-run, and says so.
+read from their supervisors' heartbeats. It launches nothing yet — until the
+restart step lands, a run selects, records its line in the run log, and says
+plainly that it launched nothing.
 
 The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
 § Ruled 2026-08-31 and its amendments:
@@ -44,9 +45,23 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
   - A seat with no state file is not considered: the supervisor writes the
     file on its first launch and never deletes it, so a seat without one
     never ran under a supervisor.
+  - Ruled 2026-09-11 (the user, on the amendment above: "sounds like we need
+    a log here ... not a single file"): every run that is not a dry run
+    appends one line to the run log beside the state files — the run, the
+    boot, the stop, and the verdict per seat. A later run in the same boot
+    reads the stop back from it instead of deriving it, and then the
+    amendment above does not apply: the recorded stop is the stop whatever
+    the restarted seats have stamped over since, so a seat that did not come
+    back is restarted rather than merely offered. Lines are matched to this
+    boot within a few seconds, because each machine recomputes its boot
+    instant from a clock NTP may have stepped since. Each line records what
+    was launched as well as what was decided: null while this program cannot
+    launch at all, so a decision is never read as an outcome.
+    A line that cannot be read is skipped and a log that cannot be written is
+    reported, because the record must never block the restart.
 
 Usage:
-  restart-live-seats-at-login.py --dry-run [--handoff-dir DIR]
+  restart-live-seats-at-login.py [--dry-run] [--handoff-dir DIR]
 """
 
 import argparse
@@ -73,6 +88,22 @@ LIVE_SET_WINDOW_SECONDS = 2 * supervisor.HEARTBEAT_INTERVAL_SECONDS
 # running when the machine stopped; an older one asks rather than acts.
 RECENT_ANCHOR_BEFORE_BOOT_SECONDS = 3600
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
+# One JSON object per line, appended, never rewritten (user-ruled 2026-09-11:
+# "a log ... not a single file"). It lives beside the state files, as
+# recover-crashed-seats-log.txt does.
+RUN_LOG_FILE_NAME = "restart-live-seats-at-login-log.txt"
+# A run log line is matched to this boot within a few seconds rather than
+# exactly, because neither machine stores its boot instant — both recompute it
+# from a realtime clock that NTP may have corrected since (measured
+# 2026-09-11, in review). The Mac adjusts kern.boottime when the clock is
+# corrected: the same boot read sec=1789103232 usec=162719 in the morning and
+# usec=223179 that evening. The box computes `uptime -s` as now minus
+# /proc/uptime and prints whole seconds (procps-ng 4.0.4, NTP active), so a
+# clock step of half a second flips the second it prints — and a step right
+# after boot is exactly when this program runs. Five seconds is far below the
+# shortest interval two real boots can be apart, shutdown and POST included,
+# so the tolerance cannot reach a different boot.
+BOOT_MATCH_TOLERANCE_SECONDS = 5
 
 
 def parse_darwin_kern_boottime(text: str) -> datetime:
@@ -136,13 +167,110 @@ def read_supervisor_heartbeat(state_path: Path, now: datetime):
     return stamp, ""
 
 
+def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
+    """The stop an earlier run in THIS boot recorded, or None.
+
+    The evidence of when the machine stopped is the heartbeats from before
+    boot, and the seats a first run brings back stamp over their own within
+    ten seconds. So the first run writes the stop down and every later run in
+    the same boot reads it back here (user-ruled 2026-09-11).
+
+    Boots are matched as instants, not as strings: the box reads its boot
+    time from `uptime -s` in local time, so the same boot can be written with
+    a different offset. They are matched within BOOT_MATCH_TOLERANCE_SECONDS
+    rather than exactly, because each machine recomputes the instant from a
+    clock that may have been corrected since. The first line recorded for
+    this boot wins — it saw
+    the least disturbed state. A line that cannot be read is skipped, and a
+    log that cannot be read at all is simply no recorded stop: the record
+    must never block the restart.
+    """
+    try:
+        lines = (handoff_directory / RUN_LOG_FILE_NAME).read_text(
+            encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        recorded_boot, recorded_stop = entry.get("boot_at"), entry.get("stop_at")
+        if not isinstance(recorded_boot, str) or not isinstance(recorded_stop, str):
+            continue
+        try:
+            boot_of_line = datetime.fromisoformat(recorded_boot)
+            stop_of_line = datetime.fromisoformat(recorded_stop)
+        except ValueError:
+            continue
+        if boot_of_line.tzinfo is None or stop_of_line.tzinfo is None:
+            continue
+        if abs((boot_of_line - boot_at).total_seconds()) <= BOOT_MATCH_TOLERANCE_SECONDS:
+            return stop_of_line
+    return None
+
+
+def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
+                                anchor, anchor_is_the_stop: bool, decisions,
+                                run_at: datetime, launched=None):
+    """One line per run, appended: the run, the boot, the stop, the anchor it
+    worked from, the verdict per seat, and what was actually launched.
+
+    A verdict is what the run decided, not what happened, and the two are not
+    the same thing: today every run decides and launches nothing, and once
+    build step 4 lands a decided restart can still fail to come up. So
+    `launched` records the outcome beside the decision — null while this
+    program cannot launch at all, and the list of seats it did launch once it
+    can. A cold reader can then tell a seat that was never launched from one
+    whose launch failed, which a verdict alone cannot say.
+
+    User-ruled 2026-09-11, a log and not a single overwritten file, so that
+    the runs of one boot can be read in order afterwards. Dry runs do not
+    write it: --dry-run promises to change nothing. A write that fails is
+    reported and nothing more — a machine that has just booted needs its
+    seats back more than it needs the record (the same rule as the recovery
+    tool's append_to_recovery_log).
+
+    A run that could not tell where the stop was — its derived anchor already
+    stamped over by seats brought back earlier in this boot — records
+    stop_at null, and keeps what it did work from in anchor_at. Otherwise the
+    next run would read that degraded anchor back as the stop, drop the
+    degradation because the stop was "recorded", and restart a seat that died
+    before the real stop: the defect #318's review blocked, returning by the
+    back door.
+    """
+    log_path = handoff_directory / RUN_LOG_FILE_NAME
+    entry = {
+        "run_at": run_at.isoformat(timespec="seconds"),
+        "boot_at": boot_at.isoformat(),
+        "stop_at": anchor.isoformat() if anchor_is_the_stop else None,
+        "anchor_at": None if anchor is None else anchor.isoformat(),
+        "seats": {seat: verdict for seat, verdict, _ in decisions},
+        "launched": None if launched is None else sorted(launched),
+    }
+    try:
+        handoff_directory.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(entry) + "\n")
+    except OSError as error:
+        print(f"restart-live-seats-at-login: could not append to {log_path}: {error}",
+              file=sys.stderr)
+
+
 def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
-                                  now: datetime):
-    """(anchor, decisions): the newest heartbeat before boot, or None, and one
-    (seat, verdict, reason) per supervisor state file. Verdicts: restart,
-    offer, not-running-at-the-stop, stamped-since-boot."""
+                                  now: datetime, recorded_stop=None):
+    """(anchor, decisions, anchor_is_the_stop).
+
+    The anchor is recorded_stop when an earlier run in this boot wrote one
+    down, else the newest heartbeat before boot, or None. decisions is one
+    (seat, verdict, reason) per supervisor state file; the verdicts are
+    restart, offer, not-running-at-the-stop and stamped-since-boot.
+    anchor_is_the_stop says whether the anchor can be written down as the
+    moment the machine stopped — see append_selection_to_run_log."""
     if not handoff_directory.is_dir():
-        return None, []
+        return None, [], False
     readings = []
     for state_path in sorted(handoff_directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}")):
         seat = state_path.name[:-len(SUPERVISOR_STATE_FILE_SUFFIX)]
@@ -152,12 +280,23 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
         since_boot = heartbeat_at >= boot_at or written_at >= boot_at
         readings.append((seat, heartbeat_at, written_at, since_boot, problem))
 
-    anchor = max((heartbeat_at for _, heartbeat_at, _, _, _ in readings
-                  if heartbeat_at < boot_at), default=None)
+    anchor = recorded_stop if recorded_stop is not None else max(
+        (heartbeat_at for _, heartbeat_at, _, _, _ in readings
+         if heartbeat_at < boot_at), default=None)
     anchor_is_recent = (anchor is not None
                         and (boot_at - anchor).total_seconds()
                         <= RECENT_ANCHOR_BEFORE_BOOT_SECONDS)
-    restart_already_ran = any(since_boot for _, _, _, since_boot, _ in readings)
+    # The 2026-09-11 amendment degrades a restart to an offer once any seat
+    # has been written since boot, because the anchor derived then may no
+    # longer be the stop. A stop read back from the run log is not derived,
+    # so there is nothing to degrade: a seat still stamped at the recorded
+    # stop is one that did not come back, and it is restarted.
+    restart_already_ran = (recorded_stop is None
+                           and any(since_boot for _, _, _, since_boot, _ in readings))
+    # The same condition, read the other way: a derived anchor that seats
+    # brought back since boot may have stamped over is not the stop, and must
+    # not be recorded as one.
+    anchor_is_the_stop = anchor is not None and not restart_already_ran
 
     decisions = []
     for seat, heartbeat_at, written_at, since_boot, problem in readings:
@@ -185,7 +324,7 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
                 f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the "
                 f"stop, which was {describe_gap(boot_at - anchor)} before boot")
         decisions.append((seat, verdict, stands_in + reason))
-    return anchor, decisions
+    return anchor, decisions, anchor_is_the_stop
 
 
 def main(argv=None) -> int:
@@ -196,32 +335,46 @@ def main(argv=None) -> int:
         epilog=__doc__,
     )
     parser.add_argument("--dry-run", action="store_true",
-                        help="report the selection and launch nothing (required "
-                             "until the restart step is built)")
+                        help="report the selection and change nothing at all, "
+                             "the run log included")
     parser.add_argument("--handoff-dir", type=Path,
                         default=Path("~/.claude/handoffs").expanduser(),
-                        help="where the supervisor state files live")
+                        help="where the supervisor state files and the run log live")
     arguments = parser.parse_args(argv)
-    if not arguments.dry_run:
-        parser.error("only --dry-run exists so far: the restart step "
-                     "(nedschorus#116, build step 4) is not built yet")
 
-    boot_at = machine_boot_time()
-    anchor, decisions = select_seats_live_at_the_stop(arguments.handoff_dir,
-                                                      boot_at, current_time())
-    print("restart-live-seats-at-login: dry run, the selection only; nothing is launched")
+    boot_at, now = machine_boot_time(), current_time()
+    log_path = arguments.handoff_dir / RUN_LOG_FILE_NAME
+    recorded_stop = read_recorded_stop_for_boot(arguments.handoff_dir, boot_at)
+    anchor, decisions, anchor_is_the_stop = select_seats_live_at_the_stop(
+        arguments.handoff_dir, boot_at, now, recorded_stop=recorded_stop)
+    if not arguments.dry_run:
+        append_selection_to_run_log(arguments.handoff_dir, boot_at, anchor,
+                                    anchor_is_the_stop, decisions, now)
+
+    print("restart-live-seats-at-login: "
+          + ("dry run, the selection only; nothing is launched and nothing is recorded"
+             if arguments.dry_run else "the selection"))
     print(f"  boot {boot_at.isoformat(timespec='seconds')}")
     if anchor is None:
         print("  no heartbeat before boot: no supervisor was running when the machine stopped")
+    elif recorded_stop is not None:
+        print(f"  the stop: {anchor.isoformat(timespec='seconds')}, "
+              f"{describe_gap(boot_at - anchor)} before boot, read back from "
+              f"{log_path} — an earlier run in this boot recorded it")
     else:
         print(f"  the stop: newest heartbeat before boot "
               f"{anchor.isoformat(timespec='seconds')}, "
               f"{describe_gap(boot_at - anchor)} before boot")
-    if any(verdict == "stamped-since-boot" for _, verdict, _ in decisions):
+    if recorded_stop is None and any(verdict == "stamped-since-boot"
+                                     for _, verdict, _ in decisions):
         print("  seats have been written since boot: this boot's restart has already "
-              "run, so nothing is restarted silently")
+              "run and left no line in the run log, so nothing is restarted silently "
+              "and no stop is recorded for the runs after this one")
     for seat, verdict, reason in decisions:
         print(f"  {seat}: {verdict} — {reason}")
+    if not arguments.dry_run:
+        print(f"  recorded in {log_path}; the restart step (nedschorus#116, build "
+              "step 4) is not built yet, so this run launched nothing")
     return 0
 
 
