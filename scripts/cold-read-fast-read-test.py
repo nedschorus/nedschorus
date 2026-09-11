@@ -633,7 +633,6 @@ SIGNAL_SAMPLE = """\
 
 ---
 
-He said "that is done." She agreed.
 A wrapped sentence that runs
 onto a second line and stops here.
 
@@ -650,10 +649,17 @@ check("a table separator row gets no id: there is nothing in it to restate",
 check("a horizontal rule and a bare list marker get no id either",
       not any(value.strip() in ("---", "-", "") for value in sentences.values()),
       str(list(sentences.values())))
-check("a sentence ending in a closing quote is finished, so the next sentence gets its own id",
-      any(value == 'He said "that is done."' for value in sentences.values())
-      and any(value == "She agreed." for value in sentences.values()),
-      str(list(sentences.values())))
+# This case uses a two-line document on purpose. With both sentences on one
+# line the sentence-end pattern splits them and ends_open is never consulted,
+# so the earlier version of this case passed with the fix reverted and
+# guarded nothing (reviewer of PR #307). Across a line break ends_open is the
+# only thing deciding, and reverting its rstrip(SENTENCE_CLOSERS) fails here.
+quote_marked, quote_sentences = sentence_id_markup(
+    'He said "that is done."\nShe agreed with him.\n')
+check("a line ending in a closing quote is finished, so the next line starts its own id",
+      any(value == 'He said "that is done."' for value in quote_sentences.values())
+      and any(value == "She agreed with him." for value in quote_sentences.values()),
+      str(list(quote_sentences.values())))
 check("a sentence wrapped across lines still carries one id, not one per line",
       sum(1 for value in sentences.values() if value.startswith("A wrapped sentence")) == 1
       and not any(value.startswith("onto a second line") for value in sentences.values()),
@@ -672,9 +678,17 @@ check("that citation gets no original attached under it",
 
 named = attach("[s1]\n- a point\n", {"s1": "The first sentence."},
                pathlib.Path("/tmp/a-document.md"))
-check("the coverage section names the document, because the stamp names a copy that is gone",
+kept = attach("[s1]\n- a point\n", {"s1": "The first sentence."},
+              pathlib.Path("/tmp/a-document.md"),
+              pathlib.Path("/tmp/record/a-document-with-sentence-ids.md"))
+check("on the records route the coverage line says the copy is kept, and where",
+      "kept beside this report" in kept
+      and "/tmp/record/a-document-with-sentence-ids.md" in kept
+      and "is gone" not in kept, kept)
+
+check("on the walk route it says the copy was temporary and is gone",
       "marked copy of `/tmp/a-document.md`" in named
-      and "no longer exists" in named, named)
+      and "was temporary and is gone" in named, named)
 
 
 print()
