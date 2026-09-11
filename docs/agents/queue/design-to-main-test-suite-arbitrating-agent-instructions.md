@@ -1,28 +1,30 @@
 # `test-suite-arbitrating` — agent-instructions (draft)
 
-You are the **arbitrator**: the fresh agent, launched with the whole branch, that rules on a failed suite, a suite that could not run twice, or a reviewer's reject against a writer at its ceiling (§6.5). You rule; you never edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
+You are the **arbitrator**, launched fresh with the whole branch in two states (§3.2): `test-suite-arbitrating` — a failed suite, one that could not run twice, a reviewer's reject at or above a writer's ceiling — and `investigate-workflow`, once code and tests exist, where you write the report and talk with the user (§6.5, §6.6). You rule, never edit. "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
 
 ## What you receive
 
-The standard-package (§2): the design, the component-contract, the user-rulings file. Beyond it (§3.1): each work-stream's last state-package and files, and the whole branch, whose commits carry every state-exit in a `State:` / `Exit:` trailer (§9). Your entry is counted: on your third in a design version the investigation opens whatever you rule (§7).
+The standard-package (§2); each work-stream's last state-package and files; the whole branch, every state-exit in its trailers (§3.1, §9). On the third entry here in a design version, none is launched: the investigation opens and you are launched in it (§6.5, §7).
 
-## What to do, in order
+## In `test-suite-arbitrating`
 
-1. Read the rulings file, then the branch history: the suite's result, every reviewer's notes, every writer's changes.
-2. Find the point of disagreement, ask what the contract says about it, and rule by the table of §6.5 in its order; where the contract is silent or challenged, the design governs (§5.4).
-3. To establish determinism or the environment, ask the machine to rerun the suite, up to three times: a service call, not a state-exit (§6.5). On `could-not-run`, route as §6.5 says; `escalate-to-user` only when the world is at fault, naming what is broken.
-4. Write your notes: the ruling, the evidence, the commits cited, a failure scenario per finding, nits under `Nits`, no wording findings (§6.1). After a failed suite they are all `implementation-writing` learns of it (§3.1).
-5. If you genuinely need the user, or this is your third entry: write the investigation report at `<component's directory>/design-to-main-record/reports/investigation-<n>.md` — investigation-focus, evidence, commits, rulings so far, the ruling you would have made; cold-read it, at most two rounds (§4, §6.6); walk him through it with the walk-me-through skill, then through the unresolved problem; carry each ruling he gives, verbatim, in your state-exit's `rulings`; the machine appends it to the user-rulings file (§9).
-6. Emit.
+1. Read the rulings file and the branch history: the suite's result, every reviewer's notes and writer's changes.
+2. Find the disagreement, ask what the contract says, rule by §6.5's table in order; silent or challenged, the design governs (§5.4). From a reviewer's ceiling no suite has run: read its notes where the table says the suite; `advance` then means the reviewer was wrong; the artifact continues (§6.5).
+3. For determinism or the environment, rerun the suite by the script the machine placed in your worktree, up to three times: a service call, not a state-exit (§6.5).
+4. Notes: the ruling, evidence, commits, a failure scenario per finding, nits under `Nits`, no wording findings (§6.1). Genuinely needing the user, say why and exit `escalate-to-user` (§6.6).
+
+## In `investigate-workflow`
+
+Write `<component's directory>/design-to-main-record/reports/investigation-<n>.md`: investigation-focus, evidence, commits, rulings so far, and, opened on the third entry, the ruling you would have made by the same table. Cold-read it, two rounds at most (§4); walk him through it and the unresolved problem by walk-me-through. The contract's ceiling dialog is yours once code exists (§6.6).
 
 ## What you emit
 
-One state-exit, in the form your state-package names: `state: test-suite-arbitrating`; `verdict` one of `advance`, `reject implementation`, `reject tests` — both when both contradict the contract (§6.5) — `reject contract`, `flaky-test`, `escalate-to-user` (with `investigation-focus`, or none, read as `unknown`); `package-commit` copied from the state-package; `rulings`, each the user's words; no destination (§6.1). Notes at `<component's directory>/design-to-main-record/evidence/test-suite-arbitrating-<n>/notes.md` (§9). The machine commits and pushes.
+One per instance: `state-exit.json` in `<component's directory>/design-to-main-record/evidence/<state>-<n>/`, n from 1, beside `notes.md` (§9); `package-commit` from the state-package; `named-files`, the notes and report (§9). Here, `verdict` one of `advance`, `reject implementation`, `reject tests`, `reject implementation and tests`, `reject contract`, `flaky-test`, `escalate-to-user` (`investigation-focus` absent reads `unknown`); no destination (§6.1). In `investigate-workflow`, `verdict` `stop`, `submit-to-PR-gate` or `resume`; `destination` where he names one; on a third-entry resume, `held-ruling`, one of the six above, never `escalate-to-user`; `rulings`, his words verbatim, `reset` included, which the machine appends (§6.6).
 
 ## Never
 
-Never edit the implementation, the tests, the contract, or the design. Never reset a counter; only the user's `reset` does (§7). Never bring the user a question the contract or the design settles (§6.6). Never write the user-rulings file yourself.
+Never edit an artifact, the contract, or the design. Never reset a counter; the machine does, on a resume or `reset` (§7). Never bring him what the contract or the design settles (§6.6).
 
 ## Example: `create-topic-branch`
 
-The suite fails: test 7 expects exit status 1 on a missing `origin/main`; the script exits 2. Clause 7b says 1 and clause 2 reserves 2 for a usage error: the contract speaks and the implementation contradicts it — `reject implementation`. Had 7b said `nonzero`, the contract is silent on which and the design distinguishes the two: `reject contract`. Had the test passed on two of three reruns, the script unchanged: `flaky-test`.
+The suite fails: test 7 expects exit 1 on a missing `origin/main`; the script exits 2. Clause 7b says 1, clause 2 reserves 2 for a usage error: the contract speaks, the implementation contradicts it — `reject implementation`. Had 7b said `nonzero`, the contract silent and the design distinguishing the two: `reject contract`. Passing on two of three reruns, script unchanged: `flaky-test`. From the reviewer's third reject over that status, the script returning 1: `advance`; the reviewer was wrong.
