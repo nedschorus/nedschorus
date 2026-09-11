@@ -418,7 +418,13 @@ the project's synthetic-keystroke guard hook blocks that form outright
 - **What does the selector do with a bad state file?** No behavior is defined
   for a state file that is missing, malformed, empty, or future-dated.
   `write_supervisor_state()` is a whole-file write, so a reboot mid-write
-  produces exactly that input. Undecided.
+  produces exactly that input. *Answered by the user 2026-09-11 for a file that
+  cannot be read:* "Resume or continue works perfectly 99% of the time, so I'd
+  try that." So an empty, cut-off, unparseable or future-dated file counts as
+  running at the stop, and the seat is restarted. A missing file is treated as
+  a different case, and that part still waits on the user's word. The supervisor
+  writes its state file on its first launch and never deletes it, so a seat
+  without one never ran supervised, and the selector does not consider it.
 
 ## Provenance
 
