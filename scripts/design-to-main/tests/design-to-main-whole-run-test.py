@@ -1178,6 +1178,28 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
         self.assertEqual(record.git("status", "--porcelain").stdout, "")
 
 
+    def test_an_arbitrator_the_user_named_on_a_resume_has_no_entry_for_its_advance_to_read(self):
+        # The user names test-suite-arbitrating on a resume: the arbitrator
+        # is launched with no failed suite and no reviewer's ceiling to
+        # stand in for. The run-state records the resume as what entered
+        # it, so neither row 58 nor row 59 holds and its `advance` is a
+        # machine error rather than a route on the entry before (reported
+        # with this slice); its rejects route as they always do.
+        machine, run, record = self.open_the_third_entry_investigation()
+        self.assertEqual(run.test_suite_arbitrating_entered_from, T.TEST_SUITE_EXECUTING)
+        machine.launcher.script += [
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.TEST_SUITE_ARBITRATING}),  # row 71
+            (T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, {}),                                     # no row
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual(run.test_suite_arbitrating_entered_from, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertIsNone(machine.routed[-1][0])
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
+        self.assertEqual(self.arbitrator_launches(machine), 3)
+
+
 class RecoveryFromTheLastCommit(unittest.TestCase):
 
     def test_a_process_that_dies_before_committing_re_runs_the_state(self):

@@ -296,9 +296,11 @@ GUARD_PREDICATES = {
         lambda ctx: not ctx.run.work_stream_ready(tables.IMPLEMENTATION_WORK_STREAM),
     tables.G_COULD_NOT_RUN_FIRST: lambda ctx: ctx.run.consecutive_could_not_run_count == 0,
     tables.G_COULD_NOT_RUN_SECOND: lambda ctx: ctx.run.consecutive_could_not_run_count >= 1,
-    # Neither holds when the run-state records nothing (the user named
-    # test-suite-arbitrating on a resume before it was ever entered): the
-    # arbitrator's advance is then a machine error, not a guess.
+    # Neither holds when the run-state records no suite and no reviewer —
+    # nothing yet, or the resume by which the user named
+    # test-suite-arbitrating as his destination (section 6.6): the
+    # arbitrator's advance is then a machine error, not a guess (reported
+    # with this slice).
     tables.G_ENTERED_ON_A_FAILED_SUITE_OR_A_COULD_NOT_RUN:
         lambda ctx: ctx.run.test_suite_arbitrating_entered_from == tables.TEST_SUITE_EXECUTING,
     tables.G_ENTERED_FROM_A_REVIEWERS_CEILING:
@@ -1123,12 +1125,6 @@ class DesignToMainStateMachineFlow:
             next_position = tables.WRITER_STATE_FOR_VERDICT[verdict]
         if row.to_state == tables.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES:
             next_position = self.apply_the_reviewers_advance(run, state_exit)
-        # What entered test-suite-arbitrating, for rows 58 and 59 (and the
-        # third-entry rule, which reads nothing of it but is applied on
-        # this same entry). Recorded here, where the state-exit is in
-        # hand, before enter() runs.
-        if next_position == tables.TEST_SUITE_ARBITRATING:
-            run.test_suite_arbitrating_entered_from = state_exit.state
 
         # Re-entering a writing state by a reject, a discuss or the
         # arbitrator's ruling: why, for the three buckets. (Rows 18 and 39,
@@ -1164,6 +1160,17 @@ class DesignToMainStateMachineFlow:
             else:
                 next_position = resume_destination
                 self.position_work_streams_for_resume(run, next_position, state_exit)
+
+        # What entered test-suite-arbitrating, for rows 58 and 59 (and the
+        # third-entry rule, which reads nothing of it but is applied on
+        # this same entry). Recorded here, where the state-exit is in
+        # hand and every destination above is resolved, before enter()
+        # runs. A resume that names the arbitrator records the resume:
+        # there is then no failed suite and no reviewer's ceiling for its
+        # advance to stand in for, and neither row holds (the guards'
+        # predicates).
+        if next_position == tables.TEST_SUITE_ARBITRATING:
+            run.test_suite_arbitrating_entered_from = state_exit.state
 
         return next_position, write_number
 
