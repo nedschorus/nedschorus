@@ -542,7 +542,8 @@ def main():
 
     runner_gate = load_runner()
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
-    runner_gate.run_claude = lambda prompt: (0, "the cell's report body\n")
+    runner_gate.run_claude = lambda prompt: (
+        0, "the cell's report body\n", "claude-fable-5-1", "")
     buffer = io.StringIO()
     # A real record directory, in a temporary tree: run_cell makes the cell's
     # scratch directory under the one it is handed, and a relative path here
@@ -842,7 +843,10 @@ def main():
 
     def capture_claude_command(command, *arguments, **keywords):
         captured_claude["command"] = list(command)
-        return subprocess.CompletedProcess(list(command), 0, "", "")
+        # A non-empty stdout, so the chain's first model counts as having
+        # produced a review and the capture holds one invocation rather than
+        # the last model's after a fallback.
+        return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
     real_claude_run = runner_tools.subprocess.run
     try:
@@ -859,6 +863,72 @@ def main():
     check("the reading tools a review cell needs are still in the tool set",
           {"Read", "Grep", "Glob"} <= set(allowed_tools.split(",")),
           f"allowed tools were {allowed_tools!r}")
+
+    # The claude runtime's model chain. Fable 5 is obsolete (user, 2026-09-04)
+    # and Fable is sometimes unavailable (user, 2026-09-11: "sometimes fable is
+    # not available, so it should fall back to opus in that case"), so the cell
+    # tries Fable 5.1 and falls back to Opus 5. The three ways an attempt can
+    # produce no review are the house chain's (run_model_chain in
+    # scripts/cold-read-cell-common.py). No model is called: subprocess.run is
+    # replaced for the length of these cases and answers per model.
+    runner_chain = load_runner()
+    fable, opus = runner_chain.CLAUDE_MODEL_CHAIN
+    check("the chain is Fable 5.1 then Opus 5, and Opus ends it",
+          runner_chain.CLAUDE_MODEL_CHAIN == ("claude-fable-5-1", "claude-opus-5"),
+          runner_chain.CLAUDE_MODEL_CHAIN)
+
+    def answering(answers):
+        """A subprocess.run stand-in answering per model: (returncode, stdout)."""
+        def fake_run(command, *arguments, **keywords):
+            model = command[command.index("--model") + 1]
+            code, out = answers[model]
+            return subprocess.CompletedProcess(list(command), code, out, "")
+        return fake_run
+
+    real_chain_run = runner_chain.subprocess.run
+    try:
+        runner_chain.subprocess.run = answering({fable: (0, "fable's review\n")})
+        answered = runner_chain.run_claude("a prompt no model ever sees")
+        check("the chain runs Fable first, and does not fall back when it answers",
+              answered == (0, "fable's review\n", fable, ""), answered)
+
+        runner_chain.subprocess.run = answering(
+            {fable: (1, ""), opus: (0, "opus's review\n")})
+        code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        check("a Fable that exits non-zero falls back to Opus, which is named as the model",
+              (code, output, model) == (0, "opus's review\n", opus)
+              and fallback_from == f"{fable}(exit1)",
+              (code, output, model, fallback_from))
+
+        runner_chain.subprocess.run = answering(
+            {fable: (0, "   \n"), opus: (0, "opus's review\n")})
+        code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        check("a Fable that exits 0 having written no review falls back too",
+              (code, model) == (0, opus)
+              and fallback_from == f"{fable}(no-report)",
+              (code, model, fallback_from))
+
+        runner_chain.subprocess.run = answering({fable: (1, ""), opus: (1, "")})
+        code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        check("every model failing fails the cell, and both attempts are named",
+              code != 0 and output == ""
+              and fallback_from == f"{fable}(exit1)+{opus}(exit1)",
+              (code, output, fallback_from))
+    finally:
+        runner_chain.subprocess.run = real_chain_run
+
+    # The report's provenance names the model that actually wrote it and what
+    # it fell back from, the way the cold-read cells' stamp does.
+    fell_back = runner_chain.provenance_line(
+        "claude", "claude-opus-5", "cut", "docs/x.md", False, "commit=abc1234",
+        "claude-fable-5-1(exit1)")
+    check("the provenance line records the model that answered and the fallback",
+          "model=claude-opus-5 " in fell_back
+          and "fallback_from=claude-fable-5-1(exit1) " in fell_back, fell_back)
+    straight_through = runner_chain.provenance_line(
+        "codex", "gpt-5.6-sol", "cut", "docs/x.md", False, "commit=abc1234")
+    check("a cell that did not fall back carries no fallback_from field",
+          "fallback_from=" not in straight_through, straight_through)
 
     # The provenance line carries the CLI version the RUNNER measured —
     # nedschorus#161's cross-version fact rested on the cells' own words.
