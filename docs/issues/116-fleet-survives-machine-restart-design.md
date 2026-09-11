@@ -459,7 +459,13 @@ the project's synthetic-keystroke guard hook blocks that form outright
   half a second flips it, and a step right after boot is exactly when this
   program runs (measured 2026-09-11, in review). The tolerance is far below
   the shortest interval two real boots can be apart. The first line recorded
-  for a boot wins, having seen the least disturbed state. A line that cannot be read is skipped
+  for a boot wins, having seen the least disturbed state. **Each line records
+  what was launched as well as what was decided** (the user, 2026-09-11, on
+  whether to defer the field: *"If so why wait"*): a verdict is a decision,
+  and once step 4 lands a decided restart can still fail to come up, so
+  `launched` carries null while this program cannot launch at all and the list
+  of seats it launched once it can. A cold reader can then tell a seat that
+  was never launched from one whose launch failed. A line that cannot be read is skipped
   and a log that cannot be written is reported and nothing more: a machine
   that has just booted needs its seats back more than it needs the record.
   **A run that cannot tell where the stop was records none:** when the seats

@@ -54,7 +54,9 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     the restarted seats have stamped over since, so a seat that did not come
     back is restarted rather than merely offered. Lines are matched to this
     boot within a few seconds, because each machine recomputes its boot
-    instant from a clock NTP may have stepped since.
+    instant from a clock NTP may have stepped since. Each line records what
+    was launched as well as what was decided: null while this program cannot
+    launch at all, so a decision is never read as an outcome.
     A line that cannot be read is skipped and a log that cannot be written is
     reported, because the record must never block the restart.
 
@@ -212,9 +214,17 @@ def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
 
 def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
                                 anchor, anchor_is_the_stop: bool, decisions,
-                                run_at: datetime):
+                                run_at: datetime, launched=None):
     """One line per run, appended: the run, the boot, the stop, the anchor it
-    worked from, and the verdict per seat.
+    worked from, the verdict per seat, and what was actually launched.
+
+    A verdict is what the run decided, not what happened, and the two are not
+    the same thing: today every run decides and launches nothing, and once
+    build step 4 lands a decided restart can still fail to come up. So
+    `launched` records the outcome beside the decision — null while this
+    program cannot launch at all, and the list of seats it did launch once it
+    can. A cold reader can then tell a seat that was never launched from one
+    whose launch failed, which a verdict alone cannot say.
 
     User-ruled 2026-09-11, a log and not a single overwritten file, so that
     the runs of one boot can be read in order afterwards. Dry runs do not
@@ -238,6 +248,7 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
         "stop_at": anchor.isoformat() if anchor_is_the_stop else None,
         "anchor_at": None if anchor is None else anchor.isoformat(),
         "seats": {seat: verdict for seat, verdict, _ in decisions},
+        "launched": None if launched is None else sorted(launched),
     }
     try:
         handoff_directory.mkdir(parents=True, exist_ok=True)

@@ -474,6 +474,11 @@ with tempfile.TemporaryDirectory() as temporary:
                                         decisions, NOW)
     lines = run_log_lines(handoffs)
     check("a run appends exactly one line", len(lines) == 1, lines)
+    # A verdict is a decision, not an outcome. Today nothing can be launched,
+    # and once build step 4 lands a decided restart can still fail to come up,
+    # so the line records what was launched beside what was decided.
+    check("a run that cannot launch anything records launched null, not an empty list",
+          lines and lines[0]["launched"] is None, lines)
     check("the line carries the run, the boot, the stop, the anchor and the verdicts",
           lines and lines[0]["run_at"] == NOW.isoformat(timespec="seconds")
           and lines[0]["boot_at"] == BOOT_AT.isoformat()
@@ -500,6 +505,22 @@ with tempfile.TemporaryDirectory() as temporary:
           run_log_lines(handoffs)[0]["stop_at"] is None
           and run_log_lines(handoffs)[0]["anchor_at"] is None,
           run_log_lines(handoffs))
+
+    # What build step 4 will write, once it can launch: the seats it brought
+    # back, recorded beside the verdicts, so a restart that failed to come up
+    # is distinguishable from one that was never attempted.
+    handoffs = root / "run-log-launched-recorded"
+    write_state(handoffs, "came-back", STOP)
+    write_state(handoffs, "failed-to-come-up", STOP - timedelta(seconds=2))
+    anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
+        handoffs, BOOT_AT, NOW)
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW, launched=["came-back"])
+    line = run_log_lines(handoffs)[0]
+    check("a launched seat is recorded, and one decided but not launched is not",
+          line["launched"] == ["came-back"]
+          and line["seats"]["failed-to-come-up"] == "restart",
+          line)
 
     handoffs = root / "run-log-directory-absent" / "handoffs"
     restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
