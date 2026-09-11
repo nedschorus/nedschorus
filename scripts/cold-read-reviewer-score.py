@@ -371,7 +371,15 @@ def main() -> int:
 
     summaries, all_findings, anomalies_by_reviewer = {}, [], {}
     for path in placement_files:
-        reviewer, findings, anomalies = parse_one_placement_file(path, row_total)
+        # A malformed placement table is the caller's file to fix, so it gets
+        # the one line naming the file and what is wrong with it. Letting the
+        # exception escape prints a traceback, which buries that line and
+        # reads as a crash in this program rather than a fault in the input.
+        try:
+            reviewer, findings, anomalies = parse_one_placement_file(path, row_total)
+        except PlacementParseError as problem:
+            print(f"{PROGRAM}: {problem}", file=sys.stderr)
+            return EXIT_BAD_INVOCATION
         summaries[reviewer] = summarize(findings, weights, total_weight, row_total)
         all_findings.extend(findings)
         if anomalies:

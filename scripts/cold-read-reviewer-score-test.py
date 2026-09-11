@@ -10,14 +10,20 @@ ghi-write ruler carries, checked against the figures already published in
 so a change to the scoring math that would silently re-tune every published
 number fails here instead.
 
-The pinned cases use the committed ruler and a fixture of each reviewer's
-rows-hit list. They deliberately do NOT use the real placement tables: those
-are run output and live in the log-store, not in this repository.
+The pinned cases drive the program's OWN summarize(), print_unions() and
+print_unfound() with findings synthesized from each reviewer's published
+rows-hit list, so the scoring math is what is under test. An earlier
+version re-did the sums here instead, which left this half agreeing with
+itself while only the synthetic cases exercised the code; PR #302's
+reviewer caught that. They deliberately do NOT use the real placement
+tables: those are run output and live in the log-store, not here.
 
 Run: python3 scripts/cold-read-reviewer-score-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import importlib.util
+import io
 import pathlib
 import subprocess
 import sys
@@ -175,21 +181,30 @@ with tempfile.TemporaryDirectory(prefix="cold-read-reviewer-score-test-") as nam
           "cells, not 5" in result.stdout, result.stdout)
 
 # --- Pinned to the published figures ---------------------------------------
+# These cases drive the PROGRAM'S OWN summarize() and print_unions() with
+# findings synthesized from each reviewer's published rows-hit list. An
+# earlier version re-did the sums here instead, which meant a change to the
+# scoring math was caught only by the synthetic cases while this half went on
+# agreeing with itself — the reviewer of PR #302 caught that, and this is the
+# fix. The published figures are ghi-write's; the program is generic, and the
+# only thing tying these cases to that document is the ruler they load.
 if REAL_RULER.is_file():
     weights = scorer.read_severity_weights(REAL_RULER)
+    total_weight = sum(weights.values())
+    row_total = max(weights)
     scored = sum(1 for w in weights.values() if w > 0)
     check("the committed ghi-write ruler still carries 33 rows, 32 of them "
           "scored, totalling 102",
-          len(weights) == 33 and scored == 32 and sum(weights.values()) == 102,
-          f"rows {len(weights)}, scored {scored}, total {sum(weights.values())}")
+          len(weights) == 33 and scored == 32 and total_weight == 102,
+          f"rows {len(weights)}, scored {scored}, total {total_weight}")
     check("row 22 is the one weighted 0, the user's ruling that it is not a defect",
           weights[22] == 0 and all(w > 0 for r, w in weights.items() if r != 22))
-    check("the six heavy rows and their weights are unchanged",
+    check("the six heaviest rows and their weights are unchanged",
           [weights[r] for r in (30, 20, 6, 17, 11, 15)] == [8, 7, 6, 6, 5, 5],
           str([weights[r] for r in (30, 20, 6, 17, 11, 15)]))
 
     # Each reviewer's rows-hit list as published in RESULT.md, and the weight
-    # the addendum reported for it. If the weighting math changes, these move.
+    # the 2026-09-08 addendum reported for it.
     PUBLISHED = {
         "sol-max": ([1, 2, 3, 4, 6, 8, 11, 12, 13, 14, 16, 17, 20, 21, 23, 24,
                      25, 26, 27, 28, 29, 30], 75),
@@ -204,21 +219,56 @@ if REAL_RULER.is_file():
         "terra-low": ([1, 2, 3, 4, 7, 8, 11, 12, 20, 27, 28, 29, 32], 38),
         "gem38-low": ([2, 3, 4, 7, 9, 11, 14, 20, 28, 29, 33], 35),
     }
+
+    def findings_for(reviewer, rows):
+        """One HIT finding per published row, in the shape the parser emits."""
+        return [{"reviewer": reviewer, "id": str(i), "quote": "q",
+                 "placement": f"ROW {row}", "rows": {row}, "category": "HIT",
+                 "confidence": "sure", "reason": ""}
+                for i, row in enumerate(rows, start=1)]
+
+    summaries = {}
     for reviewer, (rows, published_weight) in PUBLISHED.items():
-        computed = sum(weights[r] for r in rows)
-        check(f"{reviewer}'s published rows still weigh {published_weight}",
-              computed == published_weight, f"computed {computed}")
+        summary = scorer.summarize(findings_for(reviewer, rows), weights,
+                                   total_weight, row_total)
+        summaries[reviewer] = summary
+        check(f"summarize() gives {reviewer} the published weight "
+              f"{published_weight}",
+              summary["weight_hit"] == published_weight,
+              f"got {summary['weight_hit']}")
+        check(f"summarize() gives {reviewer} the published rows",
+              summary["rows_hit"] == set(rows),
+              str(sorted(summary["rows_hit"])))
 
-    best_four = max(
-        sum(weights[r] for r in set().union(*(set(PUBLISHED[m][0]) for m in combo)))
-        for combo in __import__("itertools").combinations(PUBLISHED, 4))
-    check("the best set of four still covers 100 of 102, as published",
-          best_four == 100, str(best_four))
+    check("summarize() puts sol-max top on weighted recall, at 74 %",
+          round(summaries["sol-max"]["weighted_recall"] * 100) == 74,
+          str(summaries["sol-max"]["weighted_recall"]))
+    check("summarize() has fable51-max outweigh gem38-high on FEWER rows, "
+          "which is what weighting changed",
+          summaries["fable51-max"]["weight_hit"] > summaries["gem38-high"]["weight_hit"]
+          and len(summaries["fable51-max"]["rows_hit"])
+          < len(summaries["gem38-high"]["rows_hit"]))
 
-    found = set().union(*(set(rows) for rows, _ in PUBLISHED.values()))
-    unfound = sorted(r for r in weights if weights[r] > 0 and r not in found)
-    check("row 19 is still the only scored row no reviewer found",
-          unfound == [19], str(unfound))
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        scorer.print_unions(summaries, weights, total_weight, [2, 3, 4], 6)
+    unions_output = captured.getvalue()
+    check("print_unions() reports the published best set of four, 100 of 102",
+          "### Sets of 4 — best 100 of 102 (98 %)" in unions_output,
+          unions_output[-600:])
+    check("print_unions() reports the published best set of three, 98 of 102",
+          "### Sets of 3 — best 98 of 102 (96 %)" in unions_output,
+          unions_output[:600])
+    check("print_unions() reports the published best pair, 92 of 102",
+          "### Sets of 2 — best 92 of 102 (90 %)" in unions_output,
+          unions_output[:300])
+
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        scorer.print_unfound(summaries, weights, total_weight)
+    check("print_unfound() reports row 19 as the only scored row nobody found",
+          "1 rows, weight 2 of 102: row 19 (weight 2)" in captured.getvalue(),
+          captured.getvalue())
 else:
     check("the committed ghi-write ruler is present", False, f"missing {REAL_RULER}")
 
