@@ -75,9 +75,16 @@ class RefusedBeforeTopicBranchCut(Exception):
 class TopicBranchGitRecord:
     """The component's topic branch in one repository checkout."""
 
-    def __init__(self, repository_dir, component, component_directory):
+    def __init__(self, repository_dir, component, component_directory,
+                 topic_branch_start_point="origin/main"):
         self.repository_dir = pathlib.Path(repository_dir)
         self.component = component
+        # Where the topic branch is cut from (section 9: `origin/main`),
+        # and so where the run's own commits begin: the cut and the count
+        # of a state's instances (instances_of_state_so_far) both read it,
+        # so a successor process recovering the run counts the same span
+        # without a cut of its own.
+        self.topic_branch_start_point = topic_branch_start_point
         # Where the component's directory is follows the layout rule of
         # GitHub issue #224 (section 9); this slice takes it as a parameter.
         self.component_directory = pathlib.Path(component_directory)
@@ -114,13 +121,14 @@ class TopicBranchGitRecord:
 
     # -- section 9: the topic branch ----------------------------------------
 
-    def cut_topic_branch(self, start_point="origin/main"):
+    def cut_topic_branch(self):
         """Cut the topic branch from `origin/main`, named for the component,
         naming the start point explicitly (the topic-branch rule,
         docs/issues/238-topic-branch-creation-script-design.md). A refusal
         — the branch already exists, as after a run that ended failed —
         is TopicBranchCutRefused, an ordinary outcome rather than a crash,
         as the topic-branch rule has it."""
+        start_point = self.topic_branch_start_point
         cut = self.git("checkout", "-b", self.component, start_point, check=False)
         if cut.returncode != 0:
             raise TopicBranchCutRefused(
@@ -191,14 +199,19 @@ class TopicBranchGitRecord:
                 / tables.STATE_EXIT_FILE_NAME)
 
     def instances_of_state_so_far(self, state_or_sub_state):
-        """How many instances of a state or sub-state the branch has
-        committed: its `State:` trailers (section 9). Counted over the
-        run, not per design version — the design counts "the nth
-        instance of that state or sub-state" and says nothing of
-        versions (reported with this slice). A stale or refused state-exit
-        is committed too, so an instance that was re-run counts once per
-        launch, as its directories should."""
-        states = self.git("log", "--format=%(trailers:key=State,valueonly)", "HEAD").stdout.split("\n")
+        """How many instances of a state or sub-state this run has
+        committed: the `State:` trailers on the branch above its cut from
+        the start point (section 9), `origin/main..HEAD` — never all of
+        HEAD's ancestry, which holds every merged run's trailers too, so
+        that one merged run of another component numbered the next run's
+        first instance `-2` (GHI #313). Counted over the run, not per
+        design version — the design counts "the nth instance of that
+        state or sub-state" and says nothing of versions (reported with
+        this slice). A stale or refused state-exit is committed too, so an
+        instance that was re-run counts once per launch, as its
+        directories should."""
+        states = self.git("log", "--format=%(trailers:key=State,valueonly)",
+                          "%s..HEAD" % self.topic_branch_start_point).stdout.split("\n")
         return sum(1 for line in states if line.strip() == state_or_sub_state)
 
     def evidence_directory_for_the_next_instance(self, state_or_sub_state):
