@@ -207,6 +207,17 @@ SENTENCE_ID_PATTERN = re.compile(r"\[s(\d+)\]")
 # decimals are the known misses and are accepted.
 SENTENCE_END_PATTERN = re.compile(r"""[.!?]["')\]]*\s+""")
 SENTENCE_OPENERS = "\"'(`[*_"
+# The closing marks a sentence end may carry after its full stop. Stripped
+# before asking whether a line's last sentence is finished, so `word."` reads
+# as finished and not as a sentence still running (reviewer of PR #303).
+SENTENCE_CLOSERS = "\"')]"
+
+# A unit with no letter and no digit carries nothing to restate: a table's
+# separator row `|---|---|`, a horizontal rule, a bare list marker. Giving it
+# an id put it in the never-restated list of every report, which is a false
+# signal in exactly the check the ids exist to provide (reviewer of PR #303).
+def carries_words(text: str) -> bool:
+    return any(character.isalnum() for character in text)
 
 # Structures that are one unit each, whatever punctuation they contain: a
 # heading, a table row, a fenced code block. Splitting a heading at its colon
@@ -274,8 +285,12 @@ def sentence_id_markup(text: str):
     in_frontmatter = bool(lines) and lines[0].strip() == "---"
     continues_previous = False
 
-    def take(sentence: str) -> str:
+    def take(sentence: str):
+        """The id marker for this sentence, or None when there is nothing to
+        restate; a caller that gets None emits the line unchanged."""
         nonlocal counter
+        if not carries_words(sentence):
+            return None
         counter += 1
         name = f"s{counter}"
         sentences[name] = sentence.strip()
@@ -288,14 +303,18 @@ def sentence_id_markup(text: str):
             if position == 0 and already_open:
                 out.append(piece)
                 continue
+            marker = take(piece)
+            if marker is None:
+                out.append(piece)
+                continue
             leading = len(piece) - len(piece.lstrip())
-            out.append(f"{piece[:leading]}{take(piece)} {piece.lstrip()}")
+            out.append(f"{piece[:leading]}{marker} {piece.lstrip()}")
         return "".join(out)
 
     def ends_open(content: str) -> bool:
         """True when this line's last sentence is unfinished, so the next
         line continues it."""
-        stripped = content.rstrip()
+        stripped = content.rstrip().rstrip(SENTENCE_CLOSERS)
         return bool(stripped) and stripped[-1] not in ".!?:;|"
 
     while index < len(lines):
@@ -310,8 +329,9 @@ def sentence_id_markup(text: str):
                 marked.append(line)
             else:
                 field = FRONTMATTER_FIELD_PATTERN.match(line)
-                marked.append(f"{field.group(1)}{take(field.group(2))} {field.group(2)}"
-                              if field else line)
+                marker = take(field.group(2)) if field else None
+                marked.append(f"{field.group(1)}{marker} {field.group(2)}"
+                              if marker else line)
             index += 1
             continue
 
@@ -320,7 +340,8 @@ def sentence_id_markup(text: str):
             while closing < len(lines) and not CODE_FENCE_PATTERN.match(lines[closing]):
                 closing += 1
             block = lines[index:closing + 1]
-            marked.append(f"{line} {take(chr(10).join(block))}")
+            marker = take(chr(10).join(block))
+            marked.append(line if marker is None else f"{line} {marker}")
             marked.extend(block[1:])
             index = closing + 1
             continues_previous = False
@@ -335,10 +356,14 @@ def sentence_id_markup(text: str):
         heading = HEADING_PATTERN.match(line)
         table_row = TABLE_ROW_PATTERN.match(line)
         if heading:
-            marked.append(f"{heading.group(1)}{take(heading.group(2))} {heading.group(2)}")
+            marker = take(heading.group(2))
+            marked.append(line if marker is None
+                          else f"{heading.group(1)}{marker} {heading.group(2)}")
             continues_previous = False
         elif table_row:
-            marked.append(f"{table_row.group(1)}{take(table_row.group(2))} {table_row.group(2)}")
+            marker = take(table_row.group(2))
+            marked.append(line if marker is None
+                          else f"{table_row.group(1)}{marker} {table_row.group(2)}")
             continues_previous = False
         else:
             prefix_match = LIST_ITEM_PATTERN.match(line) or BLOCKQUOTE_PATTERN.match(line)
@@ -358,7 +383,8 @@ def sentence_id_markup(text: str):
 SENTENCE_COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)"
 
 
-def attach_sentences_and_coverage(report_text: str, sentences: dict) -> str:
+def attach_sentences_and_coverage(report_text: str, sentences: dict,
+                                  document: pathlib.Path = None) -> str:
     """Put each original sentence under the restatement claiming its id, and
     append what the restatement missed.
 
@@ -368,16 +394,19 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict) -> str:
     check the four-word anchor could not give: a sentence the reviewer never
     restated is a sentence it may never have read.
 
-    Only the FIRST mention of an id is treated as its restatement. Sections 2
-    and 3 cite ids too, and attaching the original under each citation would
-    bury the reviewer's own words.
+    Only an id STANDING ALONE on its line is treated as a restatement, which
+    is the shape Question 1 asks for. An id cited inside a sentence of
+    Question 2 or 3 is a reference to that sentence, not a restatement of it,
+    and counting it as one marked a skipped sentence covered (reviewer of PR
+    #303). Such a citation gets no original attached either, because attaching
+    one under each would bury the reviewer's own words.
     """
     claimed = []
     unknown = []
     lines = []
     for line in report_text.split("\n"):
         lines.append(line)
-        found = SENTENCE_ID_PATTERN.search(line)
+        found = SENTENCE_ID_PATTERN.fullmatch(line.strip())
         if not found:
             continue
         name = f"s{found.group(1)}"
@@ -400,6 +429,14 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict) -> str:
     coverage.append(
         f"- Never restated: {', '.join(missing)}. Check whether the reviewer read them."
         if missing else "- Every sentence was restated.")
+    if document is not None:
+        # The provenance stamp at the top of the report names the marked copy
+        # the reviewer read, which on the walk route is a temporary file that
+        # is gone by the time anyone opens the report. Naming the document
+        # here is what keeps that citation followable (reviewer of PR #303).
+        coverage.append(
+            f"- The reviewer read a marked copy of `{document}`; the `target=` "
+            "stamp above names that copy, which no longer exists.")
     if unknown:
         coverage.append(
             f"- Cited but not in the document: {', '.join(unknown)}. "
@@ -513,7 +550,7 @@ def main() -> int:
                 # which sentences no restatement claimed.
                 report.write_text(
                     attach_sentences_and_coverage(
-                        report.read_text(encoding="utf-8"), sentences),
+                        report.read_text(encoding="utf-8"), sentences, target),
                     encoding="utf-8")
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)

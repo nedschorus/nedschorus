@@ -620,6 +620,63 @@ check("only the first mention of an id gets the original under it",
       repeated.count("> The first sentence.") == 1, repeated)
 
 
+
+# --- The four signal-quality fixes from the PR #303 review ---------------
+# Each of these degraded the coverage check itself: a sentence wrongly listed
+# as skipped, two sentences sharing one id, a skipped sentence counted as
+# covered, or a citation pointing at a file that no longer exists.
+
+SIGNAL_SAMPLE = """\
+| a | b |
+|---|---|
+| one | two |
+
+---
+
+He said "that is done." She agreed.
+A wrapped sentence that runs
+onto a second line and stops here.
+
+- 
+- A real item.
+"""
+marked, sentences = sentence_id_markup(SIGNAL_SAMPLE)
+check("strip_sentence_ids still returns the document unchanged with the fixes in",
+      strip_sentence_ids(marked) == SIGNAL_SAMPLE, repr(marked))
+check("a table separator row gets no id: there is nothing in it to restate",
+      "|---|---|" in marked and "[s" not in [line for line in marked.split("\n")
+                                             if line.startswith("|---")][0],
+      marked)
+check("a horizontal rule and a bare list marker get no id either",
+      not any(value.strip() in ("---", "-", "") for value in sentences.values()),
+      str(list(sentences.values())))
+check("a sentence ending in a closing quote is finished, so the next sentence gets its own id",
+      any(value == 'He said "that is done."' for value in sentences.values())
+      and any(value == "She agreed." for value in sentences.values()),
+      str(list(sentences.values())))
+check("a sentence wrapped across lines still carries one id, not one per line",
+      sum(1 for value in sentences.values() if value.startswith("A wrapped sentence")) == 1
+      and not any(value.startswith("onto a second line") for value in sentences.values()),
+      str(list(sentences.values())))
+
+# An id cited inside a Question 2 sentence is a reference, not a restatement.
+CITED = {"s1": "The first sentence.", "s2": "The second one."}
+cited_later = attach("## Question 1\n\n[s1]\n- a point\n\n"
+                     "## Question 2\n\n1. [s2] is unclear here.\n", CITED)
+check("an id cited inside a later sentence does not count as restated",
+      "Never restated: s2" in cited_later
+      and "2 sentences in the document, 1 restated" in cited_later,
+      cited_later)
+check("that citation gets no original attached under it",
+      "> The second one." not in cited_later, cited_later)
+
+named = attach("[s1]\n- a point\n", {"s1": "The first sentence."},
+               pathlib.Path("/tmp/a-document.md"))
+check("the coverage section names the document, because the stamp names a copy that is gone",
+      "marked copy of `/tmp/a-document.md`" in named
+      and "no longer exists" in named, named)
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
