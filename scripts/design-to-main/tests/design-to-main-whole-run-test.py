@@ -11,6 +11,8 @@ Run: python3 scripts/design-to-main/tests/design-to-main-whole-run-test.py
 import importlib.util
 import json
 import pathlib
+import shutil
+import tempfile
 import unittest
 
 _fixture_spec = importlib.util.spec_from_file_location(
@@ -54,7 +56,7 @@ class WholeRunThatPasses(unittest.TestCase):
         ])
         rows = [row.row for row, _, _ in self.machine.routed]
         self.assertEqual(rows, ["1", "2", "5", "16", "18", "21", "24", "32", "16", "39",
-                                "40", "45", "54", "72"])
+                                "40", "45", "54", "73"])
 
     def test_the_machine_cut_the_topic_branch_from_origin_main_named_for_the_component(self):
         self.assertEqual(self.record.current_branch(), fixture.COMPONENT)
@@ -131,7 +133,7 @@ class WholeRunThatPasses(unittest.TestCase):
                 "consecutive-could-not-run-count", "consecutive-program-check-failure-count",
                 "submit-retry-count",
                 "writing-state-entry-reason",
-                "implementation-coverage-type", "tests-coverage-type",
+                "implementation-coverage-type", "tests-coverage-types",
                 "paused-state", "investigation-opened-at-commit",
                 "topic-branch-cut", "outcome"):
             self.assertIn(key, on_disk, key)
@@ -189,7 +191,7 @@ class TheWriteTrailer(unittest.TestCase):
         try:
             script = fixture.whole_run_to_passed()[:-2] + [
                 (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),
-                (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),       # row 59
+                (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION, {}),       # row 60
                 fixture.implementation_write(),                                  # Write: forced
             ]
             machine, run, record, _ = fixture.make_machine(script, repository)
@@ -228,7 +230,7 @@ class TwoWorkStreams(unittest.TestCase):
             self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
             rows = [row.row for row, _, _ in machine.routed]
             self.assertEqual(rows[-13:], ["51", "19", "6", "9", "21", "26", "32", "16", "39",
-                                          "40", "45", "54", "72"])
+                                          "40", "45", "54", "73"])
             self.assertEqual(run.counters.value("contract-revisions"), 1)
             self.assertEqual(run.counters.value("implementation-writes"), 1)
             self.assertEqual(run.counters.value("test-writes"), 1)
@@ -242,11 +244,12 @@ class TwoWorkStreams(unittest.TestCase):
     def test_a_stream_paused_in_a_reviewing_state_resumes_there_not_at_its_last_writing_state(self):
         # Row 52 opens an investigation with the test-work-stream in
         # test-reviewing; the user edits only the implementation and
-        # resumes. Row 70 resumes at implementation-reviewing, its reviewer
+        # resumes. Row 71 resumes at implementation-reviewing, its reviewer
         # advances, and row 26 holds the implementation and sends the run to
         # the test-work-stream's position: test-reviewing, not the
         # test-writing it was in before the tests were reviewed. No test
-        # write is forced, and the test-writes counter does not move.
+        # write is forced; the resume zeroed test-writes (section 7) and
+        # nothing charges it after.
         repository = fixture.ThrowawayRepository()
         try:
             script = fixture.prefix_to_test_writing() + [
@@ -261,15 +264,15 @@ class TwoWorkStreams(unittest.TestCase):
             implementation.parent.mkdir(parents=True, exist_ok=True)
             implementation.write_text("# the implementation, edited by the user\n")
             machine.launcher.script += [
-                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 70
+                (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),                          # row 71
                 (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),           # row 26: holds
             ]
             fixture.drive(machine, run)
-            self.assertEqual([row.row for row, _, _ in machine.routed][-3:], ["52", "70", "26"])
+            self.assertEqual([row.row for row, _, _ in machine.routed][-3:], ["52", "71", "26"])
             self.assertEqual(run.current_state, T.TEST_REVIEWING)
             self.assertEqual(run.test_work_stream_position, T.TEST_REVIEWING)
             self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
-            self.assertEqual(run.counters.value("test-writes"), 1)
+            self.assertEqual(run.counters.value("test-writes"), 0)
             self.assertEqual(run.writes_emitted_per_version[T.TEST_WRITING], 1)
             self.assertEqual(
                 sum(1 for p in machine.launcher.launched if p["state"] == T.TEST_WRITING), 1)
@@ -278,17 +281,17 @@ class TwoWorkStreams(unittest.TestCase):
 
 
 class TheArbitratorRejectsBothArtifactsInOneRuling(unittest.TestCase):
-    """Row 62: `reject implementation and tests` re-enters both writers,
+    """Row 63: `reject implementation and tests` re-enters both writers,
     fresh, each write the arbitrator's bucket; the implementation-work-
     stream runs first (section 3.1), holds, and the test-work-stream runs;
     they meet again at test-suite-executing."""
 
-    def test_row_62_re_enters_both_writers_the_implementation_first(self):
+    def test_row_63_re_enters_both_writers_the_implementation_first(self):
         repository = fixture.ThrowawayRepository()
         try:
             script = fixture.whole_run_to_passed()[:-2] + [
                 (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),                                  # row 55
-                (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS, {}),    # row 62
+                (T.TEST_SUITE_ARBITRATING, T.V_REJECT_IMPLEMENTATION_AND_TESTS, {}),    # row 63
                 fixture.implementation_write(),                                         # forced
                 (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 26: holds
                 fixture.test_write(),                                                   # forced
@@ -299,7 +302,7 @@ class TheArbitratorRejectsBothArtifactsInOneRuling(unittest.TestCase):
             machine, run, record, _ = fixture.make_machine(script, repository)
             self.assertEqual(machine.run_until_ended(run), T.OUTCOME_PASSED)
             rows = [row.row for row, _, _ in machine.routed]
-            self.assertEqual(rows[-8:], ["55", "62", "21", "26", "40", "45", "54", "72"])
+            self.assertEqual(rows[-8:], ["55", "63", "21", "26", "40", "45", "54", "73"])
             self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
             self.assertEqual(run.counters.value("implementation-writes"), 1)
             self.assertEqual(run.counters.value("test-writes"), 1)
@@ -311,6 +314,138 @@ class TheArbitratorRejectsBothArtifactsInOneRuling(unittest.TestCase):
                              T.ENTRY_REASON_ARBITRATOR_RULING)
         finally:
             repository.remove()
+
+
+class TheCoverageTypesOfASetOfTests(unittest.TestCase):
+    """The eighth walk, item 8 (user-ruled 2026-09-09; sections 3.1 and
+    6.4): test-writing's `emitted` carries every coverage-type present in
+    the set — `script, prompt` for nine scripts and one prompt-based-test
+    — as a tuple on the state-exit record and a comma-separated string
+    in state-exit.json; the machine records the set, and the tests go to
+    test-acceptance-by-user when prompt or script-and-prompt is among
+    them. An implementation's coverage-type is one thing (section 2)."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_the_set_is_recorded_and_routes_the_tests_to_the_user_when_any_is_agent_instructions(self):
+        script = fixture.prefix_to_test_writing() + [
+            fixture.test_write("script", "prompt"),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                          # row 16
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "16")
+        self.assertEqual(run.current_state, T.TEST_ACCEPTANCE_BY_USER)
+        self.assertEqual(run.tests_coverage_types, ("script", "prompt"))
+        self.assertTrue(run.tests_are_agent_instructions())
+        on_disk = json.loads(record.absolute(record.run_state_path).read_text())
+        self.assertEqual(on_disk["tests-coverage-types"], ["script", "prompt"])
+        self.assertNotIn("tests-coverage-type", on_disk)
+        read_back = RunStateRecord.read_from(record.absolute(record.run_state_path))
+        self.assertEqual(read_back.tests_coverage_types, ("script", "prompt"))
+
+    def test_scripts_alone_skip_the_users_check(self):
+        script = fixture.prefix_to_test_writing() + [
+            fixture.test_write("script"),
+            (T.TEST_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                          # row 45
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "45")
+        self.assertEqual(run.tests_coverage_types, ("script",))
+        self.assertFalse(run.tests_are_agent_instructions())
+
+    def test_the_json_field_is_a_comma_separated_string_and_the_record_a_tuple(self):
+        self.assertEqual(M.coverage_types_from_json_field("script, prompt"), ("script", "prompt"))
+        self.assertEqual(M.coverage_types_from_json_field("script"), ("script",))
+        self.assertEqual(M.coverage_types_from_json_field(" script-and-prompt ,prompt "),
+                         ("script-and-prompt", "prompt"))
+        self.assertEqual(M.coverage_types_as_json_field(("script", "prompt")), "script, prompt")
+        self.assertEqual(M.coverage_types_as_json_field(("script",)), "script")
+
+    def test_an_implementation_emitting_more_than_one_coverage_type_is_a_machine_error(self):
+        # Section 2: the coverage-type of an implementation says what kind
+        # of thing it is — one of three. Two is not one: a machine error,
+        # routed like any illegal state-exit (reported with this slice).
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {"coverage_types": ("script", "prompt")}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.IMPLEMENTATION_WRITING)
+        self.assertIsNone(run.implementation_coverage_type)
+        self.assertEqual(run.counters.value("implementation-writes"), 0)
+
+
+class TheArbitratorOverrulesAReviewer(unittest.TestCase):
+    """Row 59 (section 6.5, user-ruled 2026-09-09, the eighth walk, item 4):
+    entered from a reviewer's ceiling, the arbitrator's `advance` means the
+    reviewer was wrong, and the artifact continues as if that reviewer had
+    advanced it — wherever that reviewing state's own advance goes. The
+    run-state records what entered test-suite-arbitrating so that the
+    machine can tell this entry from a failed suite's (row 58)."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def three_rejects_of_the_implementation(self, coverage_type="script"):
+        script = fixture.prefix_to_design_approved()
+        for _ in range(3):
+            script += [fixture.implementation_write(coverage_type),
+                       (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {})]
+        return script
+
+    def test_the_implementation_continues_as_if_its_reviewer_had_advanced_it(self):
+        # Three rejects, row 28; the arbitrator advances: the reviewer's own
+        # advance with tests not yet begun is row 24, so tests begin.
+        script = self.three_rejects_of_the_implementation() + [
+            (T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, {}),                          # row 59
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["28", "59"])
+        self.assertEqual(run.test_suite_arbitrating_entered_from, T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
+        self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
+        self.assertTrue(run.tests_begun)
+        self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
+        self.assertEqual(run.test_work_stream_position, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
+        self.assertEqual(run.counters.value("implementation-writes"), 3)
+        self.assertEqual(machine.machine_errors, [])
+        on_disk = json.loads(record.absolute(record.run_state_path).read_text())
+        self.assertEqual(on_disk["test-suite-arbitrating-entered-from"], T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT)
+
+    def test_agent_instructions_continue_to_the_users_check(self):
+        # The implementation is agent-instructions: the agent check's
+        # advance is row 16, to implementation-acceptance-by-user.
+        script = self.three_rejects_of_the_implementation(coverage_type="prompt") + [
+            (T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, {}),                          # row 59
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "59")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_ACCEPTANCE_BY_USER)
+        self.assertFalse(run.tests_begun)
+
+    def test_a_failed_suite_s_advance_still_goes_to_the_gate(self):
+        script = fixture.whole_run_to_passed()[:-2] + [
+            (T.TEST_SUITE_EXECUTING, T.V_FAIL, {}),                                # row 55
+            (T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, {}),                           # row 58
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["55", "58"])
+        self.assertEqual(run.test_suite_arbitrating_entered_from, T.TEST_SUITE_EXECUTING)
+        self.assertEqual(run.current_state, T.SUBMIT_TO_PR_GATE)
 
 
 class WholeRunThatFailsAtTheRedesignsCeiling(unittest.TestCase):
@@ -333,7 +468,7 @@ class WholeRunThatFailsAtTheRedesignsCeiling(unittest.TestCase):
             self.assertEqual(outcome, T.OUTCOME_FAILED)
             self.assertEqual(run.counters.value("redesigns"), 2)
             self.assertEqual(run.design_version, 3)
-            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["21", "30", "71"])
+            self.assertEqual([r.row for r, _, _ in machine.routed][-3:], ["21", "30", "72"])
             trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
             self.assertEqual(trailer["Counter-redesigns"], "2")
             self.assertEqual(RunStateRecord.read_from(
@@ -406,9 +541,11 @@ class ResumingAnInvestigation(unittest.TestCase):
 class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
     """Section 6.6: an investigation pauses the run — whatever agent was
     working is ended, its uncommitted work discarded, and its state re-run
-    on resume. The opening commit carries the state-exit and the record,
-    nothing the paused agent half-wrote; the resume diff therefore sees
-    the user's edits and only those."""
+    on resume. The opening commit carries the state-exit, the files it
+    names and the record, nothing the paused agent half-wrote and did not
+    name; the discard runs after the commit, as after every commit
+    (section 9), and the resume diff therefore sees the user's edits and
+    only those."""
 
     TEST_DESIGN = fixture.COMPONENT_DIRECTORY + "/widget-counter-test-design.md"
     IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
@@ -425,7 +562,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
 
     def open_investigation_from_test_design_writing(self):
         """test-design-writing writes its draft and touches a tracked file,
-        then escalates (row 67, focus design)."""
+        then escalates (row 68, focus design)."""
         script = fixture.prefix_to_tests_begun() + [
             (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {
                 "investigation_focus": T.FOCUS_DESIGN,
@@ -453,7 +590,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
         machine, run, record = self.open_investigation_from_test_design_writing()
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
-        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["67", "70"])
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["68", "71"])
         self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
         self.assertEqual(run.design_version, 1)
 
@@ -484,7 +621,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
         ]
         machine, run, record, _ = fixture.make_machine(script, self.repository)
         fixture.drive(machine, run)
-        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["23", "70"])
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["23", "71"])
         self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
         self.assertEqual(run.implementation_work_stream_position, T.IMPLEMENTATION_WRITING)
         self.assertFalse(record.absolute(self.IMPLEMENTATION).exists())
@@ -505,7 +642,7 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         try:
             script = fixture.prefix_to_design_approved() + [
                 (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
-                    "coverage_type": "script",
+                    "coverage_types": ("script",),
                     "named_files": (self.IMPLEMENTATION,),
                     fixture.FILES_WRITTEN_BEFORE_EMITTING: {
                         self.IMPLEMENTATION: "# the implementation\n",
@@ -526,6 +663,65 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         finally:
             repository.remove()
 
+    def test_after_the_commit_every_other_change_in_the_worktree_is_discarded(self):
+        # Section 9 after the eighth walk (item 7, user-ruled 2026-09-09):
+        # after committing a state-exit, the machine discards every other
+        # change in its worktree — the scratch file the writer left beside
+        # the real one, the tracked file it touched — so the next state's
+        # worktree holds only what a state-exit claimed.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                    "coverage_types": ("script",),
+                    "named_files": (self.IMPLEMENTATION,),
+                    fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                        self.IMPLEMENTATION: "# the implementation\n",
+                        self.STRAY: "a writer's scratch file, not named\n",
+                        "README.md": "main, touched by the writer\n",
+                    }}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+            self.assertEqual(record.absolute(self.IMPLEMENTATION).read_text(), "# the implementation\n")
+            self.assertFalse(record.absolute(self.STRAY).exists())
+            self.assertEqual(record.absolute("README.md").read_text(), "main\n")
+            self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        finally:
+            repository.remove()
+
+    def test_a_state_exit_naming_a_file_that_is_not_there_is_a_machine_error_not_a_crash(self):
+        # Section 9 after the eighth walk (item 7): a state-exit naming a
+        # file that is not there — neither in the worktree nor tracked at
+        # HEAD — is a machine error, routed like any illegal state-exit
+        # (section 3.2): committed, the run paused in investigate-workflow
+        # at the emitting state, no CalledProcessError from the restricted
+        # add. A named deletion of a tracked file is not this: it is a
+        # change the commit carries.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                    "coverage_types": ("script",),
+                    "named_files": (self.IMPLEMENTATION, self.STRAY),
+                    fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                        self.IMPLEMENTATION: "# the implementation\n"}}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(len(machine.machine_errors), 1)
+            self.assertIn(self.STRAY, run.machine_error)
+            self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(run.paused_state, T.IMPLEMENTATION_WRITING)
+            self.assertEqual(run.counters.value("implementation-writes"), 0)
+            trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
+            self.assertEqual(trailer["State"], T.IMPLEMENTATION_WRITING)
+            self.assertEqual(trailer["Exit"], T.V_EMITTED)
+            self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        finally:
+            repository.remove()
+
     def test_the_record_never_stages_the_whole_worktree(self):
         # A `git add -A` with no pathspec after it stages the whole
         # worktree; the one the record runs is restricted to the record
@@ -534,6 +730,92 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         self.assertNotIn('"add", "-A")', source)
         self.assertNotIn('"add", "-A", ".")', source)
         self.assertIn('"add", "-A", "--", str(self.record_directory), *named_files)', source)
+
+
+class AnInvestigationOpeningStateExitNamingFilesHasThemCommitted(unittest.TestCase):
+    """PR #295, round 2, finding 2, and section 9 after the eighth walk
+    (item 7): a writer that stops mid-write names what it has written so
+    far, and the next writer receives it. So an investigation-opening
+    state-exit that names files has them committed — a modified tracked
+    file is not reverted to HEAD, an untracked one does not crash the
+    restricted add — and the discard removes only what no state-exit
+    named, after the commit. The resume diff runs against the opening
+    commit, so the partial a writer named is not mistaken for the user's
+    edit."""
+
+    IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
+    REVIEW_NOTES = fixture.COMPONENT_DIRECTORY + "/review-notes.md"
+    V1 = "# the implementation, v1\n"
+    PARTIAL = "# the implementation, v2, half-fixed when the writer found the design wanting\n"
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def paths_in_commit(self, record, commit):
+        return record.git("show", "--name-only", "--format=", commit).stdout.split()
+
+    def test_a_partial_write_named_by_an_input_quick_check_failed_is_in_the_opening_commit(self):
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                "coverage_types": ("script",),
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),   # row 27
+            (T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, {
+                "input_named": T.INPUT_DESIGN,
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                    self.IMPLEMENTATION: self.PARTIAL,
+                    "README.md": "main, touched by the writer\n"}}),                # row 23
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "23")
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        opening_commit = machine.routed[-1][2]
+        self.assertIn(self.IMPLEMENTATION, self.paths_in_commit(record, opening_commit))
+        self.assertEqual(record.git("show", "HEAD:" + self.IMPLEMENTATION).stdout, self.PARTIAL)
+        self.assertEqual(record.absolute(self.IMPLEMENTATION).read_text(), self.PARTIAL)
+        self.assertEqual(record.absolute("README.md").read_text(), "main\n")   # not named: discarded
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        # Nothing edited: the resume returns to the writer, which receives
+        # the partial; the partial is not read as the user's edit.
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+        self.assertEqual(record.git("show", "HEAD:" + self.IMPLEMENTATION).stdout, self.PARTIAL)
+
+    def test_an_untracked_file_named_by_a_reject_design_is_committed_not_a_crash(self):
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                "coverage_types": ("script",),
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {
+                "named_files": (self.REVIEW_NOTES,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                    self.REVIEW_NOTES: "the failure scenario in the design\n"}}),   # row 30
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "30")
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        opening_commit = machine.routed[-1][2]
+        self.assertIn(self.REVIEW_NOTES, self.paths_in_commit(record, opening_commit))
+        self.assertEqual(record.git("show", "HEAD:" + self.REVIEW_NOTES).stdout,
+                         "the failure scenario in the design\n")
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        # On disk the run-state is the committed one: HEAD and the file agree.
+        self.assertEqual(record.absolute(record.run_state_path).read_text(),
+                         record.git("show", "HEAD:" + str(record.run_state_path)).stdout)
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)   # the paused state
 
 
 class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
@@ -560,11 +842,11 @@ class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
 
     def open_the_investigation_with_v1_committed(self):
         """The implementation-write commits v1 (named); tests written and
-        accepted; the suite fails; the arbitrator escalates (row 66, its
+        accepted; the suite fails; the arbitrator escalates (row 67, its
         first entry)."""
         script = fixture.prefix_to_design_approved() + [
             (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
-                "coverage_type": "script",
+                "coverage_types": ("script",),
                 "named_files": (self.IMPLEMENTATION,),
                 fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
             (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),
@@ -594,7 +876,7 @@ class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
         ]
         fixture.drive(machine, run)
         rows = [row.row for row, _, _ in machine.routed]
-        self.assertEqual(rows[-4:], ["70", "25", "55", "66"])
+        self.assertEqual(rows[-4:], ["71", "25", "55", "67"])
         resume_commit = machine.routed[-4][2]
         self.assertEqual(machine.routed[-4][1].verdict, T.V_RESUME)
         self.assertIn(self.IMPLEMENTATION, self.paths_in_commit(record, resume_commit))
@@ -616,7 +898,7 @@ class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
         record.absolute(self.IMPLEMENTATION).unlink()
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(machine.routed[-1][0].row, "71")
         self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
         resume_commit = machine.routed[-1][2]
         self.assertEqual(sorted(self.paths_in_commit(record, resume_commit)),
@@ -678,7 +960,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         self.stray_verdict_then_check_the_pause_is_unchanged(machine, run, record)
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(machine.routed[-1][0].row, "71")
         self.assertIsNone(machine.routed[-2][0])   # the stray exit: a machine error, no row
         self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
         self.assertEqual(run.design_version, 1)
@@ -709,7 +991,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
         machine.launcher.script.append(
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(machine.routed[-1][0].row, "71")
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.design_version, 2)
         self.assertEqual(run.counters.value("redesigns"), 1)
@@ -732,7 +1014,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
                 self.assertIn(name, run.machine_error)
                 machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
                 fixture.drive(machine, run)
-                self.assertEqual(machine.routed[-1][0].row, "70")
+                self.assertEqual(machine.routed[-1][0].row, "71")
                 self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
 
     def test_a_reset_carried_on_a_malformed_resume_is_refused_with_the_whole_state_exit(self):
@@ -746,12 +1028,12 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
             fields={"destination": "desgin-writing", "rulings": ("reset",)})
         self.assertEqual(run.counters.value("redesigns"), 2)
         self.assertFalse(record.absolute(record.user_rulings_path).exists())
-        # Without the reset a resume to design-writing is row 71; with it,
-        # said again on the correct resume, row 70.
+        # Without the reset a resume to design-writing is row 72; with it,
+        # said again on the correct resume, row 71.
         machine.launcher.script.append(
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING, "rulings": ("reset",)}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(machine.routed[-1][0].row, "71")
         self.assertEqual(run.current_state, T.DESIGN_WRITING)
         self.assertEqual(run.counters.value("redesigns"), 1)
         self.assertEqual(record.absolute(record.user_rulings_path).read_text(),
@@ -760,7 +1042,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
 
 class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
     """Section 6.6: an investigation the arbitrator's third entry opened
-    (row 63) is the one a plain resume would loop back into, since the
+    (row 64) is the one a plain resume would loop back into, since the
     paused state is test-suite-arbitrating at its ceiling. There a resume
     either names a destination or applies the ruling the arbitrator held
     in its report, routed through test-suite-arbitrating's rows without
@@ -813,25 +1095,109 @@ class ResumingFromTheArbitratorsThirdEntry(unittest.TestCase):
             fixture.test_write(),                                                # forced
         ]
         fixture.drive(machine, run)
-        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["70", "40"])
-        # test-writes is 1: the arbitrator's two earlier writes were its
-        # bucket, so the held ruling routes by row 60, not 61.
-        self.assertEqual(machine.held_rulings_applied[-1][0].row, "60")
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["71", "40"])
+        # The resume zeroed the six per-version counters (section 7), so
+        # the held ruling routes by row 61; the write it orders is still
+        # the arbitrator's bucket, and test-writes stays at zero.
+        self.assertEqual(machine.held_rulings_applied[-1][0].row, "61")
         self.assertEqual(self.arbitrator_launches(machine), 2)
-        self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
-        self.assertEqual(run.counters.value("test-writes"), 1)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 0)
+        self.assertEqual(run.counters.value("test-writes"), 0)
         self.assertEqual(run.writing_state_entry_reason[T.TEST_WRITING], T.ENTRY_REASON_ARBITRATOR_RULING)
         self.assertEqual(run.current_state, T.TEST_REVIEWING)
         self.assertEqual(machine.machine_errors, [])
+
+    def test_a_held_escalate_to_user_is_refused_as_a_malformed_resume(self):
+        # Section 6.6 after the eighth walk (item 5): the held ruling is
+        # one of the arbitrator's six rulings, never escalate-to-user —
+        # the arbitrator is already talking to the user, and applying it
+        # would open a second investigation whose plain resume returns to
+        # the same ceiling. Refused like a resume naming `ended`: a
+        # machine error, the pause unchanged, the counters untouched, the
+        # next resume routed.
+        machine, run, record = self.open_the_third_entry_investigation()
+        opened_at = run.investigation_opened_at_commit
+        opening_commit = machine.routed[-1][2]
+        for held in (T.V_ESCALATE_TO_USER, "reject desgin"):
+            with self.subTest(held_ruling=held):
+                machine.launcher.script.append(
+                    (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": held}))
+                fixture.drive(machine, run)
+                self.assertIsNone(machine.routed[-1][0])
+                self.assertIn(held, run.machine_error)
+                self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+                self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
+                self.assertEqual(run.investigation_opened_by_row, T.ROW_THE_ARBITRATORS_THIRD_ENTRY)
+                self.assertEqual(run.investigation_opened_at_commit, opened_at)
+                self.assertEqual(run.counters.value("arbitrator-rulings"), 2)
+                self.assertEqual(self.arbitrator_launches(machine), 2)
+        self.assertEqual(len(machine.machine_errors), 2)
+        self.assertEqual(len(record.commits_on_branch(since=opening_commit)), 2)
+        machine.launcher.script.append(
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"held_ruling": T.V_REJECT_TESTS}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.TEST_WRITING)
 
     def test_a_resume_naming_a_destination_goes_there(self):
         machine, run, record = self.open_the_third_entry_investigation()
         machine.launcher.script.append(
             (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.IMPLEMENTATION_REVIEWING}))
         fixture.drive(machine, run)
-        self.assertEqual(machine.routed[-1][0].row, "70")
+        self.assertEqual(machine.routed[-1][0].row, "71")
         self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
         self.assertEqual(self.arbitrator_launches(machine), 2)
+
+    def test_a_resume_naming_the_arbitrator_launches_it_with_a_fresh_budget_and_carries_the_users_edit(self):
+        # PR #295, round 2, finding 1 reproduced a resume naming
+        # test-suite-arbitrating at the arbitrator's ceiling re-opening the
+        # investigation half-way. Since the eighth walk's ruling that every
+        # resume zeroes the six per-version counters, that resume finds
+        # arbitrator-rulings at zero: the arbitrator is launched a third
+        # time on a fresh budget, and nothing re-opens. The resume's
+        # commit still carries the user's edit. (The opening is keyed on
+        # the openers regardless, so a future row that did open one from
+        # a resume would open it whole.)
+        machine, run, record = self.open_the_third_entry_investigation()
+        edited = record.absolute(fixture.COMPONENT_DIRECTORY + "/widget_counter.py")
+        edited.parent.mkdir(parents=True, exist_ok=True)
+        edited.write_text("# the implementation, edited by the user in the investigation\n")
+        machine.launcher.script += [
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.TEST_SUITE_ARBITRATING}),  # row 71
+            (T.TEST_SUITE_ARBITRATING, T.V_REJECT_TESTS, {}),                                # row 61
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["71", "61"])
+        self.assertEqual(run.current_state, T.TEST_WRITING)
+        self.assertEqual(run.counters.value("arbitrator-rulings"), 1)
+        self.assertEqual(self.arbitrator_launches(machine), 3)
+        self.assertEqual(machine.machine_errors, [])
+        resume_commit = machine.routed[-2][2]
+        self.assertIn(fixture.COMPONENT_DIRECTORY + "/widget_counter.py",
+                      record.git("show", "--name-only", "--format=", resume_commit).stdout.split())
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+
+
+    def test_an_arbitrator_the_user_named_on_a_resume_has_no_entry_for_its_advance_to_read(self):
+        # The user names test-suite-arbitrating on a resume: the arbitrator
+        # is launched with no failed suite and no reviewer's ceiling to
+        # stand in for. The run-state records the resume as what entered
+        # it, so neither row 58 nor row 59 holds and its `advance` is a
+        # machine error rather than a route on the entry before (reported
+        # with this slice); its rejects route as they always do.
+        machine, run, record = self.open_the_third_entry_investigation()
+        self.assertEqual(run.test_suite_arbitrating_entered_from, T.TEST_SUITE_EXECUTING)
+        machine.launcher.script += [
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.TEST_SUITE_ARBITRATING}),  # row 71
+            (T.TEST_SUITE_ARBITRATING, T.V_ADVANCE, {}),                                     # no row
+        ]
+        fixture.drive(machine, run)
+        self.assertEqual(run.test_suite_arbitrating_entered_from, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(len(machine.machine_errors), 1)
+        self.assertIsNone(machine.routed[-1][0])
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(run.paused_state, T.TEST_SUITE_ARBITRATING)
+        self.assertEqual(self.arbitrator_launches(machine), 3)
 
 
 class RecoveryFromTheLastCommit(unittest.TestCase):
@@ -1036,12 +1402,153 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             design.parent.mkdir(parents=True, exist_ok=True)
             design.write_text("# the design, edited by the user during the investigation\n")
             fixture.drive(successor, recovered)
-            self.assertEqual([row.row for row, _, _ in successor.routed], ["70"])
+            self.assertEqual([row.row for row, _, _ in successor.routed], ["71"])
             self.assertEqual(recovered.current_state, T.DESIGN_WRITING)
             self.assertEqual(recovered.design_version, 2)
             self.assertEqual(recovered.counters.value("redesigns"), 1)
         finally:
             repository.remove()
+
+
+class TheRecordsLayout(unittest.TestCase):
+    """Section 9 after the eighth walk (item 3, user-ruled 2026-09-08):
+    the component's directory is created by the machine when it cuts the
+    topic branch, holding only `design-to-main-record/` until code
+    exists; a reviewer's or a writer's notes are `notes.md` and its
+    state-exit `state-exit.json` in `evidence/<state or sub-state>-<n>/`,
+    for the nth instance of that state or sub-state, counted from 1."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_the_cut_creates_the_components_directory_holding_only_the_record(self):
+        machine, run, record, _ = fixture.make_machine([], self.repository)
+        record.cut_topic_branch()
+        component_directory = record.absolute(record.component_directory)
+        self.assertTrue(record.absolute(record.record_directory).is_dir())
+        self.assertEqual([p.name for p in component_directory.iterdir()], [T.RECORD_DIRECTORY_NAME])
+
+    def test_after_row_1_the_components_directory_holds_only_the_record(self):
+        machine, run, record, _ = fixture.make_machine(
+            [(T.INITIATE_DESIGN_TO_MAIN, T.V_INVOKED, {})], self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.DESIGN_WRITING)
+        component_directory = record.absolute(record.component_directory)
+        self.assertEqual([p.name for p in component_directory.iterdir()], [T.RECORD_DIRECTORY_NAME])
+        self.assertEqual(sorted(p.name for p in record.absolute(record.record_directory).iterdir()),
+                         [T.RUN_STATE_FILE_NAME])
+
+    def test_an_instances_evidence_directory_is_named_for_the_state_and_counted_from_1(self):
+        machine, run, record, _ = fixture.make_machine([], self.repository)
+        self.assertEqual(
+            record.evidence_directory_for_instance(T.IMPLEMENTATION_WRITING, 1),
+            record.record_directory / "evidence" / "implementation-writing-1")
+        self.assertEqual(
+            record.evidence_directory_for_instance(T.TEST_ACCEPTANCE_BY_AGENT, 2),
+            record.record_directory / "evidence" / "test-acceptance-by-agent-2")
+        self.assertEqual(
+            record.notes_path_for_instance(T.IMPLEMENTATION_WRITING, 1),
+            record.record_directory / "evidence" / "implementation-writing-1" / "notes.md")
+        self.assertEqual(
+            record.state_exit_path_for_instance(T.IMPLEMENTATION_WRITING, 1),
+            record.record_directory / "evidence" / "implementation-writing-1" / "state-exit.json")
+
+    def test_the_next_instance_is_counted_from_the_branchs_state_trailers_and_named_in_the_package(self):
+        script = fixture.prefix_to_design_approved() + [
+            fixture.implementation_write(),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),
+            fixture.implementation_write(),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(record.instances_of_state_so_far(T.IMPLEMENTATION_WRITING), 2)
+        self.assertEqual(record.instances_of_state_so_far(T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT), 1)
+        self.assertEqual(record.instances_of_state_so_far(T.TEST_WRITING), 0)
+        self.assertEqual(
+            record.evidence_directory_for_the_next_instance(T.IMPLEMENTATION_WRITING),
+            record.record_directory / "evidence" / "implementation-writing-3")
+        packages = [p for p in machine.launcher.launched if p["state"] == T.IMPLEMENTATION_WRITING]
+        self.assertEqual([str(p["evidence-directory"]) for p in packages], [
+            str(record.record_directory / "evidence" / "implementation-writing-1"),
+            str(record.record_directory / "evidence" / "implementation-writing-2")])
+        first = [p for p in machine.launcher.launched if p["state"] == T.INITIATE_DESIGN_TO_MAIN][0]
+        self.assertEqual(str(first["evidence-directory"]),
+                         str(record.record_directory / "evidence" / "initiate-design-to-main-1"))
+
+
+class TheStateExitFile(unittest.TestCase):
+    """Section 2: the state-exit is a file, state-exit.json, in the
+    instance's evidence directory, its fields spelled with hyphens —
+    `state`, `verdict`, `package-commit`, `destination`, `input-named`,
+    `investigation-focus`, `coverage-type`, `refusal-class`,
+    `held-ruling`, `named-files`, `rulings`. The reader parses it into
+    the machine's StateExitRecord."""
+
+    def setUp(self):
+        self.directory = pathlib.Path(tempfile.mkdtemp(prefix="design-to-main-state-exit-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def write(self, fields):
+        path = self.directory / T.STATE_EXIT_FILE_NAME
+        path.write_text(json.dumps(fields, indent=2) + "\n")
+        return path
+
+    def test_every_field_of_section_2_reads_into_the_record(self):
+        path = self.write({
+            "state": T.TEST_WRITING, "verdict": T.V_EMITTED, "package-commit": "a" * 40,
+            "destination": T.TEST_REVIEWING, "coverage-type": "script, prompt",
+            "named-files": ["scripts/widget-counter/tests/a-test.py",
+                            "scripts/widget-counter/tests/b-prompt-test.md"],
+        })
+        record = M.state_exit_record_from_json_file(path)
+        self.assertEqual(record, M.StateExitRecord(
+            state=T.TEST_WRITING, verdict=T.V_EMITTED, package_commit="a" * 40,
+            destination=T.TEST_REVIEWING, coverage_types=("script", "prompt"),
+            named_files=("scripts/widget-counter/tests/a-test.py",
+                         "scripts/widget-counter/tests/b-prompt-test.md")))
+        path = self.write({
+            "state": T.INVESTIGATE_WORKFLOW, "verdict": T.V_RESUME, "package-commit": "b" * 40,
+            "held-ruling": T.V_REJECT_TESTS, "rulings": ["reset", "the exit status of a refusal is 3"],
+        })
+        record = M.state_exit_record_from_json_file(path)
+        self.assertEqual(record.held_ruling, T.V_REJECT_TESTS)
+        self.assertEqual(record.rulings, ("reset", "the exit status of a refusal is 3"))
+        self.assertEqual(record.coverage_types, ())
+        path = self.write({
+            "state": T.IMPLEMENTATION_WRITING, "verdict": T.V_INPUT_QUICK_CHECK_FAILED,
+            "package-commit": "c" * 40, "input-named": T.INPUT_DESIGN,
+        })
+        self.assertEqual(M.state_exit_record_from_json_file(path).input_named, T.INPUT_DESIGN)
+        path = self.write({
+            "state": T.TEST_SUITE_ARBITRATING, "verdict": T.V_ESCALATE_TO_USER,
+            "package-commit": "d" * 40, "investigation-focus": T.FOCUS_DESIGN,
+        })
+        self.assertEqual(M.state_exit_record_from_json_file(path).investigation_focus, T.FOCUS_DESIGN)
+        path = self.write({
+            "state": T.SUBMIT_TO_PR_GATE, "verdict": T.V_GATEKEEPER_REFUSAL,
+            "package-commit": "e" * 40, "refusal-class": T.REFUSAL_FORM,
+        })
+        self.assertEqual(M.state_exit_record_from_json_file(path).refusal_class, T.REFUSAL_FORM)
+
+    def test_a_field_the_design_does_not_name_or_a_required_one_missing_is_refused(self):
+        # An agent wrote `input_named` (the underscore spelling PR #292's
+        # drafts once had) or left out the verdict: refused with the
+        # field's name, so that the machine can route it as a malformed
+        # state-exit rather than read half a record.
+        path = self.write({"state": T.IMPLEMENTATION_WRITING, "verdict": T.V_INPUT_QUICK_CHECK_FAILED,
+                           "package-commit": "a" * 40, "input_named": T.INPUT_DESIGN})
+        with self.assertRaises(M.MalformedStateExitFile) as refused:
+            M.state_exit_record_from_json_file(path)
+        self.assertIn("input_named", str(refused.exception))
+        path = self.write({"state": T.IMPLEMENTATION_WRITING, "package-commit": "a" * 40})
+        with self.assertRaises(M.MalformedStateExitFile) as refused:
+            M.state_exit_record_from_json_file(path)
+        self.assertIn("verdict", str(refused.exception))
 
 
 class TopicBranchRefusedAtRow1(unittest.TestCase):
@@ -1150,7 +1657,7 @@ class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
         self.assertFalse(run.topic_branch_cut)
         self.assertFalse(record.topic_branch_is_checked_out())
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.discard_uncommitted_work_outside_the_record(run)
+            record.discard_every_change_the_commit_did_not_carry(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
             record.discard_all_uncommitted_work_for_recovery(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
@@ -1174,7 +1681,7 @@ class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
         self.assertFalse(run.topic_branch_cut)
         head_before = fixture.git(checkout, "rev-parse", "HEAD")
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.discard_uncommitted_work_outside_the_record(run)
+            record.discard_every_change_the_commit_did_not_carry(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
             record.discard_all_uncommitted_work_for_recovery(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):

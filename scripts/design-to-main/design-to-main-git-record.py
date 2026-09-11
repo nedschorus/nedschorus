@@ -103,6 +103,15 @@ class TopicBranchGitRecord:
         span = "%s..HEAD" % since if since else "HEAD"
         return self.git("log", "--format=%H", span).stdout.split()
 
+    def first_commit_after(self, commit):
+        """The commit that follows `commit` on the branch, or None when
+        HEAD is `commit`. run-state.json records the PARENT of the commit
+        that opened an investigation (a commit's own SHA cannot be written
+        into a file it contains), and the resume diff of section 6.6 runs
+        against the opening commit itself: this is how it is found."""
+        commits = self.commits_on_branch(since=commit)
+        return commits[-1] if commits else None
+
     # -- section 9: the topic branch ----------------------------------------
 
     def cut_topic_branch(self, start_point="origin/main"):
@@ -117,6 +126,11 @@ class TopicBranchGitRecord:
             raise TopicBranchCutRefused(
                 "git refused to cut the topic branch %r from %s: %s" % (
                     self.component, start_point, cut.stderr.strip()))
+        # Section 9: the component's directory is created when the branch
+        # is cut, holding only the record until code exists (user-ruled
+        # 2026-09-08, the eighth walk, item 3). After the cut, so that a
+        # refused cut leaves nothing behind.
+        self.absolute(self.record_directory).mkdir(parents=True, exist_ok=True)
         return self.head_commit()
 
     def topic_branch_is_checked_out(self):
@@ -160,6 +174,37 @@ class TopicBranchGitRecord:
     def user_rulings_path(self):
         return self.record_directory / tables.USER_RULINGS_FILE_NAME
 
+    # -- section 9: evidence/<state or sub-state>-<n>/ ------------------------
+
+    def evidence_directory_for_instance(self, state_or_sub_state, instance_number):
+        """The evidence directory of the nth instance of a state or
+        sub-state, n counted from 1: `implementation-writing-1` is the
+        first. Relative to the repository, like every path here."""
+        return (self.record_directory / tables.EVIDENCE_DIRECTORY_NAME
+                / ("%s-%d" % (state_or_sub_state, instance_number)))
+
+    def notes_path_for_instance(self, state_or_sub_state, instance_number):
+        return self.evidence_directory_for_instance(state_or_sub_state, instance_number) / tables.NOTES_FILE_NAME
+
+    def state_exit_path_for_instance(self, state_or_sub_state, instance_number):
+        return (self.evidence_directory_for_instance(state_or_sub_state, instance_number)
+                / tables.STATE_EXIT_FILE_NAME)
+
+    def instances_of_state_so_far(self, state_or_sub_state):
+        """How many instances of a state or sub-state the branch has
+        committed: its `State:` trailers (section 9). Counted over the
+        run, not per design version — the design counts "the nth
+        instance of that state or sub-state" and says nothing of
+        versions (reported with this slice). A stale or refused state-exit
+        is committed too, so an instance that was re-run counts once per
+        launch, as its directories should."""
+        states = self.git("log", "--format=%(trailers:key=State,valueonly)", "HEAD").stdout.split("\n")
+        return sum(1 for line in states if line.strip() == state_or_sub_state)
+
+    def evidence_directory_for_the_next_instance(self, state_or_sub_state):
+        return self.evidence_directory_for_instance(
+            state_or_sub_state, self.instances_of_state_so_far(state_or_sub_state) + 1)
+
     def absolute(self, relative):
         return self.repository_dir / relative
 
@@ -195,27 +240,41 @@ class TopicBranchGitRecord:
         Empty commits are allowed: a retry or a discarded state-exit
         changes nothing but the record."""
         self.require_topic_branch_cut_for_run(run, "commit a state-exit")
-        # `add -A` restricted to these paths stages their deletions too;
-        # a named file that does not exist is git's error, as it should
-        # be — the state-exit named something it did not write.
+        # `add -A` restricted to these paths stages their deletions too.
+        # A named file that is not there at all is the machine's error
+        # to catch before this (named_files_that_are_not_there), never
+        # git's to crash on.
         self.git("add", "-A", "--", str(self.record_directory), *named_files)
         message = subject + "\n\n" + trailer
         self.git("commit", "--allow-empty", "-q", "-m", message)
         return self.head_commit()
 
-    # -- section 6.6: the paused agent's uncommitted work is discarded --------
+    def named_files_that_are_not_there(self, named_files):
+        """The named files that are neither in the worktree nor tracked at
+        HEAD: a state-exit naming one is a machine error (section 9),
+        routed like any illegal state-exit. A named file that is tracked
+        and gone from the worktree is a deletion the commit carries, not
+        this."""
+        missing = []
+        for path in named_files:
+            if self.absolute(path).exists():
+                continue
+            tracked = self.git("cat-file", "-e", "HEAD:%s" % path, check=False)
+            if tracked.returncode != 0:
+                missing.append(path)
+        return missing
 
-    def discard_uncommitted_work_outside_the_record(self, run):
-        """Put every path outside the record directory back to HEAD:
-        staged or not, modified, added or deleted, untracked. The record
-        directory is kept — a ruling appended for this state-exit and a
-        reviewer's notes under `evidence/` belong to the state-exit, not
-        to the work that is discarded."""
-        self.require_topic_branch_cut_for_run(run, "discard the paused agent's uncommitted work")
-        outside_the_record = [".", ":(exclude)%s" % self.record_directory]
-        self.git("reset", "-q", "--", *outside_the_record)
-        self.git("checkout", "--", *outside_the_record)
-        self.git("clean", "-fdq", "--", *outside_the_record)
+    # -- section 9: after the commit, every other change is discarded --------
+
+    def discard_every_change_the_commit_did_not_carry(self, run):
+        """After committing a state-exit, put the whole checkout back to
+        HEAD (section 9, user-ruled 2026-09-09, the eighth walk, item 7):
+        the commit carried the files the state-exit named and the record,
+        so what remains is what no state-exit claimed — a writer's scratch
+        file, a tracked file it touched, a paused agent's half-written
+        work — and the next state's worktree holds only claimed work."""
+        self.require_topic_branch_cut_for_run(run, "discard what the commit did not carry")
+        self.put_the_whole_checkout_back_to_head()
 
     # -- section 9, recovery: the dead process's uncommitted files ------------
 
@@ -223,15 +282,17 @@ class TopicBranchGitRecord:
         """Put the whole checkout back to HEAD, the record directory
         included: a process that died before committing a state-exit left
         files that belong to no commit (section 9). `run` is the run being
-        recovered, read from the last commit before this is called.
+        recovered, read from the last commit before this is called."""
+        self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
+        self.put_the_whole_checkout_back_to_head()
 
-        The index too, not only the working tree: commit_state_exit is
+    def put_the_whole_checkout_back_to_head(self):
+        """The index too, not only the working tree: commit_state_exit is
         `add` of the named files then `commit`, two subprocesses, so a
         process that dies between them leaves those files STAGED.
         `checkout -- .` restores from the index and `clean` removes only
         untracked files; without the `reset` first, what was staged
         survives both into the next state-exit's commit."""
-        self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
         self.git("reset", "-q", check=False)
         self.git("checkout", "--", ".", check=False)
         self.git("clean", "-fdq", check=False)

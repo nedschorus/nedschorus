@@ -132,11 +132,14 @@ def prefix_to_design_approved():
 
 
 def implementation_write(coverage_type="script"):
-    return (tables.IMPLEMENTATION_WRITING, tables.V_EMITTED, {"coverage_type": coverage_type})
+    return (tables.IMPLEMENTATION_WRITING, tables.V_EMITTED, {"coverage_types": (coverage_type,)})
 
 
-def test_write(coverage_type="script"):
-    return (tables.TEST_WRITING, tables.V_EMITTED, {"coverage_type": coverage_type})
+def test_write(*coverage_types):
+    """A test-write emitting the coverage-types present in the set
+    (`test_write("script", "prompt")`); `script` alone by default."""
+    return (tables.TEST_WRITING, tables.V_EMITTED,
+            {"coverage_types": coverage_types or ("script",)})
 
 
 def prefix_to_tests_begun():

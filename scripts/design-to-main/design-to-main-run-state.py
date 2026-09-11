@@ -41,24 +41,37 @@ class RunCounters:
         return tables.COUNTER_TABLE_BY_NAME[name]
 
     def at_ceiling(self, name):
-        """Section 3.2's guard "the <name> counter at its ceiling"."""
+        """Section 3.2's guard "the <name> counter at its ceiling" — and,
+        for the two write counters a discuss may take past it, "at or
+        above its ceiling": one predicate, read as >=."""
         return self.values[name] >= self.rule(name).at_ceiling_from_value
 
     def below_ceiling(self, name):
         return not self.at_ceiling(name)
 
-    def increment(self, name):
+    def increment(self, name, forced_by_the_users_discuss=False):
+        """One more; past the ceiling only for a write counter and only
+        when the write was forced by the user's discuss (section 7 after
+        the eighth walk, item 6: counted like any other, and the guards
+        read at or above). Any other increment past a ceiling is a
+        machine error."""
         rule = self.rule(name)
-        if self.values[name] + 1 > rule.ceiling:
+        past_the_ceiling_allowed = (
+            forced_by_the_users_discuss and rule.may_be_taken_past_its_ceiling_by_the_users_discuss)
+        if self.values[name] + 1 > rule.ceiling and not past_the_ceiling_allowed:
             raise CounterCeilingExceeded(
                 "%s is %d; its ceiling is %d (%s)" % (
                     name, self.values[name], rule.ceiling, rule.at_the_ceiling))
         self.values[name] += 1
         return self.values[name]
 
-    def reset_for_new_design_version(self):
-        """A redesign resets the version (section 3.2): every per-design-
-        version counter starts from zero; the redesigns counter does not."""
+    def zero_the_six_per_version_counters(self):
+        """The six per-version counters start from zero; the redesigns
+        counter does not. A redesign does this (section 3.2, "A redesign
+        resets the version"), and so does every resume from an
+        investigation (section 7, row 71; user-ruled 2026-09-09, the
+        eighth walk: "if I intervene all the agents get their chance
+        again")."""
         for rule in tables.COUNTER_TABLE:
             if rule.per_design_version:
                 self.values[rule.name] = 0
@@ -96,7 +109,9 @@ class RunStateRecord:
     tests-begun; whether the design and the test-design are approved; the
     consecutive could-not-run, program-check-failure and submit-retry
     counts; why each state was entered (the writing states' entry reasons,
-    for the three buckets); each artifact's coverage-type; the paused
+    for the three buckets; what entered test-suite-arbitrating, for rows
+    58 and 59); the implementation's coverage-type and the coverage-types
+    of the set of tests; the paused
     state and the commit at which an investigation opened; whether row 1
     has cut the topic branch; the outcome once ended.
 
@@ -119,8 +134,9 @@ class RunStateRecord:
         "implementation-work-stream-position", "test-work-stream-position",
         "consecutive-could-not-run-count", "submit-retry-count",
         "consecutive-program-check-failure-count",
-        "implementation-coverage-type", "tests-coverage-type",
+        "implementation-coverage-type", "tests-coverage-types",
         "writing-state-entry-reason", "writes-emitted-per-version",
+        "test-suite-arbitrating-entered-from",
         "paused-state", "investigation-focus", "investigation-opened-at-commit",
         "investigation-opened-by", "investigation-opened-by-row",
         "investigation-held-resume-destination", "machine-error",
@@ -144,15 +160,23 @@ class RunStateRecord:
         self.submit_retry_count = 0
         self.consecutive_program_check_failure_count = 0
         self.implementation_coverage_type = None
-        self.tests_coverage_type = None
+        # Every coverage-type present in the set of tests, as the test
+        # writer's emitted carried it (sections 3.1 and 6.4): a tuple.
+        self.tests_coverage_types = ()
         self.writing_state_entry_reason = {}
         self.writes_emitted_per_version = {}
+        # Why test-suite-arbitrating was entered, as the state or sub-state
+        # whose state-exit entered it: test-suite-executing on a failed
+        # suite or a could-not-run, a reviewing sub-state on a reviewer's
+        # reject at the writer's ceiling. Rows 58 and 59 route the
+        # arbitrator's `advance` on it (section 6.5).
+        self.test_suite_arbitrating_entered_from = None
         self.paused_state = None
         self.investigation_focus = None
         self.investigation_opened_at_commit = None
         self.investigation_opened_by = None
         # The row of section 3.2 that opened the investigation, or None for
-        # a machine error; row 63 (the arbitrator's third entry) is the one
+        # a machine error; row 64 (the arbitrator's third entry) is the one
         # a resume must not return to (section 6.6).
         self.investigation_opened_by_row = None
         # The destination the investigation's opening held for its resume
@@ -164,7 +188,7 @@ class RunStateRecord:
 
     def start_new_design_version(self):
         self.design_version += 1
-        self.counters.reset_for_new_design_version()
+        self.counters.zero_the_six_per_version_counters()
         self.tests_begun = False
         self.implementation_work_stream_position = None
         self.test_work_stream_position = None
@@ -172,6 +196,7 @@ class RunStateRecord:
         self.test_design_approved = False
         self.writes_emitted_per_version = {}
         self.writing_state_entry_reason = {}
+        self.test_suite_arbitrating_entered_from = None
         self.consecutive_program_check_failure_count = 0
 
     # -- work-streams ------------------------------------------------------
@@ -197,6 +222,11 @@ class RunStateRecord:
     def is_agent_instructions(self, coverage_type):
         return coverage_type in tables.COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS
 
+    def tests_are_agent_instructions(self):
+        """Section 6.4: whether prompt or script-and-prompt is among the
+        coverage-types of the set — then the tests go to the user."""
+        return any(self.is_agent_instructions(t) for t in self.tests_coverage_types)
+
     # -- the file -----------------------------------------------------------
 
     def as_dict(self):
@@ -218,9 +248,10 @@ class RunStateRecord:
             "consecutive-program-check-failure-count":
                 self.consecutive_program_check_failure_count,
             "implementation-coverage-type": self.implementation_coverage_type,
-            "tests-coverage-type": self.tests_coverage_type,
+            "tests-coverage-types": list(self.tests_coverage_types),
             "writing-state-entry-reason": dict(self.writing_state_entry_reason),
             "writes-emitted-per-version": dict(self.writes_emitted_per_version),
+            "test-suite-arbitrating-entered-from": self.test_suite_arbitrating_entered_from,
             "paused-state": self.paused_state,
             "investigation-focus": self.investigation_focus,
             "investigation-opened-at-commit": self.investigation_opened_at_commit,
@@ -252,9 +283,10 @@ class RunStateRecord:
         run.consecutive_program_check_failure_count = data[
             "consecutive-program-check-failure-count"]
         run.implementation_coverage_type = data.get("implementation-coverage-type")
-        run.tests_coverage_type = data.get("tests-coverage-type")
+        run.tests_coverage_types = tuple(data.get("tests-coverage-types", ()))
         run.writing_state_entry_reason = dict(data.get("writing-state-entry-reason", {}))
         run.writes_emitted_per_version = dict(data.get("writes-emitted-per-version", {}))
+        run.test_suite_arbitrating_entered_from = data.get("test-suite-arbitrating-entered-from")
         run.paused_state = data.get("paused-state")
         run.investigation_focus = data.get("investigation-focus")
         run.investigation_opened_at_commit = data.get("investigation-opened-at-commit")
