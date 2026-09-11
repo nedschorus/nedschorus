@@ -18,11 +18,11 @@ walk-ledgers/
 # walk-me-through's four files per walk (draft, suggestions, walk, minutes):
 # logs, not the system — a record of what was presented and what the user
 # ruled. Their home is the log-store's walk/ kind,
-# nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/, which already held most
-# of them while main held a second copy: at the 2026-09-10 drain 25 of the 29
-# committed files were already in the store, duplicated. The drain (PR #305)
-# shipped all 29 add-only, verified by sha256, and deleted them here; this
-# line is what stops main re-accumulating them. User-ruled 2026-09-10.
+# nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/, and before the drain
+# main held a second copy of walk files the store already had, with neither
+# copy governed by any program. The drain (PR #305) shipped all 29 committed
+# files add-only, verified by sha256, and deleted them here; this line is
+# what stops main re-accumulating them. User-ruled 2026-09-10.
 #
 # KNOWN GAP, stated rather than hidden: no program ships a walk's files to the
 # store. The 87 there were put there by hand. So a walk written after this
