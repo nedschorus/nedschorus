@@ -539,9 +539,11 @@ class ResumingAnInvestigation(unittest.TestCase):
 class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
     """Section 6.6: an investigation pauses the run — whatever agent was
     working is ended, its uncommitted work discarded, and its state re-run
-    on resume. The opening commit carries the state-exit and the record,
-    nothing the paused agent half-wrote; the resume diff therefore sees
-    the user's edits and only those."""
+    on resume. The opening commit carries the state-exit, the files it
+    names and the record, nothing the paused agent half-wrote and did not
+    name; the discard runs after the commit, as after every commit
+    (section 9), and the resume diff therefore sees the user's edits and
+    only those."""
 
     TEST_DESIGN = fixture.COMPONENT_DIRECTORY + "/widget-counter-test-design.md"
     IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
@@ -659,6 +661,65 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         finally:
             repository.remove()
 
+    def test_after_the_commit_every_other_change_in_the_worktree_is_discarded(self):
+        # Section 9 after the eighth walk (item 7, user-ruled 2026-09-09):
+        # after committing a state-exit, the machine discards every other
+        # change in its worktree — the scratch file the writer left beside
+        # the real one, the tracked file it touched — so the next state's
+        # worktree holds only what a state-exit claimed.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                    "coverage_types": ("script",),
+                    "named_files": (self.IMPLEMENTATION,),
+                    fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                        self.IMPLEMENTATION: "# the implementation\n",
+                        self.STRAY: "a writer's scratch file, not named\n",
+                        "README.md": "main, touched by the writer\n",
+                    }}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)
+            self.assertEqual(record.absolute(self.IMPLEMENTATION).read_text(), "# the implementation\n")
+            self.assertFalse(record.absolute(self.STRAY).exists())
+            self.assertEqual(record.absolute("README.md").read_text(), "main\n")
+            self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        finally:
+            repository.remove()
+
+    def test_a_state_exit_naming_a_file_that_is_not_there_is_a_machine_error_not_a_crash(self):
+        # Section 9 after the eighth walk (item 7): a state-exit naming a
+        # file that is not there — neither in the worktree nor tracked at
+        # HEAD — is a machine error, routed like any illegal state-exit
+        # (section 3.2): committed, the run paused in investigate-workflow
+        # at the emitting state, no CalledProcessError from the restricted
+        # add. A named deletion of a tracked file is not this: it is a
+        # change the commit carries.
+        repository = fixture.ThrowawayRepository()
+        try:
+            script = fixture.prefix_to_design_approved() + [
+                (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                    "coverage_types": ("script",),
+                    "named_files": (self.IMPLEMENTATION, self.STRAY),
+                    fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                        self.IMPLEMENTATION: "# the implementation\n"}}),
+            ]
+            machine, run, record, _ = fixture.make_machine(script, repository)
+            fixture.drive(machine, run)
+            self.assertEqual(len(machine.machine_errors), 1)
+            self.assertIn(self.STRAY, run.machine_error)
+            self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+            self.assertEqual(run.paused_state, T.IMPLEMENTATION_WRITING)
+            self.assertEqual(run.counters.value("implementation-writes"), 0)
+            trailer = G.parse_state_exit_trailer(record.commit_message("HEAD"))
+            self.assertEqual(trailer["State"], T.IMPLEMENTATION_WRITING)
+            self.assertEqual(trailer["Exit"], T.V_EMITTED)
+            self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        finally:
+            repository.remove()
+
     def test_the_record_never_stages_the_whole_worktree(self):
         # A `git add -A` with no pathspec after it stages the whole
         # worktree; the one the record runs is restricted to the record
@@ -667,6 +728,92 @@ class AStateExitCommitsOnlyTheFilesItNames(unittest.TestCase):
         self.assertNotIn('"add", "-A")', source)
         self.assertNotIn('"add", "-A", ".")', source)
         self.assertIn('"add", "-A", "--", str(self.record_directory), *named_files)', source)
+
+
+class AnInvestigationOpeningStateExitNamingFilesHasThemCommitted(unittest.TestCase):
+    """PR #295, round 2, finding 2, and section 9 after the eighth walk
+    (item 7): a writer that stops mid-write names what it has written so
+    far, and the next writer receives it. So an investigation-opening
+    state-exit that names files has them committed — a modified tracked
+    file is not reverted to HEAD, an untracked one does not crash the
+    restricted add — and the discard removes only what no state-exit
+    named, after the commit. The resume diff runs against the opening
+    commit, so the partial a writer named is not mistaken for the user's
+    edit."""
+
+    IMPLEMENTATION = fixture.COMPONENT_DIRECTORY + "/widget_counter.py"
+    REVIEW_NOTES = fixture.COMPONENT_DIRECTORY + "/review-notes.md"
+    V1 = "# the implementation, v1\n"
+    PARTIAL = "# the implementation, v2, half-fixed when the writer found the design wanting\n"
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def paths_in_commit(self, record, commit):
+        return record.git("show", "--name-only", "--format=", commit).stdout.split()
+
+    def test_a_partial_write_named_by_an_input_quick_check_failed_is_in_the_opening_commit(self):
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                "coverage_types": ("script",),
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_IMPLEMENTATION, {}),   # row 27
+            (T.IMPLEMENTATION_WRITING, T.V_INPUT_QUICK_CHECK_FAILED, {
+                "input_named": T.INPUT_DESIGN,
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                    self.IMPLEMENTATION: self.PARTIAL,
+                    "README.md": "main, touched by the writer\n"}}),                # row 23
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "23")
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        opening_commit = machine.routed[-1][2]
+        self.assertIn(self.IMPLEMENTATION, self.paths_in_commit(record, opening_commit))
+        self.assertEqual(record.git("show", "HEAD:" + self.IMPLEMENTATION).stdout, self.PARTIAL)
+        self.assertEqual(record.absolute(self.IMPLEMENTATION).read_text(), self.PARTIAL)
+        self.assertEqual(record.absolute("README.md").read_text(), "main\n")   # not named: discarded
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        # Nothing edited: the resume returns to the writer, which receives
+        # the partial; the partial is not read as the user's edit.
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "71")
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+        self.assertEqual(record.git("show", "HEAD:" + self.IMPLEMENTATION).stdout, self.PARTIAL)
+
+    def test_an_untracked_file_named_by_a_reject_design_is_committed_not_a_crash(self):
+        script = fixture.prefix_to_design_approved() + [
+            (T.IMPLEMENTATION_WRITING, T.V_EMITTED, {
+                "coverage_types": ("script",),
+                "named_files": (self.IMPLEMENTATION,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {self.IMPLEMENTATION: self.V1}}),
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {
+                "named_files": (self.REVIEW_NOTES,),
+                fixture.FILES_WRITTEN_BEFORE_EMITTING: {
+                    self.REVIEW_NOTES: "the failure scenario in the design\n"}}),   # row 30
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(machine.routed[-1][0].row, "30")
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
+        opening_commit = machine.routed[-1][2]
+        self.assertIn(self.REVIEW_NOTES, self.paths_in_commit(record, opening_commit))
+        self.assertEqual(record.git("show", "HEAD:" + self.REVIEW_NOTES).stdout,
+                         "the failure scenario in the design\n")
+        self.assertEqual(record.git("status", "--porcelain").stdout, "")
+        # On disk the run-state is the committed one: HEAD and the file agree.
+        self.assertEqual(record.absolute(record.run_state_path).read_text(),
+                         record.git("show", "HEAD:" + str(record.run_state_path)).stdout)
+        machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
+        fixture.drive(machine, run)
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_REVIEWING)   # the paused state
 
 
 class AResumeCommitsWhatTheUserChangedInTheInvestigation(unittest.TestCase):
@@ -1345,7 +1492,7 @@ class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
         self.assertFalse(run.topic_branch_cut)
         self.assertFalse(record.topic_branch_is_checked_out())
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.discard_uncommitted_work_outside_the_record(run)
+            record.discard_every_change_the_commit_did_not_carry(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
             record.discard_all_uncommitted_work_for_recovery(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
@@ -1369,7 +1516,7 @@ class AStrayVerdictBeforeTheTopicBranchIsCut(unittest.TestCase):
         self.assertFalse(run.topic_branch_cut)
         head_before = fixture.git(checkout, "rev-parse", "HEAD")
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
-            record.discard_uncommitted_work_outside_the_record(run)
+            record.discard_every_change_the_commit_did_not_carry(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):
             record.discard_all_uncommitted_work_for_recovery(run)
         with self.assertRaises(M.RefusedBeforeTopicBranchCut):

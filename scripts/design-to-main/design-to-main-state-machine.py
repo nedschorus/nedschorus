@@ -633,7 +633,17 @@ class DesignToMainStateMachineFlow:
         resume_destination = None
         counters_before_rulings = run.counters.as_dict()
         rulings_refused = False
+        named_files_not_there = ()
         try:
+            # Section 9: a state-exit naming a file that is not there is a
+            # machine error, routed like any illegal state-exit — checked
+            # first, before any row or ruling takes effect.
+            named_files_not_there = tuple(
+                self.git_record.named_files_that_are_not_there(state_exit.named_files))
+            if named_files_not_there:
+                raise IllegalStateExit(
+                    "%r from %s names files that are not there: %s (section 9)" % (
+                        state_exit.verdict, state_exit.state, ", ".join(named_files_not_there)))
             if state_exit.verdict == tables.V_RESUME:
                 # Resolved, and its form checked, before any ruling it
                 # carries is applied (refuse_malformed_resume).
@@ -684,19 +694,6 @@ class DesignToMainStateMachineFlow:
         # that run-state.json on the branch is the state the run is in.
         self.enter(run, next_position)
         if self.investigation_opens_with(run):
-            # Section 6.6: the investigation pauses the run — the agent
-            # that was working is ended and its uncommitted work discarded,
-            # its state re-run on resume. Discarded here, before the
-            # opening state-exit is committed, so that the opening commit
-            # carries the state-exit and the record (run-state.json, a
-            # ruling appended, a reviewer's notes) and nothing the paused
-            # agent half-wrote; that is what makes the resume diff the
-            # user's edits and only those. Opened by a resume, there is no
-            # paused agent: the worktree is the user's, and the resume's
-            # commit carries it (files_beyond_the_named), so nothing is
-            # discarded.
-            if state_exit.from_state != tables.INVESTIGATE_WORKFLOW:
-                self.git_record.discard_uncommitted_work_outside_the_record(run)
             # The branch head now: the PARENT of the opening commit, from
             # which commit_the_investigation_opened_with finds the opening
             # commit the resume diff runs against (section 6.6). The
@@ -708,8 +705,23 @@ class DesignToMainStateMachineFlow:
             run.investigation_opened_at_commit = self.git_record.head_commit()
         commit = self.commit_state_exit(
             run, state_exit, write_number, record_rulings=not rulings_refused,
-            files_beyond_the_named=files_beyond_the_named)
+            files_beyond_the_named=files_beyond_the_named,
+            named_files_not_there=named_files_not_there)
         self.routed.append((row, state_exit, commit))
+        # Section 9 (user-ruled 2026-09-09, the eighth walk, item 7): after
+        # committing a state-exit, the machine discards every other change
+        # in its worktree — what no state-exit claimed: a writer's scratch
+        # file, a paused agent's half-written work. Section 6.6's pause
+        # discards the same way, after the opening commit now, so that an
+        # opening state-exit that names files (a writer that stopped
+        # mid-write names what it has written so far) has them committed
+        # (PR #295, round 2, finding 2). The one exception: a state-exit
+        # from investigate-workflow that leaves the run there — a stray
+        # verdict, a refused resume — where the worktree is the user's
+        # (section 9, recovery) and nothing of his is discarded.
+        if not (state_exit.from_state == tables.INVESTIGATE_WORKFLOW
+                and run.current_state == tables.INVESTIGATE_WORKFLOW):
+            self.git_record.discard_every_change_the_commit_did_not_carry(run)
         return run.current_state
 
     def mark_investigation_opening(self, run):
@@ -802,7 +814,7 @@ class DesignToMainStateMachineFlow:
         return self.git_record.first_commit_after(run.investigation_opened_at_commit)
 
     def commit_state_exit(self, run, state_exit, write_number, record_rulings=True,
-                          files_beyond_the_named=()):
+                          files_beyond_the_named=(), named_files_not_there=()):
         # Guarded before anything is written — the rulings, then
         # run-state.json — not only at the record's commit, so a refusal
         # leaves no file behind.
@@ -814,8 +826,12 @@ class DesignToMainStateMachineFlow:
             state_exit.state, state_exit.verdict, state_exit.package_commit,
             run.counters.as_dict(), write_number)
         subject = "%s: %s %s" % (run.component, state_exit.state, state_exit.verdict)
-        named = tuple(state_exit.named_files) + tuple(
-            f for f in files_beyond_the_named if f not in state_exit.named_files)
+        # A state-exit refused for naming files that are not there is
+        # committed like any other machine error, with the named files
+        # that are there; the missing ones are the error, in the trailer's
+        # run-state.
+        named = tuple(f for f in state_exit.named_files if f not in named_files_not_there)
+        named += tuple(f for f in files_beyond_the_named if f not in named)
         return self.git_record.commit_state_exit(run, subject, trailer, named)
 
     # -- entering a state -------------------------------------------------------

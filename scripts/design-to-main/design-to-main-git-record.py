@@ -204,27 +204,41 @@ class TopicBranchGitRecord:
         Empty commits are allowed: a retry or a discarded state-exit
         changes nothing but the record."""
         self.require_topic_branch_cut_for_run(run, "commit a state-exit")
-        # `add -A` restricted to these paths stages their deletions too;
-        # a named file that does not exist is git's error, as it should
-        # be — the state-exit named something it did not write.
+        # `add -A` restricted to these paths stages their deletions too.
+        # A named file that is not there at all is the machine's error
+        # to catch before this (named_files_that_are_not_there), never
+        # git's to crash on.
         self.git("add", "-A", "--", str(self.record_directory), *named_files)
         message = subject + "\n\n" + trailer
         self.git("commit", "--allow-empty", "-q", "-m", message)
         return self.head_commit()
 
-    # -- section 6.6: the paused agent's uncommitted work is discarded --------
+    def named_files_that_are_not_there(self, named_files):
+        """The named files that are neither in the worktree nor tracked at
+        HEAD: a state-exit naming one is a machine error (section 9),
+        routed like any illegal state-exit. A named file that is tracked
+        and gone from the worktree is a deletion the commit carries, not
+        this."""
+        missing = []
+        for path in named_files:
+            if self.absolute(path).exists():
+                continue
+            tracked = self.git("cat-file", "-e", "HEAD:%s" % path, check=False)
+            if tracked.returncode != 0:
+                missing.append(path)
+        return missing
 
-    def discard_uncommitted_work_outside_the_record(self, run):
-        """Put every path outside the record directory back to HEAD:
-        staged or not, modified, added or deleted, untracked. The record
-        directory is kept — a ruling appended for this state-exit and a
-        reviewer's notes under `evidence/` belong to the state-exit, not
-        to the work that is discarded."""
-        self.require_topic_branch_cut_for_run(run, "discard the paused agent's uncommitted work")
-        outside_the_record = [".", ":(exclude)%s" % self.record_directory]
-        self.git("reset", "-q", "--", *outside_the_record)
-        self.git("checkout", "--", *outside_the_record)
-        self.git("clean", "-fdq", "--", *outside_the_record)
+    # -- section 9: after the commit, every other change is discarded --------
+
+    def discard_every_change_the_commit_did_not_carry(self, run):
+        """After committing a state-exit, put the whole checkout back to
+        HEAD (section 9, user-ruled 2026-09-09, the eighth walk, item 7):
+        the commit carried the files the state-exit named and the record,
+        so what remains is what no state-exit claimed — a writer's scratch
+        file, a tracked file it touched, a paused agent's half-written
+        work — and the next state's worktree holds only claimed work."""
+        self.require_topic_branch_cut_for_run(run, "discard what the commit did not carry")
+        self.put_the_whole_checkout_back_to_head()
 
     # -- section 9, recovery: the dead process's uncommitted files ------------
 
@@ -232,15 +246,17 @@ class TopicBranchGitRecord:
         """Put the whole checkout back to HEAD, the record directory
         included: a process that died before committing a state-exit left
         files that belong to no commit (section 9). `run` is the run being
-        recovered, read from the last commit before this is called.
+        recovered, read from the last commit before this is called."""
+        self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
+        self.put_the_whole_checkout_back_to_head()
 
-        The index too, not only the working tree: commit_state_exit is
+    def put_the_whole_checkout_back_to_head(self):
+        """The index too, not only the working tree: commit_state_exit is
         `add` of the named files then `commit`, two subprocesses, so a
         process that dies between them leaves those files STAGED.
         `checkout -- .` restores from the index and `clean` removes only
         untracked files; without the `reset` first, what was staged
         survives both into the next state-exit's commit."""
-        self.require_topic_branch_cut_for_run(run, "discard a dead process's uncommitted work")
         self.git("reset", "-q", check=False)
         self.git("checkout", "--", ".", check=False)
         self.git("clean", "-fdq", check=False)
