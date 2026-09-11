@@ -420,11 +420,24 @@ the project's synthetic-keystroke guard hook blocks that form outright
   `write_supervisor_state()` is a whole-file write, so a reboot mid-write
   produces exactly that input. *Answered by the user 2026-09-11 for a file that
   cannot be read:* "Resume or continue works perfectly 99% of the time, so I'd
-  try that." So an empty, cut-off, unparseable or future-dated file counts as
-  running at the stop, and the seat is restarted. A missing file is treated as
-  a different case, and that part still waits on the user's word. The supervisor
-  writes its state file on its first launch and never deletes it, so a seat
-  without one never ran supervised, and the selector does not consider it.
+  try that." Resume replays the transcript, not this file; the file only says
+  whether the seat was running. So an unreadable file is dated by its last
+  write instead, which works because only the supervisor writes it. A file cut
+  off at the stop therefore counts as running then, and the seat is restarted.
+  One damaged long before the stop is judged like any old seat. A missing file
+  is a different case, and that part still waits on the user's word. The
+  supervisor writes its state file on its first launch and never deletes it, so
+  a seat without one never ran supervised, and the selector does not consider
+  it.
+- **Amended 2026-09-11, in review: after the first restart, offer.** Once any
+  seat has been written since boot, the seats that were running at the stop
+  have stamped over their heartbeats from before boot, and the newest one left
+  is no longer the stop. A later run in the same boot would anchor on a seat
+  that died earlier and restart it. So once any seat has been written since
+  boot, the selector offers instead of restarting. The cost: every later login
+  in the same boot offers whichever seat holds the newest remaining heartbeat
+  from before boot. If that grates, the fix is to persist the first run's
+  anchor.
 
 ## Provenance
 

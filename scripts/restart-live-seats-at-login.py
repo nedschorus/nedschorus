@@ -8,27 +8,39 @@ read from their supervisors' heartbeats. It launches nothing; until the
 restart step lands it runs only with --dry-run, and says so.
 
 The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
-§ Ruled 2026-08-31 and its 2026-09-02 amendments:
+§ Ruled 2026-08-31 and its amendments:
 
   - Every supervisor stamps last_poll_at into
     ~/.claude/handoffs/<seat>-supervisor-state.json every
-    HEARTBEAT_INTERVAL_SECONDS while it runs.
-  - The anchor is the newest stamp before this boot; it approximates the
-    moment the machine stopped. A stamp since boot belongs to a seat running
-    now — recovered by hand, or started by an earlier run of this program —
-    and is neither the anchor nor restarted.
-  - Anchor within an hour before boot: the seats stamped within
+    HEARTBEAT_INTERVAL_SECONDS while it runs. Nothing else writes that file
+    (every write is handoff-supervisor.py's write_supervisor_state; checked
+    2026-09-11), so the file's modification time is a supervisor's last
+    write too.
+  - A seat's heartbeat is its last_poll_at. When that cannot be read —
+    empty, cut off, no stamp, a stamp that does not parse, or one in the
+    future — the file's last write stands in for it. A reboot in the middle
+    of the supervisor's whole-file write leaves a file cut off at the stop,
+    and the user's answer for that file (2026-09-11) was to try the resume:
+    "Resume or continue works perfectly 99% of the time, so I'd try that."
+    A file damaged long before the stop is judged like any old seat.
+  - The anchor is the newest heartbeat before this boot; it approximates the
+    moment the machine stopped.
+  - A seat whose heartbeat or file was written since boot has had a
+    supervisor since boot — recovered by hand, started by an earlier run of
+    this program, or caught mid-write while it runs now. It is neither the
+    anchor nor restarted.
+  - Anchor within an hour before boot: the seats whose heartbeats are within
     LIVE_SET_WINDOW_SECONDS of it were running at the stop, and are
     restarted.
   - Anchor longer before boot: either nothing was running when the machine
     stopped, or it sat off a long time. Nothing is started silently; those
     seats are offered — restart, park, or finished.
-  - A state file whose heartbeat cannot be read — empty, cut off, no stamp,
-    a stamp that does not parse, or one in the future — is treated as
-    running at the stop, and restarted. A reboot in the middle of the
-    supervisor's whole-file write leaves exactly that, and the user's answer
-    (2026-09-11) was to try the resume: "Resume or continue works perfectly
-    99% of the time, so I'd try that."
+  - Amended 2026-09-11 (review of 8b15919): once any seat has been written
+    since boot, this boot's restart has already run, by hand or by this
+    program. The seats that were running at the stop have stamped over
+    their heartbeats from before boot, so the newest one left is no longer
+    the stop, and anchoring on it would restart a seat that died earlier.
+    So then nothing is restarted silently; the selection is offered.
   - A seat with no state file is not considered: the supervisor writes the
     file on its first launch and never deletes it, so a seat without one
     never ran under a supervisor.
@@ -89,6 +101,10 @@ def machine_boot_time() -> datetime:
     return parse(completed.stdout)
 
 
+def current_time() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def describe_gap(gap: timedelta) -> str:
     seconds = gap.total_seconds()
     for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
@@ -124,41 +140,51 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
                                   now: datetime):
     """(anchor, decisions): the newest heartbeat before boot, or None, and one
     (seat, verdict, reason) per supervisor state file. Verdicts: restart,
-    offer, not-running-at-the-stop, running-since-boot."""
+    offer, not-running-at-the-stop, stamped-since-boot."""
     if not handoff_directory.is_dir():
         return None, []
     readings = []
     for state_path in sorted(handoff_directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}")):
         seat = state_path.name[:-len(SUPERVISOR_STATE_FILE_SUFFIX)]
         stamp, problem = read_supervisor_heartbeat(state_path, now)
-        readings.append((seat, stamp, problem))
+        written_at = datetime.fromtimestamp(state_path.stat().st_mtime, timezone.utc)
+        heartbeat_at = stamp if stamp is not None else written_at
+        since_boot = heartbeat_at >= boot_at or written_at >= boot_at
+        readings.append((seat, heartbeat_at, written_at, since_boot, problem))
 
-    anchor = max((stamp for _, stamp, _ in readings
-                  if stamp is not None and stamp < boot_at), default=None)
+    anchor = max((heartbeat_at for _, heartbeat_at, _, _, _ in readings
+                  if heartbeat_at < boot_at), default=None)
     anchor_is_recent = (anchor is not None
                         and (boot_at - anchor).total_seconds()
                         <= RECENT_ANCHOR_BEFORE_BOOT_SECONDS)
+    restart_already_ran = any(since_boot for _, _, _, since_boot, _ in readings)
 
     decisions = []
-    for seat, stamp, problem in readings:
-        if stamp is None:
-            decisions.append((seat, "restart", (
-                f"its heartbeat cannot be read ({problem}); treated as running "
-                "at the stop — the user's answer 2026-09-11: try the resume")))
-        elif stamp >= boot_at:
-            decisions.append((seat, "running-since-boot", (
-                f"stamped {stamp.isoformat(timespec='seconds')}, since boot")))
-        elif (anchor - stamp).total_seconds() > LIVE_SET_WINDOW_SECONDS:
-            decisions.append((seat, "not-running-at-the-stop", (
-                f"stamped {describe_gap(anchor - stamp)} before the stop")))
-        elif anchor_is_recent:
-            decisions.append((seat, "restart", (
-                f"stamped {describe_gap(anchor - stamp)} before the stop, which "
-                f"was {describe_gap(boot_at - anchor)} before boot")))
-        else:
-            decisions.append((seat, "offer", (
+    for seat, heartbeat_at, written_at, since_boot, problem in readings:
+        stands_in = (f"its heartbeat cannot be read ({problem}), so the file's last "
+                     "write stands in for it; ") if problem else ""
+        if since_boot:
+            last_written = max(heartbeat_at, written_at)
+            verdict, reason = "stamped-since-boot", (
+                f"written {last_written.isoformat(timespec='seconds')}, since boot: "
+                "a supervisor has run for it since then")
+        elif (anchor - heartbeat_at).total_seconds() > LIVE_SET_WINDOW_SECONDS:
+            verdict, reason = "not-running-at-the-stop", (
+                f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the stop")
+        elif not anchor_is_recent:
+            verdict, reason = "offer", (
                 f"running at a stop {describe_gap(boot_at - anchor)} before boot, "
-                "too long to restart silently: offer restart, park, or finished")))
+                "too long to restart silently: offer restart, park, or finished")
+        elif restart_already_ran:
+            verdict, reason = "offer", (
+                "the newest heartbeat left from before boot, but seats have been "
+                "written since boot, so it may not be the stop: offer restart, "
+                "park, or finished")
+        else:
+            verdict, reason = "restart", (
+                f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the "
+                f"stop, which was {describe_gap(boot_at - anchor)} before boot")
+        decisions.append((seat, verdict, stands_in + reason))
     return anchor, decisions
 
 
@@ -181,9 +207,8 @@ def main(argv=None) -> int:
                      "(nedschorus#116, build step 4) is not built yet")
 
     boot_at = machine_boot_time()
-    now = datetime.now(timezone.utc)
     anchor, decisions = select_seats_live_at_the_stop(arguments.handoff_dir,
-                                                      boot_at, now)
+                                                      boot_at, current_time())
     print("restart-live-seats-at-login: dry run, the selection only; nothing is launched")
     print(f"  boot {boot_at.isoformat(timespec='seconds')}")
     if anchor is None:
@@ -192,6 +217,9 @@ def main(argv=None) -> int:
         print(f"  the stop: newest heartbeat before boot "
               f"{anchor.isoformat(timespec='seconds')}, "
               f"{describe_gap(boot_at - anchor)} before boot")
+    if any(verdict == "stamped-since-boot" for _, verdict, _ in decisions):
+        print("  seats have been written since boot: this boot's restart has already "
+              "run, so nothing is restarted silently")
     for seat, verdict, reason in decisions:
         print(f"  {seat}: {verdict} — {reason}")
     return 0
