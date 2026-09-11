@@ -38,7 +38,8 @@ fails before any model cost is spent.
 
 Operating rules:
 
-- Both runtimes on every audit — claude-fable-5 (the claude CLI) and
+- Both runtimes on every audit — the claude CLI (claude-fable-5-1, falling
+  back to claude-opus-5 when Fable produces no review) and
   gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
   `<audit>-<runtime>` in this runner's output.
@@ -195,7 +196,19 @@ IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
 # write detection alone and belong to no commit — see reviewed_revision.
 IGNORED_PATH_STATUS_CODE = "!!"
 
-CLAUDE_MODEL = "claude-fable-5"
+# The claude runtime's chain, tried in order until one produces a review.
+# "claude-fable-5" is obsolete (user, 2026-09-04: "fable 5 is now obsolete.
+# 5.1 is current"), and Fable is sometimes unavailable (user, 2026-09-11:
+# "sometimes fable is not available, so it should fall back to opus in that
+# case"), so Opus 5 stands behind it and ends the chain.
+#
+# WHAT COUNTS AS A FAILURE WORTH FALLING BACK FROM follows the house chain,
+# run_model_chain in scripts/cold-read-cell-common.py: a model that exits
+# non-zero, cannot be launched at all, or exits 0 having written nothing are
+# one event — no review was produced — so the chain advances on all three.
+# That module is not imported here: it is built around the cold-read cell's
+# command line and report file, and this runner has neither.
+CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 CODEX_MODEL = "gpt-5.6-sol"
 # xhigh for both runtimes: user calibration 2026-08-03 for codex, confirmed
 # for both by the 2026-08-17 tier probe (max earned neither slot).
@@ -363,18 +376,40 @@ def run_claude(prompt: str) -> tuple:
     # it looked like — a claude cell wrote to the worktree on 2026-08-21 with
     # no write tool at all (nedschorus#161), which is why run_cell's worktree
     # check runs for claude cells too, not only codex's.
-    command = [
-        "claude", "-p",
-        "--model", CLAUDE_MODEL,
-        "--effort", REASONING_EFFORT,
-        "--output-format", "text",
-        "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
-    ]
-    completed = subprocess.run(
-        command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        cwd=REPO_ROOT, text=True, check=False, timeout=CELL_TIMEOUT_SECONDS,
-    )
-    return completed.returncode, completed.stdout
+    failed_attempts = []
+    for model in CLAUDE_MODEL_CHAIN:
+        command = [
+            "claude", "-p",
+            "--model", model,
+            "--effort", REASONING_EFFORT,
+            "--output-format", "text",
+            "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
+        ]
+        try:
+            completed = subprocess.run(
+                command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                cwd=REPO_ROOT, text=True, check=False, timeout=CELL_TIMEOUT_SECONDS,
+            )
+        except OSError as error:
+            # A CLI that will not launch is one failed attempt, not the end of
+            # the run. run_cell's own OSError handler still covers the codex
+            # runtime, which has no chain to advance.
+            failed_attempts.append(f"{model}({type(error).__name__})")
+            print(f"WARNING: {model} could not be run: {error}", flush=True)
+            continue
+        if completed.returncode != 0:
+            failed_attempts.append(f"{model}(exit{completed.returncode})")
+            print(f"WARNING: {model} failed (exit {completed.returncode})", flush=True)
+            continue
+        if not completed.stdout.strip():
+            # Exiting 0 with nothing to show is the ending that looks most like
+            # success to a caller reading only the exit code, and the report it
+            # would save is an empty review carrying a provenance stamp.
+            failed_attempts.append(f"{model}(no-report)")
+            print(f"WARNING: {model} exited 0 but produced no review", flush=True)
+            continue
+        return 0, completed.stdout, model, "+".join(failed_attempts)
+    return 1, "", "", "+".join(failed_attempts)
 
 
 def run_codex(prompt: str) -> tuple:
@@ -410,8 +445,8 @@ def run_codex(prompt: str) -> tuple:
             timeout=CELL_TIMEOUT_SECONDS,
         )
         if completed.returncode != 0:
-            return completed.returncode, ""
-        return 0, last_message_path.read_text(encoding="utf-8")
+            return completed.returncode, "", CODEX_MODEL, ""
+        return 0, last_message_path.read_text(encoding="utf-8"), CODEX_MODEL, ""
     finally:
         last_message_path.unlink(missing_ok=True)
 
@@ -614,11 +649,22 @@ def runtime_cli_version(runtime: str) -> str:
 
 
 def provenance_line(runtime: str, model: str, attack: str, target: str,
-                    fresh_eyes: bool, revision: str) -> str:
+                    fresh_eyes: bool, revision: str,
+                    fallback_from: str = "") -> str:
     """The provenance comment a saved report opens with — one line, one token
-    per fact, so a later reader can check quotes against exactly what ran."""
+    per fact, so a later reader can check quotes against exactly what ran.
+
+    `model=` names the model that actually produced the text below it, and
+    `fallback_from=` appears only when an earlier model in a chain produced
+    no review, so a degraded cell is visible in the record and not only in
+    the run's output. Both follow the cold-read cells' stamp
+    (stamp_provenance in scripts/cold-read-cell-common.py), field order
+    included.
+    """
+    fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
     return (
-        f"<!-- provenance: runtime={runtime} model={model} effort={REASONING_EFFORT} "
+        f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
+        f"effort={REASONING_EFFORT} "
         f"cli={runtime_cli_version(runtime)} "
         f"attack={attack} target={target} "
         f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
@@ -840,7 +886,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     fresh_eyes = attack == "fresh-eyes"
     runner = run_claude if runtime == "claude" else run_codex
     try:
-        code, output = runner(prompt)
+        code, output, model, fallback_from = runner(prompt)
     except subprocess.TimeoutExpired:
         print(f"FAILED: {cell} (timeout after {CELL_TIMEOUT_SECONDS}s)", flush=True)
         return cell, False
@@ -849,14 +895,17 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         print(f"FAILED: {cell} (launcher error: {exc})", flush=True)
         return cell, False
     if code != 0:
-        print(f"FAILED: {cell} exit {code}", flush=True)
+        # The attempts, when there were several: a claude cell whose whole
+        # chain failed exits 1 for every reason, so the exit code alone says
+        # nothing about which models were tried or how they ended.
+        attempts = f" — {fallback_from}" if fallback_from else ""
+        print(f"FAILED: {cell} exit {code}{attempts}", flush=True)
         return cell, False
     if not fresh_eyes:
         quote_scan(corpus, output, cell)
     stray = report_ledger.stray_paths_since(baseline_status)
     if stray:
         print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
-    model = CLAUDE_MODEL if runtime == "claude" else CODEX_MODEL
     revision = reviewed_revision(baseline_status)
     out_path = out_dir / f"{cell}.md"
     # Through the ledger, not straight to disk: the report lands in a directory
@@ -864,7 +913,8 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     # a cell's.
     overwrote_stray_write = report_ledger.write_report(
         out_path,
-        provenance_line(runtime, model, attack, target, fresh_eyes, revision)
+        provenance_line(runtime, model, attack, target, fresh_eyes, revision,
+                        fallback_from)
         + "\n\n" + output,
     )
     if overwrote_stray_write:
