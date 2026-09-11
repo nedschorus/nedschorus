@@ -194,9 +194,10 @@ def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
 
 
 def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
-                                anchor, decisions, run_at: datetime):
-    """One line per run, appended: the run, the boot, the stop, the verdict
-    per seat.
+                                anchor, anchor_is_the_stop: bool, decisions,
+                                run_at: datetime):
+    """One line per run, appended: the run, the boot, the stop, the anchor it
+    worked from, and the verdict per seat.
 
     User-ruled 2026-09-11, a log and not a single overwritten file, so that
     the runs of one boot can be read in order afterwards. Dry runs do not
@@ -204,12 +205,21 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
     reported and nothing more — a machine that has just booted needs its
     seats back more than it needs the record (the same rule as the recovery
     tool's append_to_recovery_log).
+
+    A run that could not tell where the stop was — its derived anchor already
+    stamped over by seats brought back earlier in this boot — records
+    stop_at null, and keeps what it did work from in anchor_at. Otherwise the
+    next run would read that degraded anchor back as the stop, drop the
+    degradation because the stop was "recorded", and restart a seat that died
+    before the real stop: the defect #318's review blocked, returning by the
+    back door.
     """
     log_path = handoff_directory / RUN_LOG_FILE_NAME
     entry = {
         "run_at": run_at.isoformat(timespec="seconds"),
         "boot_at": boot_at.isoformat(),
-        "stop_at": None if anchor is None else anchor.isoformat(),
+        "stop_at": anchor.isoformat() if anchor_is_the_stop else None,
+        "anchor_at": None if anchor is None else anchor.isoformat(),
         "seats": {seat: verdict for seat, verdict, _ in decisions},
     }
     try:
@@ -223,12 +233,16 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
 
 def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
                                   now: datetime, recorded_stop=None):
-    """(anchor, decisions): the stop — recorded_stop when an earlier run in
-    this boot wrote one down, else the newest heartbeat before boot, or None —
-    and one (seat, verdict, reason) per supervisor state file. Verdicts:
-    restart, offer, not-running-at-the-stop, stamped-since-boot."""
+    """(anchor, decisions, anchor_is_the_stop).
+
+    The anchor is recorded_stop when an earlier run in this boot wrote one
+    down, else the newest heartbeat before boot, or None. decisions is one
+    (seat, verdict, reason) per supervisor state file; the verdicts are
+    restart, offer, not-running-at-the-stop and stamped-since-boot.
+    anchor_is_the_stop says whether the anchor can be written down as the
+    moment the machine stopped — see append_selection_to_run_log."""
     if not handoff_directory.is_dir():
-        return None, []
+        return None, [], False
     readings = []
     for state_path in sorted(handoff_directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}")):
         seat = state_path.name[:-len(SUPERVISOR_STATE_FILE_SUFFIX)]
@@ -251,6 +265,10 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
     # stop is one that did not come back, and it is restarted.
     restart_already_ran = (recorded_stop is None
                            and any(since_boot for _, _, _, since_boot, _ in readings))
+    # The same condition, read the other way: a derived anchor that seats
+    # brought back since boot may have stamped over is not the stop, and must
+    # not be recorded as one.
+    anchor_is_the_stop = anchor is not None and not restart_already_ran
 
     decisions = []
     for seat, heartbeat_at, written_at, since_boot, problem in readings:
@@ -278,7 +296,7 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
                 f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the "
                 f"stop, which was {describe_gap(boot_at - anchor)} before boot")
         decisions.append((seat, verdict, stands_in + reason))
-    return anchor, decisions
+    return anchor, decisions, anchor_is_the_stop
 
 
 def main(argv=None) -> int:
@@ -299,11 +317,11 @@ def main(argv=None) -> int:
     boot_at, now = machine_boot_time(), current_time()
     log_path = arguments.handoff_dir / RUN_LOG_FILE_NAME
     recorded_stop = read_recorded_stop_for_boot(arguments.handoff_dir, boot_at)
-    anchor, decisions = select_seats_live_at_the_stop(
+    anchor, decisions, anchor_is_the_stop = select_seats_live_at_the_stop(
         arguments.handoff_dir, boot_at, now, recorded_stop=recorded_stop)
     if not arguments.dry_run:
         append_selection_to_run_log(arguments.handoff_dir, boot_at, anchor,
-                                    decisions, now)
+                                    anchor_is_the_stop, decisions, now)
 
     print("restart-live-seats-at-login: "
           + ("dry run, the selection only; nothing is launched and nothing is recorded"
@@ -322,7 +340,8 @@ def main(argv=None) -> int:
     if recorded_stop is None and any(verdict == "stamped-since-boot"
                                      for _, verdict, _ in decisions):
         print("  seats have been written since boot: this boot's restart has already "
-              "run and left no line in the run log, so nothing is restarted silently")
+              "run and left no line in the run log, so nothing is restarted silently "
+              "and no stop is recorded for the runs after this one")
     for seat, verdict, reason in decisions:
         print(f"  {seat}: {verdict} — {reason}")
     if not arguments.dry_run:

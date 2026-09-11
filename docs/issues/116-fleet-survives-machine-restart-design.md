@@ -456,7 +456,15 @@ the project's synthetic-keystroke guard hook blocks that form outright
   having seen the least disturbed state. A line that cannot be read is skipped
   and a log that cannot be written is reported and nothing more: a machine
   that has just booted needs its seats back more than it needs the record.
-  Built 2026-09-11, with `--dry-run` reading the log and never writing it.
+  **A run that cannot tell where the stop was records none:** when the seats
+  brought back earlier in this boot have already stamped over the derived
+  anchor — the 2026-09-10 shape, where the user recovered seats by hand before
+  this program ever ran — the line carries `stop_at` null and keeps what the
+  run worked from in `anchor_at`, visible to an investigator and trusted by no
+  later run. Otherwise that degraded anchor would be read back as the stop,
+  the degradation would be dropped because a stop had been "recorded", and a
+  seat that died before the real stop would be restarted. Built 2026-09-11,
+  with `--dry-run` reading the log and never writing it.
 
 ## Provenance
 

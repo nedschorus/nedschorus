@@ -73,7 +73,7 @@ def write_state(handoffs: Path, seat: str, stamp=None, raw=None, written_at=None
 
 
 def verdicts(handoffs: Path, boot_at=BOOT_AT, now=NOW, recorded_stop=None):
-    anchor, decisions = restart.select_seats_live_at_the_stop(
+    anchor, decisions, _ = restart.select_seats_live_at_the_stop(
         handoffs, boot_at, now, recorded_stop=recorded_stop)
     return anchor, {seat: (verdict, reason) for seat, verdict, reason in decisions}
 
@@ -447,19 +447,22 @@ with tempfile.TemporaryDirectory() as temporary:
     handoffs = root / "run-log-append"
     write_state(handoffs, "MD-skills", STOP)
     write_state(handoffs, "mac-prof", STOP - timedelta(days=3))
-    anchor, decisions = restart.select_seats_live_at_the_stop(handoffs, BOOT_AT, NOW)
-    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, decisions, NOW)
+    anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
+        handoffs, BOOT_AT, NOW)
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW)
     lines = run_log_lines(handoffs)
     check("a run appends exactly one line", len(lines) == 1, lines)
-    check("the line carries the run, the boot, the stop and the verdict per seat",
+    check("the line carries the run, the boot, the stop, the anchor and the verdicts",
           lines and lines[0]["run_at"] == NOW.isoformat(timespec="seconds")
           and lines[0]["boot_at"] == BOOT_AT.isoformat()
           and lines[0]["stop_at"] == STOP.isoformat()
+          and lines[0]["anchor_at"] == STOP.isoformat()
           and lines[0]["seats"] == {"MD-skills": "restart",
                                     "mac-prof": "not-running-at-the-stop"},
           lines)
-    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, decisions,
-                                        NOW + timedelta(minutes=2))
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW + timedelta(minutes=2))
     check("a second run appends rather than overwriting: a log, not a single file",
           len(run_log_lines(handoffs)) == 2, run_log_lines(handoffs))
     check("what a run writes reads back as this boot's stop",
@@ -468,17 +471,21 @@ with tempfile.TemporaryDirectory() as temporary:
 
     handoffs = root / "run-log-append-no-anchor"
     write_state(handoffs, "running-now", NOW - timedelta(seconds=4))
-    anchor, decisions = restart.select_seats_live_at_the_stop(handoffs, BOOT_AT, NOW)
-    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, decisions, NOW)
+    anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
+        handoffs, BOOT_AT, NOW)
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW)
     check("a run that found no stop records it as null, rather than leaving it out",
-          run_log_lines(handoffs)[0]["stop_at"] is None, run_log_lines(handoffs))
+          run_log_lines(handoffs)[0]["stop_at"] is None
+          and run_log_lines(handoffs)[0]["anchor_at"] is None,
+          run_log_lines(handoffs))
 
     handoffs = root / "run-log-unwritable"
     write_state(handoffs, "MD-skills", STOP)
     run_log_path(handoffs).mkdir()
     complaints = io.StringIO()
     with redirect_stderr(complaints):
-        restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, [], NOW)
+        restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
     check("a log that cannot be written is reported and never raises",
           "could not append" in complaints.getvalue(), complaints.getvalue())
 
@@ -510,6 +517,29 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 0 and "Z-died-before-stop: not-running-at-the-stop" in report
           and "read back" in report and len(run_log_lines(handoffs)) == 1,
           report)
+
+    # A run that cannot tell where the stop was must record no stop. This is
+    # the 2026-09-10 shape: the machine reboots, the user brings A and B back
+    # by hand, and only then does this program run for the first time in the
+    # boot. Its derived anchor is Z's heartbeat, 35 minutes before the real
+    # stop — the very thing the 2026-09-11 amendment refuses to act on. If it
+    # were written down as the stop, the next run would read it back, drop the
+    # degradation because a stop was "recorded", and restart Z.
+    handoffs = root / "run-log-degraded-first-run"
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    write_state(handoffs, "B", NOW - timedelta(seconds=6))
+    write_state(handoffs, "Z-died-before-stop", STOP - timedelta(minutes=35))
+    exit_code, first_report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("a run whose anchor was stamped over offers it, as the amendment rules",
+          "Z-died-before-stop: offer" in first_report, first_report)
+    check("and records no stop, keeping only the anchor it worked from",
+          run_log_lines(handoffs)[0]["stop_at"] is None
+          and run_log_lines(handoffs)[0]["anchor_at"]
+          == (STOP - timedelta(minutes=35)).isoformat(),
+          run_log_lines(handoffs))
+    exit_code, second_report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("so the run after it still refuses to restart a seat that died earlier",
+          "Z-died-before-stop: offer" in second_report, second_report)
 
     # The whole point, end to end: run 1 selects and records; the seats it
     # restarts stamp over the evidence; run 2 reads the stop back.
