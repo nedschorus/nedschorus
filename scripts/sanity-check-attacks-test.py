@@ -914,21 +914,68 @@ def main():
               code != 0 and output == ""
               and fallback_from == f"{fable}(exit1)+{opus}(exit1)",
               (code, output, fallback_from))
+
+        # A failed attempt keeps the runtime's own words. A CLI that is logged
+        # out or out of credits explains itself on one of its streams and
+        # nowhere else, and the chain CONTINUES past the failure -- so without
+        # this the run saves a report and its whole account of the broken CLI
+        # is one "failed (exit 1)" line. Both streams, because the claude CLI
+        # has used either for its refusals.
+        def explaining(command, *arguments, **keywords):
+            model = command[command.index("--model") + 1]
+            if model == fable:
+                return subprocess.CompletedProcess(
+                    list(command), 1, "Credit balance is too low\n",
+                    "Invalid API key - run /login\n")
+            return subprocess.CompletedProcess(list(command), 0, "opus's review\n", "")
+
+        runner_chain.subprocess.run = explaining
+        spoken = io.StringIO()
+        with contextlib.redirect_stdout(spoken):
+            code, output, model, fallback_from = runner_chain.run_claude("a prompt")
+        said = spoken.getvalue()
+        check("a failed attempt re-emits the runtime's stderr, not just the exit code",
+              "Invalid API key" in said, said)
+        check("and the stdout it failed with, where a CLI puts its reason instead",
+              "Credit balance is too low" in said, said)
+        check("the cell still falls back, and the review is returned, never printed",
+              (code, output, model) == (0, "opus's review\n", opus)
+              and "opus's review" not in said, (code, output, model, said))
     finally:
         runner_chain.subprocess.run = real_chain_run
 
     # The report's provenance names the model that actually wrote it and what
     # it fell back from, the way the cold-read cells' stamp does.
-    fell_back = runner_chain.provenance_line(
-        "claude", "claude-opus-5", "cut", "docs/x.md", False, "commit=abc1234",
-        "claude-fable-5-1(exit1)")
+    #
+    # The cache is primed first because provenance_line asks
+    # runtime_cli_version for a value, and an empty cache makes that launch the
+    # machine's real `claude --version` and `codex --version`: a unit case
+    # reaching out to whatever happens to be installed, and waiting on it. The
+    # cli= case further down primes it for the same reason. subprocess.run is
+    # then pinned to raise, so an edit that reintroduces the probe fails here
+    # instead of silently shelling out again.
+    runner_chain.CLI_VERSION_CACHE.update({"claude": "1.1.1-test", "codex": "2.2.2-test"})
+
+    def no_cli_launch_here(command, *arguments, **keywords):
+        raise AssertionError(f"a provenance case launched {list(command)}")
+
+    runner_chain.subprocess.run = no_cli_launch_here
+    try:
+        fell_back = runner_chain.provenance_line(
+            "claude", "claude-opus-5", "cut", "docs/x.md", False, "commit=abc1234",
+            "claude-fable-5-1(exit1)")
+        straight_through = runner_chain.provenance_line(
+            "codex", "gpt-5.6-sol", "cut", "docs/x.md", False, "commit=abc1234")
+    finally:
+        runner_chain.subprocess.run = real_chain_run
     check("the provenance line records the model that answered and the fallback",
           "model=claude-opus-5 " in fell_back
           and "fallback_from=claude-fable-5-1(exit1) " in fell_back, fell_back)
-    straight_through = runner_chain.provenance_line(
-        "codex", "gpt-5.6-sol", "cut", "docs/x.md", False, "commit=abc1234")
     check("a cell that did not fall back carries no fallback_from field",
           "fallback_from=" not in straight_through, straight_through)
+    check("and neither line launched a CLI: both versions came from the cache",
+          "cli=1.1.1-test" in fell_back and "cli=2.2.2-test" in straight_through,
+          (fell_back, straight_through))
 
     # The provenance line carries the CLI version the RUNNER measured —
     # nedschorus#161's cross-version fact rested on the cells' own words.
