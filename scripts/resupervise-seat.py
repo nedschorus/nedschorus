@@ -366,9 +366,14 @@ def main(argv=None) -> int:
     # before anything is killed.
     alive, explanation = supervisor.supervisor_liveness(state_path)
     if alive:
+        # Conditional for the same reason as handoff-write-and-check-supervisor:
+        # alive can be yes-by-assumption when ps cannot be asked, and the
+        # explanation in parentheses is what says which one this is
+        # (#328 follow-up round, nedschorus#242).
         return refuse(
             f"{arguments.name} already has a supervisor watching it ({explanation}). "
-            "Nothing to recover -- it will reincarnate on its own handoff."
+            "Nothing to recover -- if it is watching, it reincarnates the seat "
+            "on its own handoff."
         )
 
     waiting, counter, note = handoff_is_waiting(handoff_path, state_path)
