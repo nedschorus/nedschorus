@@ -108,6 +108,14 @@ def run_log_entry(boot_at=BOOT_AT, stop_at=STOP, run_at=NOW, seats=None):
         "seats": seats if seats is not None else {"A": "restart"}})
 
 
+def read_recorded_stop(handoffs: Path, boot_at=BOOT_AT):
+    """Just the stop an earlier run in this boot recorded. The reader also
+    reports whether there WAS an earlier run, which the cases above pin
+    separately; most cases here care only about the stop."""
+    recorded_stop, _ = restart.read_earlier_run_for_this_boot(handoffs, boot_at)
+    return recorded_stop
+
+
 def run_main(arguments, boot_at=BOOT_AT):
     """main() with this machine's boot time replaced by boot_at (BOOT_AT
     unless a case is exercising the boot instant moving between runs) and its
@@ -344,25 +352,83 @@ with tempfile.TemporaryDirectory() as temporary:
     # the stop back instead of deriving it. Precedent: the recovery tool's
     # recover-crashed-seats-log.txt, ruled 2026-08-22.
 
+    # The reader answers two questions, not one, because they come apart: a
+    # degraded run leaves a line carrying no stop. "No stop" and "no earlier
+    # run" are then different states, and the report has to tell them apart.
     handoffs = root / "run-log-absent"
     handoffs.mkdir(parents=True, exist_ok=True)
-    check("with no run log there is no recorded stop",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) is None,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+    check("with no run log there is no recorded stop and no earlier run",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, False),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-line-without-a-stop"
+    write_run_log_line(handoffs, run_log_entry(stop_at=None))
+    check("a degraded line is an earlier run, even though it carries no stop",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-another-boot-only"
+    write_run_log_line(handoffs, run_log_entry(boot_at=BOOT_AT - timedelta(days=2)))
+    check("a line from another boot is not an earlier run in this one",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, False),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-malformed-only"
+    write_run_log_line(handoffs, "not json at all")
+    check("a line that cannot be read is not evidence of an earlier run",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, False),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    # A null stop is deliberate and settles the matter; a corrupt one is a
+    # line nobody wrote on purpose, and must not be read as a deliberate null.
+    handoffs = root / "run-log-corrupt-stop-then-good"
+    write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat(),
+                                             "stop_at": "never"}))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a corrupt stop is skipped, and the good line after it decides",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (STOP, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    # Corrupt in the other direction: a stop that is not a string at all. Only
+    # JSON null is the deliberate "no stop", so a number or an object is a
+    # line to skip, not a degraded run to believe.
+    for corrupt_stop in (12345, {}, [], True):
+        handoffs = root / f"run-log-stop-of-type-{type(corrupt_stop).__name__}"
+        write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat(),
+                                                 "stop_at": corrupt_stop}))
+        write_run_log_line(handoffs, run_log_entry())
+        check(f"a stop that is a {type(corrupt_stop).__name__} is skipped, "
+              "not taken for a deliberate null",
+              restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (STOP, True),
+              restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-null-stop-then-good"
+    write_run_log_line(handoffs, run_log_entry(stop_at=None))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a deliberate null stop settles it, and no later line overrides it",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-stop-field-missing"
+    write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat()}))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a line with no stop field at all is skipped, not read as a null stop",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (STOP, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
 
     handoffs = root / "run-log-this-boot"
     write_run_log_line(handoffs, run_log_entry())
     check("a line for this boot gives back the stop it recorded",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     handoffs = root / "run-log-another-boot"
     earlier_boot = BOOT_AT - timedelta(days=2)
     write_run_log_line(handoffs, run_log_entry(
         boot_at=earlier_boot, stop_at=earlier_boot - timedelta(minutes=5)))
     check("a line from an earlier boot is ignored: the stop it holds is not this one's",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) is None,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) is None,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     # The box reads its boot time from `uptime -s`, in local time, so the same
     # boot can be written with a different offset. Boots are matched as
@@ -371,8 +437,8 @@ with tempfile.TemporaryDirectory() as temporary:
     write_run_log_line(handoffs, run_log_entry(
         boot_at=BOOT_AT.astimezone(timezone(timedelta(hours=-7)))))
     check("the same boot written in another timezone offset is the same boot",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     # Neither machine stores its boot instant: the Mac adjusts kern.boottime
     # when the clock is corrected, and the box computes `uptime -s` as now
@@ -383,13 +449,13 @@ with tempfile.TemporaryDirectory() as temporary:
     handoffs = root / "run-log-boot-drifted-by-a-second"
     write_run_log_line(handoffs, run_log_entry(boot_at=BOOT_AT - timedelta(seconds=1)))
     check("a boot instant that has drifted by a second is still this boot",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
     for drift_seconds, is_this_boot in ((5, True), (6, False)):
         handoffs = root / f"run-log-boot-drifted-by-{drift_seconds}"
         write_run_log_line(handoffs, run_log_entry(
             boot_at=BOOT_AT + timedelta(seconds=drift_seconds)))
-        read_back = restart.read_recorded_stop_for_boot(handoffs, BOOT_AT)
+        read_back = read_recorded_stop(handoffs, BOOT_AT)
         check(f"a boot instant {drift_seconds} seconds off "
               f"{'is' if is_this_boot else 'is not'} this boot",
               (read_back == STOP) == is_this_boot, read_back)
@@ -406,14 +472,14 @@ with tempfile.TemporaryDirectory() as temporary:
                                              "stop_at": "2026-09-10T22:02:12"}))
     write_run_log_line(handoffs, run_log_entry())
     check("a line that does not parse is skipped, and the good line after it is read",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     handoffs = root / "run-log-no-stop-recorded"
     write_run_log_line(handoffs, run_log_entry(stop_at=None))
     check("a run that found no stop pins nothing for the runs after it",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) is None,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) is None,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     # The first run in a boot saw the least disturbed state, so its stop is the
     # one that counts.
@@ -422,15 +488,15 @@ with tempfile.TemporaryDirectory() as temporary:
     write_run_log_line(handoffs, run_log_entry(stop_at=STOP - timedelta(minutes=40),
                                                run_at=NOW + timedelta(minutes=1)))
     check("the first line recorded in this boot is the one that counts",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     handoffs = root / "run-log-unreadable"
     handoffs.mkdir(parents=True, exist_ok=True)
     run_log_path(handoffs).mkdir()
     check("a run log that cannot be read is no recorded stop, and does not raise",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) is None,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) is None,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     # With the stop read back, the degradation of the 2026-09-11 amendment is
     # not needed: the recorded stop is the stop, whatever the seats that came
@@ -470,10 +536,11 @@ with tempfile.TemporaryDirectory() as temporary:
     write_state(handoffs, "mac-prof", STOP - timedelta(days=3))
     anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
         handoffs, BOOT_AT, NOW)
-    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
-                                        decisions, NOW)
+    wrote = restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor,
+                                                anchor_is_the_stop, decisions, NOW)
     lines = run_log_lines(handoffs)
     check("a run appends exactly one line", len(lines) == 1, lines)
+    check("and the appender says it wrote", wrote is True, wrote)
     # A verdict is a decision, not an outcome. Today nothing can be launched,
     # and once build step 4 lands a decided restart can still fail to come up,
     # so the line records what was launched beside what was decided.
@@ -492,8 +559,8 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a second run appends rather than overwriting: a log, not a single file",
           len(run_log_lines(handoffs)) == 2, run_log_lines(handoffs))
     check("what a run writes reads back as this boot's stop",
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == STOP,
-          restart.read_recorded_stop_for_boot(handoffs, BOOT_AT))
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
 
     handoffs = root / "run-log-append-no-anchor"
     write_state(handoffs, "running-now", NOW - timedelta(seconds=4))
@@ -532,9 +599,24 @@ with tempfile.TemporaryDirectory() as temporary:
     run_log_path(handoffs).mkdir()
     complaints = io.StringIO()
     with redirect_stderr(complaints):
-        restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
+        wrote = restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
     check("a log that cannot be written is reported and never raises",
           "could not append" in complaints.getvalue(), complaints.getvalue())
+    check("and the appender says it did not write",
+          wrote is False, wrote)
+
+    # The report must not contradict itself: an append that failed said so on
+    # stderr while stdout still announced "recorded in <path>" (found in
+    # review of bbb66d4). Two lines about one event, one of them false.
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("a run whose log write failed does not claim it recorded anything",
+          "recorded in" not in report, report)
+    check("it says the append failed, and still reports the selection",
+          "could not append this run" in report and "MD-skills" in report, report)
+    check("and warns that the runs after it cannot read this stop back",
+          "will not read its stop back" in report, report)
+    check("the failure is still on stderr, where a log failure belongs",
+          "could not append" in errors, errors)
 
     # The command line. Until the restart step is built, the program reports
     # and records, and says plainly that it launched nothing.
@@ -587,6 +669,16 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, second_report, errors = run_main(["--handoff-dir", str(handoffs)])
     check("so the run after it still refuses to restart a seat that died earlier",
           "Z-died-before-stop: offer" in second_report, second_report)
+    # The verdicts above were right all along; the sentence printed beside them
+    # was not. Run 1 left a line, so saying it left none is false — and this
+    # case drove exactly this state while asserting only on verdicts, which is
+    # why the suite stayed green through it (found in review of bbb66d4).
+    check("and does not claim the earlier run left no line, when it left one",
+          "left no line in the run log" not in second_report, second_report)
+    check("it says instead that the earlier run recorded no stop",
+          "recorded no stop" in second_report, second_report)
+    check("a boot with no line at all still says there is none",
+          "left no line in the run log" in first_report, first_report)
 
     # The whole point, end to end: run 1 selects and records; the seats it
     # restarts stamp over the evidence; run 2 reads the stop back.
@@ -636,7 +728,7 @@ with tempfile.TemporaryDirectory() as temporary:
     run_main(["--handoff-dir", str(handoffs)])
     check("a stop carrying microseconds is recorded and read back exactly",
           run_log_lines(handoffs)[0]["stop_at"] == precise_stop.isoformat()
-          and restart.read_recorded_stop_for_boot(handoffs, BOOT_AT) == precise_stop,
+          and read_recorded_stop(handoffs, BOOT_AT) == precise_stop,
           run_log_lines(handoffs))
 
     exit_code, report, errors = run_main(["--dry-run", "--handoff-dir",

@@ -465,7 +465,18 @@ the project's synthetic-keystroke guard hook blocks that form outright
   and once step 4 lands a decided restart can still fail to come up, so
   `launched` carries null while this program cannot launch at all and the list
   of seats it launched once it can. A cold reader can then tell a seat that
-  was never launched from one whose launch failed. A line that cannot be read is skipped
+  was never launched from one whose launch failed. **And the report says what
+  actually happened** (found in review, fixed 2026-09-11): a run whose append
+  failed no longer announces a record that is not there, and a later run in a
+  degraded boot no longer says the first one "left no line in the run log"
+  when the log holds exactly that line. The log is what an investigator reads,
+  so a false sentence beside a true verdict is worse than no sentence. This
+  needs the reader to answer two questions rather than one — the stop, and
+  whether there was an earlier run at all — because a degraded run leaves a
+  line carrying no stop, which makes "no recorded stop" and "no earlier run"
+  different states. A null stop is deliberate and settles the matter; a stop
+  that is present but corrupt is a line nobody wrote on purpose, and is
+  skipped rather than believed. A line that cannot be read is skipped
   and a log that cannot be written is reported and nothing more: a machine
   that has just booted needs its seats back more than it needs the record.
   **A run that cannot tell where the stop was records none:** when the seats
