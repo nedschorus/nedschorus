@@ -387,7 +387,7 @@ def run_claude(prompt: str) -> tuple:
         ]
         try:
             completed = subprocess.run(
-                command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                command, input=prompt, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 cwd=REPO_ROOT, text=True, check=False, timeout=CELL_TIMEOUT_SECONDS,
             )
         except OSError as error:
@@ -397,8 +397,26 @@ def run_claude(prompt: str) -> tuple:
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"WARNING: {model} could not be run: {error}", flush=True)
             continue
+        # The runtime's own words survive every ending, the house chain's rule
+        # (BOTH STREAMS ARE CAPTURED, in run_model_chain,
+        # scripts/cold-read-cell-common.py). A CLI that is logged out or out of
+        # credits explains itself on one of these streams and nowhere else, so
+        # discarding them leaves "WARNING: <model> failed (exit 1)" as the whole
+        # account of why -- the 54-byte cold-read log of 2026-08-23, which is
+        # what taught the house chain to capture both. It is worse here than it
+        # was there: the chain continues past a failed attempt, so a run whose
+        # first model is logged out still saves a report, and that one line is
+        # the only trace of the degradation in the output. Re-emitted before any
+        # branch below, so no ending drops them. This program's log is its
+        # stdout -- the review itself is returned to run_cell, never printed --
+        # so the runtime's words go there too, and not to stderr as in the
+        # house tool, whose log is the other stream.
+        if completed.stderr:
+            print(completed.stderr, end="", flush=True)
         if completed.returncode != 0:
             failed_attempts.append(f"{model}(exit{completed.returncode})")
+            if completed.stdout:
+                print(completed.stdout, flush=True)
             print(f"WARNING: {model} failed (exit {completed.returncode})", flush=True)
             continue
         if not completed.stdout.strip():
