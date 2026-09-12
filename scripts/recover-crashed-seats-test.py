@@ -171,6 +171,21 @@ def identity_answers(*answers):
     return check
 
 
+def identity_answers_recording_when_asked(monotonic, *answers):
+    """(check, asked_at) — identity_answers, plus the fake clock's reading at
+    every call. The ORDER of the waiter's two waits is only visible from inside
+    it: reading the clock after it returns sees one total, which cannot tell a
+    settle placed before the first-sighting loop from one placed after it."""
+    answering = identity_answers(*answers)
+    asked_at = []
+
+    def check_recording_when_asked(process_id, agent_name):
+        asked_at.append(monotonic())
+        return answering(process_id, agent_name)
+
+    return check_recording_when_asked, asked_at
+
+
 def run_came_up_cases(root: Path):
     """nedschorus#242 change 4: a launch exiting zero says the launcher ran, not
     that the seat came back. A resume whose session dies inside Claude leaves the
@@ -195,6 +210,39 @@ def run_came_up_cases(root: Path):
     check("a supervisor that starts and survives the settle came up", came_up, why)
     check("and the settle was actually waited out",
           elapsed[0] >= recovery.SEAT_SETTLE_SECONDS, elapsed[0])
+
+    # That case reads the clock only after the call, so it sees a total and
+    # nothing about ORDER. Measured: moving the settle before the first-sighting
+    # loop, keeping the recheck, left every case in this suite passing. The
+    # order is the design point — the settle is measured from FIRST SIGHTING,
+    # never from the launch — so it is pinned from inside, by an identity check
+    # that records the clock at every call (PR #329 review, finding 3).
+    monotonic, sleep, _ = a_fake_clock()
+    identity_check, asked_at = identity_answers_recording_when_asked(monotonic, True)
+    came_up, why = recovery.wait_for_the_seat_to_come_up(
+        "seat-a", handoffs, identity_check=identity_check,
+        sleep=sleep, monotonic=monotonic)
+    check("the first sighting is taken before any settle is waited out",
+          came_up and asked_at[0] == 0.0, (asked_at, why))
+    check("and the recheck comes a whole settle after that first sighting",
+          len(asked_at) == 2
+          and asked_at[1] >= asked_at[0] + recovery.SEAT_SETTLE_SECONDS,
+          asked_at)
+
+    # The same ordering where it discriminates: a supervisor sixty polls late.
+    # A settle measured from the LAUNCH is long spent by then, so it would
+    # recheck at once; measured from first sighting it cannot.
+    monotonic, sleep, _ = a_fake_clock()
+    identity_check, asked_at = identity_answers_recording_when_asked(
+        monotonic, *([False] * 60 + [True]))
+    came_up, why = recovery.wait_for_the_seat_to_come_up(
+        "seat-a", handoffs, identity_check=identity_check,
+        sleep=sleep, monotonic=monotonic)
+    first_sighting = 60 * recovery.SEAT_COMES_UP_POLL_SECONDS
+    check("a supervisor sixty polls late settles from when IT appeared, not from the launch",
+          came_up and len(asked_at) == 62 and asked_at[60] == first_sighting
+          and asked_at[61] >= first_sighting + recovery.SEAT_SETTLE_SECONDS,
+          (asked_at[59:], why))
 
     # THE CASE THAT DISCRIMINATES a settle from a single check. A supervisor
     # whose session has already died still holds its lock for up to
@@ -1627,6 +1675,24 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and it offers the degraded restart",
           "--ignite-fallback" in report, report)
 
+    # The plain relaunch the deferred-handoff verdict chooses. That verdict is
+    # reached on the verdict alone — assess_seat never sees --ignite-fallback —
+    # so a run that PASSED the flag lands here too, and was offered the flag it
+    # had just used (PR #329 review, finding 2).
+    for used_the_flag, offered in ((True, False), (False, True)):
+        workspace = Workspace(root / f"came-up-defer-{used_the_flag}",
+                              name="defer-did-not-come-up")
+        all_dead()
+        capture_launches(workspace)
+        seat_comes_up(False, "no supervisor appeared within 120s")
+        (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+        report = workspace.recover(ignite_fallback=used_the_flag)
+        check("a plain relaunch that did not come up offers the degraded restart "
+              f"only to an operator who has not just used it (--ignite-fallback: {used_the_flag})",
+              "LAUNCHED BUT DID NOT COME UP" in report
+              and ("--ignite-fallback" in report) == offered, report)
+
     workspace = Workspace(root / "came-up-ignite", name="ignite-did-not-come-up")
     all_dead()
     capture_launches(workspace)
@@ -1650,6 +1716,70 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a dry run never waits for a seat to come up",
           waited == [] and "would resume" in report, (waited, report))
     seat_comes_up()
+
+    # --- the exit code -------------------------------------------------------
+    # A report class the counting does not recognise makes this tool exit ZERO
+    # for a seat it has just said did not come back — which is what LAUNCHED BUT
+    # DID NOT COME UP did, containing neither "REFUSED" nor "LAUNCH FAILED"
+    # (PR #329 review, finding 1). Two cases, catching different things.
+    #
+    # This one pins main against the DECLARED set: every class named in
+    # SEAT_NOT_RECOVERED_REPORT_MARKERS is counted, so a class added there is
+    # covered without anyone writing a case for it.
+    def main_on(workspace):
+        return recovery.main([workspace.name,
+                              "--agents-root", str(workspace.agents_root),
+                              "--handoff-dir", str(workspace.handoffs),
+                              "--projects-root", str(workspace.projects)])
+
+    workspace = Workspace(root / "exit-declared", name="exit-declared-seat")
+    real_recover_seat = recovery.recover_seat
+    try:
+        for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS:
+            stubbed = f"{workspace.name}: {marker} — whatever the reason was"
+            patch("recover_seat", lambda *a, report=stubbed, **k: report)
+            check(f"EXIT: a seat reported {marker} does not exit zero",
+                  main_on(workspace) != 0, marker)
+        patch("recover_seat",
+              lambda *a, **k: f"{workspace.name}: relaunched plain — it came back")
+        check("EXIT: and a seat that did come back exits zero", main_on(workspace) == 0)
+    finally:
+        patch("recover_seat", real_recover_seat)
+
+    # And this one runs the REAL recover_seat down every failure path it has,
+    # which is the half that would have caught the miss: the tuple above is only
+    # as good as someone remembering to add to it, and nobody did.
+    def a_real_failure_path_does_not_exit_zero(case_name, workspace):
+        exit_code = main_on(workspace)
+        log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+        logged = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+        check(f"EXIT: {case_name} does not exit zero, and says so in a declared class",
+              exit_code != 0
+              and any(marker in logged
+                      for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+              (exit_code, logged))
+
+    workspace = Workspace(root / "exit-refused", name="exit-refused-seat")
+    all_dead()
+    capture_launches(workspace)
+    patch("tmux_session_alive_anywhere",
+          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+    a_real_failure_path_does_not_exit_zero("a seat that was refused", workspace)
+
+    workspace = Workspace(root / "exit-launch-failed", name="exit-launch-failed-seat")
+    all_dead()
+    capture_launches(workspace)
+    patch("launch_seat", lambda *arguments, **keywords: 7)
+    write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+    a_real_failure_path_does_not_exit_zero("a launch that failed", workspace)
+
+    workspace = Workspace(root / "exit-did-not-come-up", name="exit-did-not-come-up-seat")
+    all_dead()
+    capture_launches(workspace)
+    seat_comes_up(False, "a supervisor started and stopped again within 6s, "
+                         "so the session did not survive")
+    write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+    a_real_failure_path_does_not_exit_zero("a launch that did not come up", workspace)
 
 
 print()

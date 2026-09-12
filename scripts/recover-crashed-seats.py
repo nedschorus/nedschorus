@@ -659,6 +659,13 @@ def wait_for_the_seat_to_come_up(name: str, handoff_directory: Path,
     single check right after it appears would call that coming up. The settle is
     measured from when the supervisor was FIRST SEEN, never from the launch:
     on the window path the launch returns before the launcher has even started.
+
+    So what this answers is that a supervisor appeared and survived the settle,
+    which is not quite that the seat is back: handoff-supervisor.py claims its
+    lock at :1383, BEFORE supervise_sessions starts the session, so the first
+    sighting can precede the session existing at all, and a session that dies
+    more than SEAT_SETTLE_SECONDS after the lock appeared still reads here as
+    come up (PR #329 review, raised as a question and left as a bound).
     """
     if identity_check is None:
         identity_check = supervisor.process_is_supervisor_for_agent
@@ -706,6 +713,22 @@ def came_up_or_failure_report(name: str, handoff_directory: Path,
     return f"{name}: LAUNCHED BUT DID NOT COME UP — {why}{offer}"
 
 
+# Every report class that means the seat is NOT running once this tool is done.
+# main counts these for its exit code, and the suite enumerates this same tuple,
+# so a failure report is covered the moment it is named here. It is one named
+# tuple rather than substrings spelled into main because that is exactly how
+# LAUNCHED BUT DID NOT COME UP slipped through: it contains neither "REFUSED"
+# nor "LAUNCH FAILED", so the failure #242 change 4 was added to catch was
+# printed, logged, and then exited zero — a login restart still reporting the
+# fleet is back to an absent operator, by way of the status code this time
+# (PR #329 review, finding 1).
+SEAT_NOT_RECOVERED_REPORT_MARKERS = (
+    "REFUSED",
+    "LAUNCH FAILED",
+    "LAUNCHED BUT DID NOT COME UP",
+)
+
+
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                  projects_root: Path, dry_run: bool, ignite_fallback: bool,
                  open_iterm_window: bool = False) -> str:
@@ -735,7 +758,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
-        did_not_come_up = came_up_or_failure_report(name, handoff_directory, True)
+        # Not offered to an operator who just used it. This path is chosen by
+        # the verdict alone — assess_seat never sees the flag — so a run that
+        # passed --ignite-fallback lands here too, and was told to try the flag
+        # it had already tried (PR #329 review, finding 2).
+        did_not_come_up = came_up_or_failure_report(name, handoff_directory,
+                                                    not ignite_fallback)
         if did_not_come_up is not None:
             return did_not_come_up
         return f"{name}: relaunched plain{in_window} — {detail}"
@@ -909,7 +937,7 @@ def main(argv=None) -> int:
         print(f"recover-crashed-seats: {report}")
         if not arguments.dry_run:
             append_to_recovery_log(handoff_directory, report)
-        if "REFUSED" in report or "LAUNCH FAILED" in report:
+        if any(marker in report for marker in SEAT_NOT_RECOVERED_REPORT_MARKERS):
             not_recovered += 1
     return 1 if not_recovered == len(names) else 0
 
