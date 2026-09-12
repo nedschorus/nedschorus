@@ -185,25 +185,141 @@ def stamp_heartbeat(state_path: Path, state: dict) -> None:
     write_supervisor_state(state_path, state)
 
 
+SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
+SUPERVISOR_LOCK_FILE_SUFFIX = "-supervisor.lock"
+# This script's own name, as it appears in a running supervisor's command line.
+SUPERVISOR_SCRIPT_FILE_NAME = "handoff-supervisor.py"
+
+
+def agent_name_from_supervisor_file(path: Path) -> str:
+    """The agent a supervisor state file or lock file belongs to.
+
+    Both are named after the agent — <agent>-supervisor-state.json and
+    <agent>-supervisor.lock — so the name is the one place the agent is
+    recorded for a file handed to us on its own. A path that follows neither
+    convention yields its whole stem, which matches no running supervisor and
+    so reads as dead rather than wedging the seat.
+    """
+    for suffix in (SUPERVISOR_STATE_FILE_SUFFIX, SUPERVISOR_LOCK_FILE_SUFFIX):
+        if path.name.endswith(suffix):
+            return path.name[:-len(suffix)]
+    return path.stem
+
+
+def read_process_command_line(process_id: int):
+    """The command line of a running process, or None if it is not running.
+
+    `ps -ww -p` works on both machines (measured 2026-09-11 on the Mac and on
+    ned-box). The -ww matters: without it macOS truncates the output to the
+    terminal width even through a pipe, which would cut the --agent argument
+    off exactly the long paths the fleet uses.
+    """
+    try:
+        finished = subprocess.run(["ps", "-ww", "-p", str(process_id), "-o", "args="],
+                                  capture_output=True, text=True, check=False, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if finished.returncode != 0:
+        return None
+    command_line = finished.stdout.strip()
+    return command_line or None
+
+
+def process_is_supervisor_for_agent(process_id, agent_name: str,
+                                    read_command_line=read_process_command_line):
+    """(is_it, explanation): is this process a live supervisor for this agent?
+
+    Ruled in nedschorus#242 change 1, and it replaces two weaker tests.
+
+    Heartbeat age cannot answer the question. The stamp is read as fresh for
+    HEARTBEAT_STALE_SECONDS after the last poll, so for a minute after a
+    supervisor dies its state file still says a supervisor is watching — and
+    the login restart of nedschorus#116 runs inside exactly that minute, so it
+    refused every seat it existed to bring back.
+
+    A bare process-id check cannot answer it either. The lock file recording
+    the id outlives a reboot, and ids are reused across the very reboot this
+    serves, so the id alone can name something else entirely. Hence the
+    command line: the process must be running THIS script, with THIS agent.
+    The agent argument is compared whole rather than by substring, because
+    `--agent prof` would otherwise match the supervisor of `prof-2`.
+    """
+    try:
+        process_id = int(process_id)
+    except (TypeError, ValueError):
+        return False, f"process id {process_id!r} is not a number"
+    if process_id <= 0:
+        return False, f"process id {process_id} cannot name a process"
+
+    command_line = read_command_line(process_id)
+    if command_line is None:
+        return False, f"process {process_id} is not running"
+
+    words = command_line.split()
+    runs_this_script = any(word.rpartition("/")[2] == SUPERVISOR_SCRIPT_FILE_NAME
+                           for word in words)
+    named_agents = [word.partition("=")[2] for word in words if word.startswith("--agent=")]
+    named_agents += [words[position + 1] for position, word in enumerate(words)
+                     if word == "--agent" and position + 1 < len(words)]
+    if runs_this_script and agent_name in named_agents:
+        return True, f"process {process_id} is the supervisor of {agent_name}"
+    return False, (f"process {process_id} is live but not a supervisor of {agent_name}: "
+                   f"{command_line}")
+
+
 def supervisor_liveness(state_path: Path):
-    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    """Return (is_alive, explanation) for the supervisor owning this state file.
+
+    The verdict is the supervisor's PROCESS, found through the lock file beside
+    this one, confirmed by its command line (nedschorus#242 change 1). The
+    heartbeat is reported because its age is worth knowing, but it no longer
+    decides: see process_is_supervisor_for_agent for why it cannot.
+
+    The process id is taken from the lock rather than the state file because
+    the lock is written once when a supervisor claims an agent, while the state
+    file is truncated and rewritten every HEARTBEAT_INTERVAL_SECONDS — a read
+    landing mid-write sees it empty, which would read as a dead supervisor on a
+    live one.
+    """
     if not state_path.is_file():
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 
-    state = read_supervisor_state(state_path)
-    stamped = state.get("last_poll_at")
-    if not stamped:
-        return False, "supervisor state carries no heartbeat — it is from an older build or never polled"
+    agent_name = agent_name_from_supervisor_file(state_path)
+    lock_path = state_path.with_name(f"{agent_name}{SUPERVISOR_LOCK_FILE_SUFFIX}")
+    # Every dead verdict opens with the same words, so a caller can report the
+    # verdict and the reason without knowing which reason it got; resupervise-seat
+    # prints this sentence as its own reason for proceeding.
+    if not lock_path.is_file():
+        return False, (f"no supervisor is watching — no supervisor lock at {lock_path}, "
+                       "and a supervisor removes it when it stops cleanly")
+    try:
+        holder = int(lock_path.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError) as error:
+        return False, (f"no supervisor is watching — the supervisor lock at {lock_path} "
+                       f"is unreadable: {error}")
 
+    running, identity = process_is_supervisor_for_agent(holder, agent_name)
+    if running:
+        return True, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
+    return False, f"no supervisor is watching — {identity}"
+
+
+def heartbeat_age_sentence(state_path: Path) -> str:
+    """", last heartbeat 3s ago" when the state file carries a readable stamp,
+    else "". Reported alongside a verdict the process has already settled: a
+    supervisor busy enough to have missed its stamps is still a supervisor,
+    but how far behind it is remains worth saying."""
+    stamped = read_supervisor_state(state_path).get("last_poll_at")
+    if not stamped:
+        return ", no heartbeat recorded yet"
     try:
         last_poll = datetime.fromisoformat(stamped)
     except ValueError:
-        return False, f"unreadable heartbeat: {stamped!r}"
-
+        return f", unreadable heartbeat {stamped!r}"
     age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
-    if age_seconds > HEARTBEAT_STALE_SECONDS:
-        return False, f"last heartbeat was {age_seconds:.0f}s ago — no supervisor is watching"
-    return True, f"supervisor alive, last heartbeat {age_seconds:.0f}s ago"
+    if age_seconds >= 60:
+        return f", last heartbeat {age_seconds / 60:.0f}m ago"
+    return f", last heartbeat {age_seconds:.0f}s ago"
 
 
 def counter_from(fields: dict):
@@ -739,6 +855,13 @@ def claim_supervisor_lock(lock_path: Path) -> bool:
     successor, so the second must not start. A lock left by a supervisor that
     died is reclaimed: the recorded process id is checked before the lock is
     believed.
+
+    What is checked is that the id names a live supervisor OF THIS AGENT, not
+    merely a live process (nedschorus#242 change 1). This file survives a
+    reboot and ids are reused across it, so a stale lock whose id now belongs
+    to something unrelated would otherwise refuse the very supervisor the login
+    restart just asked for — and refuse it for as long as the lock sat there.
+    The agent is taken from this file's own name.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -749,13 +872,10 @@ def claim_supervisor_lock(lock_path: Path) -> bool:
         except (ValueError, OSError):
             holder = None
         if holder is not None and holder != os.getpid():
-            try:
-                os.kill(holder, 0)
+            held, _ = process_is_supervisor_for_agent(
+                holder, agent_name_from_supervisor_file(lock_path))
+            if held:
                 return False  # a live supervisor already holds this agent
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                return False
         lock_path.unlink(missing_ok=True)  # the holder is gone; reclaim it
         return claim_supervisor_lock(lock_path)
     os.write(descriptor, f"{os.getpid()}\n".encode("utf-8"))

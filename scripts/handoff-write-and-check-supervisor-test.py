@@ -249,11 +249,36 @@ def run_liveness_report_cases(workspace: Path):
           and "Stop working now and wait" not in result.stdout,
           result.stdout)
 
+    # "A supervisor is watching, so stop and wait" is a claim about a PROCESS,
+    # not about a stamp (nedschorus#242 change 1). A heartbeat from a second ago
+    # outlives its supervisor by up to HEARTBEAT_STALE_SECONDS, and telling an
+    # agent to stop and wait for a supervisor that has died is the worst way to
+    # be wrong here: it waits forever. So the watcher has to be real.
     writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"session_id": "s"})
+    stub_directory = workspace / "looks-like-a-supervisor"
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "handoff-supervisor.py"
+    stub.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    watcher = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, str(stub), "--agent", "tester", "--cd", str(stub_directory)])
+    try:
+        (workspace / "tester-supervisor.lock").write_text(
+            f"{watcher.pid}\n", encoding="utf-8")
+        result = run_writer(workspace, "Continue the walk.")
+        check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
+        check("with a live supervisor, the agent is told to stop and wait",
+              "Stop working now and wait" in result.stdout, result.stdout)
+    finally:
+        watcher.kill()
+        watcher.wait()
+
+    # The same fresh stamp, the supervisor gone: the agent must NOT be told to
+    # wait for it.
     result = run_writer(workspace, "Continue the walk.")
-    check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
-    check("with a live supervisor, the agent is told to stop and wait",
-          "Stop working now and wait" in result.stdout, result.stdout)
+    check("a fresh stamp with no supervisor process does not tell the agent to wait",
+          result.returncode == 1 and "Stop working now and wait" not in result.stdout,
+          result.stdout)
+    (workspace / "tester-supervisor.lock").unlink(missing_ok=True)
 
     writer.supervisor.write_supervisor_state(
         workspace / "tester-supervisor-state.json", {"last_poll_at": "not a timestamp"}

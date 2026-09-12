@@ -110,17 +110,43 @@ def run_already_consumed_case(workspace: Path):
 
 
 def run_live_supervisor_case(workspace: Path):
-    """A seat that already has a watcher is not the state this script repairs."""
+    """A seat that already has a watcher is not the state this script repairs.
+
+    What makes the watcher live is its PROCESS, not the freshness of its
+    heartbeat (nedschorus#242 change 1): a stamp from a second ago outlives the
+    supervisor that wrote it by up to HEARTBEAT_STALE_SECONDS. So this case
+    needs a real process whose command line is a supervisor's for this seat,
+    and the lock file that records it.
+    """
     supervisor_module = load_supervisor()
     write_handoff(workspace, "watched", counter=1)
     supervisor_module.stamp_heartbeat(
         workspace / "watched-supervisor-state.json", {"session_id": "s"}
     )
+    stub_directory = workspace / "looks-like-a-supervisor"
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "handoff-supervisor.py"
+    stub.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    watcher = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, str(stub), "--agent", "watched", "--cd", str(stub_directory)])
+    try:
+        (workspace / "watched-supervisor.lock").write_text(
+            f"{watcher.pid}\n", encoding="utf-8")
+        result = run_resupervise(workspace, "watched", "--dry-run")
+        check("a seat with a live supervisor refuses",
+              result.returncode == 1, result.stdout + result.stderr)
+        check("the live-supervisor refusal says there is nothing to recover",
+              "Nothing to recover" in result.stderr, result.stderr)
+    finally:
+        watcher.kill()
+        watcher.wait()
+
+    # The same seat, the same fresh stamp, once that supervisor is gone: this
+    # script's own repair path is what #242 change 1 opens up.
     result = run_resupervise(workspace, "watched", "--dry-run")
-    check("a seat with a live supervisor refuses",
-          result.returncode == 1, result.stdout + result.stderr)
-    check("the live-supervisor refusal says there is nothing to recover",
-          "Nothing to recover" in result.stderr, result.stderr)
+    check("and once the supervisor is gone the same seat is repairable",
+          result.returncode == 0, result.stdout + result.stderr)
+    (workspace / "watched-supervisor.lock").unlink(missing_ok=True)
 
 
 def load_supervisor():
