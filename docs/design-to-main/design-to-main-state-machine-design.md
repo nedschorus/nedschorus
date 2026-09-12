@@ -117,7 +117,7 @@ This table is normative. The Trigger column names the state-exit verdict and any
 | --- | --- | --- | --- |
 | `initiate-design-to-main` | `invoked` | `design-writing`, after the machine has cut the topic branch (§9) | — |
 | `design-writing` | `emitted` | `contract-reviewing`, program check only | redesigns are counted on entry, not here |
-| `contract-reviewing` | `reject contract` from the program check, first time | `contract-revising` (fresh) | — (not counted; a structural failure) |
+| `contract-reviewing` | `reject contract` from the program check, first time | `contract-revising` | — (not counted; a structural failure) |
 | `contract-reviewing` | `reject contract` from the program check, second consecutive time | `investigate-workflow`, investigation-focus `contract` — the contract-revising agent cannot satisfy the script, which is the machine's to look at | — |
 | `contract-reviewing` | `advance` from the program check, the design not yet approved | `design-reviewing` | — |
 | `contract-reviewing` | `advance` from the program check, on a contract-revision | `contract-acceptance-by-agent` | — |
@@ -149,7 +149,7 @@ This table is normative. The Trigger column names the state-exit verdict and any
 | `test-design-writing` | `emitted` | `test-design-reviewing` | — |
 | `test-design-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
 | `test-design-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
-| `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent` | `test-design-writing` (fresh), with the notes | — (a re-write before approval) |
+| `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent` | `test-design-writing`, with the notes | — (a re-write before approval) |
 | `test-design-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
 | `test-design-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
 | `test-design-reviewing` | `discuss` from `test-design-acceptance-by-user` | `test-design-writing` | — |
