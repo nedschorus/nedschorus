@@ -70,6 +70,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -621,6 +622,90 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     return "resume", (session_id, found)
 
 
+# A supervisor notices its session has died within HANDOFF_POLL_SECONDS and then
+# stops and removes its lock, so anything checked sooner than that can see a
+# supervisor that is already finished. Three times the interval leaves room for
+# the cleanup that follows.
+SEAT_SETTLE_SECONDS = 3 * supervisor.HANDOFF_POLL_SECONDS
+# How long a supervisor may take to appear at all. The launcher runs its Claude
+# update step BEFORE starting the supervisor, and on the window path this script
+# does not wait for the launcher — it waits only for the opener, which returns as
+# soon as the window exists. So this has to cover an update, not a process start.
+# A version change was observed taking tens of seconds on 2026-09-11; this is a
+# generous multiple of that, and only a seat that never comes up pays it in full.
+# Tunable: it is a fact about the user's machines, not about this program.
+SEAT_COMES_UP_DEADLINE_SECONDS = 120.0
+SEAT_COMES_UP_POLL_SECONDS = 0.5
+
+
+def wait_for_the_seat_to_come_up(name: str, handoff_directory: Path,
+                                 settle_seconds=SEAT_SETTLE_SECONDS,
+                                 deadline_seconds=SEAT_COMES_UP_DEADLINE_SECONDS,
+                                 identity_check=None, sleep=time.sleep,
+                                 monotonic=time.monotonic):
+    """(came_up, why): did a supervisor actually start for this seat and survive?
+
+    nedschorus#242 change 4. A launch that exits zero says the launcher ran, not
+    that the seat came back: a resume whose session dies inside Claude — a
+    session id that no longer resolves, say — leaves the launcher exiting zero
+    while the supervisor starts, watches the session end without a handoff, and
+    stops. Reported as success, that is the login restart telling an absent
+    operator the fleet is back when it is not.
+
+    Two waits, and they are different. First, poll until a supervisor is seen at
+    all, which can take as long as the launcher's update step. Then wait out
+    SEAT_SETTLE_SECONDS and look again, because a supervisor whose session has
+    already died still holds its lock for up to HANDOFF_POLL_SECONDS — so a
+    single check right after it appears would call that coming up. The settle is
+    measured from when the supervisor was FIRST SEEN, never from the launch:
+    on the window path the launch returns before the launcher has even started.
+    """
+    if identity_check is None:
+        identity_check = supervisor.process_is_supervisor_for_agent
+    lock_path = handoff_directory / f"{name}-supervisor.lock"
+
+    def a_supervisor_is_running():
+        try:
+            holder = int(lock_path.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            return False, f"no readable supervisor lock at {lock_path}"
+        return identity_check(holder, name)
+
+    started_waiting = monotonic()
+    while True:
+        running, identity = a_supervisor_is_running()
+        if running:
+            break
+        if monotonic() - started_waiting >= deadline_seconds:
+            return False, (f"no supervisor appeared within {deadline_seconds:.0f}s — "
+                           f"{identity}")
+        sleep(SEAT_COMES_UP_POLL_SECONDS)
+
+    sleep(settle_seconds)
+    running, identity = a_supervisor_is_running()
+    if running:
+        return True, f"a supervisor was still running {settle_seconds:.0f}s after it started"
+    return False, (f"a supervisor started and stopped again within {settle_seconds:.0f}s, "
+                   f"so the session did not survive — {identity}")
+
+
+def came_up_or_failure_report(name: str, handoff_directory: Path,
+                              offer_ignite_fallback: bool):
+    """None when the seat came up, else the report that says it did not.
+
+    The offer is a sentence, not an action (nedschorus#242 change 4 says offer):
+    falling back automatically would spend a session on a recovery that may be
+    the wrong one. On the ignite paths there is nothing further to offer, because
+    the degraded restart is what just failed.
+    """
+    came_up, why = wait_for_the_seat_to_come_up(name, handoff_directory)
+    if came_up:
+        return None
+    offer = ("; the degraded restart is --ignite-fallback, which starts a fresh session "
+             "from the newest dialog extract" if offer_ignite_fallback else "")
+    return f"{name}: LAUNCHED BUT DID NOT COME UP — {why}{offer}"
+
+
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                  projects_root: Path, dry_run: bool, ignite_fallback: bool,
                  open_iterm_window: bool = False) -> str:
@@ -650,6 +735,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
+        did_not_come_up = came_up_or_failure_report(name, handoff_directory, True)
+        if did_not_come_up is not None:
+            return did_not_come_up
         return f"{name}: relaunched plain{in_window} — {detail}"
 
     if verdict == "resume" and not ignite_fallback:
@@ -669,6 +757,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                                handoff_directory, name, unreplied_successor))
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
+        did_not_come_up = came_up_or_failure_report(name, handoff_directory, True)
+        if did_not_come_up is not None:
+            return did_not_come_up
         return (f"{name}: relaunched resuming {session_id} "
                 f"({size_kb}KB transcript){in_window}{unreplied_note}")
 
@@ -683,6 +774,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
+        did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
+        if did_not_come_up is not None:
+            return did_not_come_up
         return f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
     prompt = (
         f"Read {extract} — it is the dialog from this seat's last recorded "
@@ -699,6 +793,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                        first_prompt_file=prompt_path)
     if exit_code != 0:
         return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
+    did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
+    if did_not_come_up is not None:
+        return did_not_come_up
     return f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
 
 
