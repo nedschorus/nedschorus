@@ -20,6 +20,7 @@ import io
 import json
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
 import time
@@ -157,8 +158,13 @@ with tempfile.TemporaryDirectory() as temporary:
         "last_poll_at": datetime.now(timezone.utc).isoformat(),
     }), encoding="utf-8")
     verdict, detail = workspace.assess()
-    check("a live supervisor heartbeat refuses",
-          verdict == "refuse" and "supervisor is watching" in detail, (verdict, detail))
+    # Changed with nedschorus#242 change 1. A heartbeat stamped a moment ago
+    # with no supervisor process behind it is the 60-second hole this tool used
+    # to fall into: it refused a crashed seat for a full minute after the crash,
+    # which is exactly when the login restart of #116 runs. The heartbeat no
+    # longer decides; the supervisor's process does, and there is none here.
+    check("a fresh heartbeat alone no longer refuses, with no supervisor process behind it",
+          verdict != "refuse", (verdict, detail))
     state_path.unlink()
 
     patch("seat_directory_occupied",
@@ -448,17 +454,41 @@ with tempfile.TemporaryDirectory() as temporary:
           verdict == "refuse" and "restart-counter" in detail
           and "delete it" in detail, (verdict, detail))
 
-    # Q3: a live-held supervisor lock refuses.
+    # Q3: a supervisor lock held by a live supervisor refuses.
     workspace = Workspace(root / "r8")
     all_dead()
-    (workspace.handoffs / f"{workspace.name}-supervisor.lock").write_text(
-        f"{os.getpid()}\n", encoding="utf-8")
-    verdict, detail = workspace.assess()
-    check("Q3: a supervisor lock held by a live process refuses",
-          verdict == "refuse" and "supervisor lock" in detail, (verdict, detail))
-    (workspace.handoffs / f"{workspace.name}-supervisor.lock").write_text(
-        "999999999\n", encoding="utf-8")
-    write_transcript(workspace.project_directory(), "real", "work", records=4)
+    lock_path = workspace.handoffs / f"{workspace.name}-supervisor.lock"
+    stub_directory = root / "r8-looks-like-a-supervisor"
+    stub_directory.mkdir(parents=True, exist_ok=True)
+    stub = stub_directory / "handoff-supervisor.py"
+    stub.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    holder = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, str(stub), "--agent", workspace.name, "--cd", str(stub_directory)])
+    try:
+        lock_path.write_text(f"{holder.pid}\n", encoding="utf-8")
+        verdict, detail = workspace.assess()
+        check("Q3: a supervisor lock held by a live supervisor refuses",
+              verdict == "refuse" and "supervisor lock" in detail, (verdict, detail))
+    finally:
+        holder.kill()
+        holder.wait()
+
+    # Changed with nedschorus#242 change 1: the lock file outlives a reboot and
+    # process ids are reused across it, so a live id that is NOT this seat's
+    # supervisor must not block the recovery the login restart just asked for.
+    unrelated = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        lock_path.write_text(f"{unrelated.pid}\n", encoding="utf-8")
+        write_transcript(workspace.project_directory(), "real", "work", records=4)
+        verdict, detail = workspace.assess()
+        check("Q3: a lock whose id is live but not this seat's supervisor does not block",
+              verdict == "resume", (verdict, detail))
+    finally:
+        unrelated.kill()
+        unrelated.wait()
+
+    lock_path.write_text("999999999\n", encoding="utf-8")
     verdict, detail = workspace.assess()
     check("Q3: a stale lock (dead pid) does not block recovery",
           verdict == "resume", (verdict, detail))

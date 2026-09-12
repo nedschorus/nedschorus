@@ -558,19 +558,28 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if alive:
         return "refuse", f"{detail} — this tool recovers crashes, it never touches live seats"
 
-    # A supervisor lock held by a live process means a supervisor is starting
-    # or racing this assessment (PR #131 review, question 3): the launch this
+    # A supervisor lock held by a live supervisor means one is starting or
+    # racing this assessment (PR #131 review, question 3): the launch this
     # script would start exits at once against that lock, and finding-1's fix
-    # would then report a failure — refusing earlier is clearer.
+    # would then report a failure — refusing earlier is clearer. This is the
+    # check that catches a supervisor which has claimed its lock but not yet
+    # written a state file, which supervisor_liveness cannot see.
+    #
+    # Held by a live SUPERVISOR OF THIS SEAT, not merely a live process
+    # (nedschorus#242 change 1): this file outlives a reboot and process ids
+    # are reused across it, so a bare check refuses the very seat the login
+    # restart was asked to bring back.
     lock_path = handoff_directory / f"{name}-supervisor.lock"
     if lock_path.is_file():
         try:
             holder = int(lock_path.read_text(encoding="utf-8").strip())
-            os.kill(holder, 0)
-            return "refuse", (f"the supervisor lock at {lock_path} is held by live "
-                              f"process {holder} — a supervisor is starting or running")
         except (ValueError, OSError):
-            pass  # stale or unreadable lock: the launcher's own reclaim handles it
+            holder = None  # stale or unreadable lock: the launcher's own reclaim handles it
+        if holder is not None:
+            held, identity = supervisor.process_is_supervisor_for_agent(holder, name)
+            if held:
+                return "refuse", (f"the supervisor lock at {lock_path} is held by a live "
+                                  f"supervisor — {identity}")
 
     state_path = handoff_directory / f"{name}-supervisor-state.json"
     supervisor_alive, liveness_detail = supervisor.supervisor_liveness(state_path)
