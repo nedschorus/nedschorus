@@ -426,11 +426,33 @@ the project's synthetic-keystroke guard hook blocks that form outright
   whether the seat was running. So an unreadable file is dated by its last
   write instead, which works because only the supervisor writes it. A file cut
   off at the stop therefore counts as running then, and the seat is restarted.
-  One damaged long before the stop is judged like any old seat. A missing file
-  is a different case, and that part still waits on the user's word. The
-  supervisor writes its state file on its first launch and never deletes it, so
-  a seat without one never ran supervised, and the selector does not consider
-  it.
+  One damaged long before the stop is judged like any old seat.
+
+  **A missing file is a different case, settled 2026-09-11: the selector does
+  not consider such a seat.** The supervisor writes its state file on its first
+  launch and never deletes it, so a seat without one never ran supervised.
+
+  That was the standing proposal, and it was nearly replaced by a worse rule.
+  The intermediate proposal — offer the seat when it has transcripts, since
+  something evidently ran there — was put to the user and approved, then
+  withdrawn when it was measured rather than assumed. Every seat on either
+  machine with a seat directory and no state file: the Mac's `seat-t` and
+  `seatub`, both with no transcripts at all, and ned-box's `ghi-info`, with
+  five. `ghi-info` is the only seat the rule would ever have surfaced, and it
+  is precisely the wrong one — `scripts/ghi-info-ask.py` runs it as a one-shot
+  `claude -p` over ssh, never under `handoff-supervisor.py` and never in tmux.
+  It has a seat directory because it follows the agents-root convention and
+  transcripts because `claude -p` writes them. So **having transcripts does not
+  mean having been a running seat**, and the rule would have offered to restart
+  a tool that was never running. The user's word on the corrected measurement
+  (2026-09-11) is the ruling above.
+
+  The failure the rule was meant to cover — a supervised seat that lost its
+  state file — appears nowhere in the evidence. The divergence that does occur
+  is the reverse, and is already handled: five state files on the Mac
+  (`doctrine-queue-drain` with 73 transcripts, `git-infra` 57,
+  `mac-ubuntu-bridge` 22, `fixer1` and `repo-hygiene` 1 each) have no seat
+  directory at all, and are considered and reported `not-running-at-the-stop`.
 - **Amended 2026-09-11, in review: after the first restart, offer.** Once any
   seat has been written since boot, the seats that were running at the stop
   have stamped over their heartbeats from before boot, and the newest one left
