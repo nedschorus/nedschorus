@@ -602,9 +602,15 @@ def main(argv=None) -> int:
 
     alive, explanation = supervisor.supervisor_liveness(state_path)
     if alive:
+        # "if it is watching", not "it takes over", because alive can be
+        # yes-by-assumption: with ps unavailable and some process holding the
+        # lock, a supervisor is assumed rather than identified. Stopping is
+        # still right — the handoff is on disk and recoverable — but promising
+        # a takeover would strand this agent on a sentence instead of a fact
+        # (#328 follow-up round, nedschorus#242).
         print(
             f"handoff-write-and-check-supervisor: {explanation}. Stop working now and wait — "
-            "it takes over within seconds."
+            "if it is watching, it takes over within seconds."
         )
         return 0
 

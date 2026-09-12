@@ -82,6 +82,13 @@ DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
 HEARTBEAT_INTERVAL_SECONDS = 10.0
 HEARTBEAT_STALE_SECONDS = 60.0
 
+# How long `ps` gets to answer before read_process_command_line gives up and
+# reports that it could not be asked. Read from the module INSIDE that function
+# rather than bound as a default argument, so a case can lower it and exercise
+# the timeout against a real `ps` that really hangs — see the NOTE in
+# process_is_supervisor_for_agent for what default-argument binding costs a test.
+PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = 15
+
 
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
@@ -230,7 +237,8 @@ def read_process_command_line(process_id: int):
     """
     try:
         finished = subprocess.run(["ps", "-ww", "-p", str(process_id), "-o", "args="],
-                                  capture_output=True, text=True, check=False, timeout=15)
+                                  capture_output=True, text=True, check=False,
+                                  timeout=PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return None, False
     # A non-zero exit is ps's answer for "no such process", not a failure to
@@ -293,6 +301,17 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     says it on stderr, because a seat that will not start is the moment an
     operator most needs a true sentence about why.
 
+    **That is a trade, and it was first written down as though it were free.**
+    A caller acting on `True` here is acting on an assumption, and two of
+    supervisor_liveness's callers act on it by telling someone to wait:
+    handoff-write-and-check-supervisor stops an agent that has just written a
+    handoff, and resupervise-seat refuses to repair the seat. If no supervisor
+    is in fact there, that agent waits on nobody. The direction is still right —
+    a stranded agent whose handoff is written on disk is recoverable by hand,
+    two supervisors each killing a session and writing a successor are not — but
+    the cost is real, so the sentences those two print say "if it is watching"
+    rather than promising that it is (#328 follow-up round, nedschorus#242).
+
     NOTE for anyone reproducing this: `read_command_line` is a default argument,
     bound when this function was defined. Replacing the module's
     `read_process_command_line` afterwards does NOT reach it, and the real `ps`
@@ -312,10 +331,14 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
         if not process_exists_by_signal(process_id):
             return False, (f"process {process_id} is not running — ps could not be run, "
                            "but os.kill reports no such process")
+        # The consequence clause is deliberately caller-agnostic. It used to say
+        # "this seat will not start", which is claim_supervisor_lock's outcome
+        # and only its outcome — the other callers refuse a repair, stop an
+        # agent, or set an exit code. The remedy is the same for all of them.
         print(f"handoff-supervisor: could not identify process {process_id} — ps could "
               f"not be run. A process with that id exists, so it is treated as a live "
-              f"supervisor of {agent_name}; if none is in fact running, this seat will "
-              "not start until ps works or the lock is removed by hand.",
+              f"supervisor of {agent_name}; if none is in fact running, whatever asked "
+              "is acting on that assumption until ps works or the lock is removed by hand.",
               file=sys.stderr)
         return True, (f"cannot tell whether process {process_id} is the supervisor of "
                       f"{agent_name} — ps could not be run and a process with that id "
