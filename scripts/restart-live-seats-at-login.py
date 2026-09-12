@@ -167,8 +167,16 @@ def read_supervisor_heartbeat(state_path: Path, now: datetime):
     return stamp, ""
 
 
-def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
-    """The stop an earlier run in THIS boot recorded, or None.
+def read_earlier_run_for_this_boot(handoff_directory: Path, boot_at: datetime):
+    """(the stop an earlier run in THIS boot recorded, whether there was one).
+
+    Two answers rather than one, because they come apart: a run that could not
+    tell where the stop was records a line carrying no stop, so "no recorded
+    stop" and "no earlier run" are different states. The selection only needs
+    the first; the report needs both, or it says this boot's restart "left no
+    line in the run log" about a boot whose log holds exactly that line (found
+    in review of bbb66d4, where the verdicts were right and only the sentence
+    was false).
 
     The evidence of when the machine stopped is the heartbeats from before
     boot, and the seats a first run brings back stamp over their own within
@@ -179,17 +187,17 @@ def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
     time from `uptime -s` in local time, so the same boot can be written with
     a different offset. They are matched within BOOT_MATCH_TOLERANCE_SECONDS
     rather than exactly, because each machine recomputes the instant from a
-    clock that may have been corrected since. The first line recorded for
-    this boot wins — it saw
-    the least disturbed state. A line that cannot be read is skipped, and a
-    log that cannot be read at all is simply no recorded stop: the record
-    must never block the restart.
+    clock that may have been corrected since. The first line recorded for this
+    boot wins outright — it saw the least disturbed state, and it settles the
+    stop even when it carries none. A line that cannot be read is skipped and
+    is not evidence of anything, and a log that cannot be read at all is
+    simply no earlier run: the record must never block the restart.
     """
     try:
         lines = (handoff_directory / RUN_LOG_FILE_NAME).read_text(
             encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
-        return None
+        return None, False
     for line in lines:
         try:
             entry = json.loads(line)
@@ -197,19 +205,45 @@ def read_recorded_stop_for_boot(handoff_directory: Path, boot_at: datetime):
             continue
         if not isinstance(entry, dict):
             continue
-        recorded_boot, recorded_stop = entry.get("boot_at"), entry.get("stop_at")
-        if not isinstance(recorded_boot, str) or not isinstance(recorded_stop, str):
+        recorded_boot = entry.get("boot_at")
+        if not isinstance(recorded_boot, str):
             continue
         try:
             boot_of_line = datetime.fromisoformat(recorded_boot)
-            stop_of_line = datetime.fromisoformat(recorded_stop)
         except ValueError:
             continue
-        if boot_of_line.tzinfo is None or stop_of_line.tzinfo is None:
+        if boot_of_line.tzinfo is None:
             continue
-        if abs((boot_of_line - boot_at).total_seconds()) <= BOOT_MATCH_TOLERANCE_SECONDS:
-            return stop_of_line
-    return None
+        if abs((boot_of_line - boot_at).total_seconds()) > BOOT_MATCH_TOLERANCE_SECONDS:
+            continue
+        stop_of_line, readable = read_stop_of_run_log_line(entry)
+        if not readable:
+            continue
+        return stop_of_line, True
+    return None, False
+
+
+def read_stop_of_run_log_line(entry: dict):
+    """(the stop this line carries, whether the line could be read at all).
+
+    A null stop is deliberate — a run that could not tell where the stop was
+    records exactly that — so it reads fine and carries None. A stop that is
+    present but corrupt is a line nobody wrote on purpose: it reads as
+    unreadable, and the caller skips the whole line rather than taking its
+    silence for a deliberate one.
+    """
+    if "stop_at" not in entry:
+        return None, False
+    recorded_stop = entry["stop_at"]
+    if recorded_stop is None:
+        return None, True
+    if not isinstance(recorded_stop, str):
+        return None, False
+    try:
+        stop_of_line = datetime.fromisoformat(recorded_stop)
+    except ValueError:
+        return None, False
+    return (None, False) if stop_of_line.tzinfo is None else (stop_of_line, True)
 
 
 def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
@@ -231,7 +265,9 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
     write it: --dry-run promises to change nothing. A write that fails is
     reported and nothing more — a machine that has just booted needs its
     seats back more than it needs the record (the same rule as the recovery
-    tool's append_to_recovery_log).
+    tool's append_to_recovery_log). It returns whether it wrote, so the
+    report can say what actually happened rather than announcing a record
+    that is not there.
 
     A run that could not tell where the stop was — its derived anchor already
     stamped over by seats brought back earlier in this boot — records
@@ -257,6 +293,8 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
     except OSError as error:
         print(f"restart-live-seats-at-login: could not append to {log_path}: {error}",
               file=sys.stderr)
+        return False
+    return True
 
 
 def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
@@ -344,12 +382,12 @@ def main(argv=None) -> int:
 
     boot_at, now = machine_boot_time(), current_time()
     log_path = arguments.handoff_dir / RUN_LOG_FILE_NAME
-    recorded_stop = read_recorded_stop_for_boot(arguments.handoff_dir, boot_at)
+    recorded_stop, an_earlier_run_ran = read_earlier_run_for_this_boot(
+        arguments.handoff_dir, boot_at)
     anchor, decisions, anchor_is_the_stop = select_seats_live_at_the_stop(
         arguments.handoff_dir, boot_at, now, recorded_stop=recorded_stop)
-    if not arguments.dry_run:
-        append_selection_to_run_log(arguments.handoff_dir, boot_at, anchor,
-                                    anchor_is_the_stop, decisions, now)
+    recorded = None if arguments.dry_run else append_selection_to_run_log(
+        arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now)
 
     print("restart-live-seats-at-login: "
           + ("dry run, the selection only; nothing is launched and nothing is recorded"
@@ -367,14 +405,25 @@ def main(argv=None) -> int:
               f"{describe_gap(boot_at - anchor)} before boot")
     if recorded_stop is None and any(verdict == "stamped-since-boot"
                                      for _, verdict, _ in decisions):
-        print("  seats have been written since boot: this boot's restart has already "
-              "run and left no line in the run log, so nothing is restarted silently "
-              "and no stop is recorded for the runs after this one")
+        # Three states, not two: no line for this boot at all, or a line from
+        # a run that could not tell where the stop was either. Saying "left no
+        # line" about the second is false, and the log is what an investigator
+        # reads (found in review of bbb66d4).
+        print("  seats have been written since boot: this boot's restart has already run "
+              + (f"and an earlier run recorded no stop in {log_path}"
+                 if an_earlier_run_ran else "and left no line in the run log")
+              + ", so nothing is restarted silently and no stop is recorded for "
+                "the runs after this one")
     for seat, verdict, reason in decisions:
         print(f"  {seat}: {verdict} — {reason}")
-    if not arguments.dry_run:
+    if recorded is True:
         print(f"  recorded in {log_path}; the restart step (nedschorus#116, build "
               "step 4) is not built yet, so this run launched nothing")
+    elif recorded is False:
+        print(f"  could not append this run to {log_path} (the reason is on stderr), "
+              "so the runs after it in this boot will not read its stop back; the "
+              "restart step (nedschorus#116, build step 4) is not built yet, so this "
+              "run launched nothing")
     return 0
 
 
