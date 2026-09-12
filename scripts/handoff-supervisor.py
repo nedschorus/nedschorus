@@ -207,7 +207,21 @@ def agent_name_from_supervisor_file(path: Path) -> str:
 
 
 def read_process_command_line(process_id: int):
-    """The command line of a running process, or None if it is not running.
+    """(command_line, ps_answered) for a process id.
+
+    THREE outcomes, not two, and keeping them apart is the point:
+
+      (line, True)   ps ran and the process is there.
+      (None, True)   ps ran and said there is no such process.
+      (None, False)  ps could not be asked at all — it failed to start, or it
+                     timed out. We do not know anything about the process.
+
+    The `os.kill(pid, 0)` this replaced had only the first two: it answered, or
+    it raised something that told us which answer it was. `ps` is a program,
+    and a program can fail to run — a fork or exec failure under load, say,
+    which this machine reaches when several test sweeps run at once. Folding
+    "could not ask" into "not running" makes a confident false statement about
+    a live process, and the callers act on it (found in review of a82b49e).
 
     `ps -ww -p` works on both machines (measured 2026-09-11 on the Mac and on
     ned-box). The -ww matters: without it macOS truncates the output to the
@@ -218,11 +232,32 @@ def read_process_command_line(process_id: int):
         finished = subprocess.run(["ps", "-ww", "-p", str(process_id), "-o", "args="],
                                   capture_output=True, text=True, check=False, timeout=15)
     except (OSError, subprocess.SubprocessError):
-        return None
-    if finished.returncode != 0:
-        return None
+        return None, False
+    # A non-zero exit is ps's answer for "no such process", not a failure to
+    # answer, and ps has no distinct exit code for its own troubles — so a
+    # non-zero exit with nothing on stdout is taken at its word. Only never
+    # having run at all counts as not knowing.
     command_line = finished.stdout.strip()
-    return command_line or None
+    return (command_line or None), True
+
+
+def process_exists_by_signal(process_id: int) -> bool:
+    """Is there a process with this id? Answered by `os.kill(pid, 0)`.
+
+    This is the one question that cannot go unanswered: the call either returns,
+    or raises something that says which answer it is. ProcessLookupError means
+    gone; success means it is there; PermissionError means it is there and
+    belongs to someone else. It is used only where `ps` could not be asked —
+    `os.kill` cannot say WHAT a process is, which is the whole reason `ps`
+    replaced it for identity.
+    """
+    try:
+        os.kill(process_id, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
 
 
 def process_is_supervisor_for_agent(process_id, agent_name: str,
@@ -243,6 +278,27 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     command line: the process must be running THIS script, with THIS agent.
     The agent argument is compared whole rather than by substring, because
     `--agent prof` would otherwise match the supervisor of `prof-2`.
+
+    **When `ps` cannot be asked, existence is still answerable.** `os.kill`
+    cannot say what a process is, but it cannot fail to say whether one is
+    there — so a lock left by a crashed supervisor, holding an id that no longer
+    exists, is still recognised as stale without `ps`. Only when a process with
+    that id really does exist, and `ps` cannot say what it is, is the answer
+    yes-by-assumption: failing closed leaves a seat down until someone looks,
+    which is visible and recoverable, while failing open starts a second
+    supervisor on an agent that already has one — and those two would each kill
+    the session and each launch a successor, which is the thing the lock exists
+    to prevent and is neither visible nor self-correcting. The detail says so
+    rather than pretending to a certainty we do not have, and that case also
+    says it on stderr, because a seat that will not start is the moment an
+    operator most needs a true sentence about why.
+
+    NOTE for anyone reproducing this: `read_command_line` is a default argument,
+    bound when this function was defined. Replacing the module's
+    `read_process_command_line` afterwards does NOT reach it, and the real `ps`
+    runs instead — so a harness that patches the module attribute sees the
+    behaviour it was trying to replace and reports no defect. Substitute this
+    whole function, or pass `read_command_line=` explicitly.
     """
     try:
         process_id = int(process_id)
@@ -251,7 +307,20 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     if process_id <= 0:
         return False, f"process id {process_id} cannot name a process"
 
-    command_line = read_command_line(process_id)
+    command_line, ps_answered = read_command_line(process_id)
+    if not ps_answered:
+        if not process_exists_by_signal(process_id):
+            return False, (f"process {process_id} is not running — ps could not be run, "
+                           "but os.kill reports no such process")
+        print(f"handoff-supervisor: could not identify process {process_id} — ps could "
+              f"not be run. A process with that id exists, so it is treated as a live "
+              f"supervisor of {agent_name}; if none is in fact running, this seat will "
+              "not start until ps works or the lock is removed by hand.",
+              file=sys.stderr)
+        return True, (f"cannot tell whether process {process_id} is the supervisor of "
+                      f"{agent_name} — ps could not be run and a process with that id "
+                      "exists, so a supervisor is assumed present rather than risk "
+                      "starting a second one")
     if command_line is None:
         return False, f"process {process_id} is not running"
 

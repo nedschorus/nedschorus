@@ -383,6 +383,87 @@ def run_process_identity_cases(workspace: Path):
         unrelated.kill()
         unrelated.wait()
 
+    # ps is a program and a program can fail to run — a fork or exec failure
+    # under load, which this machine reaches when several sweeps run at once.
+    # That is a third answer, and filing it under "not running" makes a
+    # confident false statement about a live process (found in review of
+    # a82b49e). The reader keeps the three apart.
+    ps_could_not_run = lambda process_id: (None, False)
+    ps_says_no_such_process = lambda process_id: (None, True)
+
+    # The real reader's own three answers, with nothing patched inside it: a
+    # live process, a dead one, and ps not running at all. The last is driven
+    # by making ps unfindable, which is a genuine OSError out of
+    # subprocess.run — the same path a fork or exec failure under load takes.
+    # Injected readers cannot cover this, so without it the defect found in
+    # review of a82b49e could be reintroduced in the reader and no case would
+    # notice.
+    line, answered = supervisor.read_process_command_line(os.getpid())
+    check("the real reader reads this process's own command line",
+          answered and line is not None and "python" in line.lower(), (answered, line))
+    line, answered = supervisor.read_process_command_line(99999999)
+    check("the real reader says ps ANSWERED for a process that is not there",
+          answered and line is None, (answered, line))
+    real_search_path = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = ""
+        line, answered = supervisor.read_process_command_line(os.getpid())
+        check("the real reader says ps did NOT answer when ps cannot be run",
+              not answered and line is None, (answered, line))
+    finally:
+        os.environ["PATH"] = real_search_path
+    check("and the reader works again once ps is findable",
+          supervisor.read_process_command_line(os.getpid())[1])
+
+    alive, detail = supervisor.process_is_supervisor_for_agent(
+        99999999, "x", read_command_line=ps_says_no_such_process)
+    check("ps answering 'no such process' means not a supervisor",
+          not alive and "not running" in detail, detail)
+
+    # os.kill answers EXISTENCE and cannot fail to: ProcessLookupError means
+    # gone. So a lock left by a crashed supervisor, holding an id that no longer
+    # exists, is still recognised as stale with no ps at all. Without this the
+    # fail-closed rule wedged the ordinary post-crash state — the very state the
+    # lock's reclaim exists to serve.
+    check("os.kill says a process that is not there is not there",
+          not supervisor.process_exists_by_signal(99999999))
+    check("and says this process is",
+          supervisor.process_exists_by_signal(os.getpid()))
+    # A process that exists but cannot be signalled still exists. Process 1 is
+    # root-owned on both machines, so os.kill raises PermissionError for it
+    # while the process is plainly there; reading that as "gone" would be the
+    # unsafe direction. Signal 0 sends nothing, so this probe is inert.
+    check("a process that exists but cannot be signalled still counts as existing",
+          supervisor.process_exists_by_signal(1))
+
+    alive, detail = supervisor.process_is_supervisor_for_agent(
+        99999999, "x", read_command_line=ps_could_not_run)
+    check("with no ps, a dead id is still answered: not a supervisor",
+          not alive and "os.kill" in detail, detail)
+
+    # Only a process that really exists, and cannot be identified, is assumed
+    # to be a supervisor.
+    unidentifiable = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    complaints = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(complaints):
+            alive, detail = supervisor.process_is_supervisor_for_agent(
+                unidentifiable.pid, "x", read_command_line=ps_could_not_run)
+        check("a live but unidentifiable process IS assumed to be the supervisor",
+              alive, detail)
+        check("and it says it cannot tell, rather than claiming the process is gone",
+              "cannot tell" in detail and "not running" not in detail, detail)
+        check("and the wedge is not mute: it says so on stderr, naming ps",
+              "could not identify" in complaints.getvalue()
+              and "ps could not be run" in complaints.getvalue(),
+              complaints.getvalue())
+        check("and names the way out, since a seat that will not start needs one",
+              "lock is removed" in complaints.getvalue(), complaints.getvalue())
+    finally:
+        unidentifiable.kill()
+        unidentifiable.wait()
+
     with a_process_that_looks_like_a_supervisor(workspace, "identity-seat") as running:
         alive, detail = supervisor.process_is_supervisor_for_agent(
             running.pid, "identity-seat")
@@ -458,6 +539,76 @@ def run_lock_cases(workspace: Path):
     # The same lock, the same id, once that supervisor is gone.
     check("and is reclaimed once that supervisor has exited",
           supervisor.claim_supervisor_lock(lock_path))
+
+    # Both callers of the identity check must fail CLOSED when ps cannot be
+    # asked. For the lock that means refusing to claim: a seat that stays down
+    # is visible and recoverable, while two supervisors on one agent each kill
+    # the session and each launch a successor. This is the caller with nothing
+    # behind it — assess_seat still has the tmux check ahead of it, this has
+    # none (found in review of a82b49e).
+    with a_process_that_looks_like_a_supervisor(workspace, "locktest") as running:
+        lock_path.write_text(f"{running.pid}\n", encoding="utf-8")
+        real_identity_check = supervisor.process_is_supervisor_for_agent
+        try:
+            supervisor.process_is_supervisor_for_agent = (
+                lambda process_id, agent_name, **_: real_identity_check(
+                    process_id, agent_name,
+                    read_command_line=lambda _p: (None, False)))
+            check("a lock is NOT reclaimed when ps could not say who holds it",
+                  not supervisor.claim_supervisor_lock(lock_path))
+            check("and the live supervisor still holds it",
+                  lock_path.read_text().strip() == str(running.pid),
+                  lock_path.read_text())
+        finally:
+            supervisor.process_is_supervisor_for_agent = real_identity_check
+
+    # THE WEDGE, which fail-closed-everywhere would have shipped. A crashed seat
+    # leaves a stale lock holding a dead id, and claim_supervisor_lock runs when
+    # a supervisor STARTS. Refusing to reclaim that lock whenever ps is
+    # unavailable means no supervisor can start for the seat at all — breaking
+    # exactly the state the reclaim exists to serve. os.kill answers it.
+    lock_path.write_text("99999999\n", encoding="utf-8")
+    real_identity_check = supervisor.process_is_supervisor_for_agent
+    try:
+        supervisor.process_is_supervisor_for_agent = (
+            lambda process_id, agent_name, **_: real_identity_check(
+                process_id, agent_name, read_command_line=lambda _p: (None, False)))
+        check("a crashed seat's stale lock is still reclaimed when ps cannot be run",
+              supervisor.claim_supervisor_lock(lock_path))
+    finally:
+        supervisor.process_is_supervisor_for_agent = real_identity_check
+
+    # The same unknown answer through supervisor_liveness: a supervisor that
+    # cannot be ruled out is reported as watching, so nothing recovers over it.
+    unknown_state_path = workspace / "unknown-supervisor-state.json"
+    unknown_lock_path = workspace / "unknown-supervisor.lock"
+    supervisor.stamp_heartbeat(unknown_state_path, {"session_id": "s"})
+    # A process that really exists, so existence is not what is unknown here —
+    # only its identity is. A dead id would now be answered outright.
+    unidentifiable = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    unknown_lock_path.write_text(f"{unidentifiable.pid}\n", encoding="utf-8")
+    real_identity_check = supervisor.process_is_supervisor_for_agent
+    try:
+        supervisor.process_is_supervisor_for_agent = (
+            lambda process_id, agent_name, **_: real_identity_check(
+                process_id, agent_name, read_command_line=lambda _p: (None, False)))
+        with contextlib.redirect_stderr(io.StringIO()):
+            alive, explanation = supervisor.supervisor_liveness(unknown_state_path)
+        check("a supervisor that cannot be ruled out reads as watching",
+              alive and "cannot tell" in explanation, explanation)
+
+        # And the dead-id case through the same path: answered, not assumed.
+        unknown_lock_path.write_text("99999999\n", encoding="utf-8")
+        alive, explanation = supervisor.supervisor_liveness(unknown_state_path)
+        check("a dead id reads as no supervisor even when ps cannot be run",
+              not alive and "os.kill" in explanation, explanation)
+    finally:
+        supervisor.process_is_supervisor_for_agent = real_identity_check
+        unidentifiable.kill()
+        unidentifiable.wait()
+    unknown_state_path.unlink(missing_ok=True)
+    unknown_lock_path.unlink(missing_ok=True)
 
     # The agent name comes from the lock's own filename, so a lock that does
     # not follow the convention still reclaims rather than wedging a seat.
