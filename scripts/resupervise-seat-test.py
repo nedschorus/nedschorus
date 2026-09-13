@@ -137,6 +137,12 @@ def run_live_supervisor_case(workspace: Path):
               result.returncode == 1, result.stdout + result.stderr)
         check("the live-supervisor refusal says there is nothing to recover",
               "Nothing to recover" in result.stderr, result.stderr)
+        # Conditional for the same reason as handoff-write-and-check-supervisor:
+        # alive can be yes-by-assumption when ps cannot be asked, and promising
+        # a reincarnation nothing keeps is how a seat stays down while its
+        # operator believes it is being watched (#328 follow-up round).
+        check("and states the reincarnation conditionally, since alive can be an assumption",
+              "if it is watching, it reincarnates" in result.stderr, result.stderr)
     finally:
         watcher.kill()
         watcher.wait()

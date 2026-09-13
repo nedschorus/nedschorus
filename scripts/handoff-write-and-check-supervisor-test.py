@@ -268,6 +268,14 @@ def run_liveness_report_cases(workspace: Path):
         check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
         check("with a live supervisor, the agent is told to stop and wait",
               "Stop working now and wait" in result.stdout, result.stdout)
+        # Conditional, not promised. alive can be yes-by-assumption: with ps
+        # unavailable and some process holding the lock, a supervisor is
+        # assumed rather than identified, and this agent has just written a
+        # handoff. "It takes over within seconds" would strand it on a sentence
+        # instead of a fact (#328 follow-up round, nedschorus#242).
+        check("and the takeover is stated conditionally, since alive can be an assumption",
+              "if it is watching, it takes over within seconds" in result.stdout,
+              result.stdout)
     finally:
         watcher.kill()
         watcher.wait()

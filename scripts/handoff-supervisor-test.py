@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -415,6 +416,42 @@ def run_process_identity_cases(workspace: Path):
     check("and the reader works again once ps is findable",
           supervisor.read_process_command_line(os.getpid())[1])
 
+    # The OTHER way ps fails to answer: it runs and never finishes. Driven with
+    # a real `ps` early on PATH that really hangs, a real subprocess.run
+    # timeout, and a real TimeoutExpired — nothing patched inside the reader,
+    # for the same reason as the block above.
+    #
+    # This case exists because mutation 18 of the #328 self-check SURVIVED:
+    # dropping subprocess.SubprocessError from the reader's except tuple leaves
+    # TimeoutExpired escaping the reader, which kills a supervisor at startup
+    # instead of reporting "could not ask" and falling back to os.kill. Nothing
+    # exercised the timeout, so nothing noticed. The 15 is now a module
+    # constant precisely so this case can lower it; a default argument could not
+    # be lowered from here, which is the trap the NOTE in
+    # process_is_supervisor_for_agent describes.
+    hanging_ps_directory = workspace / "hanging-ps"
+    hanging_ps_directory.mkdir()
+    hanging_ps = hanging_ps_directory / "ps"
+    hanging_ps.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    hanging_ps.chmod(0o755)
+    real_read_timeout = supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS
+    try:
+        os.environ["PATH"] = f"{hanging_ps_directory}:{real_search_path}"
+        supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = 0.25
+        started_waiting = time.monotonic()
+        line, answered = supervisor.read_process_command_line(os.getpid())
+        waited = time.monotonic() - started_waiting
+    finally:
+        os.environ["PATH"] = real_search_path
+        supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = real_read_timeout
+    check("a ps that hangs is reported as not having answered, not as 'no such process'",
+          not answered and line is None, (answered, line))
+    check("and the reader gives up at the timeout instead of waiting out ps",
+          waited < 5, waited)
+    check("and the timeout is a module constant the suite can lower, not a literal",
+          supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS == 15,
+          supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
+
     alive, detail = supervisor.process_is_supervisor_for_agent(
         99999999, "x", read_command_line=ps_says_no_such_process)
     check("ps answering 'no such process' means not a supervisor",
@@ -433,6 +470,15 @@ def run_process_identity_cases(workspace: Path):
     # root-owned on both machines, so os.kill raises PermissionError for it
     # while the process is plainly there; reading that as "gone" would be the
     # unsafe direction. Signal 0 sends nothing, so this probe is inert.
+    #
+    # LIMIT, stated rather than discovered: this case is VACUOUS under root.
+    # As root os.kill(1, 0) simply succeeds, so the assertion passes through
+    # the success branch and the PermissionError branch it was written for is
+    # never reached. It is honest for this fleet, which runs as nedlern on
+    # ned-box and el on the Mac, and it is not a check anyone should trust
+    # after a change to who the seats run as. main-gatekeeper-test.py detects
+    # the same condition and skips; here the case is kept unconditional because
+    # passing vacuously is harmless and disappearing silently is not.
     check("a process that exists but cannot be signalled still counts as existing",
           supervisor.process_exists_by_signal(1))
 
@@ -458,8 +504,16 @@ def run_process_identity_cases(workspace: Path):
               "could not identify" in complaints.getvalue()
               and "ps could not be run" in complaints.getvalue(),
               complaints.getvalue())
-        check("and names the way out, since a seat that will not start needs one",
+        check("and names the way out, since whoever asked is now stuck on an assumption",
               "lock is removed" in complaints.getvalue(), complaints.getvalue())
+        # The remedy is the same for every caller; the CONSEQUENCE is not. This
+        # sentence once said "this seat will not start", which is true of
+        # claim_supervisor_lock and of nothing else that asks — the other
+        # callers refuse a repair, stop an agent, or set an exit code
+        # (#328 follow-up round, nedschorus#242).
+        check("and does not claim a consequence only one of the callers has",
+              "this seat will not start" not in complaints.getvalue(),
+              complaints.getvalue())
     finally:
         unidentifiable.kill()
         unidentifiable.wait()
