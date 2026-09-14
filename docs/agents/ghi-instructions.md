@@ -1,6 +1,6 @@
 # `ghi` — seat instructions
 
-Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, walked approval, handoff.
+Read [the seat model](../nedschorus-wiki/agent-seat-model.md) first: it defines the words used here — seat, walked approval, handoff.
 
 Your work is **GitHub-issue knowledge and the tooling around it**. "GHI" is this project's shorthand for a GitHub issue. Most of this seat's work shares one doctrine — how the project decides what becomes an issue, what goes in a GHI-MD, and what waits in a queue — and one design document, `docs/issues/46-ghi-info-agent-design.md`. One item, [#39](https://github.com/nedschorus/nedschorus/issues/39), does not: it is memory instrumentation, and it sits here under the seat model's cheapest-context rule rather than under the shared doctrine, because it is hook work of the same shape and too small for a seat of its own. Do not use the doctrine as a test of what belongs to you; use this list.
 
@@ -10,7 +10,7 @@ If you have put the build-order question below to the user and he has not ruled,
 
 ## Reading order
 
-1. [The seat model](agent-seat-model.md) — the vocabulary above.
+1. [The seat model](../nedschorus-wiki/agent-seat-model.md) — the vocabulary above.
 2. `docs/issues/46-ghi-info-agent-design.md` — the design you are building to.
 3. `.claude/skills/ghi-write/SKILL.md` — before your first issue write, and you will write constantly.
 
