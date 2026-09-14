@@ -425,9 +425,48 @@ the project's synthetic-keystroke guard hook blocks that form outright
    opened an iTerm window (id 1743) and launched the seat fresh, the
    supervisor came up in 17 s, the run log recorded `launched: ["seat-t"]`,
    the job exited 0. No Automation permission prompt appeared: the
-   AppleScript ran under launchd without one. The box sibling (a systemd
-   unit running the same program without the window flag) is a separate
-   change.
+   AppleScript ran under launchd without one.
+
+   *Built 2026-09-14, the box half:* `install-restart-live-seats-at-login-systemd-unit.py`
+   writes a systemd **user** unit (`restart-live-seats-at-login.service`,
+   `Type=oneshot`, `WantedBy=default.target`, PATH set, output appended
+   beside the run log) and enables it; lingering is on for the seat user,
+   so the user manager starts at boot and runs it without a login. A user
+   unit rather than a system unit beside `fleet-tmux.service`: no root, and
+   the seats belong to the seat user. The line that matters is
+   `KillMode=process`: a oneshot service kills whatever is left in its
+   control group when its main process exits, and the seats the program
+   launches are detached tmux servers left behind by it. Measured
+   2026-09-14 with a probe unit on the box: with `KillMode=process` the
+   tmux server was alive after the unit went inactive; without it, no
+   server was running. `RemainAfterExit` was rejected because a later stop
+   of the unit would then kill every seat it launched. Measured the same
+   day with a throwaway unit started by hand: the program decided
+   `restart` for a canary seat, the recovery tool launched it fresh on its
+   own tmux server, the supervisor came up, the run log recorded
+   `launched: ["systemd-unit-canary"]`, the unit went inactive with
+   status 0 and the journal noted the tmux server "remains running after
+   unit stopped". The product unit was then installed and enabled, with the
+   canary left live in the real handoff directory, so the box's one real
+   reboot (allowed 2026-09-11) measures the unit firing at boot and a seat
+   live at the stop coming back.
+
+   *The box reboot, 2026-09-14 23:33:22Z, on the user's word.* Boot at
+   16:34:12 PDT. The user manager reached `basic.target` and started the
+   unit at 16:34:20, the same second the system reached `network.target`
+   and five seconds before `network-online.target` (16:34:25) — a user
+   unit cannot order itself after the system manager's network targets, so
+   the program runs before the network is declared online. It decided
+   `restart` for the canary (heartbeat 56 s before boot), the recovery tool
+   launched it on its own tmux server, the supervisor's first heartbeat
+   landed at 16:34:22, the unit finished with status 0 at 16:34:27 and the
+   journal logged the tmux server "remains running after unit stopped".
+   The run log line carries `"launched": ["systemd-unit-canary"]`; the seat
+   was alive and stamping afterwards. Whether the session's first API call
+   waited on the network is not measured; the seat came up. `fleet-anchor`
+   came back through `fleet-tmux.service` at 16:34:25 as before. The
+   canary and its records were then removed. Left unmeasured on either
+   machine: only the Mac's real login after a real reboot.
 5. **Notify-and-wait and the resume prompt** stay as designed above: built only
    if the manual path proves insufficient. Open, as noted there: no trigger for
    that judgment is defined.
