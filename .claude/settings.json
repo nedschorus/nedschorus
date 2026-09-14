@@ -7,7 +7,6 @@
     "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}\"/scripts/session-statusline-command.py"
   },
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(gh pr merge *)"
     ]
