@@ -65,12 +65,17 @@ def launch_agent_plist(label: str, checkout: Path, handoff_directory,
     means the program's default (~/.claude/handoffs); a directory is passed
     to the program and holds the output file, so a test install touches
     nothing of the real one."""
+    # Absolute, whatever was typed: launchd starts the job in /, so a relative
+    # --checkout or --handoff-dir written as typed names nothing at login and
+    # the job fails silently — the very failure the is_file guard below exists
+    # to catch (PR #354 review, finding 1).
+    checkout = Path(os.path.abspath(checkout))
     program = checkout / "scripts" / PROGRAM_FILE_NAME
     arguments = [PYTHON_PATH, str(program)]
     output_directory = home / ".claude" / "handoffs"
     if handoff_directory is not None:
-        arguments += ["--handoff-dir", str(handoff_directory)]
-        output_directory = Path(handoff_directory)
+        output_directory = Path(os.path.abspath(handoff_directory))
+        arguments += ["--handoff-dir", str(output_directory)]
     output_path = str(output_directory / LAUNCHD_OUTPUT_FILE_NAME)
     return {
         "Label": label,
@@ -89,7 +94,7 @@ def launchd_domain() -> str:
 
 def install(label: str, checkout: Path, handoff_directory, launch_agents_directory: Path,
             bootstrap_now: bool, run=subprocess.run) -> int:
-    program = checkout / "scripts" / PROGRAM_FILE_NAME
+    program = Path(os.path.abspath(checkout)) / "scripts" / PROGRAM_FILE_NAME
     if not program.is_file():
         print(f"install-restart-live-seats-at-login-launch-agent: no {PROGRAM_FILE_NAME} "
               f"under {checkout}/scripts — pass --checkout with the durable checkout",

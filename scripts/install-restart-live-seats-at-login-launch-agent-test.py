@@ -102,6 +102,34 @@ with tempfile.TemporaryDirectory() as temporary:
           == str(throwaway / "restart-live-seats-at-login-launchd-output.txt"),
           plist)
 
+    # A relative --checkout or --handoff-dir is written absolute: launchd
+    # starts the job in /, where a relative path names nothing.
+    working_directory_before = os.getcwd()
+    os.chdir(root)
+    try:
+        plist = installer.launch_agent_plist("com.nedschorus.test", Path("checkout"),
+                                             Path("throwaway-handoffs"), home=home)
+        exit_code, printed, errors = run_main(
+            ["--checkout", "checkout", "--label", "com.nedschorus.relative"],
+            root / "LaunchAgents-relative")
+    finally:
+        os.chdir(working_directory_before)
+    # Compared resolved: on macOS the temporary root is under /var, an alias
+    # of /private/var, and the working directory reads back as the latter.
+    check("a relative checkout and handoff directory are written absolute, because launchd "
+          "starts the job in /",
+          plist["ProgramArguments"][1]
+          == str(checkout.resolve() / "scripts" / "restart-live-seats-at-login.py")
+          and plist["ProgramArguments"][3] == str(throwaway.resolve())
+          and plist["StandardOutPath"].startswith(str(throwaway.resolve())),
+          plist)
+    check("and an install typed with a relative checkout finds the program and writes it absolute",
+          exit_code == 0
+          and plistlib.loads((root / "LaunchAgents-relative" / "com.nedschorus.relative.plist")
+                             .read_bytes())["ProgramArguments"][1]
+          == str(checkout.resolve() / "scripts" / "restart-live-seats-at-login.py"),
+          (exit_code, printed, errors))
+
     # --print writes nothing.
     agents_directory = root / "LaunchAgents-print"
     exit_code, printed, errors = run_main(
