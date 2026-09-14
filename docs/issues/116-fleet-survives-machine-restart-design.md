@@ -449,7 +449,24 @@ the project's synthetic-keystroke guard hook blocks that form outright
    unit stopped". The product unit was then installed and enabled, with the
    canary left live in the real handoff directory, so the box's one real
    reboot (allowed 2026-09-11) measures the unit firing at boot and a seat
-   live at the stop coming back; its record goes here.
+   live at the stop coming back.
+
+   *The box reboot, 2026-09-14 23:33:22Z, on the user's word.* Boot at
+   16:34:12 PDT. The user manager reached `basic.target` and started the
+   unit at 16:34:20, the same second the system reached `network.target`
+   and five seconds before `network-online.target` (16:34:25) — a user
+   unit cannot order itself after the system manager's network targets, so
+   the program runs before the network is declared online. It decided
+   `restart` for the canary (heartbeat 56 s before boot), the recovery tool
+   launched it on its own tmux server, the supervisor's first heartbeat
+   landed at 16:34:22, the unit finished with status 0 at 16:34:27 and the
+   journal logged the tmux server "remains running after unit stopped".
+   The run log line carries `"launched": ["systemd-unit-canary"]`; the seat
+   was alive and stamping afterwards. Whether the session's first API call
+   waited on the network is not measured; the seat came up. `fleet-anchor`
+   came back through `fleet-tmux.service` at 16:34:25 as before. The
+   canary and its records were then removed. Left unmeasured on either
+   machine: only the Mac's real login after a real reboot.
 5. **Notify-and-wait and the resume prompt** stay as designed above: built only
    if the manual path proves insufficient. Open, as noted there: no trigger for
    that judgment is defined.
