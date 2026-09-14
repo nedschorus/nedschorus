@@ -425,9 +425,31 @@ the project's synthetic-keystroke guard hook blocks that form outright
    opened an iTerm window (id 1743) and launched the seat fresh, the
    supervisor came up in 17 s, the run log recorded `launched: ["seat-t"]`,
    the job exited 0. No Automation permission prompt appeared: the
-   AppleScript ran under launchd without one. The box sibling (a systemd
-   unit running the same program without the window flag) is a separate
-   change.
+   AppleScript ran under launchd without one.
+
+   *Built 2026-09-14, the box half:* `install-restart-live-seats-at-login-systemd-unit.py`
+   writes a systemd **user** unit (`restart-live-seats-at-login.service`,
+   `Type=oneshot`, `WantedBy=default.target`, PATH set, output appended
+   beside the run log) and enables it; lingering is on for the seat user,
+   so the user manager starts at boot and runs it without a login. A user
+   unit rather than a system unit beside `fleet-tmux.service`: no root, and
+   the seats belong to the seat user. The line that matters is
+   `KillMode=process`: a oneshot service kills whatever is left in its
+   control group when its main process exits, and the seats the program
+   launches are detached tmux servers left behind by it. Measured
+   2026-09-14 with a probe unit on the box: with `KillMode=process` the
+   tmux server was alive after the unit went inactive; without it, no
+   server was running. `RemainAfterExit` was rejected because a later stop
+   of the unit would then kill every seat it launched. Measured the same
+   day with a throwaway unit started by hand: the program decided
+   `restart` for a canary seat, the recovery tool launched it fresh on its
+   own tmux server, the supervisor came up, the run log recorded
+   `launched: ["systemd-unit-canary"]`, the unit went inactive with
+   status 0 and the journal noted the tmux server "remains running after
+   unit stopped". The product unit was then installed and enabled, with the
+   canary left live in the real handoff directory, so the box's one real
+   reboot (allowed 2026-09-11) measures the unit firing at boot and a seat
+   live at the stop coming back; its record goes here.
 5. **Notify-and-wait and the resume prompt** stay as designed above: built only
    if the manual path proves insufficient. Open, as noted there: no trigger for
    that judgment is defined.
