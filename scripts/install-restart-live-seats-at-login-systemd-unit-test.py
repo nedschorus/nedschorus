@@ -2,9 +2,10 @@
 """Tests for install-restart-live-seats-at-login-systemd-unit.py
 (nedschorus#116, build step 4, the box half).
 
-Every case writes under a throwaway unit directory and runs systemctl
-through a stub that records what it was asked, so no case touches
-~/.config/systemd/user or a running user manager. The suite runs on either
+Every case writes under a throwaway unit directory, with the home passed
+in, and runs systemctl through a stub that records what it was asked, so no
+case touches ~/.config/systemd/user, the real ~/.claude/handoffs, or a
+running user manager. The suite runs on either
 machine: the installer's platform is passed in.
 
 Run: python3 scripts/install-restart-live-seats-at-login-systemd-unit-test.py
@@ -59,13 +60,14 @@ class SystemctlStub:
         return [command[2:] for command in self.commands]
 
 
-def run_main(arguments, unit_directory, platform="linux", systemctl=None):
+def run_main(arguments, unit_directory, platform="linux", systemctl=None, home=None):
     printed, errors = io.StringIO(), io.StringIO()
     with redirect_stdout(printed), redirect_stderr(errors):
         try:
             exit_code = installer.main(arguments, platform=platform,
                                        unit_directory=unit_directory,
-                                       run=systemctl or SystemctlStub())
+                                       run=systemctl or SystemctlStub(),
+                                       home=home or TEST_HOME)
         except SystemExit as stop_request:
             exit_code = stop_request.code
     return exit_code, printed.getvalue(), errors.getvalue()
@@ -80,7 +82,7 @@ with tempfile.TemporaryDirectory() as temporary:
     checkout = root / "checkout"
     (checkout / "scripts").mkdir(parents=True)
     (checkout / "scripts" / "restart-live-seats-at-login.py").write_text("# program\n")
-    home = root / "home"
+    home = TEST_HOME = root / "home"
     # abspath leaves an absolute path as typed and resolves a relative one
     # against the working directory, which on macOS reads back under
     # /private/var while the temporary root is spelled under /var.
@@ -155,6 +157,11 @@ with tempfile.TemporaryDirectory() as temporary:
           systemctl.verbs == [["daemon-reload"], ["enable", "restart-live-seats-at-login.service"]]
           and "next boot" in printed and "nothing runs now" in printed,
           (systemctl.verbs, printed))
+    check("a product install creates the output directory under the home passed in, "
+          "not the real one (the #360 review's hygiene note)",
+          (home / ".claude" / "handoffs").is_dir()
+          and f"append:{home / '.claude' / 'handoffs'}/" in written.read_text(),
+          written.read_text())
     check("every systemctl call is to the user manager",
           all(command[:2] == ["systemctl", "--user"] for command in systemctl.commands),
           systemctl.commands)
@@ -239,9 +246,36 @@ with tempfile.TemporaryDirectory() as temporary:
     systemctl = SystemctlStub(failing=["disable"])
     exit_code, printed, errors = run_main(["--unit-name", "t", "--remove"], unit_directory,
                                           systemctl=systemctl)
-    check("removing a unit that is not there still reloads and says there was none",
+    check("removing a unit that is not there still reloads, says there was none, and "
+          "does not claim to have disabled it",
           exit_code == 0 and "no " in printed and "to remove" in printed
-          and systemctl.verbs[-1] == ["daemon-reload"], (printed, systemctl.verbs))
+          and "disabled" not in printed and errors == ""
+          and systemctl.verbs[-1] == ["daemon-reload"], (printed, errors, systemctl.verbs))
+
+    # --remove with the manager unreachable (PR #358 review, item 3): the
+    # old version printed "disabled ... and removed ..." and exited 0. Now
+    # each failed call is reported and the run exits 1; the file is still
+    # deleted, since that part did happen.
+    unit_directory = root / "user-remove-unreachable"
+    run_main(["--checkout", str(checkout), "--unit-name", "t"], unit_directory)
+    systemctl = SystemctlStub(failing=["disable", "daemon-reload"])
+    exit_code, printed, errors = run_main(["--unit-name", "t", "--remove"], unit_directory,
+                                          systemctl=systemctl)
+    check("--remove with both calls failing reports both, claims no disable, and exits 1",
+          exit_code == 1 and "disabled" not in printed and "removed" in printed
+          and "disable failed" in errors and "daemon-reload failed" in errors
+          and "user manager reachable" in errors
+          and not (unit_directory / "t.service").exists(),
+          (exit_code, printed, errors))
+    unit_directory = root / "user-remove-reload-fails"
+    run_main(["--checkout", str(checkout), "--unit-name", "t"], unit_directory)
+    systemctl = SystemctlStub(failing=["daemon-reload"])
+    exit_code, printed, errors = run_main(["--unit-name", "t", "--remove"], unit_directory,
+                                          systemctl=systemctl)
+    check("a failed reload alone is reported and exits 1, after a disable that worked",
+          exit_code == 1 and "disabled t and removed" in printed
+          and "daemon-reload failed" in errors and "disable failed" not in errors,
+          (exit_code, printed, errors))
 
     # A checkout without the program is refused.
     unit_directory = root / "user-bad-checkout"
