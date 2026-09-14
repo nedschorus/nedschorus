@@ -315,9 +315,9 @@ Outer walk, 17 items:
     (b) Artifact-lifecycle ruling APPROVED and executed (commit 4b20892):
     every artifact final-at-home or in a destination-rooted queue with one
     four-outcome drain (promote / edit / demote / drop). Queues created at
-    docs/wiki/queue/ + docs/issues/queue/ (destination-rooted under the
+    docs/nedschorus-wiki/queue/ + docs/issues/queue/ (destination-rooted under the
     plan's ruled homes — the verbatim proposal's bare `wiki/queue/` spelling
-    reconciled to `docs/wiki/queue/`); skill-authoring checklist git mv'd
+    reconciled to `docs/nedschorus-wiki/queue/`); skill-authoring checklist git mv'd
     there and docs/reference/ removed; step-1 pointer + candidate GHIs
     #15–#23 re-pointed; `boss-review` renamed `draft` doctrine-wide and the
     label created on GitHub; three-state rule superseded by the

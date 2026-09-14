@@ -966,11 +966,11 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     (project / "nc-queue" / "2026-07-28-older-note.md").write_text("x", encoding="utf-8")
     (project / "nc-queue" / "2026-08-01-newer-note.md").write_text("x", encoding="utf-8")
     (project / "nc-queue" / "README.md").write_text("x", encoding="utf-8")
-    (project / "docs" / "wiki" / "queue").mkdir(parents=True)
+    (project / "docs" / "nedschorus-wiki" / "queue").mkdir(parents=True)
     line = supervisor.queue_status_line(project)
     check("queue status counts a loaded queue", "nc-queue: 2" in line, line)
     check("queue status names the oldest item", "2026-07-28-older-note.md" in line, line)
-    check("queue status reports an empty queue", "docs/wiki/queue: empty" in line, line)
+    check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
 
     # --- Task pre-seed (file mechanics, no session) -----------------------
     # CLAUDE_CODE_TASK_LIST_ID is removed for the un-pinned cases and set

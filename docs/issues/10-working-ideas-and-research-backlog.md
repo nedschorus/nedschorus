@@ -73,12 +73,12 @@ rule); this is the summary, updated 2026-07-26 to the ruled state:
 
 - A request for a durable Markdown document creates an MD-GitHub-issue pair.
 - Working documents live at `docs/issues/<number>-<slug>.md`.
-- Permanent truth graduates to `docs/wiki/`.
+- Permanent truth graduates to `docs/nedschorus-wiki/`.
 - Session continuity lives under `handoff/`.
 - Cross-project founding material lives under `docs/cross-project/`.
 - Every artifact is either FINAL at its home or sitting in a NAMED QUEUE that
   states its destination, and every queue drains by one four-outcome process
-  (promote / edit / demote / drop): `docs/wiki/queue/` for wiki-bound
+  (promote / edit / demote / drop): `docs/nedschorus-wiki/queue/` for wiki-bound
   doctrine, `docs/issues/queue/` for pair-bound documents, `nc-queue/` for
   user-requested notes awaiting their first walk, `legacy-feature-queue/` for
   consider-features outliving their slice
@@ -496,7 +496,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
 - Move durable, current design material into the wiki at the proper lifecycle
   transition.
   — processed 2026-07-27 → landed: the artifact-lifecycle rule's promote
-  path (wiki-bound doctrine queues in docs/wiki/queue/; the drain's
+  path (wiki-bound doctrine queues in docs/nedschorus-wiki/queue/; the drain's
   git-mv promote IS the transition), with entry gated by the user's
   review ruling and the step-3 wiki walk. Nothing filed.
 - Link wiki pages to associated skill definitions when that relationship is

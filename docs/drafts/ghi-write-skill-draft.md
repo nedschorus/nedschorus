@@ -2,7 +2,7 @@
 
 *Landed 2026-08-12: the ruled text lives at [.claude/skills/ghi-write/SKILL.md](../../.claude/skills/ghi-write/SKILL.md); this draft is the decision trail.*
 
-Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) (the commission) and the skill-authoring checklist (the authoring rules; retired 2026-08-30 as obsolete — in git history at `git show 19e2e9b:docs/wiki/queue/skill-authoring-checklist.md`). Instructions only; the justifying evidence lives in the commission issue.
+Proposed text for `.claude/skills/ghi-write/SKILL.md`, built against [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13) (the commission) and the skill-authoring checklist (the authoring rules; retired 2026-08-30 as obsolete — in git history at `git show 19e2e9b:docs/nedschorus-wiki/queue/skill-authoring-checklist.md`). Instructions only; the justifying evidence lives in the commission issue.
 
 One tension for the walk: the commission asks for a description "written pushy" (undertriggering is the known failure direction); the checklist calls pushy descriptions a hypothesis to adopt only with false-trigger tests. The draft's description is firm about the trigger class without exhortation — rule which register wins. *(Ruled 2026-08-12: the plain register wins; see walk-order item 2.)*
 
@@ -52,7 +52,7 @@ Before filing a new issue, editing an issue body, commenting on an issue, or wri
 
 1. Ask before filing. Put the subject to ghi-info by running scripts/ghi-info-ask.py with the question (add `--include-closed` when asking about precedent or absence); read the issues it returns and the GHI-MDs they cite. When an existing artifact covers the subject, edit that artifact — a revision of the existing issue is the default disposition, the same way md-write defaults to REVISE. A failed ask never blocks the write: fall back to grepping the local mirror, then `gh` search, and proceed under these rules.
 2. Route by state. Every artifact is either final at its home or in a named queue with a drain:
-   - Material whose disposition is not yet decided goes to its destination queue — `docs/wiki/queue/` for wiki-bound doctrine, `docs/issues/queue/` for GHI-MD-bound MDs, the `draft` label for queued issues — with no GHI.
+   - Material whose disposition is not yet decided goes to its destination queue — `docs/nedschorus-wiki/queue/` for wiki-bound doctrine, `docs/issues/queue/` for GHI-MD-bound MDs, the `draft` label for queued issues — with no GHI.
    - Anything carrying pending state — a wanted feature or component, an open question, a commitment to act — gets a GHI: issue-only when the body stays under 500 words, a GHI-MD when substantial working material rides with it. The body carries the summary, the GHI-MD the substance; the pair sequence is write the MD, land it, then cite it from the issue.
    - Final reference content awaiting nothing is a bare MD at its home.
    - The discriminator: the GHI carries state, the MD carries substance, the queue holds the not-yet-decided. When the routing is genuinely ambiguous, file a `draft`-labeled issue and move on; ambiguity never blocks the write.
