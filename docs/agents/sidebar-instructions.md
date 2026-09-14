@@ -29,7 +29,7 @@ The project's standing rules bind here as everywhere: durable artifacts are writ
 
 ## Machine facts worth having on hand
 
-The user sits at a **Mac**; you run on **`ned-box`** (Ubuntu) on his local network. Every command you hand him names the machine it runs on — box-side commands take the form `ssh nedlern@ned-box '<command>'`, and browser steps happen on the Mac. The full path map for both machines is `docs/cross-project/fleet-machine-paths-and-checkouts.md`.
+The user sits at a **Mac**; you run on **`ned-box`** (Ubuntu) on his local network. Every command you hand him names the machine it runs on — box-side commands take the form `ssh nedlern@ned-box '<command>'`, and browser steps happen on the Mac. The full path map for both machines is `docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md`.
 
 ## First action
 

@@ -25,13 +25,12 @@ All working copies on a machine are the same repository viewed at different bran
 
 ## Ubuntu — `ned-box`, user `nedlern`
 
-Verified 2026-08-13.
+Verified 2026-09-14, every row checked on the box itself.
 
 | What | Full path | Branch |
 |---|---|---|
 | Main checkout | `/home/nedlern/Projects/nedschorus` | `main` |
-| Agent home — the founding seat | `/home/nedlern/agents/choirmaster` | `choirmaster` |
-| Agent homes — general | `/home/nedlern/agents/<name>` | per agent |
+| Agent homes | `/home/nedlern/agents/<name>` | per agent |
 | Task worktrees | `/home/nedlern/Projects/nedschorus/.claude/worktrees/<name>` | per job |
 | Handoff files | `/home/nedlern/.claude/handoffs/<agent>-handoff.md` | — |
 | User-level instructions | `/home/nedlern/.claude/CLAUDE.md` | — |
@@ -42,7 +41,7 @@ The legacy checkout's absence is expected and safe: the main-gatekeeper's `--imp
 
 ## Mac — user `el`
 
-The checkout path is pinned by the repository's own tests (`scripts/handoff-extract-conversation-test.py`); the remaining rows follow the same conventions and have not been inspected from the box.
+Verified 2026-09-14. The checkout path is also pinned by the repository's own tests (`scripts/handoff-extract-conversation-test.py`).
 
 | What | Full path |
 |---|---|
@@ -50,6 +49,11 @@ The checkout path is pinned by the repository's own tests (`scripts/handoff-extr
 | Agent homes | `/Users/el/agents/<name>` |
 | Task worktrees | `/Users/el/Projects/nedschorus/.claude/worktrees/<name>` |
 | Handoff files | `/Users/el/.claude/handoffs/<agent>-handoff.md` |
+| User-level instructions | `/Users/el/.claude/CLAUDE.md` |
+| Auto-memory | `/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory/` |
+| Legacy reference system | `/Users/el/Projects/nedlern` |
+
+Two naming notes that hold on both machines. A handoff file is `<agent>-handoff.md` for the current one and `<agent>-handoff-<NNNN>.md` for numbered earlier ones, with `<agent>-dialog-<NNNN>.md` beside them; the `<session-uuid>-handoff-asked` and `-handoff-deferred` files in the same directory are markers, not handoffs. A task worktree is named for its job when a person made it and `agent-<id>` when a subagent did.
 
 ## Commands, and the machine each runs on
 
@@ -62,7 +66,7 @@ The checkout path is pinned by the repository's own tests (`scripts/handoff-extr
 | Update the box's main checkout | Mac | `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus pull'` |
 | Clear stale worktree registrations | either | `git -C ~/Projects/nedschorus worktree prune` |
 
-Both launchers are attach-or-create: running a name that is already up attaches to that agent rather than starting a second copy. Within one machine, duplicate agents are impossible three ways — tmux attaches by session name, the supervisor holds an exclusive per-agent lock (reclaimed if its holder died), and an agent's home directory is derived from its name rather than chosen. Across machines nothing is shared, so the same name on both is simply two unrelated agents: no conflict, only a label that cannot be told apart in a listing spanning both. Suffix names (`-mac`, `-ubuntu`) if you want them distinguishable at a glance; nothing requires it.
+Both launchers are attach-or-create: running a name that is already up attaches to that agent rather than starting a second copy. Within one machine, duplicate agents are prevented three ways — the launcher walks every tmux socket before creating a session, the supervisor holds an exclusive per-agent lock (reclaimed if its holder died), and an agent's home directory is derived from its name rather than chosen. The first of those changed on 2026-08-21, when each seat moved to its OWN tmux server (`tmux -L <name>`, one socket per seat, after a single server's crash killed three Mac seats at once). A session name is therefore no longer unique across the machine, only within one seat's socket, so the launcher walks the whole socket directory rather than asking one server. Across machines nothing is shared, so the same name on both is simply two unrelated agents: no conflict, only a label that cannot be told apart in a listing spanning both. Suffix names (`-mac`, `-ubuntu`) if you want them distinguishable at a glance; nothing requires it.
 
 ## What crosses between machines, and what does not
 

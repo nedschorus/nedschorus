@@ -34,7 +34,7 @@ passing review.
   operator.
 - **The two machines** — the user's Mac (user `el`) and `ned-box` (Ubuntu,
   user `nedlern`), each with its own clone. Path map:
-  `docs/cross-project/fleet-machine-paths-and-checkouts.md` (flagged stale
+  `docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md` (flagged stale
   2026-08-17; verify before relying on specifics).
 - **Seat** — a named, long-lived agent identity: home directory, own
   branch, brief. **Session** — one running conversation occupying a seat;
