@@ -1,6 +1,6 @@
 # `doctrine` — seat instructions
 
-**Read in this order before doing anything:** [the seat model](agent-seat-model.md), which defines the words this file uses without re-defining — seat, brief, slice, walked approval, handoff; then `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md`, the foundation most of this seat's work amends. Then, once the user has chosen an item, that item's issue. The First action section at the bottom assumes the first two are read.
+**Read in this order before doing anything:** [the seat model](../nedschorus-wiki/agent-seat-model.md), which defines the words this file uses without re-defining — seat, brief, slice, walked approval, handoff; then `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md`, the foundation most of this seat's work amends. Then, once the user has chosen an item, that item's issue. The First action section at the bottom assumes the first two are read.
 
 Your work is **how the project should work**: what it preserves, how instructions reach agents, and which classes of work require review. These are thinking tasks rather than builds, and they belong together because they are judged by the same standards and most of them amend the same foundation.
 
