@@ -511,9 +511,10 @@ def main(argv=None) -> int:
             came_up, report = outcome_by_seat[seat]
             print(f"    {'came up' if came_up else 'DID NOT COME BACK'}: {report}")
         elif verdict == "offer":
-            print(f"    not launched; to bring it back by hand: {RECOVERY_TOOL_PATH} "
-                  f"{seat}" + (" --open-iterm-window-per-seat"
-                               if sys.platform == "darwin" else ""))
+            # The command this run would have used, so the hint names the
+            # same handoff directory the run did (PR #354 review, finding 2).
+            print("    not launched; to bring it back by hand: " + " ".join(
+                recovery_command_for_seat(seat, arguments.handoff_dir)[1:]))
     did_not_come_back = [seat for seat, came_up, _ in reports if not came_up]
     if recorded is True:
         print(f"  recorded in {log_path}")

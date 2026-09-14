@@ -768,11 +768,12 @@ with tempfile.TemporaryDirectory() as temporary:
     write_state(handoffs, "old-seat", STOP - timedelta(hours=3))
     recovery = RecoveryToolStub()
     exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
-    check("an offered seat is not launched, and the run says how to bring it back by hand",
+    check("an offered seat is not launched, and the run says how to bring it back by hand, "
+          "naming this run's handoff directory",
           exit_code == 0 and recovery.commands == []
           and "old-seat: offer" in report
           and "not launched; to bring it back by hand: " in report
-          and "recover-crashed-seats.py old-seat" in report,
+          and f"recover-crashed-seats.py old-seat --handoff-dir {handoffs}" in report,
           (exit_code, report, recovery.commands))
     check("a run that launched nothing because nothing was decided records an empty list",
           run_log_lines(handoffs)[0]["launched"] == [], run_log_lines(handoffs))
