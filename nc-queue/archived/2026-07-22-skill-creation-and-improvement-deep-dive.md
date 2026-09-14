@@ -1,7 +1,7 @@
 ---
 processed: 2026-07-24
 walk-item: outer item 11 (skill-creator review)
-dispositions: [docs/wiki/queue/skill-authoring-checklist.md (distillation), founding-plan step-1 pointer, pointers on nedschorus#15-#23]
+dispositions: [docs/nedschorus-wiki/queue/skill-authoring-checklist.md (distillation), founding-plan step-1 pointer, pointers on nedschorus#15-#23]
 dropped-by: new-vp (archived 2026-07-27 by the queue audit; outputs verified before the move)
 ---
 

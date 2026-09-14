@@ -320,7 +320,7 @@ The recommended default is:
 
 These are diagnostic rounds, not an entitlement to make three speculative edits. A clear design defect found in the first round should route immediately. Rephrasing the same failed fix to a new agent does not count as a distinct strategy.
 
-Nedschorus currently has a policy inconsistency to resolve. The queued [diagnose-failure procedure](https://github.com/nedschorus/nedschorus/blob/main/docs/issues/queue/21-diagnose-failure-test-procedure.md) calls for root-cause analysis by round two and a breaker at round three, which fits the policy above. The queued [agent-loop rules draft](https://github.com/nedschorus/nedschorus/blob/main/docs/wiki/queue/agent-loop-rules-draft.md) permits more fresh fixer attempts, including a widened team. Before implementation, those documents should be reconciled around one externally enforced counter. The three-stage policy is the simpler and safer default.
+Nedschorus currently has a policy inconsistency to resolve. The queued [diagnose-failure procedure](https://github.com/nedschorus/nedschorus/blob/main/docs/issues/queue/21-diagnose-failure-test-procedure.md) calls for root-cause analysis by round two and a breaker at round three, which fits the policy above. The queued [agent-loop rules draft](https://github.com/nedschorus/nedschorus/blob/main/docs/nedschorus-wiki/queue/agent-loop-rules-draft.md) permits more fresh fixer attempts, including a widened team. Before implementation, those documents should be reconciled around one externally enforced counter. The three-stage policy is the simpler and safer default.
 
 ## 9. Production evidence is part of the design
 

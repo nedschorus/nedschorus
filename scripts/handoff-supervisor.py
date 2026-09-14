@@ -527,7 +527,7 @@ def queue_status_line(working_directory: Path) -> str:
     there are files in the queues. Thats what queues are for."). The
     supervisor still prints it for a watched pane or the log."""
     reports = []
-    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/wiki/queue", "legacy-feature-queue"):
+    for queue_directory in ("nc-queue", "docs/issues/queue", "docs/nedschorus-wiki/queue", "legacy-feature-queue"):
         directory = working_directory / queue_directory
         if not directory.is_dir():
             continue
