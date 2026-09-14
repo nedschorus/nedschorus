@@ -100,3 +100,22 @@ carries `admin:org`, `admin:enterprise`, `audit_log`, `admin:repo_hook` and
 more, and every agent on the Mac reaches all of it by running plain `gh` with no
 token to export. Narrowing it is an open question for the owner, not a decision
 this page makes.
+
+## Root actions on this Mac leave no log
+
+`sudo` here runs with `!log_allowed`, which switches off logging of the commands
+it permits. Failed authentications are still recorded; successful ones are not,
+and neither is what they ran.
+
+The practical consequence: **"who did this as root, and what exactly did they
+do" cannot be answered by reading anything on this machine.** It can only be
+answered by asking whoever did it.
+
+Measured 2026-08-31, when a sudoers rule appeared at
+`/etc/sudoers.d/nedschorus-mount-apfs-readonly` and nobody knew who had
+installed it. The unified log showed a password accepted at 16:05:20 and the
+file created at 16:05:25 — and nothing at all about the command in between.
+Authorship was established by asking the seats, one of which read it out of a
+predecessor's handoff note. That is recollection, not evidence.
+
+Do not repeat the search expecting a different result.
