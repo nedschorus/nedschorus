@@ -403,6 +403,31 @@ the project's synthetic-keystroke guard hook blocks that form outright
 4. **`restart-live-seats-at-login`, wired to login** — a LaunchAgent on the Mac,
    `fleet-tmux.service` or a sibling on the box, running 2 and then 3, and
    handling a seat it cannot bring back as ruled above.
+
+   *Built 2026-09-14, the Mac half:* `restart-live-seats-at-login.py` runs
+   `recover-crashed-seats.py <seat> --handoff-dir <dir> --open-iterm-window-per-seat`
+   for each seat it decides to restart, one subprocess per seat, records the
+   seats that came up in the run log's `launched` field, and exits 1 when a
+   decided seat did not come back. Two decisions taken in the build: the
+   launch runs before the run-log line is appended, so a run killed
+   mid-launch leaves no line and the next run in the boot offers rather than
+   restarts (a missed restart is preferred to a double launch); and a seat
+   that does not come back is reported and left down, because parking it
+   with its reason and asking in a window is nedschorus#242 change 3, not
+   built. `install-restart-live-seats-at-login-launch-agent.py` writes the
+   LaunchAgent plist (`com.nedschorus.restart-live-seats-at-login`, RunAtLoad,
+   Aqua sessions only, PATH naming `~/.local/bin` and `/opt/homebrew/bin`,
+   output to `~/.claude/handoffs/restart-live-seats-at-login-launchd-output.txt`).
+   Writing it does not load it; it loads at the next login. Measured
+   2026-09-14 by bootstrapping a throwaway label pointed at a throwaway
+   handoff directory holding one canary state file stamped 30 s before
+   boot: launchd ran the program, it decided `restart`, the recovery tool
+   opened an iTerm window (id 1743) and launched the seat fresh, the
+   supervisor came up in 17 s, the run log recorded `launched: ["seat-t"]`,
+   the job exited 0. No Automation permission prompt appeared: the
+   AppleScript ran under launchd without one. The box sibling (a systemd
+   unit running the same program without the window flag) is a separate
+   change.
 5. **Notify-and-wait and the resume prompt** stay as designed above: built only
    if the manual path proves insufficient. Open, as noted there: no trigger for
    that judgment is defined.
@@ -412,7 +437,15 @@ the project's synthetic-keystroke guard hook blocks that form outright
 - **Does the LaunchAgent need to start iTerm2?** It fires at login, when iTerm2
   may not be running. Either `restart-live-seats-at-login` launches iTerm2
   itself and waits for it, or the trigger hangs off iTerm2's own startup
-  instead. Unresolved; it decides whether step 4 is a LaunchAgent at all. What
+  instead. *Decided 2026-09-14 for the build: it is a LaunchAgent, and it
+  relies on the opener's `tell application "iTerm"`, which AppleScript
+  answers by launching the application when it is not running.* That cold
+  start is not yet measured — the 2026-09-14 kickstart test ran with iTerm2
+  already open — so the first real login with iTerm2 quit is the
+  measurement, and its record goes here. Note also that a logout and login
+  does not change the boot instant (`kern.boottime`), so a login test on a
+  machine that has not rebooted restarts nothing: the program sees the
+  seats it already brought back as written since boot. What
   is settled (2026-09-02) is the cost of login rather than boot: an unattended
   Mac that boots to the login window restores nothing until someone logs in,
   and the user accepted that — *"I'm OK with it being stuck until I reboot it —

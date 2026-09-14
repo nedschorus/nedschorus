@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for restart-live-seats-at-login.py (nedschorus#116), the selection step.
+"""Tests for restart-live-seats-at-login.py (nedschorus#116): the selection
+step, the run log, and the restart step that runs the recovery tool.
 
 Every case runs against a throwaway handoff directory, with the boot time and
 the current time passed in, so no case reads this machine's heartbeats or its
-real boot time. The rule under test is the #116 design's
+real boot time. No case runs the real recovery tool either: every main() case
+runs with a stub in place of the subprocess runner, which records the
+commands it was given and answers with the report it was told to. The rule under test is the #116 design's
 § Ruled 2026-08-31 — the heartbeat answers "which seats were running", with
 its 2026-09-02 amendments, the user's 2026-09-11 answer on state files that
 cannot be read, and the 2026-09-11 amendment from the review of 8b15919.
@@ -20,6 +23,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -116,15 +120,44 @@ def read_recorded_stop(handoffs: Path, boot_at=BOOT_AT):
     return recorded_stop
 
 
-def run_main(arguments, boot_at=BOOT_AT):
+class RecoveryToolStub:
+    """Stands in for subprocess.run when the program launches a seat: records
+    every command, and answers each seat with the (exit code, stdout) it was
+    told to — by default the recovery tool's report for a seat that came up.
+    outcomes maps a seat name to (exit code, report); raising maps it to an
+    exception the runner raises instead, as subprocess.run does when the
+    program cannot be started."""
+
+    def __init__(self, outcomes=None, raising=None):
+        self.outcomes, self.raising, self.commands = outcomes or {}, raising or {}, []
+
+    def __call__(self, command, stdout=None, text=None):
+        self.commands.append(list(command))
+        seat = command[2]
+        if seat in self.raising:
+            raise self.raising[seat]
+        exit_code, report = self.outcomes.get(
+            seat, (0, f"recover-crashed-seats: {seat}: relaunched resuming "
+                      f"{seat}-session (12KB transcript) in a new iTerm window"))
+        return subprocess.CompletedProcess(command, exit_code, stdout=report + "\n")
+
+
+def run_main(arguments, boot_at=BOOT_AT, recovery=None):
     """main() with this machine's boot time replaced by boot_at (BOOT_AT
-    unless a case is exercising the boot instant moving between runs) and its
-    clock by NOW; (exit code, stdout, stderr)."""
+    unless a case is exercising the boot instant moving between runs), its
+    clock by NOW, and the recovery tool by a RecoveryToolStub (recovery, or a
+    fresh one answering that every seat came up); (exit code, stdout,
+    stderr)."""
     printed, errors = io.StringIO(), io.StringIO()
+    recovery = recovery or RecoveryToolStub()
     real_machine_boot_time, real_current_time = restart.machine_boot_time, restart.current_time
+    real_launch = restart.launch_seats_decided_restart
     try:
         restart.machine_boot_time = lambda: boot_at
         restart.current_time = lambda: NOW
+        restart.launch_seats_decided_restart = (
+            lambda decisions, handoff_directory: real_launch(
+                decisions, handoff_directory, run=recovery))
         with redirect_stdout(printed), redirect_stderr(errors):
             try:
                 exit_code = restart.main(arguments)
@@ -132,6 +165,7 @@ def run_main(arguments, boot_at=BOOT_AT):
                 exit_code = stop_request.code
     finally:
         restart.machine_boot_time, restart.current_time = real_machine_boot_time, real_current_time
+        restart.launch_seats_decided_restart = real_launch
     return exit_code, printed.getvalue(), errors.getvalue()
 
 
@@ -541,10 +575,12 @@ with tempfile.TemporaryDirectory() as temporary:
     lines = run_log_lines(handoffs)
     check("a run appends exactly one line", len(lines) == 1, lines)
     check("and the appender says it wrote", wrote is True, wrote)
-    # A verdict is a decision, not an outcome. Today nothing can be launched,
-    # and once build step 4 lands a decided restart can still fail to come up,
-    # so the line records what was launched beside what was decided.
-    check("a run that cannot launch anything records launched null, not an empty list",
+    # A verdict is a decision, not an outcome: a decided restart can fail to
+    # come up, so the line records what came up beside what was decided. A
+    # caller that launched nothing at all (a dry run never records; this is
+    # the appender called bare) records null, distinguishable from a run that
+    # launched and brought nothing back, which records an empty list.
+    check("a run that did not launch at all records launched null, not an empty list",
           lines and lines[0]["launched"] is None, lines)
     check("the line carries the run, the boot, the stop, the anchor and the verdicts",
           lines and lines[0]["run_at"] == NOW.isoformat(timespec="seconds")
@@ -573,9 +609,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and run_log_lines(handoffs)[0]["anchor_at"] is None,
           run_log_lines(handoffs))
 
-    # What build step 4 will write, once it can launch: the seats it brought
-    # back, recorded beside the verdicts, so a restart that failed to come up
-    # is distinguishable from one that was never attempted.
+    # What the restart step writes: the seats it brought back, recorded
+    # beside the verdicts, so a restart that failed to come up is
+    # distinguishable from one that was never attempted.
     handoffs = root / "run-log-launched-recorded"
     write_state(handoffs, "came-back", STOP)
     write_state(handoffs, "failed-to-come-up", STOP - timedelta(seconds=2))
@@ -618,18 +654,141 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the failure is still on stderr, where a log failure belongs",
           "could not append" in errors, errors)
 
-    # The command line. Until the restart step is built, the program reports
-    # and records, and says plainly that it launched nothing.
+    # The command line: a run launches each seat decided for restart through
+    # the recovery tool, reports what came of it, and records the seats that
+    # came up.
     handoffs = root / "run-log-main"
     write_state(handoffs, "MD-skills", STOP)
     write_state(handoffs, "mac-prof", STOP - timedelta(days=3))
-    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)])
-    check("without --dry-run it reports, and says the restart step is not built yet",
+    recovery = RecoveryToolStub()
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("without --dry-run it launches the seat decided for restart and reports it came up",
           exit_code == 0 and "MD-skills: restart" in report
-          and "not built yet" in report and "launched nothing" in report,
+          and "came up: recover-crashed-seats: MD-skills: relaunched resuming" in report,
           (exit_code, report))
-    check("that run appended its one line to the run log",
-          len(run_log_lines(handoffs)) == 1, run_log_lines(handoffs))
+    check("the seat not running at the stop is not launched",
+          [command[2] for command in recovery.commands] == ["MD-skills"],
+          recovery.commands)
+    check("that run appended its one line to the run log, with the seat that came up",
+          len(run_log_lines(handoffs)) == 1
+          and run_log_lines(handoffs)[0]["launched"] == ["MD-skills"],
+          run_log_lines(handoffs))
+
+    # The command the program runs: the recovery tool beside this program,
+    # the seat, the same handoff directory, and on the Mac the window flag —
+    # which the recovery tool refuses anywhere else, so it is passed only
+    # there.
+    command = restart.recovery_command_for_seat("MD-skills", Path("/h d"), platform="darwin")
+    check("the recovery command names the tool beside this program, the seat, and the "
+          "handoff directory",
+          command[0] == sys.executable
+          and command[1] == str(SCRIPT_PATH.with_name("recover-crashed-seats.py"))
+          and command[2] == "MD-skills"
+          and command[3:5] == ["--handoff-dir", "/h d"],
+          command)
+    check("on the Mac the seat is launched in its own iTerm window",
+          command[-1] == "--open-iterm-window-per-seat", command)
+    check("on the box it is not, because the recovery tool refuses that flag there",
+          "--open-iterm-window-per-seat"
+          not in restart.recovery_command_for_seat("MD-skills", Path("/h"), platform="linux"),
+          restart.recovery_command_for_seat("MD-skills", Path("/h"), platform="linux"))
+    check("the program's own command carries this machine's platform",
+          (restart.recovery_command_for_seat("s", Path("/h"))[-1]
+           == "--open-iterm-window-per-seat") == (sys.platform == "darwin"),
+          restart.recovery_command_for_seat("s", Path("/h")))
+
+    # Whether a seat came up is read from the recovery tool's exit code and
+    # its report markers, so the two programs agree on what a failure is.
+    check("a clean report with exit 0 is a seat that came up",
+          restart.seat_came_up(0, "recover-crashed-seats: s: relaunched fresh") is True)
+    for marker in restart.recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS:
+        check(f"a report marked {marker} is a seat that did not, whatever the exit code",
+              restart.seat_came_up(0, f"recover-crashed-seats: s: {marker} — x") is False)
+    check("a nonzero exit is a seat that did not, whatever the report says",
+          restart.seat_came_up(1, "recover-crashed-seats: s: relaunched fresh") is False)
+
+    # A seat that did not come back: reported as such, left out of the run
+    # log's launched list while its verdict stays restart, and the run exits
+    # nonzero — the LaunchAgent's log then shows a failure, not a success.
+    # The seats after it are still tried.
+    handoffs = root / "run-log-main-one-did-not-come-back"
+    write_state(handoffs, "A-first", STOP)
+    write_state(handoffs, "B-fails", STOP - timedelta(seconds=2))
+    write_state(handoffs, "C-after", STOP - timedelta(seconds=4))
+    recovery = RecoveryToolStub(outcomes={"B-fails": (
+        1, "recover-crashed-seats: B-fails: LAUNCHED BUT DID NOT COME UP — no supervisor "
+           "seen within 120s")})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("a seat that did not come back is reported as such and the run exits 1",
+          exit_code == 1
+          and "B-fails: restart" in report
+          and "DID NOT COME BACK: recover-crashed-seats: B-fails: LAUNCHED BUT DID NOT COME UP"
+              in report
+          and "1 seat(s) decided for restart did not come back: B-fails" in report,
+          (exit_code, report))
+    check("the seats decided after it are still tried, in the order decided",
+          [command[2] for command in recovery.commands] == ["A-first", "B-fails", "C-after"],
+          recovery.commands)
+    line = run_log_lines(handoffs)[0]
+    check("the run log records the seats that came up and keeps the failed seat's verdict",
+          line["launched"] == ["A-first", "C-after"] and line["seats"]["B-fails"] == "restart",
+          line)
+    check("the seats that came up are reported so",
+          report.count("came up: recover-crashed-seats") == 2, report)
+
+    # A recovery tool that cannot be run at all — the interpreter or the
+    # script missing under launchd's bare environment — fails every seat,
+    # each reported by name, and the run log still records that none came up.
+    handoffs = root / "run-log-main-tool-cannot-run"
+    write_state(handoffs, "A", STOP)
+    recovery = RecoveryToolStub(raising={"A": FileNotFoundError("no such file: python3")})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("a recovery tool that cannot be started is a seat that did not come back, with the error",
+          exit_code == 1 and "A: restart" in report
+          and "DID NOT COME BACK: could not run" in report
+          and "no such file: python3" in report,
+          (exit_code, report))
+    check("and the run log records that nothing came up: an empty list, not null",
+          run_log_lines(handoffs)[0]["launched"] == [], run_log_lines(handoffs))
+
+    # A recovery tool that refused its arguments prints usage to stderr and
+    # nothing to stdout; the report line then carries the exit code rather
+    # than nothing.
+    handoffs = root / "run-log-main-tool-no-report"
+    write_state(handoffs, "A", STOP)
+    recovery = RecoveryToolStub(outcomes={"A": (2, "")})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("an empty report is reported with the exit code, not as a blank line",
+          exit_code == 1 and "DID NOT COME BACK: (no report; exit 2, see stderr)" in report,
+          (exit_code, report))
+
+    # An offered seat is not launched: nothing is started silently, and the
+    # report says how to bring it back by hand. Parking it is #242 change 3.
+    handoffs = root / "run-log-main-offer-not-launched"
+    write_state(handoffs, "old-seat", STOP - timedelta(hours=3))
+    recovery = RecoveryToolStub()
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("an offered seat is not launched, and the run says how to bring it back by hand",
+          exit_code == 0 and recovery.commands == []
+          and "old-seat: offer" in report
+          and "not launched; to bring it back by hand: " in report
+          and "recover-crashed-seats.py old-seat" in report,
+          (exit_code, report, recovery.commands))
+    check("a run that launched nothing because nothing was decided records an empty list",
+          run_log_lines(handoffs)[0]["launched"] == [], run_log_lines(handoffs))
+
+    # A dry run launches nothing: it shows the command it would run instead.
+    handoffs = root / "run-log-main-dry-run-launches-nothing"
+    write_state(handoffs, "MD-skills", STOP)
+    recovery = RecoveryToolStub()
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)],
+                                         recovery=recovery)
+    check("--dry-run runs no recovery, and shows the command it would run",
+          exit_code == 0 and recovery.commands == []
+          and "MD-skills: restart" in report
+          and "would run: " in report
+          and f"recover-crashed-seats.py MD-skills --handoff-dir {handoffs}" in report,
+          (exit_code, report, recovery.commands))
 
     handoffs = root / "run-log-dry-run-writes-nothing"
     write_state(handoffs, "MD-skills", STOP)

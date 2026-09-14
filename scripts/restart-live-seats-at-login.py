@@ -2,11 +2,21 @@
 """restart-live-seats-at-login — at login, bring back the seats that were
 running when this machine stopped (nedschorus#116).
 
-Built in the order the #116 design lays out (§ The build, in order). This
-first piece is the selection alone: which seats were running at the stop,
-read from their supervisors' heartbeats. It launches nothing yet — until the
-restart step lands, a run selects, records its line in the run log, and says
-plainly that it launched nothing.
+Built in the order the #116 design lays out (§ The build, in order). The
+selection first: which seats were running at the stop, read from their
+supervisors' heartbeats. Then the restart step (build step 4): each seat the
+selection decided to restart is handed to recover-crashed-seats.py, one
+subprocess per seat, which relaunches it under a supervisor — on the Mac in
+its own iTerm window (--open-iterm-window-per-seat, build step 3) — and waits
+for it to come up. A run records its line in the run log, with the seats that
+came up beside the verdicts, and exits nonzero when a seat it decided to
+restart did not come back. A seat the selection only offers is not launched:
+the run says how to bring it back by hand. Parking a seat that could not be
+brought back, and asking about it in a window, is nedschorus#242 change 3 and
+is not built; until then the failed seat is reported and left down.
+
+On the Mac this program is run at login by a LaunchAgent, installed by
+install-restart-live-seats-at-login-launch-agent.py.
 
 The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
 § Ruled 2026-08-31 and its amendments:
@@ -55,8 +65,8 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     back is restarted rather than merely offered. Lines are matched to this
     boot within a few seconds, because each machine recomputes its boot
     instant from a clock NTP may have stepped since. Each line records what
-    was launched as well as what was decided: null while this program cannot
-    launch at all, so a decision is never read as an outcome.
+    came up as well as what was decided — a decided restart can fail to come
+    up — so a decision is never read as an outcome.
     A line that cannot be read is skipped and a log that cannot be written is
     reported, because the record must never block the restart.
 
@@ -78,6 +88,17 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
+
+# The recovery tool is what launches a seat (build step 4 runs step 3): this
+# program runs it as a subprocess, one per seat, and reads its report. The
+# import is for the report markers only — a report carrying one of them is a
+# seat that did not come back — so the two programs agree on what a failure
+# looks like without this one parsing free text.
+RECOVERY_TOOL_PATH = Path(__file__).with_name("recover-crashed-seats.py")
+_recovery_spec = importlib.util.spec_from_file_location(
+    "recover_crashed_seats", RECOVERY_TOOL_PATH)
+recovery = importlib.util.module_from_spec(_recovery_spec)
+_recovery_spec.loader.exec_module(recovery)
 
 # Ruled 2026-09-02: twice the heartbeat interval, not one. Supervisors stamp
 # on independent cycles, so a live seat can trail the newest stamp by a full
@@ -253,12 +274,12 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
     worked from, the verdict per seat, and what was actually launched.
 
     A verdict is what the run decided, not what happened, and the two are not
-    the same thing: today every run decides and launches nothing, and once
-    build step 4 lands a decided restart can still fail to come up. So
-    `launched` records the outcome beside the decision — null while this
-    program cannot launch at all, and the list of seats it did launch once it
-    can. A cold reader can then tell a seat that was never launched from one
-    whose launch failed, which a verdict alone cannot say.
+    the same thing: a decided restart can fail to come up. So `launched`
+    records the outcome beside the decision — the seats that came up, an
+    empty list when the run launched and none came back or had nothing to
+    launch, and null only when the caller did not launch at all. A cold
+    reader can then tell a seat that was never launched from one whose
+    launch failed, which a verdict alone cannot say.
 
     User-ruled 2026-09-11, a log and not a single overwritten file, so that
     the runs of one boot can be read in order afterwards. Dry runs do not
@@ -365,16 +386,73 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
     return anchor, decisions, anchor_is_the_stop
 
 
+def recovery_command_for_seat(seat: str, handoff_directory: Path,
+                              platform: str = sys.platform) -> list:
+    """The recovery tool's command line for one seat, as this program runs
+    it. On the Mac the seat is born attached in its own iTerm window (build
+    step 3): the recovery tool itself refuses that flag anywhere else, so it
+    is passed only on darwin. The handoff directory is passed through so a
+    run against a test directory recovers against that directory too; the
+    agents root is not, because this program has no argument for it — both
+    programs resolve ${NEDSCHORUS_AGENTS_ROOT:-~/agents} the same way."""
+    command = [sys.executable, str(RECOVERY_TOOL_PATH), seat,
+               "--handoff-dir", str(handoff_directory)]
+    if platform == "darwin":
+        command.append("--open-iterm-window-per-seat")
+    return command
+
+
+def seat_came_up(exit_code, report: str) -> bool:
+    """Whether one recovery run brought its seat back. The recovery tool
+    exits nonzero when every seat it was given failed — one seat, so this
+    seat — and marks each failed report; either says the seat is down."""
+    return exit_code == 0 and not any(
+        marker in report for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS)
+
+
+def launch_seats_decided_restart(decisions, handoff_directory: Path,
+                                 run=subprocess.run, platform: str = sys.platform):
+    """Run the recovery tool for every seat whose verdict is restart, in the
+    order decided, and return (launched, reports): the seats that came up,
+    and one (seat, came_up, report) per attempt. Each seat is its own
+    subprocess, so one seat's failure — a refusal, a launch that failed, a
+    seat that never came up — leaves the seats after it to be tried. The
+    recovery tool's stdout is its report, one line per seat; stderr is
+    passed through to this program's stderr. A recovery tool that cannot be
+    run at all is a failure of every seat, reported per seat so the run log
+    and the report still say which seats are down."""
+    launched, reports = [], []
+    for seat, verdict, _ in decisions:
+        if verdict != "restart":
+            continue
+        command = recovery_command_for_seat(seat, handoff_directory, platform)
+        try:
+            finished = run(command, stdout=subprocess.PIPE, text=True)
+        except OSError as error:
+            reports.append((seat, False, f"could not run {command[1]}: {error}"))
+            continue
+        report = finished.stdout.strip()
+        if not report:
+            # An argparse refusal prints usage to stderr and nothing to
+            # stdout; the exit code is then the only thing to record.
+            report = f"(no report; exit {finished.returncode}, see stderr)"
+        came_up = seat_came_up(finished.returncode, report)
+        if came_up:
+            launched.append(seat)
+        reports.append((seat, came_up, report))
+    return launched, reports
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Select, from supervisor heartbeats, the seats that were "
-                    "running when this machine stopped.",
+        description="Bring back the seats that were running when this machine "
+                    "stopped, selected from their supervisors' heartbeats.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument("--dry-run", action="store_true",
-                        help="report the selection and change nothing at all, "
-                             "the run log included")
+                        help="report the selection and what would be launched, and "
+                             "change nothing at all, the run log included")
     parser.add_argument("--handoff-dir", type=Path,
                         default=Path("~/.claude/handoffs").expanduser(),
                         help="where the supervisor state files and the run log live")
@@ -386,12 +464,21 @@ def main(argv=None) -> int:
         arguments.handoff_dir, boot_at)
     anchor, decisions, anchor_is_the_stop = select_seats_live_at_the_stop(
         arguments.handoff_dir, boot_at, now, recorded_stop=recorded_stop)
+    # Launch first, record after: the line records what came up, and a run
+    # killed mid-launch then leaves no line, which the next run reads as
+    # "already run, offer everything" — the direction that starts nothing
+    # twice. Dry runs launch nothing and record nothing.
+    if arguments.dry_run:
+        launched, reports = None, []
+    else:
+        launched, reports = launch_seats_decided_restart(decisions, arguments.handoff_dir)
     recorded = None if arguments.dry_run else append_selection_to_run_log(
-        arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now)
+        arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now,
+        launched=launched)
 
     print("restart-live-seats-at-login: "
           + ("dry run, the selection only; nothing is launched and nothing is recorded"
-             if arguments.dry_run else "the selection"))
+             if arguments.dry_run else "the selection, and what came of it"))
     print(f"  boot {boot_at.isoformat(timespec='seconds')}")
     if anchor is None:
         print("  no heartbeat before boot: no supervisor was running when the machine stopped")
@@ -414,16 +501,30 @@ def main(argv=None) -> int:
                  if an_earlier_run_ran else "and left no line in the run log")
               + ", so nothing is restarted silently and no stop is recorded for "
                 "the runs after this one")
+    outcome_by_seat = {seat: (came_up, report) for seat, came_up, report in reports}
     for seat, verdict, reason in decisions:
         print(f"  {seat}: {verdict} — {reason}")
+        if verdict == "restart" and arguments.dry_run:
+            print("    would run: " + " ".join(
+                recovery_command_for_seat(seat, arguments.handoff_dir)))
+        elif verdict == "restart":
+            came_up, report = outcome_by_seat[seat]
+            print(f"    {'came up' if came_up else 'DID NOT COME BACK'}: {report}")
+        elif verdict == "offer":
+            print(f"    not launched; to bring it back by hand: {RECOVERY_TOOL_PATH} "
+                  f"{seat}" + (" --open-iterm-window-per-seat"
+                               if sys.platform == "darwin" else ""))
+    did_not_come_back = [seat for seat, came_up, _ in reports if not came_up]
     if recorded is True:
-        print(f"  recorded in {log_path}; the restart step (nedschorus#116, build "
-              "step 4) is not built yet, so this run launched nothing")
+        print(f"  recorded in {log_path}")
     elif recorded is False:
         print(f"  could not append this run to {log_path} (the reason is on stderr), "
-              "so the runs after it in this boot will not read its stop back; the "
-              "restart step (nedschorus#116, build step 4) is not built yet, so this "
-              "run launched nothing")
+              "so the runs after it in this boot will not read its stop back")
+    if did_not_come_back:
+        print(f"  {len(did_not_come_back)} seat(s) decided for restart did not come "
+              f"back: {', '.join(did_not_come_back)} — each is left down and reported "
+              "above (parking it and asking is nedschorus#242 change 3, not built)")
+        return 1
     return 0
 
 
