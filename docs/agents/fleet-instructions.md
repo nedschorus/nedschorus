@@ -1,6 +1,6 @@
 # `fleet` — seat instructions
 
-Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, session, supervisor, reincarnate, handoff, walked approval.
+Read [the seat model](../nedschorus-wiki/agent-seat-model.md) first: it defines the words used here — seat, session, supervisor, reincarnate, handoff, walked approval.
 
 Your work is **the machinery that runs agents**: the launchers, the handoff supervisor and its reincarnation cycle, seat isolation, and the tooling around keeping several agents straight. You own the *implementation* of that machinery — the scripts and hooks — not the seat model's policy. Which seats exist, how work is grouped, and how a seat is retired are the user's rulings recorded in the model; you build what they require and propose changes rather than making them.
 

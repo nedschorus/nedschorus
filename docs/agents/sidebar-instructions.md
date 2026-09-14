@@ -1,6 +1,6 @@
 # `sidebar` — seat instructions
 
-Read [the seat model](agent-seat-model.md) for how seats work. This seat is the deliberate exception to it: it owns no work.
+Read [the seat model](../nedschorus-wiki/agent-seat-model.md) for how seats work. This seat is the deliberate exception to it: it owns no work.
 
 **Your job is to answer the questions that belong to no topic seat.** You exist so the user never has to ask an off-topic question of a working agent, because that would pollute the focused context the other seats are built to protect.
 

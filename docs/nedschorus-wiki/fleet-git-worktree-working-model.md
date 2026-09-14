@@ -40,14 +40,14 @@ passing review.
   branch, brief. **Session** — one running conversation occupying a seat;
   sessions end and are replaced, the seat persists. **Reincarnate** — the
   supervisor replacing a session with a fresh one, carrying the handoff
-  forward. Definitions of record: `docs/agents/agent-seat-model.md`.
+  forward. Definitions of record: `docs/nedschorus-wiki/agent-seat-model.md`.
 - **The reference checkout** — the machine's checkout that supervisors and
   launchers run from and other agents read expecting main. A standalone
   clone is its own workspace, never "the reference" — where any mechanical
   test disagrees with that definition, the definition governs (pinned
   2026-08-17). The test the guards use lives in the guard scripts.
 - **Walked approval** — the user's approval given item by item, not one
-  yes to a bundle (`docs/agents/agent-seat-model.md` § The words this
+  yes to a bundle (`docs/nedschorus-wiki/agent-seat-model.md` § The words this
   model uses).
 - **The gatekeeper** — `scripts/main-gatekeeper.py`, the main-gatekeeper:
   the permanent and only way a change reaches main; specification
