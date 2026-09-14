@@ -882,6 +882,92 @@ rebase the work, resubmit. Nothing is left behind; the workspace is swept.
 automatic integration (clean re-application, the usual case) and `conflict`
 (the new main touched the same content).
 
+## Activation shape ruled 2026-09-14 — shape 1, and the slices that remain
+
+**Ruled 2026-09-14 at the merge-lane seat: shape 1.** Provenance, recorded
+exactly: merge-lane presented two shapes with a recommendation for shape 1;
+the user's whole reply was "shape 1". Every other word in this section is
+merge-lane's. Issue #3's body and the specification's Implementation status
+paragraph each carry the ruling in one sentence; this section is its record.
+
+**Shape 1.** At activation the merge lane keeps reviewing and approving the
+gate's pull requests. The gate is the program that opens them: attribution
+computed (it already writes the `Gatekeeper-origin` trailer from
+`CLAUDE_CODE_SESSION_ID` — the request's `origin` field in
+`scripts/main-gatekeeper.py`, pinned by the suite's case "the origin trailer
+records the submitting session"), mechanical checks run, per-file staleness
+reported, one topic per request. Review stays where it sits today, at the
+pull request. The merge lane does not retire at activation; its hand-typed
+half shrinks. The 2026-08-17 prerequisite that the gate be able to review
+what passes through it — review-at-the-gate,
+[`3-slice-6-review-evidence-not-built.md`](3-slice-6-review-evidence-not-built.md)
+§ What replaces it — is satisfied by review at the pull request the gate
+opens. A reviewer attached to the gate itself is shape 2, below: a later
+attachment to this same path, which the user said he will want soon.
+
+Shape 1 rests on the 2026-08-29 ruling that the gate opens a pull request
+instead of pushing to main (specification § The credential and enforcement,
+the Branch protection bullet and the layout-amendment bullet). One
+consequence for a neighbouring design, stated so it is not rediscovered: the
+design-to-main state machine
+([`design-to-main-state-machine-design.md`](../design-to-main/design-to-main-state-machine-design.md)
+§ 3.4, and its glossary's gate-rejection entry) assumes the gate returns a
+review verdict; under shape 1 that verdict is the merge lane's review of the
+gate's pull request.
+
+**Status, corrected.** Slices 1–5 are BUILT, the CLAUDE.md line included: it
+landed user-walked 2026-08-12 (commit `c37f25d`, "slice 5 complete") and,
+trimmed since, is today's "How a change reaches main" line. The program's
+docstring said until this revision that the line would "land separately,
+walked with the user"; that was stale — it put a walk item in front of the
+user on a false premise on 2026-09-14 — and the docstring is corrected with
+this section. Slice 6 is not built and will not be (2026-08-17); it keeps
+its number, so the slices below start at 7.
+
+### The slices that remain before activation
+
+Same table as § The five slices. Only shape 1 is ruled here: slice 7 waits
+on an open question and slice 9's owner is unruled, and this table proposes
+no answer to either.
+
+| Slice | Delivers | Spec tests | Retires |
+|---|---|---|---|
+| 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Blocked on an open question:** what the gate's pull request carries and how it merges — routed to the user 2026-09-05 per the merge-lane seat, not ruled; on record as issue #3's "Still open" line and the state machine's § 3.4 ("unspecified in the gatekeeper design") | none yet | `attempt_push`'s direct push to main |
+| 8 | The per-file staleness report (user-ruled 2026-08-31, issue #3 body): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
+| 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR #63): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
+| 10 | The C2 move: the gate runs from the dedicated Unix user, on the deployed root-owned copy, pushing on the `ned-git-gatekeeper` token rather than on its caller's credential (specification § The credential and enforcement, the Unix-user boundary bullet) | none yet | pushing on whatever credential the caller's environment carries |
+
+Cross-machine callers (C8, specification § Open) stay open and are not a
+slice.
+
+### Shape 2 — a reviewer attached to the gate, deferred
+
+Deferred, not rejected. Shape 2, as presented and not chosen: the gate
+acquires its own reviewer and a second approving identity before activation,
+and the merge lane retires. What it would add to shape 1: a reviewer the gate
+invokes itself, so the verdict returns in the gate's reply rather than on the
+pull request, and an approving identity of the role's own, so the gate's
+pull request needs no seat to approve it. The user said he will want it soon.
+When it is designed it attaches to the path shape 1 activates; nothing in
+slices 7–10 is undone by it. Where the existing thinking lives, so it is
+not redone:
+
+- the review-at-the-gate paragraph:
+  [`3-slice-6-review-evidence-not-built.md`](3-slice-6-review-evidence-not-built.md)
+  § What replaces it, "What now gates activation" — including the user's
+  2026-08-17 sketch, a script invoking a heavy Claude and Codex review;
+- [`3-credential-work-measured-state-and-rulings.md`](3-credential-work-measured-state-and-rulings.md)
+  § The guardian direction — structure over instructions, author≠approver by
+  account, interactive not headless, the error standard;
+- the tier split, this plan § Open item 3: mechanically decidable checks are
+  code and belong to the gate; correctness review belongs to the judgment
+  layer;
+- the specification § Constructive guarantees, the advisory, and the growth
+  point — the gate as the place where checks attach as they come to exist;
+- the design-to-main state machine's gate-rejection (§ 3.4, and the
+  [glossary](../design-to-main/design-to-main-glossary.md) entry) — what a
+  review finding returned through the gate looks like to a caller.
+
 ## Open — awaiting the user
 
 1. **The push credential.** Slice 1 ships fully tested against local bare
