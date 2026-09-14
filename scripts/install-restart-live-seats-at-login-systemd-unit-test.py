@@ -37,13 +37,21 @@ def check(case_name, condition, detail=""):
 
 class SystemctlStub:
     """Records every systemctl command; answers the verbs in failing with
-    exit 1 and everything else with success."""
+    exit 1, is-enabled with 0 only for the units in enabled (nonzero is
+    what systemctl answers for disabled and unknown), everything else with
+    success. on_start, when given, is called at the start verb so a case
+    can look at the world as the manager would see it then."""
 
-    def __init__(self, failing=()):
+    def __init__(self, failing=(), enabled=(), on_start=None):
         self.commands, self.failing = [], set(failing)
+        self.enabled, self.on_start = set(enabled), on_start
 
-    def __call__(self, command):
+    def __call__(self, command, stdout=None, stderr=None):
         self.commands.append(list(command))
+        if command[2] == "is-enabled":
+            return subprocess.CompletedProcess(command, 0 if command[3] in self.enabled else 1)
+        if command[2] == "start" and self.on_start is not None:
+            self.on_start()
         return subprocess.CompletedProcess(command, 1 if command[2] in self.failing else 0)
 
     @property
@@ -158,15 +166,58 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(
         ["--checkout", str(checkout), "--unit-name", "t", "--handoff-dir", str(throwaway),
          "--start-now"], unit_directory, systemctl=systemctl)
-    check("--start-now reloads and starts the unit without enabling it",
-          exit_code == 0 and systemctl.verbs == [["daemon-reload"], ["start", "t.service"]]
+    check("--start-now asks whether the name is enabled, then reloads and starts without enabling",
+          exit_code == 0
+          and systemctl.verbs == [["is-enabled", "t.service"], ["daemon-reload"],
+                                  ["start", "t.service"]]
           and "started, not enabled" in printed and "will not run at boot" in printed,
           (exit_code, systemctl.verbs, printed, errors))
+
+    # A test start must not touch an enabled unit: start leaves the enable
+    # symlink in place, so the unit would run at every boot too, and under
+    # --handoff-dir the file boot runs would now point at the throwaway
+    # directory (PR #358 review, items 1 and 2). The product name is refused
+    # outright; any other name is refused when the manager says enabled.
+    unit_directory = root / "user-start-now-product-name"
+    systemctl = SystemctlStub()
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--handoff-dir", str(throwaway), "--start-now"],
+        unit_directory, systemctl=systemctl)
+    check("--start-now without a throwaway --unit-name is refused before anything is done",
+          exit_code == 2 and "needs a throwaway --unit-name" in errors
+          and not unit_directory.exists() and systemctl.commands == [],
+          (exit_code, errors, systemctl.commands))
+    unit_directory = root / "user-start-now-enabled-name"
+    run_main(["--checkout", str(checkout), "--unit-name", "t"], unit_directory)
+    before = (unit_directory / "t.service").read_text()
+    systemctl = SystemctlStub(enabled=["t.service"])
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--handoff-dir", str(throwaway),
+         "--start-now"], unit_directory, systemctl=systemctl)
+    check("--start-now on a name the manager reports enabled is refused, and the unit "
+          "file is not rewritten",
+          exit_code == 1 and "is enabled" in errors and "--remove it first" in errors
+          and (unit_directory / "t.service").read_text() == before
+          and systemctl.verbs == [["is-enabled", "t.service"]],
+          (exit_code, errors, systemctl.verbs))
+
+    # The output directory is created before start: StandardOutput=append:
+    # does not create it, and a start into a missing directory fails before
+    # the program's own mkdir (PR #358 review, item 4).
+    missing = root / "not-yet" / "handoffs"
+    seen = {}
+    systemctl = SystemctlStub(on_start=lambda: seen.update(exists=missing.is_dir()))
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--handoff-dir", str(missing),
+         "--start-now"], root / "user-start-now-mkdir", systemctl=systemctl)
+    check("--start-now creates the handoff directory before the start",
+          exit_code == 0 and seen.get("exists") is True, (exit_code, seen, errors))
 
     # Failures of each systemctl step are reported with their exit code.
     for verb, arguments in (("daemon-reload", ["--checkout", str(checkout)]),
                             ("enable", ["--checkout", str(checkout)]),
-                            ("start", ["--checkout", str(checkout), "--start-now"])):
+                            ("start", ["--checkout", str(checkout), "--unit-name", "t",
+                                       "--start-now"])):
         systemctl = SystemctlStub(failing=[verb])
         exit_code, printed, errors = run_main(arguments, root / f"user-fail-{verb}",
                                               systemctl=systemctl)
