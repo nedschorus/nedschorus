@@ -924,15 +924,55 @@ user on a false premise on 2026-09-14 — and the docstring is corrected with
 this section. Slice 6 is not built and will not be (2026-08-17); it keeps
 its number, so the slices below start at 7.
 
+### What the gate's pull request carries and how it merges — ruled 2026-09-15
+
+**Ruled 2026-09-15 at the merge-lane seat: shape A.** Provenance, recorded
+exactly: merge-lane presented two shapes with a recommendation for shape A;
+the user's whole reply was "a". Every other word in this section is
+merge-lane's. The specification's Implementation status paragraph and the
+state machine's § 3.4 each carry the ruling in one sentence; this section
+is its record. Issue #3's "Still open" line still lists the question: its
+body is over the ghi-write word cap, so the split that edit needs is owed,
+not done.
+
+**Shape A, ruled.** The gate's pull request carries the single candidate
+commit the gate composes today — one commit on top of current main, the
+declared files, the caller's message, the gate's trailers — opened from the
+gate's candidate branch. The merge lane reviews, approves and merges it
+exactly as it merges every pull request now: an independent reviewer plus
+the merge seat's own approving review, a merge commit pinned to the
+approved commit. The caller's working commits stay on its topic branch and
+do not reach main.
+
+**Shape B, not chosen.** The caller's topic branch with its run of commits
+as authored.
+
+**Also not chosen:** the gate merging its own pull request (it cannot
+approve it, and it gains nothing until shape 2 gives the gate a reviewer
+and approving identity of its own), and a squash merge (the reviewed head
+would no longer be an ancestor of main, so the pin would be a record on the
+pull request rather than a fact in the history).
+
+**One consequence, named so it is not rediscovered.** Under shape A a fix
+round on a gate-opened pull request is not "a fresh agent's commit on top
+of the frozen head", because the head is a commit the gate composed. It is
+a second check-in through the gate; whether that updates the same pull
+request with a new candidate commit or opens a second one is a rule to
+write when the first such fix happens, not here.
+
+Shape B and gate-merges-itself remain available under shape 2 (below) and
+nothing in this ruling forecloses them. Shape A and shape B are the pull
+request's shapes; shape 1 and shape 2 are the activation shapes — two
+letterings, kept distinct on purpose.
+
 ### The slices that remain before activation
 
-Same table as § The five slices. Only shape 1 is ruled here: slice 7 waits
-on an open question and slice 9's owner is unruled, and this table proposes
-no answer to either.
+Same table as § The five slices. Shape 1 and slice 7's shape A are ruled
+here; slice 9's owner is unruled, and this table proposes no answer to it.
 
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
-| 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Blocked on an open question:** what the gate's pull request carries and how it merges — routed to the user 2026-09-05 per the merge-lane seat, not ruled; on record as issue #3's "Still open" line and the state machine's § 3.4 ("unspecified in the gatekeeper design") | none yet | `attempt_push`'s direct push to main |
+| 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Ruled 2026-09-15: shape A** — the pull request carries the single candidate commit and the merge lane merges it as a merge commit; § What the gate's pull request carries and how it merges — ruled 2026-09-15 | none yet | `attempt_push`'s direct push to main |
 | 8 | The per-file staleness report (user-ruled 2026-08-31, issue #3 body): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
 | 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR #63): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
 | 10 | The C2 move: the gate runs from the dedicated Unix user, on the deployed root-owned copy, pushing on the `ned-git-gatekeeper` token rather than on its caller's credential (specification § The credential and enforcement, the Unix-user boundary bullet) | none yet | pushing on whatever credential the caller's environment carries |
