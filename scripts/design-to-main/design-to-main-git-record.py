@@ -49,9 +49,13 @@ def parse_state_exit_trailer(message):
 
 
 class TopicBranchCutRefused(Exception):
-    """Git refused to cut the topic branch (section 6.6: the name is
-    refused, the machine says so in the invoking conversation and the run
-    does not start). Carries git's own words; the checkout is as it was."""
+    """The topic branch cannot be cut, so the run does not start (section
+    6.6): git refused the name, or the checkout has no `origin/main` to
+    cut from. Both are said in the invoking conversation and the checkout
+    is as it was; the second is refused at the invocation like the first,
+    before anything runs (user-ruled 2026-09-11, the ninth walk, item 10,
+    on PR #314's reviewers' question). Carries git's own words where git
+    spoke."""
 
 
 class RefusedBeforeTopicBranchCut(Exception):
@@ -120,6 +124,24 @@ class TopicBranchGitRecord:
         return commits[-1] if commits else None
 
     # -- section 9: the topic branch ----------------------------------------
+
+    def require_topic_branch_start_point(self):
+        """Section 6.6: a checkout with no `origin/main` is refused at the
+        invocation, like a name git refuses, and the run does not start
+        (user-ruled 2026-09-11, the ninth walk, item 10). The one check
+        before anything runs: the start point is read twice — by the cut
+        and by the count of a state's instances
+        (instances_of_state_so_far), which runs first, while
+        initiate-design-to-main's state-package is assembled — and without
+        this the second surfaced as a raw CalledProcessError instead of
+        the refusal the design asks for."""
+        start_point = self.topic_branch_start_point
+        if self.git("rev-parse", "--verify", "--quiet",
+                    "%s^{commit}" % start_point, check=False).returncode != 0:
+            raise TopicBranchCutRefused(
+                "the checkout at %s has no %s to cut the topic branch %r from; "
+                "the run does not start and the checkout is as it was" % (
+                    self.repository_dir, start_point, self.component))
 
     def cut_topic_branch(self):
         """Cut the topic branch from `origin/main`, named for the component,
@@ -323,6 +345,20 @@ class TopicBranchGitRecord:
         record = str(self.record_directory)
         return sorted(p for p in changed if not p.startswith(record + "/"))
 
+    @property
+    def test_design_path(self):
+        """Section 9: the test-design beside the component's directory."""
+        return self.component_directory / ("%s-test-design.md" % self.component)
+
+    def test_design_text(self):
+        """The test-design as it stands in the worktree, or None when the
+        component has none yet. Section 6.4 reads its `coverage-type:`
+        lines to check the test writer's set against it."""
+        path = self.absolute(self.test_design_path)
+        if not path.exists():
+            return None
+        return path.read_text()
+
     def document_of_path(self, path):
         """Which of section 9's documents a changed path belongs to:
         design, component-contract, test-design, tests, or implementation."""
@@ -333,7 +369,7 @@ class TopicBranchGitRecord:
         if path in (tables.contract_path_while_no_code_exists(self.component),
                     "%s/%s-contract.md" % (component_dir, self.component)):
             return "component-contract"
-        if path == "%s/%s-test-design.md" % (component_dir, self.component):
+        if path == str(self.test_design_path):
             return "test-design"
         if path.startswith(component_dir + "/tests/"):
             return "tests"

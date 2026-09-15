@@ -66,6 +66,29 @@ class ThrowawayRepository:
 
 FILES_WRITTEN_BEFORE_EMITTING = "files_written_before_emitting"
 
+# The artifact each writing state writes, for a scripted `emitted` that
+# names no files of its own: section 2 makes a writing state's `emitted`
+# with an empty `named-files` a machine error, so the stub launcher writes
+# and names one file, as the agent it feigns would (the tenth walk, item
+# 3). A case that wants other files, or none, names `named_files` itself.
+DEFAULT_ARTIFACT_OF_WRITING_STATE = {
+    tables.DESIGN_WRITING: tables.design_path_while_no_code_exists(COMPONENT),
+    tables.CONTRACT_REVISING: "%s/%s-contract.md" % (COMPONENT_DIRECTORY, COMPONENT),
+    tables.IMPLEMENTATION_WRITING: "%s/%s.py" % (COMPONENT_DIRECTORY, COMPONENT),
+    tables.TEST_DESIGN_WRITING: "%s/%s-test-design.md" % (COMPONENT_DIRECTORY, COMPONENT),
+    tables.TEST_WRITING: "%s/tests/%s-test.py" % (COMPONENT_DIRECTORY, COMPONENT),
+}
+
+
+def test_design_text(*requirement_coverage_types):
+    """A test-design the machine can read: one test-requirement per
+    coverage-type, each carrying its `coverage-type:` line (section 6.4).
+    `script` alone by default, which is what `test_write()` emits."""
+    requirement_coverage_types = requirement_coverage_types or ("script",)
+    return "# %s test-design\n\n" % COMPONENT + "".join(
+        "## requirement %d\n\ncoverage-type: %s\n\n" % (number, coverage_type)
+        for number, coverage_type in enumerate(requirement_coverage_types, start=1))
+
 
 class ScriptedStateExitLauncherWritingFiles(machine_module.ScriptedStateExitLauncher):
     """The stub launcher, feigning an agent that writes into the checkout
@@ -73,7 +96,11 @@ class ScriptedStateExitLauncherWritingFiles(machine_module.ScriptedStateExitLaun
     `files_written_before_emitting`, a dict of path (relative to the
     checkout) to content, written before the state-exit is returned. What
     the state-exit NAMES of them is its own `named_files` field (section
-    9: the commit carries the named files and the record, nothing else)."""
+    9: the commit carries the named files and the record, nothing else).
+
+    A writing state's `emitted` that names no files of its own gets
+    DEFAULT_ARTIFACT_OF_WRITING_STATE's one file, written and named, so
+    that every scripted write is a write that happened (section 2)."""
 
     def __init__(self, script, checkout):
         super().__init__(script)
@@ -83,7 +110,17 @@ class ScriptedStateExitLauncherWritingFiles(machine_module.ScriptedStateExitLaun
         if self.script:
             state, verdict, fields = self.script[0]
             fields = dict(fields)
-            for path, content in fields.pop(FILES_WRITTEN_BEFORE_EMITTING, {}).items():
+            written = dict(fields.pop(FILES_WRITTEN_BEFORE_EMITTING, {}))
+            if (verdict == tables.V_EMITTED
+                    and state in DEFAULT_ARTIFACT_OF_WRITING_STATE
+                    and "named_files" not in fields):
+                artifact = DEFAULT_ARTIFACT_OF_WRITING_STATE[state]
+                written.setdefault(
+                    artifact,
+                    test_design_text() if state == tables.TEST_DESIGN_WRITING
+                    else "%s, written by %s\n" % (artifact, state))
+                fields["named_files"] = (artifact,)
+            for path, content in written.items():
                 target = self.checkout / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content)
@@ -151,9 +188,22 @@ def prefix_to_tests_begun():
     ]
 
 
-def prefix_to_test_writing():
+def test_design_write(*requirement_coverage_types):
+    """A test-design-write whose requirements carry the coverage-types
+    the test writer will emit for the set: section 6.4 has the machine
+    check the one against the other."""
+    path = DEFAULT_ARTIFACT_OF_WRITING_STATE[tables.TEST_DESIGN_WRITING]
+    return (tables.TEST_DESIGN_WRITING, tables.V_EMITTED,
+            {FILES_WRITTEN_BEFORE_EMITTING: {
+                path: test_design_text(*requirement_coverage_types)},
+             "named_files": (path,)})
+
+
+def prefix_to_test_writing(*test_design_coverage_types):
+    """Through the test-design's approval, its requirements carrying the
+    coverage-types the test writer will emit (`script` by default)."""
     return prefix_to_tests_begun() + [
-        (tables.TEST_DESIGN_WRITING, tables.V_EMITTED, {}),
+        test_design_write(*test_design_coverage_types),
         (tables.TEST_DESIGN_ACCEPTANCE_BY_AGENT, tables.V_ADVANCE, {}),
         (tables.TEST_DESIGN_ACCEPTANCE_BY_USER, tables.V_ADVANCE, {}),
     ]
