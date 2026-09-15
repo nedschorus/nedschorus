@@ -17,7 +17,7 @@ failing.
 
 The visible line, left to right (user-walked 2026-08-08):
 
-  ned-box:choirmaster (choirmaster)  Opus 5 · high  46% 2h 77% 3d 89%
+  ned-box:choirmaster  Opus 5 · high  46% 2h 77% 3d 89%
 
   host         green — which machine this session runs on. The user drives
                from a Mac over SSH while the agents run here, so the box name
@@ -27,9 +27,10 @@ The visible line, left to right (user-walked 2026-08-08):
                off the screen, worst under .claude/worktrees/). One agent,
                one worktree, so several panes differ mainly by this. Home
                itself still renders as ~.
-  (branch)     read out of .git/HEAD directly, no subprocess. Redundant with
-               the directory name today; not redundant on a detached HEAD or
-               a slice branch, where committing to the wrong branch is silent.
+               (A "(branch)" segment followed the directory until 2026-09-14,
+               when the user ruled it dropped: seats work on topic branches
+               now, whose names are long by the naming rule, so the segment
+               crowded the line and said little.)
   agent        agent.name, present only for a session launched with
                --agent <name>; absent for an ordinary session.
   model        model.display_name
@@ -148,23 +149,6 @@ def git_head_file(working_directory: Path) -> Path | None:
     return None
 
 
-def git_branch(working_directory: str) -> str:
-    """The current branch, or the short commit id when HEAD is detached."""
-    if not working_directory:
-        return ""
-    head_file = git_head_file(Path(working_directory))
-    if head_file is None:
-        return ""
-    try:
-        head = head_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-    branch_reference = "ref: refs/heads/"
-    if head.startswith(branch_reference):
-        return head[len(branch_reference):]
-    return head[:8]
-
-
 def freshness_suffix(working_directory: str) -> str:
     """⇣N when this checkout is behind origin/main, per the freshness stamp.
 
@@ -197,7 +181,7 @@ def freshness_suffix(working_directory: str) -> str:
 
 
 def location_segment(working_directory: str) -> str:
-    """host:directory (branch) — where this session is, on which machine."""
+    """host:directory — where this session is, on which machine."""
     host = os.uname().nodename.split(".")[0]
 
     pieces = []
@@ -206,9 +190,6 @@ def location_segment(working_directory: str) -> str:
     if working_directory:
         prefix = ":" if pieces else ""
         pieces.append(prefix + colored(working_directory_name(working_directory), BLUE_BOLD))
-    branch = git_branch(working_directory)
-    if branch:
-        pieces.append(f" ({branch})")
     freshness = freshness_suffix(working_directory)
     if freshness:
         pieces.append(" " + colored(freshness, RED_BOLD))
