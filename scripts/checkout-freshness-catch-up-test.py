@@ -232,6 +232,39 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           git(["rev-list", "--count", "HEAD..origin/main"], seat).stdout.strip() == "0"
           and git(["rev-parse", "--abbrev-ref", "HEAD"], seat).stdout.strip() == "seat")
 
+    # A rebase git REFUSES before starting (PR #388 review, reproduced by the
+    # lane): an untracked file at the exact path main just added. rc=1 "could
+    # not detach HEAD", no rebase state, and `git rebase --abort` would exit
+    # 128. That is a refusal, not a failed abort — told to the agent once,
+    # NEVER a user line.
+    commit_file(origin, "scripts/lands-on-main.py", "main's\n", "main adds a script")
+    (seat / "scripts").mkdir(exist_ok=True)
+    (seat / "scripts/lands-on-main.py").write_text("untracked local\n", encoding="utf-8")
+    head_before = git(["rev-parse", "HEAD"], seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a rebase git refuses before starting leaves HEAD and the tree untouched",
+          git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before
+          and rebase_state_dirs_absent(seat_git_dir)
+          and (seat / "scripts/lands-on-main.py").read_text(encoding="utf-8") == "untracked local\n",
+          result.stdout)
+    check("and is NOT a user line — git never entered the tree",
+          display_text(result) == "", display_text(result))
+    check("the agent is told git refused, and what to do",
+          "Not updated: git refused" in agent_text(result)
+          and "commit or set aside any uncommitted work" in agent_text(result),
+          agent_text(result))
+    check("the stamp says refused", stamp_of(seat).get("last_action", "").startswith("rebase refused"),
+          str(stamp_of(seat)))
+    refused_again = run_catch_up(["--cwd", str(seat)])
+    check("a refusal is told once: the next turn end is silent on both channels",
+          refused_again.stdout.strip() == "", refused_again.stdout)
+    (seat / "scripts/lands-on-main.py").unlink()
+    cleared = run_catch_up(["--cwd", str(seat)])
+    check("with the file gone, the next turn end rebases (attempted every turn end)",
+          "was rebased" in agent_text(cleared)
+          and (seat / "scripts/lands-on-main.py").read_text(encoding="utf-8") == "main's\n",
+          agent_text(cleared))
+
     # -----------------------------------------------------------------------
     # MISBEHAVIOUR is the only thing the user hears. Ruled 2026-09-15: "If the
     # agents are doing the wrong thing, or not doing the right thing, that's
@@ -578,6 +611,17 @@ with tempfile.TemporaryDirectory() as no_git_scratch:
           unlaunchable.returncode != 1, str(unlaunchable.returncode))
     check("callers still see it as a failure",
           unlaunchable.returncode != 0, str(unlaunchable.returncode))
+    # A git that did not run must never read as "unpushed" — the one answer
+    # that authorises a rebase (PR #388 review).
+    saved_path = os.environ["PATH"]
+    try:
+        os.environ["PATH"] = str(empty_path_directory)
+        unknown_state, unknown_text = catch_up_module.head_state(no_git_scratch, "seat")
+    finally:
+        os.environ["PATH"] = saved_path
+    check("head_state with git unlaunchable is 'unknown', never 'unpushed'",
+          unknown_state == "unknown" and "git did not run" in unknown_text,
+          (unknown_state, unknown_text))
 
 # ---------------------------------------------------------------------------
 # --reference-pull must still speak. Its only other case exercises the

@@ -100,7 +100,11 @@ agent is told at its next turn what happened: on success, which files moved
 under it and to rerun the suites for what it touched; on a skip or conflict,
 why, and the by-hand steps. A success is always told; a skip or conflict is
 told once per key but attempted every turn end, so it goes the moment the
-tree is clean.
+tree is clean. A rebase git refuses before starting — an untracked file at a
+path main just added, or the `--no-autostash` refusal — leaves no rebase
+state and is "refused": told to the agent once, never a user line;
+"abort-failed" means rebase state remained after an abort, decided from the
+disk, not from the abort's exit code (PR #388 review).
 
 This is not the merge the 2026-09-14 ruling removed. That merge landed
 MERGE COMMITS on FROZEN heads — pushed, with a review running — nine times in

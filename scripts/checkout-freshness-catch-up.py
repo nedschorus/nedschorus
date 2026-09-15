@@ -112,6 +112,8 @@ LEAVE_IT_ADVICE = (
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
 DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
+UNKNOWN_ADVICE = ("Your head state could not be determined (git did not run); nothing was "
+                  "changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = "Rerun the test suites for what you touched: your work now sits on newer code."
 
 # Categories worth naming, most consequential first, each labelled with WHY an
@@ -341,6 +343,12 @@ def head_state(checkout: Path, branch: str):
         return "detached", "detached HEAD"
     remote = run_git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
                      checkout, timeout=15)
+    if remote.returncode == GIT_DID_NOT_RUN:
+        # "git did not run" is not "no such ref": it must never read as
+        # "unpushed", the one answer that authorises a rebase (PR #388 review,
+        # the asymmetry with counts_against_main, which treats the same failure
+        # class as unknowable).
+        return "unknown", "head state unknowable (git did not run)"
     if remote.returncode != 0:
         return "unpushed", "head unpushed"
     head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
@@ -486,13 +494,26 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     rebased = run_git(["rebase", "--no-autostash", "origin/main"], checkout, timeout=30)
     if rebased.returncode == 0:
         return "rebased", ""
+    def rebase_state_exists() -> bool:
+        return any((git_dir / marker).exists() for marker in ("rebase-merge", "rebase-apply"))
+
+    if not rebase_state_exists():
+        # git refused BEFORE detaching HEAD — an untracked file at a path main
+        # just added ("could not detach HEAD"), or --no-autostash on a dirty
+        # tree. Nothing was touched and there is nothing to abort: `git rebase
+        # --abort` here exits 128 "no rebase in progress", and reading that as
+        # a failed abort told the user the tree was left mid-rebase, every
+        # turn end, about a tree git never entered (PR #388 review).
+        detail = "; ".join(line.strip() for line in rebased.stderr.splitlines() if line.strip())
+        return "refused", detail or "no detail"
     conflicting = run_git(["diff", "--name-only", "--diff-filter=U"], checkout,
                           timeout=15).stdout.split()
     aborted = run_git(["rebase", "--abort"], checkout, timeout=30)
-    still_in_progress = any((git_dir / marker).exists()
-                            for marker in ("rebase-merge", "rebase-apply"))
-    if aborted.returncode != 0 or still_in_progress:
-        return "abort-failed", rebased.stderr.strip() or "no detail"
+    # Whether the abort worked is decided by whether rebase state REMAINS, never
+    # by the abort's exit code: the state on disk is the truth about the tree.
+    # And a failed abort shows ITS OWN error, not the rebase's (PR #388 review).
+    if rebase_state_exists():
+        return "abort-failed", (aborted.stderr.strip() or rebased.stderr.strip() or "no detail")
     return "conflict", ", ".join(conflicting) or (rebased.stderr.strip() or "no detail")
 
 
@@ -584,6 +605,9 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                  f"({parts['behind']} commit(s) moved under your {parts['own_text']}; "
                  f"never pushed, so nothing was under review).{older}\n{AFTER_REBASE_ADVICE}")
         elif outcome == "abort-failed":
+            # No repeat key needed: rebase state is now on disk, so at the next
+            # turn end merge_blockers sees the in-progress marker and the rebase
+            # is not attempted — this fires at most once per real occurrence.
             stamp["last_action"] = "rebase failed AND could not abort"
             report(f"catch-up: {branch} was left mid-rebase — the rebase onto origin/main "
                    f"failed and `git rebase --abort` did not restore it ({detail}); "
@@ -594,9 +618,13 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             stamp["last_action"] = f"rebase {outcome}: {detail}"
             if not already_told:
                 stamp["last_told"] = told
-                reason = (f"Not updated: {detail}." if outcome == "skipped"
-                          else f"A rebase onto origin/main was tried and put back: it "
-                               f"conflicts on {detail}.")
+                if outcome == "skipped":
+                    reason = f"Not updated: {detail}."
+                elif outcome == "refused":
+                    reason = f"Not updated: git refused — {detail}."
+                else:
+                    reason = (f"A rebase onto origin/main was tried and put back: it "
+                              f"conflicts on {detail}.")
                 tell(f"{heading} {reason}{older}{note}\n{REBASE_ADVICE}")
         write_stamp(stamp_path, stamp)
         return
@@ -605,7 +633,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     stamp["last_action"] = "reported, not merged (ruled 2026-09-14)"
     if not already_told:
         stamp["last_told"] = told
-        advice = DETACHED_ADVICE if state_key == "detached" else LEAVE_IT_ADVICE
+        advice = {"detached": DETACHED_ADVICE, "unknown": UNKNOWN_ADVICE}.get(
+            state_key, LEAVE_IT_ADVICE)
         tell(f"{heading}{older}{note}\n{advice}")
     write_stamp(stamp_path, stamp)
 
