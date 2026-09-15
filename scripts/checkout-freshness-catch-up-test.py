@@ -765,6 +765,126 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           str(catch_up_module.obsolete_files_by_category(not_a_repository)))
 
 
+# ---------------------------------------------------------------------------
+# The two `git rebase --abort` shapes healthy git cannot produce
+# (nedschorus#389). PR #388's blocking fix decides abort-failed by whether
+# rebase state REMAINS on disk, never by the abort's exit code, and carries
+# the abort's own stderr. Reverting that to the pre-fix `returncode != 0` form
+# left every case green: the suite had no abort that exits non-zero, because
+# a real git never does. So a regression of the exact defect #388 removed
+# would have been silent. Each shape is produced by a `git` shim first on
+# PATH that intercepts only `rebase --abort` and hands every other call to
+# the real binary.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as abort_scratch:
+    tmp = Path(abort_scratch)
+    real_git = shutil.which("git")
+
+    def shim(name: str, abort_body: str) -> Path:
+        directory = tmp / name
+        directory.mkdir()
+        script = directory / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "rebase" ] && [ "$2" = "--abort" ]; then\n'
+            f"{abort_body}\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n',
+            encoding="utf-8")
+        script.chmod(0o755)
+        return directory
+
+    # Shape 1: the abort DOES its job, then exits 128 anyway.
+    abort_done_bad_exit = shim(
+        "abort-done-bad-exit",
+        f'  "{real_git}" rebase --abort\n'
+        '  printf "shimmed: abort done, exit 128 regardless\\n" >&2\n'
+        "  exit 128")
+    # Shape 2: the abort refuses and leaves the rebase state where it was.
+    abort_refuses = shim(
+        "abort-refuses",
+        '  printf "shimmed abort failure: refusing to touch the tree\\n" >&2\n'
+        "  exit 1")
+
+    def conflicting_seat(name: str):
+        """A never-pushed seat whose next rebase onto main must conflict."""
+        origin = tmp / f"{name}-origin"
+        origin.mkdir()
+        git(["init", "-q", "-b", "main"], origin)
+        configure_identity(origin)
+        commit_file(origin, "shared.txt", "first\n", "first commit")
+        reference = tmp / f"{name}-reference"
+        git(["clone", "-q", str(origin), str(reference)], tmp)
+        configure_identity(reference)
+        seat = tmp / f"{name}-seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
+        configure_identity(seat)
+        commit_file(seat, "shared.txt", "seat version\n", "seat edits shared")
+        commit_file(origin, "shared.txt", "origin version\n", "origin edits shared")
+        git_dir = Path(git(["rev-parse", "--absolute-git-dir"], seat).stdout.strip())
+        return seat, git_dir
+
+    def rebase_state_present(git_dir: Path) -> bool:
+        return any((git_dir / marker).exists() for marker in ("rebase-merge", "rebase-apply"))
+
+    # --- shape 1: abort succeeded, exit code lied ---------------------------
+    seat, git_dir = conflicting_seat("shape-one")
+    head_before = git(["rev-parse", "HEAD"], seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(seat)], path_prefix=str(abort_done_bad_exit))
+    check("an abort that succeeds but exits non-zero is a CONFLICT, decided from the disk",
+          "conflicts on shared.txt" in agent_text(result), agent_text(result) + result.stderr)
+    check("and is NOT a user line", display_text(result) == "", display_text(result))
+    check("the tree is exactly as it was: HEAD unchanged, no rebase state",
+          git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before
+          and not rebase_state_present(git_dir)
+          and git(["status", "--porcelain"], seat).stdout.strip() == "",
+          git(["status"], seat).stdout)
+    check("the stamp says conflict, not abort-failed",
+          stamp_of(seat).get("last_action", "").startswith("rebase conflict"),
+          str(stamp_of(seat).get("last_action")))
+
+    # --- shape 2: abort refused, state left behind --------------------------
+    seat, git_dir = conflicting_seat("shape-two")
+    head_before = git(["rev-parse", "HEAD"], seat).stdout.strip()
+    result = run_catch_up(["--cwd", str(seat)], path_prefix=str(abort_refuses))
+    check("an abort that leaves rebase state behind is ABORT-FAILED",
+          stamp_of(seat).get("last_action") == "rebase failed AND could not abort"
+          and rebase_state_present(git_dir), str(stamp_of(seat).get("last_action")))
+    check("and IS a user line, carrying the ABORT's own stderr",
+          "was left mid-rebase" in display_text(result)
+          and "shimmed abort failure: refusing to touch the tree" in display_text(result),
+          display_text(result))
+    check("the agent is told to inspect before doing anything else",
+          "could not be aborted cleanly" in agent_text(result)
+          and "Inspect `git status`" in agent_text(result), agent_text(result))
+    # The structural claim merge-lane set out to test: a true abort-failed
+    # cannot repeat. It holds, and for a reason one step earlier than the
+    # in-progress blocker: a tree parked mid-rebase has a DETACHED HEAD sitting
+    # at origin/main's tip, so it reads as 0 behind and nothing is said on
+    # either channel. The agent was told once, at the failure, to inspect
+    # `git status` before doing anything else; that is the whole telling.
+    following = run_catch_up(["--cwd", str(seat)])
+    check("the next turn end repeats NOTHING: no user line, no telling, nothing attempted",
+          following.stdout.strip() == "" and rebase_state_present(git_dir),
+          following.stdout)
+    check("and the turn after that is silent too",
+          run_catch_up(["--cwd", str(seat)]).stdout.strip() == "")
+    git(["rebase", "--abort"], seat)
+    check("(fixture) a real abort restores the seat",
+          not rebase_state_present(git_dir)
+          and git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before)
+
+    # The shims pass every other call through: a seat whose rebase is clean
+    # rebases normally under a shim, because no abort is ever reached.
+    git(["reset", "-q", "--hard", "origin/main"], seat)
+    commit_file(seat, "seat-only.txt", "mine\n", "the seat's own, non-conflicting work")
+    commit_file(tmp / "shape-two-origin", "advance.txt", "more\n", "main moves on")
+    result = run_catch_up(["--cwd", str(seat)], path_prefix=str(abort_refuses))
+    check("a shim intercepts only the abort: a clean rebase still goes through it",
+          "was rebased onto origin/main" in agent_text(result), agent_text(result) + result.stderr)
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
