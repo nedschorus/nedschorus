@@ -112,17 +112,28 @@ TIER_TO_CODEX_MODEL_CHAIN = {
 
 # Tier -> reasoning effort, pinned explicitly so a cell's behavior never
 # depends on the machine's own ~/.codex/config.toml default. xhigh for both
-# tiers by user calibration 2026-08-03 ("xhigh is OK for codex"); the good
-# tier raised to max on the 2026-09-03 campaign (user-ruled 2026-09-04):
-# sol at max beat sol at xhigh by +46 net unique-and-real findings over two
-# runs and six targets, positive on five and level on the sixth, with no
-# precision cost. It is the campaign's slowest cell (mean 1339 s against
-# 788 s at xhigh) and so bounds the whole read's wall clock. The floor stays
-# at xhigh because luna is the one model the step does not help: max was +8
-# net but positive on only three of six targets, under the campaign's rule;
-# high was -25 net.
+# tiers by user calibration 2026-08-03 ("xhigh is OK for codex"). The good
+# tier was raised to max on the 2026-09-03 campaign and PUT BACK TO XHIGH
+# 2026-09-15 (user-ruled, "approved"), because the campaign measured each
+# cell alone and the grid is a union.
+#
+# What max bought, measured per cell: sol at max beat sol at xhigh by +46 net
+# unique-and-real findings. What it buys the GRID, computed 2026-09-15 from
+# the same campaign's cluster tables over its six targets: ten findings of a
+# 331-finding union, and three points of worst-target recall, 0.86 to 0.83.
+# What it costs: this is the slowest cell of the four and so sets the whole
+# read's wall clock, mean 1339 s at max against 1082 s at xhigh. Every
+# cheaper roster on the measured frontier gives up eighteen findings or
+# more, so this is the one trade that sells little fidelity for real time.
+# The analysis is in the log-store at
+# nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
+#
+# The floor stays at xhigh because luna is the one model the step does not
+# help: max was +8 net alone, positive on only three of six targets, and in
+# the union it is worth -1. Opus and fable stay at max, where the union says
+# the effort is worth 20 and 6 findings; see the claude cell.
 TIER_TO_REASONING_EFFORT = {
-    "good": "max",
+    "good": "xhigh",
     "floor": "xhigh",
 }
 

@@ -182,7 +182,8 @@ CONCURRENT_RUN_REVIEW_TEXT = (
 # other two places a report can turn up, "stderr" and "stdout" are the
 # runtime's own words on each stream, "dump_prompt" is a path to write the
 # prompt the stub received to -- the whole of stdin on the Claude leg, which
-# is how a case reads what the cell composed -- and "exit" is the code to
+# is how a case reads what the cell composed -- "dump_argv" is a path to
+# write the argv the cell built, as JSON, and "exit" is the code to
 # exit with.
 # The report path arrives by environment rather than by parsing the prompt,
 # so a change to the prompt templates cannot silently unhook the stub.
@@ -248,6 +249,13 @@ if "break_git" in step:
 # talking. A case that needs the difference to matter writes both.
 if "dump_prompt" in step:
     pathlib.Path(step["dump_prompt"]).write_text(received_prompt, encoding="utf-8")
+if "dump_argv" in step:
+    # The argv the cell built, so a case can read what the runtime was
+    # actually asked for rather than what the module's constants say. Written
+    # as JSON so a flag and its value stay two entries: --disallowedTools and
+    # Bash are one pair, and a joined string could not tell that from a
+    # single argument that happens to contain both.
+    pathlib.Path(step["dump_argv"]).write_text(json.dumps(argv), encoding="utf-8")
 if "stderr" in step:
     sys.stderr.write(step["stderr"])
 if "stdout" in step:
@@ -857,6 +865,59 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("an unreported token total is omitted, never guessed at",
           "tokens=" not in provenance_stamp_of(report), repr(provenance_stamp_of(report)))
+
+    # --- The Claude cell denies Bash; the Codex good tier runs at xhigh ----
+    # Both settled 2026-09-15 on the union analysis in the log-store at
+    # nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
+    #
+    # Bash first. A cell inherits the machine's permission mode, and under
+    # "auto" every tool is already approved, so --allowedTools ADDS rather
+    # than restricts: in the 2026-09-14 grid run all three Claude cells made
+    # every one of their tool calls through Bash and used the Read, Grep and
+    # Glob they were given zero times. Leaving Bash out of ALLOWED_TOOLS is
+    # therefore not a denial, which is why the argv is read here rather than
+    # the module's constant: the constant looked right all along while the
+    # cells ran on Bash.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "claude-denies-bash", "claude")
+    received_argv_path = scratch / "claude-denies-bash-argv.json"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "dump_argv": str(received_argv_path)}},
+        report,
+    )
+    claude_argv = json.loads(received_argv_path.read_text(encoding="utf-8"))
+    check("a Claude cell's run reaches the runtime at all",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the Claude cell denies Bash by flag, not by omission",
+          "--disallowedTools" in claude_argv
+          and claude_argv[claude_argv.index("--disallowedTools") + 1] == "Bash",
+          repr(claude_argv))
+    check("the Claude cell still allows the four tools the reviewer needs",
+          "--allowedTools" in claude_argv
+          and claude_argv[claude_argv.index("--allowedTools") + 1]
+          == "Read,Grep,Glob,Write",
+          repr(claude_argv))
+
+    # The Codex good tier. Max beat xhigh by 46 net findings measured per
+    # cell, but the grid is a union and there it is worth ten findings of 331
+    # and three points of worst-target recall. This is the slowest of the
+    # four cells, so its effort sets the whole read's wall clock: 1339 s at
+    # max against 1082 s at xhigh. The stamp is what the record keeps, so the
+    # stamp is what this reads.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "codex-good-effort", "codex")
+    result = run_codex_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
+        report, "--tier", "good",
+    )
+    check("the Codex good tier runs at xhigh, not max",
+          result.returncode == 0
+          and "effort=xhigh" in provenance_stamp_of(report),
+          f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")
 
     # --- The effort a cell runs at is the caller's to name ----------------
     # The tier maps pin an effort per tier, and --effort overrides them the
