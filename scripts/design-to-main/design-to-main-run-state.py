@@ -69,7 +69,7 @@ class RunCounters:
         """The six per-version counters start from zero; the redesigns
         counter does not. A redesign does this (section 3.2, "A redesign
         resets the version"), and so does every resume from an
-        investigation (section 7, row 71; user-ruled 2026-09-09, the
+        investigation (section 7, row 72; user-ruled 2026-09-09, the
         eighth walk: "if I intervene all the agents get their chance
         again")."""
         for rule in tables.COUNTER_TABLE:
@@ -109,9 +109,9 @@ class RunStateRecord:
     tests-begun; whether the design and the test-design are approved; the
     consecutive could-not-run, program-check-failure and submit-retry
     counts; why each state was entered (the writing states' entry reasons,
-    for the three buckets; what entered test-suite-arbitrating, for rows
-    58 and 59); the implementation's coverage-type and the coverage-types
-    of the set of tests; the paused
+    for the three buckets; what entered test-suite-arbitrating, for row
+    60); the implementation's coverage-type and the coverage-types of the
+    set of tests; the paused
     state and the commit at which an investigation opened; whether row 1
     has cut the topic branch; the outcome once ended.
 
@@ -168,16 +168,21 @@ class RunStateRecord:
         # Why test-suite-arbitrating was entered, as the state or sub-state
         # whose state-exit entered it: test-suite-executing on a failed
         # suite or a could-not-run, a reviewing sub-state on a reviewer's
-        # reject at the writer's ceiling. Rows 58 and 59 route the
-        # arbitrator's `advance` on it (section 6.5).
+        # reject at the writer's ceiling. Row 60 routes the arbitrator's
+        # `advance` on it (section 6.5); from a failed suite that advance
+        # has no row (the tenth walk, item 16).
         self.test_suite_arbitrating_entered_from = None
         self.paused_state = None
         self.investigation_focus = None
         self.investigation_opened_at_commit = None
         self.investigation_opened_by = None
         # The row of section 3.2 that opened the investigation, or None for
-        # a machine error; row 64 (the arbitrator's third entry) is the one
-        # a resume must not return to (section 6.6).
+        # a machine error; row 65 (the arbitrator's third entry) is the one
+        # whose resume may instead apply the ruling the arbitrator held.
+        # A plain resume from it returns to the arbitrator, whose counter
+        # the resume has zeroed, so the return is the first entry of a
+        # fresh budget rather than a fourth (section 6.6; user-ruled
+        # 2026-09-11, the ninth walk, item 4).
         self.investigation_opened_by_row = None
         # The destination the investigation's opening held for its resume
         # (row 11: design-writing), applied when the user names none.
