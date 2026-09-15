@@ -123,6 +123,17 @@ TIER_TO_CLAUDE_MODEL_CHAIN = {
 # at max beat fable at high by +63, positive on every target. Time roughly
 # doubles (opus mean 757 -> 1047 s) and stays under the Codex good cell's.
 # Recalibrating is the user's call, here.
+#
+# REAFFIRMED 2026-09-15 against the union, which is the number that decides a
+# grid: those figures measure a cell alone, and what matters is what a cell
+# adds to what the others already found. Computed from the same campaign's
+# cluster tables over its six targets, opus at max is worth 20 findings of a
+# 331-finding union and 14 points of worst-target recall against opus at
+# high, and it contributes 34 findings no other cell in the grid found, more
+# than twice any other cell. Fable at max is worth 6, and contributes 14.
+# Both stay at max. The Codex good tier went the other way on the same
+# analysis; its own comment says why. The analysis is in the log-store at
+# nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
 TIER_TO_REASONING_EFFORT = {
     "good": "max",
     "floor": "max",
@@ -132,6 +143,20 @@ TIER_TO_REASONING_EFFORT = {
 # present because the report is a file now — the common module explains why
 # writes are detected rather than blocked.
 ALLOWED_TOOLS = "Read,Grep,Glob,Write"
+
+# Bash is DENIED, which is not the same as leaving it out of ALLOWED_TOOLS
+# above (measured 2026-09-14). A cell inherits the machine's permission mode,
+# and under "auto" every tool is already approved, so --allowedTools adds
+# rather than restricts: in the 2026-09-14 grid run all three Claude cells
+# used Bash for every one of their 5 to 22 tool calls and the Read, Grep and
+# Glob they were given exactly zero times. That matters because the mode also
+# carries an instruction to read files with cat rather than the Read tool,
+# and a whole-script cat overflows the tool result: the fable cell spilled
+# six results to disk and spent about five minutes reading them back in
+# 300-line slices. Denying Bash returns the cell to the four tools this
+# program chose for it; smoke-checked 2026-09-15, the cell answers from the
+# Read tool instead.
+DISALLOWED_TOOLS = "Bash"
 
 
 def invocation_builder(effort: str):
@@ -153,6 +178,7 @@ def invocation_builder(effort: str):
             "--effort", effort,
             "--output-format", "text",
             "--allowedTools", ALLOWED_TOOLS,
+            "--disallowedTools", DISALLOWED_TOOLS,
         ]
         return command, prompt
     return build_invocation
