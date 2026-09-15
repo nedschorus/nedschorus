@@ -99,13 +99,11 @@ def flush_report() -> None:
 def run_git(arguments, working_directory: Path, timeout: int = 60):
     """Run git somewhere; never raise, whatever goes wrong.
 
-    LC_ALL=C because this script READS git's prose. The merge path decides
-    whether it owns a conflict by looking for the word "CONFLICT" in git's
-    output, and git translates that word: a German-locale host prints
-    "KONFLIKT", the test fails to match, and the cleanup that should abort the
-    merge is skipped — leaving the seat's tree parked mid-merge (PR #87's
-    review). Forcing the C locale makes every message this script matches on
-    stable, whatever the host is configured for.
+    LC_ALL=C because this script READS git's prose: the reference
+    fast-forward reports git's own refusal text, and a matched word in a
+    translated message once skipped a cleanup entirely (PR #87's review, on
+    the merge path this script no longer has). Forcing the C locale keeps
+    every message stable, whatever the host is configured for.
     """
     try:
         return subprocess.run(
@@ -208,6 +206,16 @@ def head_state(checkout: Path, branch: str):
                           "new commit on top, never an amend or a merge)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
     count = local.stdout.strip() if local.returncode == 0 else "some"
+    if count == "0":
+        # HEAD is behind its own remote branch: the shape the fix-on-frozen-head
+        # process leaves once the authoring seat fetches a fresh agent's fix
+        # commit (PR #372 review). The truth is that the remote is ahead.
+        remote_only = run_git(["rev-list", "--count", f"HEAD..origin/{branch}"], checkout,
+                              timeout=30)
+        remote_count = remote_only.stdout.strip() if remote_only.returncode == 0 else "some"
+        return "behind-remote", (f"head behind origin/{branch} by {remote_count} commit(s) "
+                                 f"pushed from elsewhere (a fix on the frozen head, most "
+                                 f"likely); fast-forward to it before working here")
     return "pushed-with-local-commits", (f"head pushed, with {count} local commit(s) not "
                                          f"on origin/{branch}")
 
