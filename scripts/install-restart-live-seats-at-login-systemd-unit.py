@@ -124,7 +124,8 @@ def unit_is_enabled(unit_name: str, run=subprocess.run) -> bool:
 
 
 def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: Path,
-            start_now: bool, run=subprocess.run) -> int:
+            start_now: bool, run=subprocess.run, home: Path = None) -> int:
+    home = home or Path.home()
     program = Path(os.path.abspath(checkout)) / "scripts" / PROGRAM_FILE_NAME
     if not program.is_file():
         print(f"install-restart-live-seats-at-login-systemd-unit: no {PROGRAM_FILE_NAME} "
@@ -147,8 +148,9 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
     # start into a missing one fails before the program's own mkdir can run
     # (PR #358 review, item 4). The program's default directory exists on
     # any machine that has run a seat; a throwaway --handoff-dir may not.
-    output_directory_of(handoff_directory).mkdir(parents=True, exist_ok=True)
-    unit_path.write_text(unit_text(unit_name, checkout, handoff_directory), encoding="utf-8")
+    output_directory_of(handoff_directory, home).mkdir(parents=True, exist_ok=True)
+    unit_path.write_text(unit_text(unit_name, checkout, handoff_directory, home=home),
+                         encoding="utf-8")
     print(f"install-restart-live-seats-at-login-systemd-unit: wrote {unit_path}")
     reloaded = systemctl(run, "daemon-reload")
     if reloaded.returncode != 0:
@@ -175,23 +177,34 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
 
 
 def remove(unit_name: str, unit_directory: Path, run=subprocess.run) -> int:
+    """Disable, delete, reload — and say only what happened (PR #358 review,
+    item 3: the old version printed "disabled ... and removed ..." and exited
+    0 with the manager unreachable). disable fails for a unit the manager
+    does not know, which is expected when there is no unit file — nothing to
+    disable — and is a failure when there is one: the manager should know
+    it, so the enable symlink may still be there. A failed reload always
+    counts: the manager still holds the old unit."""
     unit_path = unit_directory / f"{unit_name}.service"
-    # disable fails for a unit that is not enabled or not there; either way
-    # the file is removed and the manager reloaded, so the answer is ignored.
-    systemctl(run, "disable", f"{unit_name}.service")
-    if unit_path.is_file():
+    had_file = unit_path.is_file()
+    disabled = systemctl(run, "disable", f"{unit_name}.service").returncode == 0
+    if had_file:
         unit_path.unlink()
-        print(f"install-restart-live-seats-at-login-systemd-unit: disabled {unit_name} and "
-              f"removed {unit_path}")
-    else:
-        print(f"install-restart-live-seats-at-login-systemd-unit: disabled {unit_name}; "
-              f"there was no {unit_path} to remove")
-    systemctl(run, "daemon-reload")
-    return 0
+    failed = []
+    if had_file and not disabled:
+        failed.append(f"disable failed, so {unit_name} may still be enabled")
+    if systemctl(run, "daemon-reload").returncode != 0:
+        failed.append("daemon-reload failed, so the manager still holds the old unit")
+    print("install-restart-live-seats-at-login-systemd-unit: "
+          + (f"disabled {unit_name} and " if disabled else "")
+          + (f"removed {unit_path}" if had_file else f"there was no {unit_path} to remove"))
+    for reason in failed:
+        print(f"  {reason} — is the user manager reachable from this session?",
+              file=sys.stderr)
+    return 1 if failed else 0
 
 
 def main(argv=None, platform: str = sys.platform, unit_directory: Path = None,
-         run=subprocess.run) -> int:
+         run=subprocess.run, home: Path = None) -> int:
     parser = argparse.ArgumentParser(
         description="Install the systemd user unit that runs restart-live-seats-at-login "
                     "at boot on the box.",
@@ -232,7 +245,7 @@ def main(argv=None, platform: str = sys.platform, unit_directory: Path = None,
     if arguments.remove:
         return remove(arguments.unit_name, unit_directory, run=run)
     return install(arguments.unit_name, arguments.checkout, arguments.handoff_dir,
-                   unit_directory, arguments.start_now, run=run)
+                   unit_directory, arguments.start_now, run=run, home=home)
 
 
 if __name__ == "__main__":
