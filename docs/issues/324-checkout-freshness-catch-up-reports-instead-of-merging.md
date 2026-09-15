@@ -85,12 +85,13 @@ The stamp gains `own`, `head_state`, `last_reported` and a `last_action` of
 4. **The dirty-tree and in-progress blockers stay for the reference
    fast-forward only.** The session path has nothing left for them to block.
 
-## Open question for the user: a branch with no commits of its own
+## The ghi-info checkout: answered (b), built 2026-09-15
 
 The ghi-info checkout on ned-box sits on a branch named `ghi-info` with zero
 commits of its own, and this hook's merge was the only thing keeping it
 current (#334: it sat 225 commits behind before 2026-09-11). Under the ruling
-as built it is reported and left where it is. Two candidates:
+as built it is reported and left where it is. Two candidates were put to the
+user:
 
 - (a) the hook fast-forwards a branch whose own-commit count is zero — no
   merge commit, nothing authored, but it does move the working branch, which
@@ -100,8 +101,34 @@ as built it is reported and left where it is. Two candidates:
   absolute and putting the refresh in the one caller that knows the answer is
   program-consumed.
 
-Recommendation: (b). Nothing breaks while it is decided; the checkout stays
-where it is.
+**The user ruled (b) on 2026-09-15**, the recommendation. What it buys: the
+hook's "never move a working branch" stays absolute with no exception carved
+into it, and the refresh happens where the need actually is — ghi-info cites
+the pair documents and wiki pages, and reads them off that disk, so a stale
+checkout is stale answers about the designs the issues point at.
+
+Built as `fast_forward_seat_checkout()`, called by the lock holder at the top
+of the ask, before the mirror refresh or any `claude` turn:
+
+- **Only under the lock.** A contended ask publishes into a throwaway mirror
+  precisely so it cannot disturb the holder; swapping the checkout's files
+  beneath the holder's running `claude` would undo that.
+- **Never merges.** `--ff-only`. ghi-info commits its own document-side link
+  repairs, so a checkout carrying a commit main does not have is a real state:
+  it is reported and left alone, exactly as the hook now does.
+- **Never fails an ask.** A dirty tree, an unreachable origin, a refused
+  fast-forward, a seat that is not a checkout at all — each is one stderr line
+  and the ask proceeds against what is on disk. A caller cannot distinguish an
+  ask that failed here from one where the box was down, so failing would send
+  it down the ghi-write fallback ladder for a reason that does not warrant it.
+- **Not** `fast_forward_reference_checkout` from the hook: that one requires
+  the checkout to be parked on main and treats any other branch as a blocker,
+  which is the guarantee a REFERENCE copy needs. This checkout is on its own
+  branch. Loosening that function for this caller would weaken it where it
+  matters, so this is a second, narrower one.
+
+This closes the remaining half of
+[nedschorus#334](https://github.com/nedschorus/nedschorus/issues/334).
 
 ## Occurrence log
 

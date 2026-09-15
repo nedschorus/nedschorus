@@ -47,6 +47,17 @@ prompt as its own turn, then the actual question as a second turn on that
 same fresh session — both prompts are verbatim from the design's § Prompts,
 never composed here.
 
+Checkout freshness (user-ruled 2026-09-15, nedschorus#324/#334): the lock
+holder fast-forwards the seat CHECKOUT to origin/main before anything reads
+from it. ghi-info's answers cite the pair documents under docs/issues/ and
+the wiki pages, and it reads those from this disk — a stale checkout is
+stale answers about the very designs the issues point at, and superseded
+skills to answer under. The freshness hook's merge used to keep the
+checkout current; that merge is gone, so the refresh belongs to the caller
+that knows an ask is about to happen. It never fails an ask: any refusal —
+a dirty tree, a commit of ghi-info's own, an unreachable origin — is one
+stderr line and the ask proceeds against what is on disk.
+
 Concurrency: the state file is flock'd. An ask that cannot get the lock
 (another ask is mid-flight) does not wait and does not touch the stored
 session — it cold-starts a throwaway session of its own and never writes
@@ -423,6 +434,86 @@ def _locked_ask(question, include_closed, seat_dir, repo, projects_root,
                 shutil.rmtree(throwaway_mirror, ignore_errors=True)
 
 
+def fast_forward_seat_checkout(seat_dir: Path) -> str:
+    """Bring the ghi-info checkout level with origin/main before it is read.
+
+    Returns one line for stderr, or "" when there is nothing to say.
+
+    WHY THE ASK DOES THIS. ghi-info answers questions about issues, and the
+    substance of most issues lives in THIS repository — the pair documents
+    under docs/issues/ and the wiki pages — which it reads from this checkout.
+    A stale checkout means stale answers about the very designs the issues
+    point at, and it means ghi-info runs under superseded skills and a
+    superseded copy of this script. Until 2026-09-15 the freshness hook's
+    merge was the only thing keeping it current; that merge is gone
+    (nedschorus#324 — it kept landing on heads frozen under review), so the
+    refresh moves to the one caller that KNOWS an ask is about to happen,
+    rather than a turn-end hook that had to guess. User-ruled 2026-09-15;
+    the remaining half of nedschorus#334.
+
+    NOT checkout-freshness-catch-up.py's fast_forward_reference_checkout.
+    That one requires the checkout to be parked on main and treats any other
+    branch as a blocker — which is exactly the guarantee a REFERENCE copy
+    needs, and this checkout sits on its own `ghi-info` branch. Loosening it
+    for this caller would weaken it for the reference copy, so this is a
+    second, narrower function rather than a shared one.
+
+    FRESHNESS MUST NEVER FAIL AN ASK. Every failure path here returns a line
+    and lets the ask proceed against whatever is on disk. A slightly stale
+    reading list beats no reading list — and a caller cannot tell an ask that
+    failed here from one where the box was down, so failing would send it
+    down the ghi-write fallback ladder for a reason that does not warrant it.
+    """
+
+    def git(arguments, timeout=60):
+        # LC_ALL=C for the same reason the freshness hook forces it: this
+        # reads git's refusal prose into an operator-facing line.
+        try:
+            return subprocess.run(["git", *arguments], cwd=str(seat_dir),
+                                  capture_output=True, text=True, check=False,
+                                  timeout=timeout, env={**os.environ, "LC_ALL": "C"})
+        except (OSError, subprocess.SubprocessError) as error:
+            return subprocess.CompletedProcess(
+                arguments, 1, "", f"{type(error).__name__}: {error}")
+
+    inside = git(["rev-parse", "--is-inside-work-tree"], timeout=15)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return f"ghi-info-ask: {seat_dir} is not a git checkout; leaving it as it stands"
+
+    status = git(["status", "--porcelain"], timeout=30)
+    if status.returncode != 0:
+        # An unreadable tree reads as unsafe, never as clean — the same
+        # silent-safety rule the freshness hook applies to the same question.
+        return "ghi-info-ask: could not read the seat checkout's status; not refreshing it"
+    tracked_changes = [line for line in status.stdout.splitlines()
+                       if not line.startswith("??")]
+    if tracked_changes:
+        # ghi-info commits its own document-side link repairs and lands them
+        # on main; work in progress here is real work, not debris.
+        return (f"ghi-info-ask: the seat checkout has {len(tracked_changes)} uncommitted "
+                f"tracked change(s); not refreshing it")
+
+    fetched = git(["fetch", "--quiet", "origin"], timeout=60)
+    if fetched.returncode != 0:
+        return (f"ghi-info-ask: could not fetch origin in the seat checkout "
+                f"({fetched.stderr.strip() or 'no detail'}); answering from what is on disk")
+
+    behind = git(["rev-list", "--count", "HEAD..origin/main"], timeout=30)
+    try:
+        count = int(behind.stdout.strip())
+    except ValueError:
+        return "ghi-info-ask: could not count the seat checkout's drift from origin/main"
+    if count == 0:
+        return ""
+
+    merged = git(["merge", "--ff-only", "origin/main"], timeout=120)
+    if merged.returncode != 0:
+        return (f"ghi-info-ask: the seat checkout is {count} behind origin/main and would "
+                f"not fast-forward ({merged.stderr.strip() or 'no detail'}); answering from "
+                f"what is on disk")
+    return f"ghi-info-ask: refreshed the seat checkout {count} commit(s) to origin/main"
+
+
 def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
                      state, state_path, locked, mirror_dir, turn):
     """The ask itself, with the lock decision and the mirror already settled.
@@ -430,6 +521,18 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     Split out so the throwaway mirror's cleanup is one `finally` around the
     whole body rather than a branch on every early return.
     """
+
+    # The checkout itself comes first, before anything reads from it: the
+    # documents the issues point at, the skills ghi-info runs under, and this
+    # script's own siblings all come off this disk.
+    #
+    # Only under the lock. A contended run holds no lock and publishes into a
+    # throwaway mirror precisely so it cannot disturb the holder; swapping the
+    # checkout's files beneath the holder's running claude would undo that.
+    if locked:
+        refresh_line = fast_forward_seat_checkout(seat_dir)
+        if refresh_line:
+            print(refresh_line, file=sys.stderr)
 
     # Steps 1-2 interleave, because which refresh is owed depends on
     # whether this ask resumes or cold-starts, and the reincarnation decision
