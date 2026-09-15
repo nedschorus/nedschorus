@@ -31,7 +31,7 @@ do?"* and *"let's have a smarter, better system."* The provenance is recorded
 on the issue: the mandate is his, the wording an agent's, the approval one
 letter.
 
-## What the hook does now (built 2026-09-15)
+## What the hook did between the two rulings (built 2026-09-15 morning; superseded the same day for the session path — see the walk section below; the reference-checkout behaviour stands)
 
 At every turn end, for the session's own checkout:
 
@@ -84,6 +84,133 @@ The stamp gains `own`, `head_state`, `last_reported` and a `last_action` of
    direction.
 4. **The dirty-tree and in-progress blockers stay for the reference
    fast-forward only.** The session path has nothing left for them to block.
+
+## Walked and ruled 2026-09-15: rebase the never-pushed, tell the pushed, alert only on misbehaviour
+
+Walk: `docs/walk/keeping-branches-current-telling-and-rebase` (gitignored; the
+minutes are the record of the exchange, this section is the record of the
+rulings). Eight items, all ruled. What was built:
+
+**1. A never-pushed branch is rebased by the hook itself, at turn end.** No
+`origin/<branch>` exists, so nobody has the commits and no review is running.
+`git rebase --no-autostash origin/main`; skip if the tree has uncommitted
+tracked changes or a git operation in progress; on conflict, `git rebase
+--abort`, verify no rebase state remains, and name the conflicting files. The
+agent is told at its next turn what happened: on success, which files moved
+under it and to rerun the suites for what it touched; on a skip or conflict,
+why, and the by-hand steps. A success is always told; a skip or conflict is
+told once per key but attempted every turn end, so it goes the moment the
+tree is clean.
+
+This is not the merge the 2026-09-14 ruling removed. That merge landed
+MERGE COMMITS on FROZEN heads — pushed, with a review running — nine times in
+five days. This is a REBASE of heads NOBODY ELSE HAS: no review to disturb,
+no merge commit created, the pushed-head rule untouched. The 2026-08-13
+objection to rewriting files under a running agent is answered by the
+telling channel, which did not exist then. The user's question that settled
+it: "I don't see how postponing that process helps" — and it does not; the
+launch sync already hands the same reconciliation to the agent at launch, so
+doing it at turn end for the one safe case only closes the window between
+launches.
+
+**2. A pushed branch is never moved.** Any pushed state — equal to the
+remote, local commits on top, behind its own remote, or diverged. The agent
+is told, once per update of main: how far behind, the stale files by name
+grouped by why they matter, and:
+
+> This branch is pushed, so its review may be running. Do not rebase, merge or amend it. A fix for this topic is a new commit on top, pushed once. Start your next topic with `git checkout -b <name> origin/main`.
+
+The user asked, of that line, whether anything reaches main unreviewed. No:
+rebase pulls main down into a branch; push goes to the branch's own remote;
+the only road into main is a reviewed pull request under branch protection.
+
+**3. The user hears only misbehaviour.** "I dont want to have to pay
+attention to details like this. If the agents are doing the wrong thing, or
+not doing the right thing, that's when I probably need to be told." The
+routine display line is gone. The hook's `systemMessage` carries three things
+and nothing else, each once per distinct finding:
+
+- a merge commit from main on a working branch (the thing #324 removed),
+  detected by testing each merge's second parent for being on `origin/main`,
+  so a merge of another topic branch is not flagged;
+- a pushed head whose history was rewritten — `origin/<branch>` no longer an
+  ancestor of `HEAD` — an amend or rebase after a push, a fifth head state
+  `diverged-from-remote`;
+- the reference checkout unable to fast-forward, because someone left work
+  where none belongs (a peer seat's finding the same day: the Mac reference
+  sat 22 behind with one uncommitted edit, silently).
+
+The detectors run every turn BEFORE the drift path: a branch that merged main
+into itself is 0 behind, exactly where a drift-first design returns early.
+
+**4. The repeat record.** `last_told` = branch, main's tip, and whether the
+head is pushed. Nothing else. The session id was dropped: two sessions in one
+checkout evicted each other's record and were told every turn (the author
+did it to himself, testing against the live checkout). "Pushed" is in the
+key because the advice flips at a push, and a seat told to rebase that pushed
+instead must hear the new advice. Main's tip is in it because "not more than
+once per pushed PR or whatever else updates main" is a cap, not a reduction
+below it — keyed any coarser, a file that goes stale an hour into a session is
+never mentioned. A pushed head changing shape without main moving (behind its
+remote; diverged) is not re-told until main next moves; the stamp records the
+state and the user line, where there is one, fires regardless.
+
+**5. What is said is computed, never asserted.** The first draft ended with
+"your tests, hooks, skills and documents here are older than main"; the user
+asked "are you sure ... or are you just saying that?" Just saying it: in the
+author's own twelve-commit gap, ten scripts and four documents had moved and
+zero hooks and zero skills had. `obsolete_files_by_category()` runs
+`git diff --name-only HEAD...origin/main` — three dots, from the merge base,
+or the branch's own work reads as something main changed — and names the
+files under "your standing instructions", "skills you run under", "hooks and
+wiring that run on your work", "scripts your tests run against", "documents
+you may cite", four per group then a count. A failed fetch is named in the
+message. When the listing cannot be built the clause is dropped, not guessed.
+
+**6. Channel.** One Stop hook, one JSON object: `hookSpecificOutput.
+additionalContext` to the agent, `systemMessage` to the user, never a
+`decision`. A second hook on `UserPromptSubmit`, with a guarded settings edit,
+was built and removed the same day on the false premise that a Stop hook
+cannot reach the agent. It can; plain stdout cannot. `.claude/settings.json`
+is untouched.
+
+**Why not on idle.** There is an idle hook — `Notification`, `idle_prompt` —
+but the harness discards the fields that would speak to the agent; it alerts
+the user. Between turns no agent is listening; anything left there is read at
+the next turn, as the user observed.
+
+## Next, proposed and not built: warn on the obsolete FILE, not the branch
+
+The line above is orientation — it tells a seat that it is behind, in general.
+The user asked the better question: "is there any easy way to tell if any agent
+has read or edited an obsolete file — that would be a good place to say
+something useful" (2026-09-15). It is easy, and it is better.
+
+`git diff --name-only HEAD...origin/main` already gives the exact set of paths
+main has moved that this checkout has not; the telling computes it for the
+category counts. Computed once per turn and cached against main's tip, every
+file touch is then a set-membership test costing nothing.
+
+A `PostToolUse` hook matching `Read|Edit|Write` receives `tool_input.file_path`
+(absolute, for all three tools) and can return
+`hookSpecificOutput.additionalContext`, which IS added to the agent's context —
+the same mechanism the Stop hook now uses. Plain stdout on those events does
+NOT reach the agent; only the JSON field does. Checked against the hooks
+reference rather than assumed, because assuming a channel's reach is the
+mistake this issue is a record of.
+
+Why it is still wanted, even with the telling capped at main's tip: it is
+earned. It fires only when an agent actually touches a file main has changed,
+and it names that file at the moment of the touch rather than at the moment of
+the last telling. The edit case has real teeth — editing a file main has
+already moved is how a conflict is made, or how a fix that landed yesterday
+gets written twice — whereas being behind in general costs nothing at merge
+under branch protection. The two do different jobs: the drift line orients a
+seat when it arrives and when main moves; the file warning catches it in the
+act.
+
+Not built: it is a separate topic and needs a `.claude/settings.json` edit,
+which the instruction-file guard protects.
 
 ## The ghi-info checkout: answered (b), built 2026-09-15
 
