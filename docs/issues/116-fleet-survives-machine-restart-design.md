@@ -174,9 +174,37 @@ each run `claude update` under live sessions (nedschorus#62). Measured
 connection's sshd process killed on the box, and a new tmux client attached
 four seconds later with the window still open; killing the seat's tmux server
 instead ended the launcher and the window, with no seat recreated. Restarting
-the box's sshd does not drop existing connections, so that is not a test. The
-first trigger — a Mac login opening a window onto each live box seat — is the
-next build.
+the box's sshd does not drop existing connections, so that is not a test.
+
+The first trigger is built into `restart-live-seats-at-login.py` (PR #367,
+2026-09-15): on the Mac, after its own seats and whatever their verdicts, a
+run asks the box over ssh which seats are alive — every session on every
+per-seat tmux server, kept only when a seat home of that name exists, the
+listing `launch-claude-ubuntu`'s usage prints — and opens an iTerm window
+onto each through `open-iterm-window-running-command`, running
+`launch-claude-ubuntu` by absolute path, which attaches. The query uses the
+launcher's box alias with BatchMode, since under the LaunchAgent there is no
+terminal to answer a prompt. A box that does not answer (ssh exit 255) is
+retried every 5 s for 150 s, because both machines may have rebooted, then
+its windows are reported missing with the by-hand command; that is not a
+failure of the run. A window that cannot be opened fails the run. Duplicate
+windows on a by-hand rerun are accepted in this version. The run-log line
+gains `box_windows`. Measured 2026-09-15 under a throwaway LaunchAgent with
+one canary seat live on the box: ssh reached the box with no prompt, the
+window opened and attached, the job exited 0 within three seconds. With both
+triggers on main and the product plist installed, a Mac logout and login is
+the test of the whole role; it has not been run yet.
+
+Two questions the #365 reviews left open, both in the launcher: the
+reconnect wait doubles to 30 s and is never reset after a successful attach,
+so every later drop in that window's life waits 30 s before its first retry
+(a slower reconnect, not a lost seat); and after a box boot a reconnecting
+window, once the box's restart has finished, creates via `new-session -A` a
+seat that restart decided only to *offer* — what a by-hand relaunch did
+before, now automatic on every reconnect. Whether the window should stop at
+the offer instead is the user's call. Unmeasured by any review: a real box
+reboot under an attached window (the measurements were an sshd-session kill
+and a tmux-server kill); the next planned box reboot is the measurement.
 
 ## Ruled 2026-08-31 — the heartbeat answers "which seats were running"
 
