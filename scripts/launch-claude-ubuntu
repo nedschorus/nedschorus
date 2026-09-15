@@ -396,13 +396,21 @@ while ! $SEAT_EXISTS_COMMAND && [ \"\$(systemctl --user is-active restart-live-s
 sleep 2; SEAT_WAITED=\$((SEAT_WAITED + 2)); done; }"
 PREPARE_UNLESS_RUNNING_COMMAND="{ $SEAT_EXISTS_COMMAND || { $PREPARE_COMMAND; }; }"
 if [ "$ATTACH" = yes ]; then
+    # The wait doubles across failed attempts and resets once a session has
+    # actually run: an ssh that lasted longer than RECONNECT_SESSION_SECONDS
+    # was a live attach that dropped, not a failed retry, so the next
+    # reconnect starts from 2s again rather than from wherever a boot's worth
+    # of retries left it (PR #365 review).
     RECONNECT_WAIT_SECONDS=2
+    RECONNECT_SESSION_SECONDS=60
     while :; do
         SSH_STATUS=0
+        SSH_STARTED_AT=$(date +%s)
         ssh -t "$AGENT_BOX" \
             "$SEAT_RESTART_WAIT_COMMAND && $PREPARE_UNLESS_RUNNING_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -A -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S'" \
             || SSH_STATUS=$?
         [ "$SSH_STATUS" -eq 255 ] || exit "$SSH_STATUS"
+        [ $(( $(date +%s) - SSH_STARTED_AT )) -lt "$RECONNECT_SESSION_SECONDS" ] || RECONNECT_WAIT_SECONDS=2
         echo "launch-claude-ubuntu: the connection to $AGENT_BOX for $AGENT_NAME dropped or could not be made (ssh exit 255); retrying in ${RECONNECT_WAIT_SECONDS}s — Ctrl-C stops this window" >&2
         sleep "$RECONNECT_WAIT_SECONDS"
         [ "$RECONNECT_WAIT_SECONDS" -ge 30 ] || RECONNECT_WAIT_SECONDS=$((RECONNECT_WAIT_SECONDS * 2))

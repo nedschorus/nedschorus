@@ -170,6 +170,14 @@ class LaunchHarness:
                    'while [ $# -gt 1 ] && [ "$n" -gt 1 ]; do shift; n=$((n - 1)); done\n'
                    'exit "$1"\n')
 
+    def clock_advances(self, seconds_per_call: int):
+        """Make `date +%s` answer a clock that moves seconds_per_call per
+        call: the launcher reads it before and after each ssh, so this is
+        how long each attach appears to have lasted."""
+        write_stub(self.stubs, "date",
+                   'echo x >> "$LCU_TEST_DIR/date-calls.txt"\n'
+                   f'echo $(( $(wc -l < "$LCU_TEST_DIR/date-calls.txt") * {seconds_per_call} ))\n')
+
     def count(self, capture_name: str) -> int:
         path = self.captures / capture_name
         return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
@@ -548,6 +556,31 @@ def main() -> int:
               and (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8").split()
               == ["2", "4"],
               result["launched"].stderr[:400])
+        # The wait resets after a session that actually ran: with each ssh
+        # appearing to last 100s, every drop is a live attach lost, and each
+        # retry starts from 2s; with each lasting 1s, they are failed
+        # attempts and the wait keeps doubling (PR #365 review).
+        harness = LaunchHarness(root / "reconnect-after-long-sessions")
+        harness.ssh_answers([255, 255, 255, 0])
+        harness.clock_advances(100)
+        result = harness.run(["seat-o2"])
+        check("a drop after a long session retries from 2s again, not from the doubled wait",
+              result["launched"].returncode == 0
+              and (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8").split()
+              == ["2", "2", "2"],
+              (result["launched"].returncode,
+               (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8")
+               if (harness.captures / "sleep-calls.txt").is_file() else None))
+        harness = LaunchHarness(root / "reconnect-after-short-attempts")
+        harness.ssh_answers([255, 255, 255, 0])
+        harness.clock_advances(1)
+        result = harness.run(["seat-o3"])
+        check("drops after short attempts keep doubling: 2, 4, 8",
+              result["launched"].returncode == 0
+              and (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8").split()
+              == ["2", "4", "8"],
+              ((harness.captures / "sleep-calls.txt").read_text(encoding="utf-8")
+               if (harness.captures / "sleep-calls.txt").is_file() else None))
         harness = LaunchHarness(root / "remote-failure")
         harness.ssh_answers([1])
         result = harness.run(["seat-p"])
