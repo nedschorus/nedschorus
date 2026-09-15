@@ -15,12 +15,19 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
   2. Fetches origin, throttled by a stamp file in the checkout's git
      directory (default 300s between fetches; fetching touches refs only and
      is always safe — it is the MERGE that needs guarding).
-  3. If the branch is behind origin/main and it is safe — on a branch that
-     is not main, no uncommitted tracked changes, no merge/rebase/bisect in
-     progress — attempts the merge; a conflict aborts cleanly back to the
-     pre-merge tree and reports instead. A merge that lands names the files
-     it changed, so the agent re-reads before touching them (the harness
-     independently refuses edits to files changed since last read).
+  3. If the branch is behind origin/main, REPORTS — how far behind, how
+     many commits are the branch's own (merges excluded), and whether the
+     head is unpushed, pushed and equal to origin/<branch> (frozen: a review
+     may be running against it), or pushed with local commits on top — and
+     never merges into the working branch. Ruled 2026-09-14 (nedschorus#324):
+     the merge it used to make landed on heads frozen under review five
+     times in one evening, and seeded the very drift it existed to remove;
+     main's branch protection makes being behind cost nothing at merge
+     time. The report is for the agent's knowledge, not a prompt to act:
+     new work starts from origin/main, and a frozen head is never moved.
+     It is printed when the facts change, not at every turn end, so a
+     seat that stays behind for the life of a review is not nagged; the
+     stamp carries the numbers for the status line regardless.
   4. The machine's reference checkout — the main worktree of the same
      repository, parked on main — gets a fast-forward-only pull on the same
      rhythm, under its own stamp. Never a real merge there: the reference
@@ -28,9 +35,11 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      33 commits stale, running a superseded extractor under every supervisor
      on the machine.
 
-Everything here exits 0: a freshness fault must never block a turn from
-ending. Silence is meaningful — no output means nothing needed doing; every
-skipped merge states its reason. The stamp
+Everything here exits 0 and speaks plain text: a freshness fault must never
+block a turn from ending, and nothing here costs the agent a turn (the
+decision:block channel went with the merge — a Stop hook's plain stdout
+reaches the transcript display, and that is where a report belongs).
+Silence is meaningful — no output means nothing changed. The stamp
 (<git-dir>/checkout-freshness-stamp.json) is what the status line and boot
 reports display, so "0 behind" is only ever claimed off a real fetch, with
 its age known.
@@ -62,66 +71,29 @@ STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 # function name does not mean two different things in two files.
 GIT_DID_NOT_RUN = -1
 DEFAULT_FETCH_INTERVAL_SECONDS = 300
-CHANGED_FILES_NAMED_LIMIT = 8
 
-# In-progress operation markers: merging into a tree mid-anything is how an
-# agent wakes to conflict markers it never created.
+# In-progress operation markers: the reference fast-forward must not run in
+# a tree that is mid-anything.
 GIT_IN_PROGRESS_MARKERS = (
     "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
     "rebase-merge", "rebase-apply",
 )
 
 
-def emit_attention(message: str) -> None:
-    """Force the agent to hear this, at the cost of one extra turn.
-
-    A Stop hook's plain stdout reaches the transcript display but never the
-    agent (verified against the hooks contract, 2026-08-17). For routine
-    events that is right — the stamp and status line carry them for free.
-    Emitting decision:block on a Stop hook makes the agent continue with the
-    reason in hand (user-ruled 2026-08-17: attention states only; everything
-    routine stays display-plus-stamp).
-
-    Two states qualify. A conflicted merge whose cleanup failed, leaving the
-    tree mid-merge — the agent seated in that tree is the right responder,
-    now. And a merge that LANDED, reclassified from routine to attention
-    (user-ruled 2026-08-31): the agent's branch just gained commits it did
-    not author, and on 2026-08-31 an agent amended its own commit onto such a
-    merge and absorbed another pull request's file into its authorship. The
-    message that would have prevented it was already written and already
-    printed — to the display, which the agent cannot read.
-    """
-    print(json.dumps({"decision": "block", "reason": message}))
-
-
-# Hook-mode output is ONE channel per run: either a plain display report or a
-# single decision:block object, never both. Claude Code parses a hook's whole
-# stdout, so a JSON object followed by a plain line is neither — as of 2.1.248
-# it is reported as a hook error, and the block is lost. That is not a corner
-# case: a merge lands only when origin/main advanced, which is exactly when the
-# reference checkout also has something to report. So lines are queued here and
-# the channel is chosen once, at the end of the run.
+# Hook-mode output is queued and printed once at the end of the run, so the
+# session's report and the reference checkout's read as one message.
 REPORT_LINES = []
-REPORT_NEEDS_ATTENTION = False
 
 
-def report(line: str, attention: bool = False) -> None:
-    """Queue one line of hook output. `attention` latches the whole run."""
-    global REPORT_NEEDS_ATTENTION
+def report(line: str) -> None:
+    """Queue one line of hook output."""
     REPORT_LINES.append(line)
-    if attention:
-        REPORT_NEEDS_ATTENTION = True
 
 
 def flush_report() -> None:
-    """Emit everything queued, on whichever channel the run earned."""
-    if not REPORT_LINES:
-        return
-    if REPORT_NEEDS_ATTENTION:
-        emit_attention("\n".join(REPORT_LINES))
-    else:
-        for queued_line in REPORT_LINES:
-            print(queued_line)
+    """Print everything queued, plain text."""
+    for queued_line in REPORT_LINES:
+        print(queued_line)
 
 
 def run_git(arguments, working_directory: Path, timeout: int = 60):
@@ -204,8 +176,45 @@ def counts_against_main(checkout: Path):
         return None
 
 
+def own_commit_count(checkout: Path):
+    """Commits on HEAD that main lacks, merges excluded — the branch's own
+    work, as distinct from catch-up merges it may carry; None when
+    unknowable."""
+    counted = run_git(["rev-list", "--count", "--no-merges", "origin/main..HEAD"],
+                      checkout, timeout=30)
+    if counted.returncode != 0:
+        return None
+    try:
+        return int(counted.stdout.strip())
+    except ValueError:
+        return None
+
+
+def head_state(checkout: Path, branch: str):
+    """(key, text) for where HEAD stands against its remote branch. The
+    frozen-head rule (CLAUDE.md, 2026-09-08) freezes a head the moment it is
+    pushed, so "pushed and equal to origin/<branch>" is the fact the rule
+    keys on; whether a pull request is open is not asked, because that
+    needs gh and the network at every turn end, and the rule does not."""
+    if branch in ("", "HEAD"):
+        return "detached", "detached HEAD"
+    remote = run_git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+                     checkout, timeout=15)
+    if remote.returncode != 0:
+        return "unpushed", "head unpushed"
+    head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
+    if remote.stdout.strip() == head:
+        return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
+                          "new commit on top, never an amend or a merge)")
+    local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
+    count = local.stdout.strip() if local.returncode == 0 else "some"
+    return "pushed-with-local-commits", (f"head pushed, with {count} local commit(s) not "
+                                         f"on origin/{branch}")
+
+
 def merge_blockers(checkout: Path, git_dir: Path):
-    """Why a merge must not run here right now; empty list means safe."""
+    """Why the reference fast-forward must not run here right now; empty
+    list means safe."""
     blockers = []
     branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
                      timeout=15).stdout.strip()
@@ -232,7 +241,8 @@ def merge_blockers(checkout: Path, git_dir: Path):
 
 
 def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
-    """The Stop-hook body for the session's own checkout."""
+    """The Stop-hook body for the session's own checkout: fetch, count,
+    report on change. It never merges (ruled 2026-09-14, nedschorus#324)."""
     git_dir = git_directory(checkout)
     if git_dir is None:
         return
@@ -244,101 +254,40 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         # Unknowable is not "still whatever it was": a preserved stale count
         # would render as knowledge (silent-safety rule).
         stamp["behind"] = stamp["ahead"] = None
+        stamp.pop("last_reported", None)
         write_stamp(stamp_path, stamp)
         return
     behind, ahead = counts
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
+        stamp.pop("last_reported", None)
         write_stamp(stamp_path, stamp)
         return
 
-    blockers, branch = merge_blockers(checkout, git_dir)
-    stamp["branch"] = branch
-    if blockers:
-        stamp["last_action"] = f"skipped: {'; '.join(blockers)}"
-        write_stamp(stamp_path, stamp)
-        report(f"catch-up: {branch} is {behind} behind origin/main; not merged — "
-               f"{'; '.join(blockers)}")
-        return
-
-    before = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
+    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
+                     timeout=15).stdout.strip()
+    own = own_commit_count(checkout)
+    state_key, state_text = head_state(checkout, branch)
     main_tip = run_git(["rev-parse", "origin/main"], checkout, timeout=15).stdout.strip()
+    stamp["branch"], stamp["own"], stamp["head_state"] = branch, own, state_key
+    stamp["last_action"] = "reported, not merged (ruled 2026-09-14)"
 
-    # A standing conflict must not be re-attempted every turn: each attempt
-    # clobbers ORIG_HEAD and churns the tree for a known answer. The stamp
-    # remembers which (HEAD, origin/main) pair conflicted; the same pair is
-    # reported, not retried (review finding, PR #87).
-    conflict_pair = f"{before}:{main_tip}"
-    if stamp.get("conflict_pair") == conflict_pair:
+    # Reported when the facts change, not at every turn end: a seat with a
+    # pull request in review stays behind for the life of the review, and a
+    # line repeating that is the "does something when there is nothing to
+    # do" the ruling answered.
+    facts = {"behind": behind, "own": own, "head_state": state_key, "main_tip": main_tip}
+    if stamp.get("last_reported") == facts:
         write_stamp(stamp_path, stamp)
-        report(f"catch-up: {branch} is {behind} behind origin/main; the merge still "
-               f"conflicts (not retried) — merge by hand at a clean point "
-               f"(git merge origin/main)")
         return
-
-    # Immediately before merging, re-verify no merge state appeared since the
-    # blockers ran: an abort may only ever destroy state THIS run created,
-    # because a human's half-resolved merge is unrecoverable once aborted
-    # (blocking review finding, PR #87).
-    if (git_dir / "MERGE_HEAD").exists():
-        stamp["last_action"] = "skipped: a foreign merge appeared mid-check"
-        write_stamp(stamp_path, stamp)
-        report(f"catch-up: {branch} is {behind} behind origin/main; not merged — "
-               f"another merge is in progress here, left exactly as found")
-        return
-
-    merged = run_git(["-c", "core.editor=true", "merge", "--no-edit", "origin/main"],
-                     checkout, timeout=120)
-    if merged.returncode != 0:
-        conflicted = "CONFLICT" in (merged.stdout + merged.stderr)
-        own_merge_state = (git_dir / "MERGE_HEAD").exists()
-        if not (conflicted and own_merge_state):
-            # Failed for some other reason (index.lock, a racing operation,
-            # an odd tree). Nothing here is ours to abort; touch nothing.
-            detail = (merged.stderr or merged.stdout).strip().splitlines()
-            stamp["last_action"] = "merge failed without a conflict; nothing touched"
-            write_stamp(stamp_path, stamp)
-            report(f"catch-up: {branch} is {behind} behind origin/main; the merge "
-                   f"failed without conflicting and nothing was aborted — "
-                   f"{detail[0] if detail else 'no detail'}")
-            return
-        aborted = run_git(["merge", "--abort"], checkout, timeout=60)
-        if aborted.returncode != 0 or (git_dir / "MERGE_HEAD").exists():
-            # A failed abort may NOT report success: the tree is mid-conflict
-            # and someone must look (silent-safety rule).
-            stamp["last_action"] = "conflict: ABORT FAILED, tree needs attention"
-            write_stamp(stamp_path, stamp)
-            report(
-                f"catch-up: {branch} conflicted with origin/main and the abort "
-                f"FAILED — this checkout is mid-merge and needs attention before "
-                f"other work: inspect `git status`, resolve or abort the merge "
-                f"by hand, and only then continue. Detail: "
-                f"{aborted.stderr.strip() or 'none'}",
-                attention=True)
-            return
-        stamp["conflict_pair"] = conflict_pair
-        stamp["last_action"] = "conflict: merge aborted cleanly"
-        write_stamp(stamp_path, stamp)
-        report(f"catch-up: {branch} is {behind} behind origin/main; the merge would "
-               f"conflict, so nothing was touched — merge by hand at a clean point "
-               f"(git merge origin/main)")
-        return
-    stamp.pop("conflict_pair", None)
-
-    changed = run_git(["diff", "--name-only", f"{before}..HEAD"], checkout,
-                      timeout=30).stdout.split()
-    named = ", ".join(changed[:CHANGED_FILES_NAMED_LIMIT])
-    if len(changed) > CHANGED_FILES_NAMED_LIMIT:
-        named += f", … {len(changed) - CHANGED_FILES_NAMED_LIMIT} more"
-    stamp["behind"], stamp["last_action"] = 0, f"merged {behind} commit(s)"
+    stamp["last_reported"] = facts
     write_stamp(stamp_path, stamp)
-    report(f"catch-up: merged origin/main into {branch} ({behind} commit(s)). "
-           f"Changed: {named or 'no files'} — re-read any of these before editing "
-           f"them. Your branch now carries commits you did not author: check "
-           f"`git show --stat` before pushing, and do not `git commit --amend` "
-           f"onto the merge.",
-           attention=True)
+    own_text = "own commits unknowable" if own is None else f"{own} own commit(s)"
+    report(f"catch-up: {branch or 'detached HEAD'} is {behind} behind origin/main — "
+           f"{own_text}, {ahead} ahead counting merges; {state_text}. Not merged "
+           f"(ruled 2026-09-14): new work starts from origin/main, and a frozen head "
+           f"is never moved.")
 
 
 def reference_checkout_of(checkout: Path):
