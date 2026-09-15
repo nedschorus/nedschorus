@@ -142,22 +142,68 @@ class RecoveryToolStub:
         return subprocess.CompletedProcess(command, exit_code, stdout=report + "\n")
 
 
-def run_main(arguments, boot_at=BOOT_AT, recovery=None):
+class BoxStub:
+    """Stands in for subprocess.run for the window role: the ssh query to the
+    box and the window opener. answers is the sequence of (exit code,
+    stdout, stderr) the query gives, the last one repeating; opener_failing
+    names seats whose window open fails. Every command is recorded, and
+    sleep and monotonic are replaced so a retry costs no time: each sleep
+    advances the fake clock by the seconds asked."""
+
+    def __init__(self, answers=None, opener_failing=(), platform="darwin", raising=None):
+        self.answers = list(answers or [(0, "", "")])
+        self.opener_failing, self.platform, self.raising = set(opener_failing), platform, raising
+        self.commands, self.slept, self.clock = [], [], 0.0
+
+    def __call__(self, command, stdout=None, stderr=None, text=None):
+        self.commands.append(list(command))
+        if self.raising is not None:
+            raise self.raising
+        if command[0] == "ssh":
+            code, out, err = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            return subprocess.CompletedProcess(command, code, stdout=out, stderr=err)
+        seat = command[-1]
+        if seat in self.opener_failing:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="no iTerm")
+        return subprocess.CompletedProcess(command, 0, stdout=f"window id {len(self.commands)}", stderr="")
+
+    def sleep(self, seconds):
+        self.slept.append(seconds); self.clock += seconds
+
+    def monotonic(self):
+        return self.clock
+
+    @property
+    def queries(self):
+        return [c for c in self.commands if c[0] == "ssh"]
+
+    @property
+    def windows(self):
+        return [c for c in self.commands if c[0] != "ssh"]
+
+
+def run_main(arguments, boot_at=BOOT_AT, recovery=None, box=None):
     """main() with this machine's boot time replaced by boot_at (BOOT_AT
     unless a case is exercising the boot instant moving between runs), its
-    clock by NOW, and the recovery tool by a RecoveryToolStub (recovery, or a
-    fresh one answering that every seat came up); (exit code, stdout,
-    stderr)."""
+    clock by NOW, the recovery tool by a RecoveryToolStub (recovery, or a
+    fresh one answering that every seat came up), and the box query and
+    window opener by a BoxStub (box, or a fresh one on darwin answering no
+    live seats); (exit code, stdout, stderr)."""
     printed, errors = io.StringIO(), io.StringIO()
     recovery = recovery or RecoveryToolStub()
+    box = box or BoxStub()
     real_machine_boot_time, real_current_time = restart.machine_boot_time, restart.current_time
     real_launch = restart.launch_seats_decided_restart
+    real_restore = restart.restore_box_windows
     try:
         restart.machine_boot_time = lambda: boot_at
         restart.current_time = lambda: NOW
         restart.launch_seats_decided_restart = (
             lambda decisions, handoff_directory: real_launch(
                 decisions, handoff_directory, run=recovery))
+        restart.restore_box_windows = (
+            lambda dry_run: real_restore(dry_run, platform=box.platform, run=box,
+                                         sleep=box.sleep, monotonic=box.monotonic))
         with redirect_stdout(printed), redirect_stderr(errors):
             try:
                 exit_code = restart.main(arguments)
@@ -166,6 +212,7 @@ def run_main(arguments, boot_at=BOOT_AT, recovery=None):
     finally:
         restart.machine_boot_time, restart.current_time = real_machine_boot_time, real_current_time
         restart.launch_seats_decided_restart = real_launch
+        restart.restore_box_windows = real_restore
     return exit_code, printed.getvalue(), errors.getvalue()
 
 
@@ -890,6 +937,131 @@ with tempfile.TemporaryDirectory() as temporary:
           run_log_lines(handoffs)[0]["stop_at"] == precise_stop.isoformat()
           and read_recorded_stop(handoffs, BOOT_AT) == precise_stop,
           run_log_lines(handoffs))
+
+    # The window role (nedschorus#116; user-ruled 2026-09-14): on the Mac,
+    # every run asks the box which seats are alive and opens a window onto
+    # each, whatever the verdicts, because every login has lost them.
+    handoffs = root / "box-windows-opened"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\nprof\n", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("the box is asked once, without a prompt, at the launcher's alias",
+          len(box.queries) == 1
+          and box.queries[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+          and box.queries[0][5] == restart.agent_box()
+          and box.queries[0][6] == restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND,
+          box.queries)
+    check("a window is opened onto each live box seat through the opener, running the "
+          "launcher by absolute path",
+          exit_code == 0 and box.windows == [
+              [str(SCRIPT_PATH.with_name("open-iterm-window-running-command")),
+               str(SCRIPT_PATH.with_name("launch-claude-ubuntu")), "gatekeeper"],
+              [str(SCRIPT_PATH.with_name("open-iterm-window-running-command")),
+               str(SCRIPT_PATH.with_name("launch-claude-ubuntu")), "prof"]],
+          (exit_code, box.windows))
+    check("the report names each window, and the run log records what was opened",
+          "window opened onto gatekeeper" in report and "window opened onto prof" in report
+          and run_log_lines(handoffs)[0]["box_windows"]
+          == {"answered": True, "opened": ["gatekeeper", "prof"]},
+          (report, run_log_lines(handoffs)))
+    real_box = os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
+    try:
+        default_alias = restart.box_seat_query_command()[5]
+        os.environ["NEDSCHORUS_AGENT_BOX"] = "ned-wifi"
+        overridden_alias = restart.box_seat_query_command()[5]
+    finally:
+        os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
+        if real_box is not None:
+            os.environ["NEDSCHORUS_AGENT_BOX"] = real_box
+    check("the box alias is the launcher's: ned by default, NEDSCHORUS_AGENT_BOX when set",
+          default_alias == "ned" and overridden_alias == "ned-wifi",
+          (default_alias, overridden_alias))
+    check("the remote listing keeps only names with a seat home, so fleet-anchor is not a seat",
+          "list-sessions" in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND
+          and '[ -d "${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/$seat_name" ]'
+          in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND)
+
+    handoffs = root / "box-no-live-seats"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box with no live seats opens nothing and says so",
+          exit_code == 0 and box.windows == [] and "no live seats, so no windows" in report
+          and run_log_lines(handoffs)[0]["box_windows"] == {"answered": True, "opened": []},
+          (exit_code, report))
+
+    # The box not answering (ssh exit 255) is retried for a bounded time —
+    # both machines may have rebooted — then reported as missing windows,
+    # with the by-hand command, and it is not a failure of this run.
+    handoffs = root / "box-answers-late"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(255, "", "Connection refused"), (255, "", "Connection refused"),
+                           (0, "gatekeeper\n", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box that answers on the third try gets its windows, after two waits",
+          exit_code == 0 and len(box.queries) == 3 and box.slept == [5.0, 5.0]
+          and [c[-1] for c in box.windows] == ["gatekeeper"],
+          (exit_code, len(box.queries), box.slept, box.windows))
+    handoffs = root / "box-never-answers"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(255, "", "No route to host")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box that never answers is retried until the deadline, then its windows are "
+          "reported missing with the by-hand command, and the run still exits 0",
+          exit_code == 0 and box.windows == []
+          and sum(box.slept) >= restart.BOX_QUERY_DEADLINE_SECONDS
+          and "did not answer" in report and "No route to host" in report
+          and "its windows are missing" in report
+          and f"{SCRIPT_PATH.with_name('launch-claude-ubuntu')} <seat>" in report
+          and run_log_lines(handoffs)[0]["box_windows"] == {"answered": False, "opened": []},
+          (exit_code, box.slept[-3:], report))
+    handoffs = root / "box-answers-with-an-error"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(1, "", "tmux: command not found")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box that answers with an error is not retried; the error is the report",
+          exit_code == 0 and len(box.queries) == 1 and box.slept == []
+          and "exit 1: tmux: command not found" in report,
+          (exit_code, len(box.queries), report))
+
+    # A window that cannot be opened is reported by seat and fails the run,
+    # the other windows still opened.
+    handoffs = root / "box-one-window-fails"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "a-seat\nb-seat\n", "")], opener_failing=["a-seat"])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a window that cannot be opened is reported with the by-hand command and fails the run; "
+          "the others open",
+          exit_code == 1 and "NO WINDOW onto a-seat" in report and "no iTerm" in report
+          and "window opened onto b-seat" in report
+          and "1 box window(s) could not be opened: a-seat" in report
+          and run_log_lines(handoffs)[0]["box_windows"] == {"answered": True, "opened": ["b-seat"]},
+          (exit_code, report))
+
+    # Not on the box, and not on a dry run.
+    handoffs = root / "box-role-not-on-the-box"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\n", "")], platform="linux")
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("on the box the window role does not run: no query, no window, null in the log",
+          exit_code == 0 and box.commands == []
+          and not [line for line in report.splitlines() if line.startswith("  box ")]
+          and run_log_lines(handoffs)[0]["box_windows"] is None,
+          (exit_code, box.commands, report))
+    handoffs = root / "box-role-dry-run"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\nprof\n", "")])
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)], box=box)
+    check("--dry-run asks the box once and says which windows it would open, opening none",
+          exit_code == 0 and len(box.queries) == 1 and box.windows == []
+          and "would open a window onto each live seat: gatekeeper, prof" in report,
+          (exit_code, box.commands, report))
+    box = BoxStub(answers=[(255, "", "down")])
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)], box=box)
+    check("--dry-run does not wait on a box that is down: one attempt, reported",
+          exit_code == 0 and len(box.queries) == 1 and box.slept == []
+          and "did not answer" in report,
+          (exit_code, len(box.queries), box.slept))
 
     exit_code, report, errors = run_main(["--dry-run", "--handoff-dir",
                                           str(root / "measured-2026-09-01")])
