@@ -208,6 +208,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "head pushed and equal to origin/seat" in result.stdout and "seat is 4 behind" in result.stdout,
           result.stdout)
 
+    # HEAD a strict ancestor of its remote branch: a fix commit pushed from
+    # another seat onto the frozen head, fetched here. That is the remote
+    # being ahead, not "0 local commits" (PR #372 review).
+    git(["push", "-q", "origin", "seat"], seat)
+    git(["reset", "-q", "--hard", "HEAD~1"], seat)
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a head behind its own remote branch is reported as such, with the count",
+          "head behind origin/seat by 1 commit(s) pushed from elsewhere" in result.stdout
+          and "0 local commit(s)" not in result.stdout,
+          result.stdout)
+    check("and the stamp records that state", stamp_of(seat).get("head_state") == "behind-remote",
+          str(stamp_of(seat)))
+    git(["reset", "-q", "--hard", "origin/seat"], seat)
+
     # Detached HEAD is named, not compared against origin/HEAD.
     detached = tmp / "detached-worktree"
     git(["worktree", "add", "-q", "--detach", str(detached), "main~1"], reference)
