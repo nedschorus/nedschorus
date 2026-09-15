@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("handoff-context-threshold-hook.py")
@@ -55,9 +56,12 @@ def run_hook_in_process(stdin_payload, scan_replacement=None, extra_arguments=()
     of answering — which is the behaviour under test here. That the real scan
     raises on a real unreadable file is pinned separately, above.
     """
-    real_scan = hook.spawned_subagent_ids_in_flight
+    # main() calls work_in_flight, the one-pass scan for subagents and
+    # background tasks alike; replacing anything else here would leave main()
+    # running the real scan and these cases testing nothing.
+    real_scan = hook.work_in_flight
     if scan_replacement is not None:
-        hook.spawned_subagent_ids_in_flight = scan_replacement
+        hook.work_in_flight = scan_replacement
     captured_stderr = io.StringIO()
     real_stdin = sys.stdin
     sys.stdin = io.StringIO(json.dumps(stdin_payload))
@@ -71,7 +75,7 @@ def run_hook_in_process(stdin_payload, scan_replacement=None, extra_arguments=()
         code, captured_stderr = -1, io.StringIO(f"main() raised {escaped!r}")
     finally:
         sys.stdin = real_stdin
-        hook.spawned_subagent_ids_in_flight = real_scan
+        hook.work_in_flight = real_scan
     return code, captured_stderr.getvalue()
 
 
@@ -173,6 +177,77 @@ def monitor_start_record(task_id="b45e25tz2"):
             "content": f"Monitor started (task {task_id}, persistent).",
         }]},
         "toolUseResult": {"taskId": task_id, "timeoutMs": 0, "persistent": True},
+    }
+
+
+# The two shapes below were read off session 44674c20 of 2026-09-14, the
+# cold-read grid run that this deferral was extended for, and trimmed to the
+# fields the hook reads.
+
+GRID_LAUNCHED_AT = "2026-09-14T22:41:47.899Z"
+GRID_FINISHED_AT = "2026-09-14T23:09:05.782Z"  # 27 minutes later, exit 0
+
+
+def utc_iso(moment):
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def background_task_launch_record(task_id="b27dndn4c", launched_at=GRID_LAUNCHED_AT,
+                                  description="Run the six-reviewer cold-read grid"):
+    """The Bash tool's run_in_background tool_result: the launch of one
+    background task. Its toolUseResult carries a backgroundTaskId and no
+    agentId; the record's own timestamp is when the task started."""
+    record = {
+        "type": "user",
+        "message": {"role": "user", "content": [{
+            "tool_use_id": f"toolu_{task_id}", "type": "tool_result",
+            "content": (
+                f"Command running in background with ID: {task_id}. Output is "
+                f"being written to: /tmp/tasks/{task_id}.output. You will be "
+                "notified when it completes."),
+            "is_error": False,
+        }]},
+        "toolUseResult": {"stdout": "", "stderr": "", "interrupted": False,
+                          "isImage": False, "noOutputExpected": False,
+                          "backgroundTaskId": task_id},
+    }
+    if launched_at is not None:
+        record["timestamp"] = launched_at
+    return record
+
+
+def background_task_completion_record(task_id="b27dndn4c", finished_at=GRID_FINISHED_AT,
+                                      status="completed"):
+    """A background task's completion notification, in the busy-session shape
+    (a queued_command attachment); the <task-id> tag is the same one a
+    subagent's completion carries."""
+    notification = (
+        "<task-notification>\n"
+        f"<task-id>{task_id}</task-id>\n"
+        f"<tool-use-id>toolu_{task_id}</tool-use-id>\n"
+        f"<output-file>/tmp/tasks/{task_id}.output</output-file>\n"
+        f"<status>{status}</status>\n"
+        f'<summary>Background command "Run the six-reviewer cold-read grid" '
+        f"{status} (exit code 0)</summary>\n"
+        "</task-notification>"
+    )
+    return {"type": "attachment", "timestamp": finished_at,
+            "attachment": {"type": "queued_command", "prompt": notification,
+                           "commandMode": "task-notification"}}
+
+
+def bash_stdout_record_mentioning_the_marker():
+    """An ordinary foreground Bash result whose stdout happens to contain the
+    word backgroundTaskId — a grep over a transcript prints exactly this. Its
+    toolUseResult has no such key, so it is not a launch."""
+    return {
+        "type": "user", "timestamp": GRID_LAUNCHED_AT,
+        "message": {"role": "user", "content": [{
+            "tool_use_id": "toolu_grep", "type": "tool_result",
+            "content": '236:{"toolUseResult":{"backgroundTaskId":"b27dndn4c"}}',
+        }]},
+        "toolUseResult": {"stdout": '236:{"toolUseResult":{"backgroundTaskId":"b27dndn4c"}}',
+                          "stderr": "", "interrupted": False, "isImage": False},
     }
 
 
@@ -301,6 +376,107 @@ with tempfile.TemporaryDirectory() as workspace:
 
     check("an absent transcript reports nothing in flight",
           hook.spawned_subagent_ids_in_flight(str(Path(workspace) / "nope.jsonl")) == [])
+
+    # --- Which background tasks are still in flight -------------------------
+    # A reincarnation kills a background Bash task with the session too. On
+    # 2026-09-14 session 831c08ee handed off at 50% with the cold-read grid
+    # running as one; the grid and its six reviewer cells died 12.7 minutes
+    # in, and five of six reports were lost. User-ruled 2026-09-14: count a
+    # background task as work in flight, bounded by a wall-clock wait, since
+    # nothing in the transcript can tell a running task from a stuck one.
+    thirty_minutes = 30 * 60
+    grid_at_13_minutes = datetime(2026, 9, 14, 22, 54, 47, tzinfo=timezone.utc)
+    grid_at_31_minutes = datetime(2026, 9, 14, 23, 12, 47, tzinfo=timezone.utc)
+
+    grid_running = transcript_of(workspace, "grid-running.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c"),
+        monitor_start_record("bwk7aucu8"),
+        subagent_completion_record("bwk7aucu8"),  # a monitor event, not a finish
+    ])
+    flight = hook.work_in_flight(str(grid_running), thirty_minutes, now=grid_at_13_minutes)
+    check("a background task younger than the wait, with no completion, is in flight",
+          flight.background_task_ids == ["b27dndn4c"] and flight.subagent_ids == [],
+          f"background={flight.background_task_ids} subagents={flight.subagent_ids}")
+
+    grid_finished = transcript_of(workspace, "grid-finished.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c"),
+        background_task_completion_record("b27dndn4c"),
+    ])
+    flight = hook.work_in_flight(str(grid_finished), thirty_minutes, now=grid_at_13_minutes)
+    check("a background task's completion notification takes it out of flight",
+          flight.background_task_ids == [], str(flight.background_task_ids))
+
+    # Past the wait the task is presumed stuck or open-ended and no longer
+    # holds the handoff: the transcript carries no pid, the Bash timeout is not
+    # enforced on a background task, and its output file is silent when stdout
+    # is redirected, as the grid's was. The wait is the only instrument.
+    flight = hook.work_in_flight(str(grid_running), thirty_minutes, now=grid_at_31_minutes)
+    check("a background task older than the wait is no longer in flight",
+          flight.background_task_ids == [], str(flight.background_task_ids))
+
+    flight = hook.work_in_flight(str(grid_running), thirty_minutes,
+                                 now=datetime(2026, 9, 14, 23, 11, 47, tzinfo=timezone.utc))
+    check("a background task exactly at the wait is still in flight",
+          flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+
+    # A launch whose age cannot be read fails closed, like everything else the
+    # scan cannot tell: it counts, and the ceiling bounds it.
+    undated_launch = transcript_of(workspace, "grid-undated-launch.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c", launched_at=None),
+    ])
+    flight = hook.work_in_flight(str(undated_launch), thirty_minutes, now=grid_at_31_minutes)
+    check("a launch record with no timestamp is treated as in flight",
+          flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+    unparseable_launch = transcript_of(workspace, "grid-unparseable-launch-time.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        background_task_launch_record("b27dndn4c", launched_at="yesterday"),
+    ])
+    flight = hook.work_in_flight(str(unparseable_launch), thirty_minutes, now=grid_at_31_minutes)
+    check("a launch record whose timestamp does not parse is treated as in flight",
+          flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
+
+    # The marker is a key of toolUseResult, not a word: a grep over a
+    # transcript prints the word into an ordinary Bash result.
+    marker_in_stdout = transcript_of(workspace, "marker-in-stdout.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        bash_stdout_record_mentioning_the_marker(),
+    ])
+    flight = hook.work_in_flight(str(marker_in_stdout), thirty_minutes, now=grid_at_13_minutes)
+    check("a Bash result that merely prints the word backgroundTaskId is not a launch",
+          flight.background_task_ids == [], str(flight.background_task_ids))
+
+    both_kinds = transcript_of(workspace, "subagent-and-background-task.jsonl", [
+        usage_record(100_000, cache_read=450_000),
+        subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+        background_task_launch_record("b27dndn4c"),
+        background_task_launch_record("bzzzzzzzz"),
+        background_task_completion_record("bzzzzzzzz"),
+    ])
+    flight = hook.work_in_flight(str(both_kinds), thirty_minutes, now=grid_at_13_minutes)
+    check("the one-pass scan reports both kinds, each in launch order",
+          flight.subagent_ids == ["a2573a7737ae643dc"]
+          and flight.background_task_ids == ["b27dndn4c"],
+          f"background={flight.background_task_ids} subagents={flight.subagent_ids}")
+    check("the subagent-only view still excludes background tasks",
+          hook.spawned_subagent_ids_in_flight(str(both_kinds)) == ["a2573a7737ae643dc"],
+          str(hook.spawned_subagent_ids_in_flight(str(both_kinds))))
+
+    truncated_launch = Path(workspace) / "truncated-background-launch.jsonl"
+    launch_text = json.dumps(background_task_launch_record("b27dndn4c"))
+    cut = launch_text.index('"backgroundTaskId"') + len('"backgroundTaskId": "b27d')
+    truncated_launch.write_text(
+        json.dumps(usage_record(100_000, cache_read=450_000)) + "\n" + launch_text[:cut],
+        encoding="utf-8")
+    try:
+        hook.work_in_flight(str(truncated_launch), thirty_minutes, now=grid_at_13_minutes)
+        refused = False
+    except hook.TranscriptCouldNotBeFullyRead:
+        refused = True
+    check("a background launch record cut off mid-write is not read as nothing running",
+          refused, "the scan answered instead of refusing")
 
     # --- "Could not tell" is not "nothing is running" ----------------------
     # A spawn record caught mid-append is not observed in practice — 841
@@ -527,7 +703,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
         # The read-error path, reached where it can be reached: main() in
         # front of a scan that raises. See run_hook_in_process.
-        def scan_that_cannot_read(_transcript_path):
+        def scan_that_cannot_read(_transcript_path, *_arguments, **_keywords):
             raise hook.TranscriptCouldNotBeFullyRead("unreadable in this test")
 
         code, stderr = run_hook_in_process(
@@ -563,6 +739,136 @@ with tempfile.TemporaryDirectory() as workspace:
         check("below the threshold a running subagent draws no message at all",
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
+
+        # --- The deferral while a background task runs (user-ruled 2026-09-14) --
+        # The same session at four moments: the grid launched ten minutes ago,
+        # the grid finished, the grid launched two hours ago (presumed stuck or
+        # open-ended), and the context past the ceiling. These run the hook as
+        # the harness does, so the launch times are relative to the real clock.
+        BACKGROUND_PROBE_SESSION_ID = "handoff-threshold-hook-test-background-task-session"
+        background_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{BACKGROUND_PROBE_SESSION_ID}-handoff-asked")
+        background_deferred_marker_file = (
+            hook.HANDOFF_DIRECTORY / f"{BACKGROUND_PROBE_SESSION_ID}-handoff-deferred")
+        background_marker_file.unlink(missing_ok=True)
+        background_deferred_marker_file.unlink(missing_ok=True)
+        clock = datetime.now(timezone.utc)
+        ten_minutes_ago = utc_iso(clock - timedelta(minutes=10))
+        two_hours_ago = utc_iso(clock - timedelta(hours=2))
+
+        grid_young = transcript_of(workspace, "background-task-young.jsonl", [
+            usage_record(100_000, cache_read=450_000),  # 55% — over 50, under 65
+            monitor_start_record("bwk7aucu8"),
+            background_task_launch_record("b27dndn4c", launched_at=ten_minutes_ago),
+        ])
+        grid_done = transcript_of(workspace, "background-task-finished.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            monitor_start_record("bwk7aucu8"),
+            background_task_launch_record("b27dndn4c", launched_at=ten_minutes_ago),
+            background_task_completion_record("b27dndn4c", finished_at=utc_iso(clock)),
+        ])
+        grid_old = transcript_of(workspace, "background-task-old.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            background_task_launch_record("b27dndn4c", launched_at=two_hours_ago),
+        ])
+        grid_past_ceiling = transcript_of(workspace, "background-task-past-ceiling.jsonl", [
+            usage_record(100_000, cache_read=600_000),  # 70% — over the ceiling
+            background_task_launch_record("b27dndn4c", launched_at=ten_minutes_ago),
+        ])
+        both_running = transcript_of(workspace, "subagent-and-background-task-running.jsonl", [
+            usage_record(100_000, cache_read=450_000),
+            subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
+            background_task_launch_record("b27dndn4c", launched_at=ten_minutes_ago),
+        ])
+
+        try:
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_young)})
+            check("hook defers instead of firing while a background task runs",
+                  result.returncode == 2 and "handoff deferred" in result.stderr,
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            check("the background-task deferral counts the task and not the monitor",
+                  "1 background task(s) run" in result.stderr
+                  and "subagent(s)" not in result.stderr.split("Spawn")[0],
+                  result.stderr[:250])
+            check("the deferral tells the agent to start no new background tasks",
+                  "start no new background tasks" in result.stderr, result.stderr[:250])
+            check("the deferral names the wait as a way the handoff fires",
+                  "30 minute" in result.stderr, result.stderr[:300])
+            check("a background-task deferral writes the deferral marker and not the fired one",
+                  background_deferred_marker_file.exists() and not background_marker_file.exists(),
+                  f"deferred={background_deferred_marker_file.exists()} "
+                  f"fired={background_marker_file.exists()}")
+
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_young)})
+            check("a second deferred turn behind a background task is silent",
+                  result.returncode == 0 and not result.stderr.strip(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_done)})
+            check("the same session fires once its background task has finished",
+                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            background_marker_file.unlink(missing_ok=True)
+            background_deferred_marker_file.unlink(missing_ok=True)
+
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_old)})
+            check("a background task older than the wait does not hold the handoff",
+                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            check("an outlived wait writes no deferral marker",
+                  not background_deferred_marker_file.exists(),
+                  str(background_deferred_marker_file))
+            background_marker_file.unlink(missing_ok=True)
+
+            # The wait ends a deferral already in progress: this session
+            # deferred while the task was young, went quiet, and reaches its
+            # next boundary after the task has outlived the wait. The deferred
+            # marker must not keep it quiet then — the marker only stops the
+            # notice repeating, and an empty flight fires whatever it says.
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_young)})
+            check("the outlived-wait session defers first, as the young-task session did",
+                  result.returncode == 2 and "handoff deferred" in result.stderr
+                  and background_deferred_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_old)})
+            check("a session that deferred fires once its background task outlives the wait",
+                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now."
+                  and background_marker_file.exists(),
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            background_marker_file.unlink(missing_ok=True)
+            background_deferred_marker_file.unlink(missing_ok=True)
+
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_young)},
+                              ("--background-task-wait-minutes", "5"))
+            check("the wait is configurable: a five-minute wait fires on a ten-minute-old task",
+                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            background_marker_file.unlink(missing_ok=True)
+            background_deferred_marker_file.unlink(missing_ok=True)
+
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(grid_past_ceiling)})
+            check("above the ceiling the handoff fires with a background task still running",
+                  result.returncode == 2 and result.stderr.strip() == "Run the handoff skill now.",
+                  f"code {result.returncode}, stderr {result.stderr[:200]}")
+            background_marker_file.unlink(missing_ok=True)
+            background_deferred_marker_file.unlink(missing_ok=True)
+
+            result = run_hook({"session_id": BACKGROUND_PROBE_SESSION_ID,
+                               "transcript_path": str(both_running)})
+            check("a deferral behind both kinds names both",
+                  "1 subagent(s) and 1 background task(s) run" in result.stderr,
+                  result.stderr[:250])
+        finally:
+            background_marker_file.unlink(missing_ok=True)
+            background_deferred_marker_file.unlink(missing_ok=True)
 
         result = run_hook({})
         check("hook stays silent with no session id", result.returncode == 0)
