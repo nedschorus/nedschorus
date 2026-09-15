@@ -622,7 +622,7 @@ def reference_checkout_of(checkout: Path):
 
 
 def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
-                                    announce_success: bool = True) -> None:
+                                    operator_facing: bool = True) -> None:
     """ff-only pull of a checkout parked on main; never a real merge.
 
     Safe by construction only when the reference carries nothing of its own:
@@ -630,8 +630,19 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     is left alone with a line saying so — to the USER, because a reference
     checkout that cannot update is someone having left work where none
     belongs, which is the kind of thing the user asked to hear (ruled
-    2026-09-15). A success is routine: announced only for the operator-facing
-    --reference-pull, which launchers print at launch.
+    2026-09-15).
+
+    Two audiences, two rates. operator_facing=True is --reference-pull, which
+    launchers print at launch: every outcome is reported, every time,
+    including a success. operator_facing=False is the Stop hook, whose
+    report() is the user's systemMessage: a success is silent, and a skip or
+    refusal is reported ONCE PER REASON, keyed in the stamp as
+    `last_reference_blockers` — never per turn, and never on `behind`, which
+    would re-fire at every update of main. This function runs at every turn
+    end off local refs regardless of the fetch throttle, so without that key
+    a reference with one uncommitted edit named itself to the user at every
+    turn end (found before PR #388 merged; it had always repeated, to plain
+    stdout that nobody read).
     """
     git_dir = git_directory(reference)
     if git_dir is None:
@@ -651,8 +662,16 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
+        stamp.pop("last_reference_blockers", None)
         write_stamp(stamp_path, stamp)
         return
+
+    def report_reason(reasons, line):
+        """Report a skip or refusal: always for the operator, once per reason
+        for the user."""
+        if operator_facing or stamp.get("last_reference_blockers") != reasons:
+            report(line)
+        stamp["last_reference_blockers"] = reasons
 
     blockers, branch = merge_blockers(reference, git_dir)
     stamp["branch"] = branch
@@ -665,21 +684,25 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         real_blockers.append(f"{ahead} local commit(s) main does not have")
     if real_blockers:
         stamp["last_action"] = f"reference skipped: {'; '.join(real_blockers)}"
+        report_reason(real_blockers,
+                      f"catch-up: reference checkout {reference} is {behind} behind and was "
+                      f"left alone — {'; '.join(real_blockers)}")
         write_stamp(stamp_path, stamp)
-        report(f"catch-up: reference checkout {reference} is {behind} behind and was "
-               f"left alone — {'; '.join(real_blockers)}")
         return
 
     pulled = run_git(["merge", "--ff-only", "origin/main"], reference, timeout=120)
     if pulled.returncode != 0:
+        detail = pulled.stderr.strip() or "no detail"
         stamp["last_action"] = "reference ff-only refused"
+        report_reason([f"ff-only refused: {detail}"],
+                      f"catch-up: reference checkout {reference} could not fast-forward: "
+                      f"{detail}")
         write_stamp(stamp_path, stamp)
-        report(f"catch-up: reference checkout {reference} could not fast-forward: "
-               f"{pulled.stderr.strip() or 'no detail'}")
         return
     stamp["behind"], stamp["last_action"] = 0, f"reference fast-forwarded {behind}"
+    stamp.pop("last_reference_blockers", None)
     write_stamp(stamp_path, stamp)
-    if announce_success:
+    if operator_facing:
         report(f"catch-up: reference checkout {reference} fast-forwarded {behind} commit(s) "
                f"to origin/main")
 
@@ -759,13 +782,13 @@ def main(argv=None) -> int:
             # merge, and no telling — it has no branch of its own to be told
             # about, and this path keeps it current.
             fast_forward_reference_checkout(root, arguments.interval_seconds,
-                                            announce_success=False)
+                                            operator_facing=False)
         else:
             catch_up_session_checkout(root, arguments.interval_seconds)
             reference = reference_checkout_of(root)
             if reference is not None and reference != root:
                 fast_forward_reference_checkout(reference, arguments.interval_seconds,
-                                                announce_success=False)
+                                                operator_facing=False)
     flush_hook_output()
     return 0
 

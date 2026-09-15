@@ -138,7 +138,10 @@ and nothing else, each once per distinct finding:
   `diverged-from-remote`;
 - the reference checkout unable to fast-forward, because someone left work
   where none belongs (a peer seat's finding the same day: the Mac reference
-  sat 22 behind with one uncommitted edit, silently).
+  sat 22 behind with one uncommitted edit, silently). Reported once per
+  reason, not per turn: this check runs at every turn end off local refs, and
+  the line had always repeated — to plain stdout nobody read — which as the
+  user's line would have been the noise this ruling removed.
 
 The detectors run every turn BEFORE the drift path: a branch that merged main
 into itself is 0 behind, exactly where a drift-first design returns early.

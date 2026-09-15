@@ -387,6 +387,33 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "left alone" in display_text(result) and "local commit" in display_text(result),
           result.stdout)
     check("the diverged reference was not moved", not (reference / "advance-six.txt").exists())
+    # Once per REASON, not per turn. This line runs at every turn end off local
+    # refs, and before PR #388 it went to plain stdout nobody read, so nobody
+    # noticed it repeated. As the user's systemMessage a repeat is the noise the
+    # 2026-09-15 ruling removed.
+    check("the same reason at the next turn end is not reported to the user again",
+          display_text(run_catch_up(["--cwd", str(reference)])) == "")
+    commit_file(origin, "advance-seven.txt", "seven\n", "advance seven")
+    check("main moving does not re-report while the reason is unchanged",
+          display_text(run_catch_up(["--cwd", str(reference)])) == "")
+    (reference / "shared.txt").write_text("also dirty\n", encoding="utf-8")
+    changed = run_catch_up(["--cwd", str(reference)])
+    check("a changed reason is reported once more",
+          "uncommitted tracked change" in display_text(changed)
+          and "local commit" in display_text(changed), display_text(changed))
+    check("and then not again",
+          display_text(run_catch_up(["--cwd", str(reference)])) == "")
+    check("the reason is what the stamp keys on",
+          stamp_of(reference).get("last_reference_blockers") and
+          any("uncommitted" in reason for reason in stamp_of(reference)["last_reference_blockers"]),
+          str(stamp_of(reference).get("last_reference_blockers")))
+    # The operator-facing mode is a launch log: it says so every time.
+    operator = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    operator_again = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("--reference-pull reports the same blocked reference every time",
+          "left alone" in operator.stdout and "left alone" in operator_again.stdout,
+          operator.stdout + operator_again.stdout)
+    git(["checkout", "--", "shared.txt"], reference)
 
     # A session seated outside any repository does nothing, silently.
     nowhere = tmp / "not-a-repo"
@@ -579,6 +606,8 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
           (reference / "advance.txt").exists())
     check("--reference-pull still speaks PLAIN TEXT — launchers read it on a terminal",
           emitted_object(pulled) is None, pulled.stdout)
+    check("a successful pull clears the reference's reason key",
+          "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
 
 
 # ---------------------------------------------------------------------------
