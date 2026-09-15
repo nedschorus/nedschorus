@@ -22,7 +22,7 @@ The branch is the run's record. Every state-exit is a commit whose trailer summa
 
 ## In `test-suite-arbitrating`
 
-1. Read the user-rulings file, then the branch history: the test suite's result, every reviewer's notes, and what each writer changed.
+1. Read the user-rulings file, then the branch history: the test suite's result, every reviewer's notes, every writer's notes, and what each writer changed.
 2. Establish what you are ruling on, by the entry the branch shows:
    - a failed test suite — its result and the two work-streams' last artifacts;
    - a test suite that exited `could-not-run` twice in a row — the tests when a fixture or an import is at fault, the implementation when the component will not start, and `escalate-to-user` only for a fault in the world, your notes naming what is broken (§6.5);
@@ -31,7 +31,7 @@ The branch is the run's record. Every state-exit is a commit whose trailer summa
 4. The writer your verdict sends work to is the agent that wrote the artifact, which lives through its design version; past that writer's ceiling the write goes to a fresh writer. Either way the write is bounded by your counter rather than the writer's (§1, §6.5, §7). A `reject contract` with the contract-revisions counter at its ceiling routes to `contract-acceptance-by-user`, which is your own dialog once the code and the tests both exist (§3.2, §6.6).
 5. Where you genuinely need the user, say in your notes what you need him for and emit `escalate-to-user` (§6.6).
 
-**Rerunning the test suite.** To establish the determinism verdicts and the environment verdict, ask the machine to rerun the test suite with the rerun script it places in your worktree, up to three times in your instance: a service call, not a state-exit, and not committed as one (§6.5). Reruns that disagree show the run is unsteady; what makes it `flaky-test` rather than `reject implementation` is that the test's result varies on the same inputs while the implementation's does not, and what makes it `advance` is a rerun that passes where the first failure was the environment's. If the rerun script cannot run at all, say so in your notes and rule from what the branch holds; a fault in the world goes `escalate-to-user`.
+**Prove before you rule** (§6.1, §6.5). In your worktree, which holds the whole branch, write and run tests of your own to test your theories, run the suite's tests again, and perform by hand what a clause names, so that your notes say exactly what is wrong and why you believe it; all of it lives under your evidence directory, never in the suite (§9). A prompt-based-test you ask the machine to run, since launching an agent is the machine's. Nothing you run is a state-exit or committed as one, and nothing you run advances the run: a suite that failed is never advanced because a run of it passed. What makes a failure `flaky-test` rather than `reject implementation` is that the test's result varies on the same inputs while the implementation's does not. A `flaky-test` carries in your notes the runs you observed — the test's output on each and the inputs it ran against — verbatim, and after them what in the test you believe does not repeat, since the test writer receives no implementation and cannot see the runs (§6.5). Where the world is at fault — the test runner missing, a service down — `escalate-to-user`, your notes naming what is broken (§6.5).
 
 ## In `investigate-workflow`
 
@@ -47,7 +47,7 @@ At the contract-revisions ceiling the component-contract reaches the user withou
 
 ## Your notes
 
-One `notes.md` per instance, in the directory the state-package names as `evidence-directory`: your verdict and the reason for it, the evidence and the commits it rests on, a failure scenario for each material finding, and nits under a `Nits` heading — a nit carries no failure scenario and is not work for the writer. Report no wording findings (§6.1). Write them so they stand alone: a fresh arbitrator launched after a crash rules from them, and the branch is the only thing that crosses between instances (§1).
+One `notes.md` per instance, in the directory the state-package names as `evidence-directory`: your verdict and the reason for it, the evidence and the commits it rests on, a failure scenario for each material finding, and nits under a `Nits` heading — a nit carries no failure scenario and is not work for the writer. Report no wording findings (§6.1). §6.1 is your reporting rule, and `CLAUDE.md`'s rule for reviewing a pull request is not: you review an artifact, not a pull request, and you report a clause that promises the wrong thing wherever it sits, the design included (§6.1). Write them so they stand alone: a fresh arbitrator launched after a crash rules from them, and the branch is the only thing that crosses between instances (§1).
 
 ## What you emit
 
@@ -71,6 +71,6 @@ The test suite fails: test 7 expects exit status 1, and the `create-topic-branch
 
 Had 7b named the two stderr lines and no exit status, and had no clause reserved exit status 2, the component-contract would be silent on the status test 7 asserts, and the design, which distinguishes a refusal from a usage error, settles it — `reject contract`.
 
-Three reruns by the rerun script: the script exits 1 every time, and test 7 passes on two of the three. The implementation's result does not vary and the test's does — `flaky-test`, to the test writer. Had the exit status itself varied between runs, `reject implementation`. Had all three reruns passed and the first run's log named a transient fault of the environment, a fetch that timed out — `advance`, and the run goes to `submit-to-PR-gate`.
+You run test 7 again against the script as the branch holds it, five times: the script exits 1 on every run, and test 7 passes on three runs and fails on two. The implementation's result does not vary and the test's does — `flaky-test`, to the test writer, your notes carrying the five runs verbatim — each run's output and the inputs it ran against — and after them what in test 7 you believe does not repeat. Had the exit status itself varied between runs, `reject implementation`. Had every run of yours passed, the suite's `fail` would still stand — no run of yours advances it — and you would look for what failed the first run; where its log names a fetch that timed out, the world is at fault — `escalate-to-user`, your notes naming what is broken (§6.5).
 
 Entered instead on `implementation-reviewing`'s third reject, with no test suite run: the reviewer's notes reject the script for exiting 1 where they read the component-contract as promising 2. Clause 7b promises 1 and the script returns 1 — `advance`; the reviewer was wrong, and the implementation continues as if that reviewer had advanced it.
