@@ -101,14 +101,14 @@ Every state is named by the document or code it works on and the work it does on
 | `initiate-design-to-main` | | the user's invocation of the skill, naming the component | `invoked` |
 | `design-writing` | | the invocation; on a redesign, the investigation report | `emitted`, with the design and the component-contract |
 | `contract-reviewing` | `contract-acceptance-by-program`; after a contract-revision also `contract-acceptance-by-agent`; at the revisions ceiling `contract-acceptance-by-user` | the previous version and the notes, on a revision | `advance` / `reject contract` / `discuss` / `redesign`, the last from the user only |
-| `design-reviewing` | `design-acceptance-by-agent`, `design-acceptance-by-user` | — | `advance` / `reject design` / `reject contract` / `discuss` |
+| `design-reviewing` | `design-acceptance-by-agent`, `design-acceptance-by-user` | on a second review, the previous reviewer's notes and the writer's notes | `advance` / `reject design` / `reject contract` / `discuss` |
 | `contract-revising` | | the notes or the failed-check report, and the version being revised | `emitted` / `input-quick-check-failed` |
 | `implementation-writing` | | on re-entry, the implementation as it stands and the notes; when an upstream document changed, its diff | `emitted` with coverage-type / `input-quick-check-failed` |
 | `implementation-reviewing` | `implementation-acceptance-by-agent`; for agent-instructions also `implementation-acceptance-by-user` | the implementation's files; on a second review, the previous reviewer's notes and the writer's notes | `advance` / `reject <artifact>` / `discuss` |
 | `test-design-writing` | | on re-entry, the test-design as it stands and the notes; when an upstream document changed, its diff | `emitted` / `input-quick-check-failed` |
-| `test-design-reviewing` | `test-design-acceptance-by-agent`, `test-design-acceptance-by-user` | the test-design | `advance` / `reject <artifact>` / `discuss` |
+| `test-design-reviewing` | `test-design-acceptance-by-agent`, `test-design-acceptance-by-user` | the test-design; on a second review, the previous reviewer's notes and the writer's notes | `advance` / `reject <artifact>` / `discuss` |
 | `test-writing` | | the test-design; on re-entry, the tests as they stand and the notes; when an upstream document changed, its diff | `emitted` with coverage-type — every coverage-type present in the set, `script, prompt` for nine scripts and one prompt-based-test — / `input-quick-check-failed` |
-| `test-reviewing` | `test-acceptance-by-agent`; for tests that are agent-instructions also `test-acceptance-by-user` | the test-design; the tests' files | `advance` / `reject <artifact>` / `discuss` |
+| `test-reviewing` | `test-acceptance-by-agent`; for tests that are agent-instructions also `test-acceptance-by-user` | the test-design; the tests' files; on a second review, the previous reviewer's notes and the writer's notes | `advance` / `reject <artifact>` / `discuss` |
 | `test-suite-executing` | | the implementation; the tests; the test-design | `pass` / `fail` / `could-not-run` |
 | `test-suite-arbitrating` | | the implementation-work-stream's last state-package and files; the test-work-stream's; the whole branch | `advance` / `reject <artifact>`, the implementation, the tests, both as `reject implementation and tests`, or the contract / `flaky-test` / `escalate-to-user` |
 | `investigate-workflow` | | the whole branch; the notes or state-exit that opened it | `stop` / `submit-to-PR-gate` / `resume`, with an optional destination |
