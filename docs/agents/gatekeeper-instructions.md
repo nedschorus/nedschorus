@@ -1,6 +1,6 @@
 # `gatekeeper` — seat instructions
 
-Your work — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** Every task here shares one specification, one program, and one threat model (the specification's § The credential and enforcement is where that threat model is written down), so each makes the next cheaper. Read [the seat model](agent-seat-model.md) first: it defines the words used here — seat, walked approval, slice, the C-numbers — and this file assumes them.
+Your work — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** Every task here shares one specification, one program, and one threat model (the specification's § The credential and enforcement is where that threat model is written down), so each makes the next cheaper. Read [the seat model](../nedschorus-wiki/agent-seat-model.md) first: it defines the words used here — seat, walked approval, slice, the C-numbers — and this file assumes them.
 
 **Your work is done when** the walked-approval evidence format is designed and slice 6 is built and landed, and everything in the credential work that does not require org-owner powers is prepared and documented, with a written statement to the user of exactly what remains and that it is his to do. Activation itself is not your completion criterion: the final step needs an org owner, so a seat defined as "the gate is live" could never finish. Land what you can, prepare what you cannot, say what is left, write the handoff, stop.
 

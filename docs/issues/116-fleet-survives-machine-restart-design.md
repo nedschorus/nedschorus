@@ -1,6 +1,6 @@
 ---
 status: design of record; build tracked in nedschorus#116
-design-as-of: 2026-09-02
+design-as-of: 2026-09-11
 ---
 
 # Fleet survives a machine restart (design)
@@ -146,6 +146,66 @@ is unreachable, or answers with nothing usable, the Mac still recovers its own
 seats and restores the windows onto them, and reports the box's windows as
 missing rather than opening nothing quietly.
 
+**Ruled 2026-09-14, after both halves of step 4 landed:** the user does not
+reconnect box seats by hand. Asked what happens to box seats opened over ssh
+from the Mac, the answer was that the seats survive either reboot but the Mac
+windows onto them do not come back on their own, and the by-hand recovery is
+`launch-claude-ubuntu <seat>`, which attaches to the existing tmux session.
+The user's ruling: *"I do not want to ssh open nedbox agents by hand. That
+should be in the claude-ubuntu script or whatever we call it."* So the window
+role is the next build, and it has two triggers, not one: a Mac login (the
+role as designed above), and a box reboot while the Mac stays up, when the ssh
+windows drop and nothing on the Mac notices. The second trigger is built into
+`launch-claude-ubuntu` (PR #365, 2026-09-14): the attach is a loop, not an
+exec, so the window outlives the box's reboot instead of being reopened after
+it. ssh exits 255 for a connection-level failure and nothing else; on 255 the
+launcher waits and tries again, doubling to 30 s, one line per attempt naming
+the seat and Ctrl-C. Any other exit — a detach, the after-exit shell closing,
+the seat's tmux server dying — ends the launcher as before, so a window never
+recreates a seat that was deliberately stopped. Two remote-side decisions ride
+with it: the attach waits out the box's own seat restart while that unit is
+still activating (bounded at 180 s), because sshd answers in the same second
+the unit starts and a `new-session -A` arriving first would create a fresh
+seat that the box's restart then refuses, the transcript resume lost; and the
+prepare step (the Claude update, the trust mark, the checkout) runs only when
+the seat does not already exist, so N windows reconnecting after a boot do not
+each run `claude update` under live sessions (nedschorus#62). Measured
+2026-09-15 with a canary seat: a window attached through the launcher, the
+connection's sshd process killed on the box, and a new tmux client attached
+four seconds later with the window still open; killing the seat's tmux server
+instead ended the launcher and the window, with no seat recreated. Restarting
+the box's sshd does not drop existing connections, so that is not a test.
+
+The first trigger is built into `restart-live-seats-at-login.py` (PR #367,
+2026-09-15): on the Mac, after its own seats and whatever their verdicts, a
+run asks the box over ssh which seats are alive — every session on every
+per-seat tmux server, kept only when a seat home of that name exists, the
+listing `launch-claude-ubuntu`'s usage prints — and opens an iTerm window
+onto each through `open-iterm-window-running-command`, running
+`launch-claude-ubuntu` by absolute path, which attaches. The query uses the
+launcher's box alias with BatchMode, since under the LaunchAgent there is no
+terminal to answer a prompt. A box that does not answer (ssh exit 255) is
+retried every 5 s for 150 s, because both machines may have rebooted, then
+its windows are reported missing with the by-hand command; that is not a
+failure of the run. A window that cannot be opened fails the run. Duplicate
+windows on a by-hand rerun are accepted in this version. The run-log line
+gains `box_windows`. Measured 2026-09-15 under a throwaway LaunchAgent with
+one canary seat live on the box: ssh reached the box with no prompt, the
+window opened and attached, the job exited 0 within three seconds. With both
+triggers on main and the product plist installed, a Mac logout and login is
+the test of the whole role; it has not been run yet.
+
+Two questions the #365 reviews left open, both in the launcher: the
+reconnect wait doubles to 30 s and is never reset after a successful attach,
+so every later drop in that window's life waits 30 s before its first retry
+(a slower reconnect, not a lost seat); and after a box boot a reconnecting
+window, once the box's restart has finished, creates via `new-session -A` a
+seat that restart decided only to *offer* — what a by-hand relaunch did
+before, now automatic on every reconnect. Whether the window should stop at
+the offer instead is the user's call. Unmeasured by any review: a real box
+reboot under an attached window (the measurements were an sshd-session kill
+and a tmux-server kill); the next planned box reboot is the measurement.
+
 ## Ruled 2026-08-31 — the heartbeat answers "which seats were running"
 
 **The snapshot only covers a planned restart.** The original relaunch step said
@@ -223,6 +283,20 @@ time is not — `last -x reboot shutdown` returns nothing on either (measured
   discard them either: report what was found and offer the three outcomes —
   restart, park, or finished. `mac-prof`, stamped three days before the stop,
   lands here rather than being resumed.
+
+**Ruled 2026-09-15, replacing the second bullet.** Asked whether a window
+reconnecting after a box boot should stop at such an offer rather than create
+the seat, the user ruled the offer itself away: *"I'd just restart anything that
+looks like it was accidentally shut down at roughly the time of shutdown. It's
+easy to shut down an agent that isn't useful."* So the seats within the
+20-second window of the newest stamp before boot are restarted however long the
+machine sat off; the age bound (one hour) is gone from the selector. The cost
+the 2026-09-02 rule guarded against — a seat that had been stopped on purpose
+long before the shutdown coming back as the "newest" one — is accepted: a seat
+restarted wrongly costs one stop, a seat left down costs its work. The
+2026-09-11 amendment stands, because it is about a different thing: once seats
+have been brought back by hand before this program ran, the newest remaining
+stamp is not the stop at all, and those seats are still only offered.
 
 This also corrects a claim below. "A seat whose supervisor died while the machine
 kept running is not restarted" does not follow from the relative rule on its own:
@@ -393,7 +467,9 @@ the project's synthetic-keystroke guard hook blocks that form outright
 2. **Heartbeat selection** — read every
    `~/.claude/handoffs/<seat>-supervisor-state.json`, take the newest
    `last_poll_at` across all of them, validate it against boot time, and select
-   the seats stamped within 20 seconds of it, as ruled above.
+   the seats stamped within 20 seconds of it, as ruled above. Each run records
+   what it selected in the run log ruled below, and a later run in the same
+   boot takes the stop from there rather than deriving it again.
 3. **Window-opening recovery** — `--open-iterm-window-per-seat` on
    `recover-crashed-seats.py`, specified in the #120 overview, so a recovered
    seat is born attached in its own iTerm window. Independently useful: it is
@@ -401,6 +477,70 @@ the project's synthetic-keystroke guard hook blocks that form outright
 4. **`restart-live-seats-at-login`, wired to login** — a LaunchAgent on the Mac,
    `fleet-tmux.service` or a sibling on the box, running 2 and then 3, and
    handling a seat it cannot bring back as ruled above.
+
+   *Built 2026-09-14, the Mac half:* `restart-live-seats-at-login.py` runs
+   `recover-crashed-seats.py <seat> --handoff-dir <dir> --open-iterm-window-per-seat`
+   for each seat it decides to restart, one subprocess per seat, records the
+   seats that came up in the run log's `launched` field, and exits 1 when a
+   decided seat did not come back. Two decisions taken in the build: the
+   launch runs before the run-log line is appended, so a run killed
+   mid-launch leaves no line and the next run in the boot offers rather than
+   restarts (a missed restart is preferred to a double launch); and a seat
+   that does not come back is reported and left down, because parking it
+   with its reason and asking in a window is nedschorus#242 change 3, not
+   built. `install-restart-live-seats-at-login-launch-agent.py` writes the
+   LaunchAgent plist (`com.nedschorus.restart-live-seats-at-login`, RunAtLoad,
+   Aqua sessions only, PATH naming `~/.local/bin` and `/opt/homebrew/bin`,
+   output to `~/.claude/handoffs/restart-live-seats-at-login-launchd-output.txt`).
+   Writing it does not load it; it loads at the next login. Measured
+   2026-09-14 by bootstrapping a throwaway label pointed at a throwaway
+   handoff directory holding one canary state file stamped 30 s before
+   boot: launchd ran the program, it decided `restart`, the recovery tool
+   opened an iTerm window (id 1743) and launched the seat fresh, the
+   supervisor came up in 17 s, the run log recorded `launched: ["seat-t"]`,
+   the job exited 0. No Automation permission prompt appeared: the
+   AppleScript ran under launchd without one.
+
+   *Built 2026-09-14, the box half:* `install-restart-live-seats-at-login-systemd-unit.py`
+   writes a systemd **user** unit (`restart-live-seats-at-login.service`,
+   `Type=oneshot`, `WantedBy=default.target`, PATH set, output appended
+   beside the run log) and enables it; lingering is on for the seat user,
+   so the user manager starts at boot and runs it without a login. A user
+   unit rather than a system unit beside `fleet-tmux.service`: no root, and
+   the seats belong to the seat user. The line that matters is
+   `KillMode=process`: a oneshot service kills whatever is left in its
+   control group when its main process exits, and the seats the program
+   launches are detached tmux servers left behind by it. Measured
+   2026-09-14 with a probe unit on the box: with `KillMode=process` the
+   tmux server was alive after the unit went inactive; without it, no
+   server was running. `RemainAfterExit` was rejected because a later stop
+   of the unit would then kill every seat it launched. Measured the same
+   day with a throwaway unit started by hand: the program decided
+   `restart` for a canary seat, the recovery tool launched it fresh on its
+   own tmux server, the supervisor came up, the run log recorded
+   `launched: ["systemd-unit-canary"]`, the unit went inactive with
+   status 0 and the journal noted the tmux server "remains running after
+   unit stopped". The product unit was then installed and enabled, with the
+   canary left live in the real handoff directory, so the box's one real
+   reboot (allowed 2026-09-11) measures the unit firing at boot and a seat
+   live at the stop coming back.
+
+   *The box reboot, 2026-09-14 23:33:22Z, on the user's word.* Boot at
+   16:34:12 PDT. The user manager reached `basic.target` and started the
+   unit at 16:34:20, the same second the system reached `network.target`
+   and five seconds before `network-online.target` (16:34:25) — a user
+   unit cannot order itself after the system manager's network targets, so
+   the program runs before the network is declared online. It decided
+   `restart` for the canary (heartbeat 56 s before boot), the recovery tool
+   launched it on its own tmux server, the supervisor's first heartbeat
+   landed at 16:34:22, the unit finished with status 0 at 16:34:27 and the
+   journal logged the tmux server "remains running after unit stopped".
+   The run log line carries `"launched": ["systemd-unit-canary"]`; the seat
+   was alive and stamping afterwards. Whether the session's first API call
+   waited on the network is not measured; the seat came up. `fleet-anchor`
+   came back through `fleet-tmux.service` at 16:34:25 as before. The
+   canary and its records were then removed. Left unmeasured on either
+   machine: only the Mac's real login after a real reboot.
 5. **Notify-and-wait and the resume prompt** stay as designed above: built only
    if the manual path proves insufficient. Open, as noted there: no trigger for
    that judgment is defined.
@@ -410,7 +550,15 @@ the project's synthetic-keystroke guard hook blocks that form outright
 - **Does the LaunchAgent need to start iTerm2?** It fires at login, when iTerm2
   may not be running. Either `restart-live-seats-at-login` launches iTerm2
   itself and waits for it, or the trigger hangs off iTerm2's own startup
-  instead. Unresolved; it decides whether step 4 is a LaunchAgent at all. What
+  instead. *Decided 2026-09-14 for the build: it is a LaunchAgent, and it
+  relies on the opener's `tell application "iTerm"`, which AppleScript
+  answers by launching the application when it is not running.* That cold
+  start is not yet measured — the 2026-09-14 kickstart test ran with iTerm2
+  already open — so the first real login with iTerm2 quit is the
+  measurement, and its record goes here. Note also that a logout and login
+  does not change the boot instant (`kern.boottime`), so a login test on a
+  machine that has not rebooted restarts nothing: the program sees the
+  seats it already brought back as written since boot. What
   is settled (2026-09-02) is the cost of login rather than boot: an unattended
   Mac that boots to the login window restores nothing until someone logs in,
   and the user accepted that — *"I'm OK with it being stuck until I reboot it —
@@ -424,11 +572,33 @@ the project's synthetic-keystroke guard hook blocks that form outright
   whether the seat was running. So an unreadable file is dated by its last
   write instead, which works because only the supervisor writes it. A file cut
   off at the stop therefore counts as running then, and the seat is restarted.
-  One damaged long before the stop is judged like any old seat. A missing file
-  is a different case, and that part still waits on the user's word. The
-  supervisor writes its state file on its first launch and never deletes it, so
-  a seat without one never ran supervised, and the selector does not consider
-  it.
+  One damaged long before the stop is judged like any old seat.
+
+  **A missing file is a different case, settled 2026-09-11: the selector does
+  not consider such a seat.** The supervisor writes its state file on its first
+  launch and never deletes it, so a seat without one never ran supervised.
+
+  That was the standing proposal, and it was nearly replaced by a worse rule.
+  The intermediate proposal — offer the seat when it has transcripts, since
+  something evidently ran there — was put to the user and approved, then
+  withdrawn when it was measured rather than assumed. Every seat on either
+  machine with a seat directory and no state file: the Mac's `seat-t` and
+  `seatub`, both with no transcripts at all, and ned-box's `ghi-info`, with
+  five. `ghi-info` is the only seat the rule would ever have surfaced, and it
+  is precisely the wrong one — `scripts/ghi-info-ask.py` runs it as a one-shot
+  `claude -p` over ssh, never under `handoff-supervisor.py` and never in tmux.
+  It has a seat directory because it follows the agents-root convention and
+  transcripts because `claude -p` writes them. So **having transcripts does not
+  mean having been a running seat**, and the rule would have offered to restart
+  a tool that was never running. The user's word on the corrected measurement
+  (2026-09-11) is the ruling above.
+
+  The failure the rule was meant to cover — a supervised seat that lost its
+  state file — appears nowhere in the evidence. The divergence that does occur
+  is the reverse, and is already handled: five state files on the Mac
+  (`doctrine-queue-drain` with 73 transcripts, `git-infra` 57,
+  `mac-ubuntu-bridge` 22, `fixer1` and `repo-hygiene` 1 each) have no seat
+  directory at all, and are considered and reported `not-running-at-the-stop`.
 - **Amended 2026-09-11, in review: after the first restart, offer.** Once any
   seat has been written since boot, the seats that were running at the stop
   have stamped over their heartbeats from before boot, and the newest one left
@@ -436,8 +606,56 @@ the project's synthetic-keystroke guard hook blocks that form outright
   that died earlier and restart it. So once any seat has been written since
   boot, the selector offers instead of restarting. The cost: every later login
   in the same boot offers whichever seat holds the newest remaining heartbeat
-  from before boot. If that grates, the fix is to persist the first run's
-  anchor.
+  from before boot.
+- **Ruled 2026-09-11, on that cost: a run log.** The user, reading the
+  amendment above: *"sounds like we need a log here ... not a single file."*
+  So every run that is not a dry run appends one line to
+  `<handoff-dir>/restart-live-seats-at-login-log.txt` — the run, the boot, the
+  stop, and the verdict per seat — and a later run in the same boot reads the
+  stop back from it instead of deriving it from heartbeats the restarted seats
+  have since stamped over. A log rather than one overwritten file, so the runs
+  of a boot can be read in order afterwards, as
+  `recover-crashed-seats-log.txt` is (ruled 2026-08-22). With the stop read
+  back, the degradation above does not apply: the recorded stop is the stop
+  whatever has been stamped since, so a seat still sitting at it is one that
+  did not come back, and it is restarted rather than merely offered. Boots are
+  matched as instants, not as strings, because the box reads its boot time
+  from `uptime -s` in local time — and within a few seconds rather than
+  exactly, because neither machine *stores* its boot instant: the Mac adjusts
+  `kern.boottime` when the clock is corrected, and the box computes `uptime
+  -s` as now minus `/proc/uptime` and prints whole seconds, so an NTP step of
+  half a second flips it, and a step right after boot is exactly when this
+  program runs (measured 2026-09-11, in review). The tolerance is far below
+  the shortest interval two real boots can be apart. The first line recorded
+  for a boot wins, having seen the least disturbed state. **Each line records
+  what was launched as well as what was decided** (the user, 2026-09-11, on
+  whether to defer the field: *"If so why wait"*): a verdict is a decision,
+  and once step 4 lands a decided restart can still fail to come up, so
+  `launched` carries null while this program cannot launch at all and the list
+  of seats it launched once it can. A cold reader can then tell a seat that
+  was never launched from one whose launch failed. **And the report says what
+  actually happened** (found in review, fixed 2026-09-11): a run whose append
+  failed no longer announces a record that is not there, and a later run in a
+  degraded boot no longer says the first one "left no line in the run log"
+  when the log holds exactly that line. The log is what an investigator reads,
+  so a false sentence beside a true verdict is worse than no sentence. This
+  needs the reader to answer two questions rather than one — the stop, and
+  whether there was an earlier run at all — because a degraded run leaves a
+  line carrying no stop, which makes "no recorded stop" and "no earlier run"
+  different states. A null stop is deliberate and settles the matter; a stop
+  that is present but corrupt is a line nobody wrote on purpose, and is
+  skipped rather than believed. A line that cannot be read is skipped
+  and a log that cannot be written is reported and nothing more: a machine
+  that has just booted needs its seats back more than it needs the record.
+  **A run that cannot tell where the stop was records none:** when the seats
+  brought back earlier in this boot have already stamped over the derived
+  anchor — the 2026-09-10 shape, where the user recovered seats by hand before
+  this program ever ran — the line carries `stop_at` null and keeps what the
+  run worked from in `anchor_at`, visible to an investigator and trusted by no
+  later run. Otherwise that degraded anchor would be read back as the stop,
+  the degradation would be dropped because a stop had been "recorded", and a
+  seat that died before the real stop would be restarted. Built 2026-09-11,
+  with `--dry-run` reading the log and never writing it.
 
 ## Provenance
 

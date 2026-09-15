@@ -4,7 +4,7 @@
 
 The *substance* of the standing decisions below was approved by the user in a walk held on 2026-09-03 and 2026-09-04. That walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
 
-The *wording* of this file is a draft. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/wiki/queue/` for that reason, and drains to `docs/wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
+The *wording* of this file is a draft. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/nedschorus-wiki/queue/` for that reason, and drains to `docs/nedschorus-wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
 
 **What this document is.** The project's objective, not its plan. It is not maintained to match reality; reality is measured against it, and a gap between them is a fact about the project rather than a defect in this file. The detail behind each subject lives in [the notes](../cross-project/nedschorus-ai-native-software-development-notes.md), which are explanatory, possibly wrong, and not prescriptive. Every subject here appears there in the same order, where there is detail to carry.
 
@@ -56,7 +56,7 @@ The literature does not point toward a larger society of autonomous agents. It p
 
 ## Vocabulary
 
-Terms of art used here are collected in the project's glossary, `docs/wiki/nedschorus-glossary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. Where a term already has a name in this project, that name is used rather than a new one.
+Terms of art used here are collected in the project's glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, so an agent meeting a word for the first time can resolve it instead of guessing. Where a term already has a name in this project, that name is used rather than a new one.
 
 ## The pipeline
 
@@ -138,12 +138,12 @@ The existing Nedschorus placement rule remains useful: GitHub Issues carry walka
 
 | Place | Holds |
 | --- | --- |
-| `docs/wiki/` | Current standing knowledge that is difficult to reconstruct from code alone |
+| `docs/nedschorus-wiki/` | Current standing knowledge that is difficult to reconstruct from code alone |
 | `docs/issues/<n>-<slug>.md` | Substantive working material paired with a GitHub Issue |
 | `docs/cross-project/` | Current designs and specifications shared across Nedschorus systems |
 | `handoff/` and uncommitted transcripts on each machine | Session continuity and complete conversation evidence |
 | `nc-queue/` | Human-requested notes awaiting their initial review |
-| `docs/wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review |
+| `docs/nedschorus-wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review |
 | `legacy-feature-queue/` | Legacy behavior whose disposition is not yet decidable |
 | GitHub Issues and pull requests | Work state, decisions, reviews, and check-in path |
 | Git | Code, current Markdown, history, hashes, and ordinary provenance |

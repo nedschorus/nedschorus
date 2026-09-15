@@ -34,20 +34,20 @@ passing review.
   operator.
 - **The two machines** — the user's Mac (user `el`) and `ned-box` (Ubuntu,
   user `nedlern`), each with its own clone. Path map:
-  `docs/cross-project/fleet-machine-paths-and-checkouts.md` (flagged stale
+  `docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md` (flagged stale
   2026-08-17; verify before relying on specifics).
 - **Seat** — a named, long-lived agent identity: home directory, own
   branch, brief. **Session** — one running conversation occupying a seat;
   sessions end and are replaced, the seat persists. **Reincarnate** — the
   supervisor replacing a session with a fresh one, carrying the handoff
-  forward. Definitions of record: `docs/agents/agent-seat-model.md`.
+  forward. Definitions of record: `docs/nedschorus-wiki/agent-seat-model.md`.
 - **The reference checkout** — the machine's checkout that supervisors and
   launchers run from and other agents read expecting main. A standalone
   clone is its own workspace, never "the reference" — where any mechanical
   test disagrees with that definition, the definition governs (pinned
   2026-08-17). The test the guards use lives in the guard scripts.
 - **Walked approval** — the user's approval given item by item, not one
-  yes to a bundle (`docs/agents/agent-seat-model.md` § The words this
+  yes to a bundle (`docs/nedschorus-wiki/agent-seat-model.md` § The words this
   model uses).
 - **The gatekeeper** — `scripts/main-gatekeeper.py`, the main-gatekeeper:
   the permanent and only way a change reaches main; specification
@@ -556,7 +556,7 @@ kept on one machine and gitignored, deleted once this document was verified on
 main; everything they decided is restated here. This document depends,
 deliberately, on three documents, each canonical for its own subject —
 the gatekeeper design, the seat model, and the AI-native development architecture
-(`docs/wiki/nedschorus-ai-native-software-development-objective.md`).
+(`docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md`).
 
 Streamlined 2026-08-20 on the user's ruling, after the document's
 mechanism prose was three times found stale against the code it

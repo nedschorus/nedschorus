@@ -6,10 +6,10 @@ Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-main-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
 
-Slices 1 to 5 of five are built (slice 5's CLAUDE.md workflow lines land
-separately, walked with the user). For each request the program does exactly
-one of two things — checks the work in, or refuses and teaches the fix. On
-success four things are true: the change is on main, the checks ran against
+Slices 1 to 5 of five are built, slice 5's CLAUDE.md workflow line included
+(user-walked 2026-08-12, commit c37f25d). For each request the program does
+exactly one of two things — checks the work in, or refuses and teaches the fix.
+On success four things are true: the change is on main, the checks ran against
 exactly the content pushed, the commit's trailers carry the whole
 machine-readable record, and the caller has the commit id.
 

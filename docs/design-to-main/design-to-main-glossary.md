@@ -1,6 +1,6 @@
 # design-to-main glossary
 
-Terms that belong to the design-to-main workflow alone, for agents working on the files in this directory. Fleet-wide terms — `agent-instructions`, `fresh agent`, `user ruling` and `user-ruled`, `GHI-MD`, `PR process`, `cold-read run`, `Code Prompt Code (CPC)` — are in the fleet glossary, `docs/wiki/nedschorus-glossary.md`, and are used here as defined there. Only hyphenated phrases are defined; no common software-engineering word is redefined. Every phrase was collision-checked against `docs/`, `scripts/` and `.claude/` on 2026-09-06.
+Terms that belong to the design-to-main workflow alone, for agents working on the files in this directory. Fleet-wide terms — `agent-instructions`, `fresh agent`, `user ruling` and `user-ruled`, `GHI-MD`, `PR process`, `cold-read run`, `Code Prompt Code (CPC)` — are in the fleet glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, and are used here as defined there. Only hyphenated phrases are defined; no common software-engineering word is redefined. Every phrase was collision-checked against `docs/`, `scripts/` and `.claude/` on 2026-09-06.
 
 The state names of the machine are in the design, `docs/design-to-main/design-to-main-state-machine-design.md`, §3.1, and are not repeated here.
 

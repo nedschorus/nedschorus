@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for restart-live-seats-at-login.py (nedschorus#116), the selection step.
+"""Tests for restart-live-seats-at-login.py (nedschorus#116): the selection
+step, the run log, and the restart step that runs the recovery tool.
 
 Every case runs against a throwaway handoff directory, with the boot time and
 the current time passed in, so no case reads this machine's heartbeats or its
-real boot time. The rule under test is the #116 design's
+real boot time. No case runs the real recovery tool either: every main() case
+runs with a stub in place of the subprocess runner, which records the
+commands it was given and answers with the report it was told to. The rule under test is the #116 design's
 § Ruled 2026-08-31 — the heartbeat answers "which seats were running", with
 its 2026-09-02 amendments, the user's 2026-09-11 answer on state files that
 cannot be read, and the 2026-09-11 amendment from the review of 8b15919.
@@ -20,6 +23,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -72,19 +76,134 @@ def write_state(handoffs: Path, seat: str, stamp=None, raw=None, written_at=None
     return path
 
 
-def verdicts(handoffs: Path, boot_at=BOOT_AT, now=NOW):
-    anchor, decisions = restart.select_seats_live_at_the_stop(handoffs, boot_at, now)
+def verdicts(handoffs: Path, boot_at=BOOT_AT, now=NOW, recorded_stop=None):
+    anchor, decisions, _ = restart.select_seats_live_at_the_stop(
+        handoffs, boot_at, now, recorded_stop=recorded_stop)
     return anchor, {seat: (verdict, reason) for seat, verdict, reason in decisions}
 
 
-def run_main(arguments):
-    """main() with this machine's boot time replaced by BOOT_AT and its clock
-    by NOW; (exit code, stdout, stderr)."""
+def run_log_path(handoffs: Path) -> Path:
+    return handoffs / restart.RUN_LOG_FILE_NAME
+
+
+def run_log_lines(handoffs: Path):
+    """The run log's lines, parsed. A line that does not parse fails here:
+    every line this program writes is one JSON object."""
+    path = run_log_path(handoffs)
+    if not path.exists():
+        return []
+    return [json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def write_run_log_line(handoffs: Path, text: str):
+    """One line into the run log, verbatim — so a case can plant a malformed
+    one as well as a good one."""
+    handoffs.mkdir(parents=True, exist_ok=True)
+    with run_log_path(handoffs).open("a", encoding="utf-8") as stream:
+        stream.write(text + "\n")
+
+
+def run_log_entry(boot_at=BOOT_AT, stop_at=STOP, run_at=NOW, seats=None):
+    return json.dumps({
+        "run_at": run_at.isoformat(timespec="seconds"),
+        "boot_at": boot_at.isoformat(),
+        "stop_at": None if stop_at is None else stop_at.isoformat(),
+        "seats": seats if seats is not None else {"A": "restart"}})
+
+
+def read_recorded_stop(handoffs: Path, boot_at=BOOT_AT):
+    """Just the stop an earlier run in this boot recorded. The reader also
+    reports whether there WAS an earlier run, which the cases above pin
+    separately; most cases here care only about the stop."""
+    recorded_stop, _ = restart.read_earlier_run_for_this_boot(handoffs, boot_at)
+    return recorded_stop
+
+
+class RecoveryToolStub:
+    """Stands in for subprocess.run when the program launches a seat: records
+    every command, and answers each seat with the (exit code, stdout) it was
+    told to — by default the recovery tool's report for a seat that came up.
+    outcomes maps a seat name to (exit code, report); raising maps it to an
+    exception the runner raises instead, as subprocess.run does when the
+    program cannot be started."""
+
+    def __init__(self, outcomes=None, raising=None):
+        self.outcomes, self.raising, self.commands = outcomes or {}, raising or {}, []
+
+    def __call__(self, command, stdout=None, text=None):
+        self.commands.append(list(command))
+        seat = command[2]
+        if seat in self.raising:
+            raise self.raising[seat]
+        exit_code, report = self.outcomes.get(
+            seat, (0, f"recover-crashed-seats: {seat}: relaunched resuming "
+                      f"{seat}-session (12KB transcript) in a new iTerm window"))
+        return subprocess.CompletedProcess(command, exit_code, stdout=report + "\n")
+
+
+class BoxStub:
+    """Stands in for subprocess.run for the window role: the ssh query to the
+    box and the window opener. answers is the sequence of (exit code,
+    stdout, stderr) the query gives, the last one repeating; opener_failing
+    names seats whose window open fails. Every command is recorded, and
+    sleep and monotonic are replaced so a retry costs no time: each sleep
+    advances the fake clock by the seconds asked."""
+
+    def __init__(self, answers=None, opener_failing=(), platform="darwin", raising=None):
+        self.answers = list(answers or [(0, "", "")])
+        self.opener_failing, self.platform, self.raising = set(opener_failing), platform, raising
+        self.commands, self.slept, self.clock = [], [], 0.0
+
+    def __call__(self, command, stdout=None, stderr=None, text=None):
+        self.commands.append(list(command))
+        if self.raising is not None:
+            raise self.raising
+        if command[0] == "ssh":
+            code, out, err = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            return subprocess.CompletedProcess(command, code, stdout=out, stderr=err)
+        seat = command[-1]
+        if seat in self.opener_failing:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="no iTerm")
+        return subprocess.CompletedProcess(command, 0, stdout=f"window id {len(self.commands)}", stderr="")
+
+    def sleep(self, seconds):
+        self.slept.append(seconds); self.clock += seconds
+
+    def monotonic(self):
+        return self.clock
+
+    @property
+    def queries(self):
+        return [c for c in self.commands if c[0] == "ssh"]
+
+    @property
+    def windows(self):
+        return [c for c in self.commands if c[0] != "ssh"]
+
+
+def run_main(arguments, boot_at=BOOT_AT, recovery=None, box=None):
+    """main() with this machine's boot time replaced by boot_at (BOOT_AT
+    unless a case is exercising the boot instant moving between runs), its
+    clock by NOW, the recovery tool by a RecoveryToolStub (recovery, or a
+    fresh one answering that every seat came up), and the box query and
+    window opener by a BoxStub (box, or a fresh one on darwin answering no
+    live seats); (exit code, stdout, stderr)."""
     printed, errors = io.StringIO(), io.StringIO()
+    recovery = recovery or RecoveryToolStub()
+    box = box or BoxStub()
     real_machine_boot_time, real_current_time = restart.machine_boot_time, restart.current_time
+    real_launch = restart.launch_seats_decided_restart
+    real_restore = restart.restore_box_windows
     try:
-        restart.machine_boot_time = lambda: BOOT_AT
+        restart.machine_boot_time = lambda: boot_at
         restart.current_time = lambda: NOW
+        restart.launch_seats_decided_restart = (
+            lambda decisions, handoff_directory: real_launch(
+                decisions, handoff_directory, run=recovery))
+        restart.restore_box_windows = (
+            lambda dry_run: real_restore(dry_run, platform=box.platform, run=box,
+                                         sleep=box.sleep, monotonic=box.monotonic))
         with redirect_stdout(printed), redirect_stderr(errors):
             try:
                 exit_code = restart.main(arguments)
@@ -92,6 +211,8 @@ def run_main(arguments):
                 exit_code = stop_request.code
     finally:
         restart.machine_boot_time, restart.current_time = real_machine_boot_time, real_current_time
+        restart.launch_seats_decided_restart = real_launch
+        restart.restore_box_windows = real_restore
     return exit_code, printed.getvalue(), errors.getvalue()
 
 
@@ -137,29 +258,31 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a seat 21 seconds behind the anchor is not",
           seen["twenty-one-behind"][0] == "not-running-at-the-stop", seen)
 
-    # Ruled 2026-09-02: an anchor long before boot asks rather than acts.
+    # Ruled 2026-09-15 (the user: "I'd just restart anything that looks like
+    # it was accidentally shut down at roughly the time of shutdown. It's
+    # easy to shut down an agent that isn't useful"): however long the
+    # machine sat off, the seats live at the stop are restarted. This
+    # replaces the 2026-09-02 rule that an anchor more than an hour before
+    # boot only offered them.
     handoffs = root / "old-anchor"
     old_stop = BOOT_AT - timedelta(days=3)
     write_state(handoffs, "mac-prof", old_stop)
     write_state(handoffs, "beside-mac-prof", old_stop - timedelta(seconds=5))
     write_state(handoffs, "long-gone", old_stop - timedelta(days=9))
     anchor, seen = verdicts(handoffs)
-    check("seats at an anchor more than an hour before boot are offered, not restarted",
-          seen["mac-prof"][0] == "offer" and seen["beside-mac-prof"][0] == "offer",
+    check("seats at an anchor days before boot are restarted, not offered",
+          seen["mac-prof"][0] == "restart" and seen["beside-mac-prof"][0] == "restart",
           seen)
-    check("the offer names the three outcomes",
-          all(word in seen["mac-prof"][1] for word in ("restart", "park", "finished")),
-          seen["mac-prof"])
+    check("the reason still says how long before boot the stop was",
+          "3d before boot" in seen["mac-prof"][1], seen["mac-prof"])
     check("a seat far behind an old anchor is still not running",
           seen["long-gone"][0] == "not-running-at-the-stop", seen)
-
-    # The one-hour bound, pinned on both sides.
-    for minutes_before_boot, expected in ((59, "restart"), (60, "restart"), (61, "offer")):
+    for minutes_before_boot in (59, 61, 24 * 60 * 30):
         handoffs = root / f"anchor-{minutes_before_boot}-minutes-before-boot"
         write_state(handoffs, "late-seat", BOOT_AT - timedelta(minutes=minutes_before_boot))
         anchor, seen = verdicts(handoffs)
-        check(f"an anchor {minutes_before_boot} minutes before boot: {expected}",
-              seen["late-seat"][0] == expected, seen)
+        check(f"an anchor {minutes_before_boot} minutes before boot: restart, no age bound",
+              seen["late-seat"][0] == "restart", seen)
 
     # A heartbeat since boot belongs to a seat that has had a supervisor since
     # boot. It must not be the anchor: if it were, every seat stamped before
@@ -302,11 +425,650 @@ with tempfile.TemporaryDirectory() as temporary:
           and box_boot == datetime(2026, 8, 20, 2, 1, 0).astimezone(),
           box_boot)
 
-    # The command line. Until the restart step is built, the program only
-    # reports, and says so rather than appearing to restart anything.
-    exit_code, report, errors = run_main(["--handoff-dir", str(root / "measured-2026-09-01")])
-    check("without --dry-run it refuses: the restart step is not built yet",
-          exit_code != 0 and "--dry-run" in errors, (exit_code, errors))
+    # ---- The run log ----
+    #
+    # User-ruled 2026-09-11: "sounds like we need a log here ... not a single
+    # file". A later run in the same boot cannot re-derive the stop, because
+    # the seats that came back have stamped over their heartbeats from before
+    # boot. So every run that is not a dry run appends one line — the boot,
+    # the stop, the verdict per seat — and a later run in the same boot reads
+    # the stop back instead of deriving it. Precedent: the recovery tool's
+    # recover-crashed-seats-log.txt, ruled 2026-08-22.
+
+    # The reader answers two questions, not one, because they come apart: a
+    # degraded run leaves a line carrying no stop. "No stop" and "no earlier
+    # run" are then different states, and the report has to tell them apart.
+    handoffs = root / "run-log-absent"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    check("with no run log there is no recorded stop and no earlier run",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, False),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-line-without-a-stop"
+    write_run_log_line(handoffs, run_log_entry(stop_at=None))
+    check("a degraded line is an earlier run, even though it carries no stop",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-another-boot-only"
+    write_run_log_line(handoffs, run_log_entry(boot_at=BOOT_AT - timedelta(days=2)))
+    check("a line from another boot is not an earlier run in this one",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, False),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-malformed-only"
+    write_run_log_line(handoffs, "not json at all")
+    check("a line that cannot be read is not evidence of an earlier run",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, False),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    # A null stop is deliberate and settles the matter; a corrupt one is a
+    # line nobody wrote on purpose, and must not be read as a deliberate null.
+    handoffs = root / "run-log-corrupt-stop-then-good"
+    write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat(),
+                                             "stop_at": "never"}))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a corrupt stop is skipped, and the good line after it decides",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (STOP, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    # Corrupt in the other direction: a stop that is not a string at all. Only
+    # JSON null is the deliberate "no stop", so a number or an object is a
+    # line to skip, not a degraded run to believe.
+    for corrupt_stop in (12345, {}, [], True):
+        handoffs = root / f"run-log-stop-of-type-{type(corrupt_stop).__name__}"
+        write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat(),
+                                                 "stop_at": corrupt_stop}))
+        write_run_log_line(handoffs, run_log_entry())
+        check(f"a stop that is a {type(corrupt_stop).__name__} is skipped, "
+              "not taken for a deliberate null",
+              restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (STOP, True),
+              restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-null-stop-then-good"
+    write_run_log_line(handoffs, run_log_entry(stop_at=None))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a deliberate null stop settles it, and no later line overrides it",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (None, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-stop-field-missing"
+    write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat()}))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a line with no stop field at all is skipped, not read as a null stop",
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT) == (STOP, True),
+          restart.read_earlier_run_for_this_boot(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-this-boot"
+    write_run_log_line(handoffs, run_log_entry())
+    check("a line for this boot gives back the stop it recorded",
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-another-boot"
+    earlier_boot = BOOT_AT - timedelta(days=2)
+    write_run_log_line(handoffs, run_log_entry(
+        boot_at=earlier_boot, stop_at=earlier_boot - timedelta(minutes=5)))
+    check("a line from an earlier boot is ignored: the stop it holds is not this one's",
+          read_recorded_stop(handoffs, BOOT_AT) is None,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    # The box reads its boot time from `uptime -s`, in local time, so the same
+    # boot can be written with a different offset. Boots are matched as
+    # instants, not as strings.
+    handoffs = root / "run-log-other-offset"
+    write_run_log_line(handoffs, run_log_entry(
+        boot_at=BOOT_AT.astimezone(timezone(timedelta(hours=-7)))))
+    check("the same boot written in another timezone offset is the same boot",
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    # Neither machine stores its boot instant: the Mac adjusts kern.boottime
+    # when the clock is corrected, and the box computes `uptime -s` as now
+    # minus /proc/uptime and prints whole seconds, so a clock step of half a
+    # second flips it (measured 2026-09-11, in review). A boot written a
+    # second or two apart is the same boot; five seconds is still far below
+    # the shortest interval two real boots can be apart.
+    handoffs = root / "run-log-boot-drifted-by-a-second"
+    write_run_log_line(handoffs, run_log_entry(boot_at=BOOT_AT - timedelta(seconds=1)))
+    check("a boot instant that has drifted by a second is still this boot",
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
+    for drift_seconds, is_this_boot in ((5, True), (6, False)):
+        handoffs = root / f"run-log-boot-drifted-by-{drift_seconds}"
+        write_run_log_line(handoffs, run_log_entry(
+            boot_at=BOOT_AT + timedelta(seconds=drift_seconds)))
+        read_back = read_recorded_stop(handoffs, BOOT_AT)
+        check(f"a boot instant {drift_seconds} seconds off "
+              f"{'is' if is_this_boot else 'is not'} this boot",
+              (read_back == STOP) == is_this_boot, read_back)
+
+    # A log failure never blocks a run: a line that cannot be read is skipped.
+    handoffs = root / "run-log-malformed"
+    write_run_log_line(handoffs, "not json at all")
+    write_run_log_line(handoffs, "[1, 2, 3]")
+    write_run_log_line(handoffs, "")
+    write_run_log_line(handoffs, json.dumps({"boot_at": "yesterday", "stop_at": "x"}))
+    write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat(),
+                                             "stop_at": "never"}))
+    write_run_log_line(handoffs, json.dumps({"boot_at": BOOT_AT.isoformat(),
+                                             "stop_at": "2026-09-10T22:02:12"}))
+    write_run_log_line(handoffs, run_log_entry())
+    check("a line that does not parse is skipped, and the good line after it is read",
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-no-stop-recorded"
+    write_run_log_line(handoffs, run_log_entry(stop_at=None))
+    check("a run that found no stop pins nothing for the runs after it",
+          read_recorded_stop(handoffs, BOOT_AT) is None,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    # The first run in a boot saw the least disturbed state, so its stop is the
+    # one that counts.
+    handoffs = root / "run-log-two-lines"
+    write_run_log_line(handoffs, run_log_entry())
+    write_run_log_line(handoffs, run_log_entry(stop_at=STOP - timedelta(minutes=40),
+                                               run_at=NOW + timedelta(minutes=1)))
+    check("the first line recorded in this boot is the one that counts",
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-unreadable"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    run_log_path(handoffs).mkdir()
+    check("a run log that cannot be read is no recorded stop, and does not raise",
+          read_recorded_stop(handoffs, BOOT_AT) is None,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    # With the stop read back, the degradation of the 2026-09-11 amendment is
+    # not needed: the recorded stop is the stop, whatever the seats that came
+    # back have stamped since. Compare the "second-run" case above, which is
+    # this same state with no log to read.
+    handoffs = root / "run-log-second-run"
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    write_state(handoffs, "B", NOW - timedelta(seconds=6))
+    write_state(handoffs, "Z-died-before-stop", STOP - timedelta(minutes=35))
+    anchor, seen = verdicts(handoffs, recorded_stop=STOP)
+    check("the stop read back is the anchor, not the newest heartbeat left",
+          anchor == STOP, anchor)
+    check("with the stop read back, the seat that died before it is not even offered",
+          seen["Z-died-before-stop"][0] == "not-running-at-the-stop"
+          and seen["A"][0] == "stamped-since-boot",
+          seen)
+
+    handoffs = root / "run-log-seat-that-did-not-come-back"
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    write_state(handoffs, "C-never-came-back", STOP - timedelta(seconds=4))
+    anchor, seen = verdicts(handoffs, recorded_stop=STOP)
+    check("a seat that did not come back is restarted by the later run",
+          seen["C-never-came-back"][0] == "restart", seen)
+    anchor, seen = verdicts(handoffs)
+    check("with no recorded stop that same seat is only offered",
+          seen["C-never-came-back"][0] == "offer", seen)
+
+    handoffs = root / "run-log-old-recorded-stop"
+    old_stop = BOOT_AT - timedelta(days=3)
+    write_state(handoffs, "mac-prof", old_stop)
+    anchor, seen = verdicts(handoffs, recorded_stop=old_stop)
+    check("a recorded stop long before boot restarts its seats too (ruled 2026-09-15)",
+          seen["mac-prof"][0] == "restart", seen)
+
+    handoffs = root / "run-log-append"
+    write_state(handoffs, "MD-skills", STOP)
+    write_state(handoffs, "mac-prof", STOP - timedelta(days=3))
+    anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
+        handoffs, BOOT_AT, NOW)
+    wrote = restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor,
+                                                anchor_is_the_stop, decisions, NOW)
+    lines = run_log_lines(handoffs)
+    check("a run appends exactly one line", len(lines) == 1, lines)
+    check("and the appender says it wrote", wrote is True, wrote)
+    # A verdict is a decision, not an outcome: a decided restart can fail to
+    # come up, so the line records what came up beside what was decided. A
+    # caller that launched nothing at all (a dry run never records; this is
+    # the appender called bare) records null, distinguishable from a run that
+    # launched and brought nothing back, which records an empty list.
+    check("a run that did not launch at all records launched null, not an empty list",
+          lines and lines[0]["launched"] is None, lines)
+    check("the line carries the run, the boot, the stop, the anchor and the verdicts",
+          lines and lines[0]["run_at"] == NOW.isoformat(timespec="seconds")
+          and lines[0]["boot_at"] == BOOT_AT.isoformat()
+          and lines[0]["stop_at"] == STOP.isoformat()
+          and lines[0]["anchor_at"] == STOP.isoformat()
+          and lines[0]["seats"] == {"MD-skills": "restart",
+                                    "mac-prof": "not-running-at-the-stop"},
+          lines)
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW + timedelta(minutes=2))
+    check("a second run appends rather than overwriting: a log, not a single file",
+          len(run_log_lines(handoffs)) == 2, run_log_lines(handoffs))
+    check("what a run writes reads back as this boot's stop",
+          read_recorded_stop(handoffs, BOOT_AT) == STOP,
+          read_recorded_stop(handoffs, BOOT_AT))
+
+    handoffs = root / "run-log-append-no-anchor"
+    write_state(handoffs, "running-now", NOW - timedelta(seconds=4))
+    anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
+        handoffs, BOOT_AT, NOW)
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW)
+    check("a run that found no stop records it as null, rather than leaving it out",
+          run_log_lines(handoffs)[0]["stop_at"] is None
+          and run_log_lines(handoffs)[0]["anchor_at"] is None,
+          run_log_lines(handoffs))
+
+    # What the restart step writes: the seats it brought back, recorded
+    # beside the verdicts, so a restart that failed to come up is
+    # distinguishable from one that was never attempted.
+    handoffs = root / "run-log-launched-recorded"
+    write_state(handoffs, "came-back", STOP)
+    write_state(handoffs, "failed-to-come-up", STOP - timedelta(seconds=2))
+    anchor, decisions, anchor_is_the_stop = restart.select_seats_live_at_the_stop(
+        handoffs, BOOT_AT, NOW)
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, anchor, anchor_is_the_stop,
+                                        decisions, NOW, launched=["came-back"])
+    line = run_log_lines(handoffs)[0]
+    check("a launched seat is recorded, and one decided but not launched is not",
+          line["launched"] == ["came-back"]
+          and line["seats"]["failed-to-come-up"] == "restart",
+          line)
+
+    handoffs = root / "run-log-directory-absent" / "handoffs"
+    restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
+    check("the appender creates the handoff directory when it is not there",
+          len(run_log_lines(handoffs)) == 1, run_log_lines(handoffs))
+
+    handoffs = root / "run-log-unwritable"
+    write_state(handoffs, "MD-skills", STOP)
+    run_log_path(handoffs).mkdir()
+    complaints = io.StringIO()
+    with redirect_stderr(complaints):
+        wrote = restart.append_selection_to_run_log(handoffs, BOOT_AT, STOP, True, [], NOW)
+    check("a log that cannot be written is reported and never raises",
+          "could not append" in complaints.getvalue(), complaints.getvalue())
+    check("and the appender says it did not write",
+          wrote is False, wrote)
+
+    # The report must not contradict itself: an append that failed said so on
+    # stderr while stdout still announced "recorded in <path>" (found in
+    # review of bbb66d4). Two lines about one event, one of them false.
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("a run whose log write failed does not claim it recorded anything",
+          "recorded in" not in report, report)
+    check("it says the append failed, and still reports the selection",
+          "could not append this run" in report and "MD-skills" in report, report)
+    check("and warns that the runs after it cannot read this stop back",
+          "will not read its stop back" in report, report)
+    check("the failure is still on stderr, where a log failure belongs",
+          "could not append" in errors, errors)
+
+    # The command line: a run launches each seat decided for restart through
+    # the recovery tool, reports what came of it, and records the seats that
+    # came up.
+    handoffs = root / "run-log-main"
+    write_state(handoffs, "MD-skills", STOP)
+    write_state(handoffs, "mac-prof", STOP - timedelta(days=3))
+    recovery = RecoveryToolStub()
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("without --dry-run it launches the seat decided for restart and reports it came up",
+          exit_code == 0 and "MD-skills: restart" in report
+          and "came up: recover-crashed-seats: MD-skills: relaunched resuming" in report,
+          (exit_code, report))
+    check("the seat not running at the stop is not launched",
+          [command[2] for command in recovery.commands] == ["MD-skills"],
+          recovery.commands)
+    check("that run appended its one line to the run log, with the seat that came up",
+          len(run_log_lines(handoffs)) == 1
+          and run_log_lines(handoffs)[0]["launched"] == ["MD-skills"],
+          run_log_lines(handoffs))
+
+    # The command the program runs: the recovery tool beside this program,
+    # the seat, the same handoff directory, and on the Mac the window flag —
+    # which the recovery tool refuses anywhere else, so it is passed only
+    # there.
+    command = restart.recovery_command_for_seat("MD-skills", Path("/h d"), platform="darwin")
+    check("the recovery command names the tool beside this program, the seat, and the "
+          "handoff directory",
+          command[0] == sys.executable
+          and command[1] == str(SCRIPT_PATH.with_name("recover-crashed-seats.py"))
+          and command[2] == "MD-skills"
+          and command[3:5] == ["--handoff-dir", "/h d"],
+          command)
+    check("on the Mac the seat is launched in its own iTerm window",
+          command[-1] == "--open-iterm-window-per-seat", command)
+    check("on the box it is not, because the recovery tool refuses that flag there",
+          "--open-iterm-window-per-seat"
+          not in restart.recovery_command_for_seat("MD-skills", Path("/h"), platform="linux"),
+          restart.recovery_command_for_seat("MD-skills", Path("/h"), platform="linux"))
+    check("the program's own command carries this machine's platform",
+          (restart.recovery_command_for_seat("s", Path("/h"))[-1]
+           == "--open-iterm-window-per-seat") == (sys.platform == "darwin"),
+          restart.recovery_command_for_seat("s", Path("/h")))
+
+    # Whether a seat came up is read from the recovery tool's exit code and
+    # its report markers, so the two programs agree on what a failure is.
+    check("a clean report with exit 0 is a seat that came up",
+          restart.seat_came_up(0, "recover-crashed-seats: s: relaunched fresh") is True)
+    for marker in restart.recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS:
+        check(f"a report marked {marker} is a seat that did not, whatever the exit code",
+              restart.seat_came_up(0, f"recover-crashed-seats: s: {marker} — x") is False)
+    check("a nonzero exit is a seat that did not, whatever the report says",
+          restart.seat_came_up(1, "recover-crashed-seats: s: relaunched fresh") is False)
+
+    # A seat that did not come back: reported as such, left out of the run
+    # log's launched list while its verdict stays restart, and the run exits
+    # nonzero — the LaunchAgent's log then shows a failure, not a success.
+    # The seats after it are still tried.
+    handoffs = root / "run-log-main-one-did-not-come-back"
+    write_state(handoffs, "A-first", STOP)
+    write_state(handoffs, "B-fails", STOP - timedelta(seconds=2))
+    write_state(handoffs, "C-after", STOP - timedelta(seconds=4))
+    recovery = RecoveryToolStub(outcomes={"B-fails": (
+        1, "recover-crashed-seats: B-fails: LAUNCHED BUT DID NOT COME UP — no supervisor "
+           "seen within 120s")})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("a seat that did not come back is reported as such and the run exits 1",
+          exit_code == 1
+          and "B-fails: restart" in report
+          and "DID NOT COME BACK: recover-crashed-seats: B-fails: LAUNCHED BUT DID NOT COME UP"
+              in report
+          and "1 seat(s) decided for restart did not come back: B-fails" in report,
+          (exit_code, report))
+    check("the seats decided after it are still tried, in the order decided",
+          [command[2] for command in recovery.commands] == ["A-first", "B-fails", "C-after"],
+          recovery.commands)
+    line = run_log_lines(handoffs)[0]
+    check("the run log records the seats that came up and keeps the failed seat's verdict",
+          line["launched"] == ["A-first", "C-after"] and line["seats"]["B-fails"] == "restart",
+          line)
+    check("the seats that came up are reported so",
+          report.count("came up: recover-crashed-seats") == 2, report)
+
+    # A recovery tool that cannot be run at all — the interpreter or the
+    # script missing under launchd's bare environment — fails every seat,
+    # each reported by name, and the run log still records that none came up.
+    handoffs = root / "run-log-main-tool-cannot-run"
+    write_state(handoffs, "A", STOP)
+    recovery = RecoveryToolStub(raising={"A": FileNotFoundError("no such file: python3")})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("a recovery tool that cannot be started is a seat that did not come back, with the error",
+          exit_code == 1 and "A: restart" in report
+          and "DID NOT COME BACK: could not run" in report
+          and "no such file: python3" in report,
+          (exit_code, report))
+    check("and the run log records that nothing came up: an empty list, not null",
+          run_log_lines(handoffs)[0]["launched"] == [], run_log_lines(handoffs))
+
+    # A recovery tool that refused its arguments prints usage to stderr and
+    # nothing to stdout; the report line then carries the exit code rather
+    # than nothing.
+    handoffs = root / "run-log-main-tool-no-report"
+    write_state(handoffs, "A", STOP)
+    recovery = RecoveryToolStub(outcomes={"A": (2, "")})
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("an empty report is reported with the exit code, not as a blank line",
+          exit_code == 1 and "DID NOT COME BACK: (no report; exit 2, see stderr)" in report,
+          (exit_code, report))
+
+    # An offered seat is not launched: nothing is started silently, and the
+    # report says how to bring it back by hand. Parking it is #242 change 3.
+    # Since the 2026-09-15 ruling the only offer left is the 2026-09-11
+    # amendment's: seats already written since boot, so the derived anchor
+    # may not be the stop.
+    handoffs = root / "run-log-main-offer-not-launched"
+    write_state(handoffs, "restarted-by-hand", NOW - timedelta(seconds=4))
+    write_state(handoffs, "old-seat", STOP)
+    recovery = RecoveryToolStub()
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
+    check("an offered seat is not launched, and the run says how to bring it back by hand, "
+          "naming this run's handoff directory",
+          exit_code == 0 and recovery.commands == []
+          and "old-seat: offer" in report
+          and "not launched; to bring it back by hand: " in report
+          and f"recover-crashed-seats.py old-seat --handoff-dir {handoffs}" in report,
+          (exit_code, report, recovery.commands))
+    check("a run that launched nothing because nothing was decided records an empty list",
+          run_log_lines(handoffs)[0]["launched"] == [], run_log_lines(handoffs))
+
+    # A dry run launches nothing: it shows the command it would run instead.
+    handoffs = root / "run-log-main-dry-run-launches-nothing"
+    write_state(handoffs, "MD-skills", STOP)
+    recovery = RecoveryToolStub()
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)],
+                                         recovery=recovery)
+    check("--dry-run runs no recovery, and shows the command it would run",
+          exit_code == 0 and recovery.commands == []
+          and "MD-skills: restart" in report
+          and "would run: " in report
+          and f"recover-crashed-seats.py MD-skills --handoff-dir {handoffs}" in report,
+          (exit_code, report, recovery.commands))
+
+    handoffs = root / "run-log-dry-run-writes-nothing"
+    write_state(handoffs, "MD-skills", STOP)
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)])
+    check("--dry-run appends no line: it promises to change nothing",
+          exit_code == 0 and run_log_lines(handoffs) == [], run_log_lines(handoffs))
+
+    handoffs = root / "run-log-dry-run-reads-it"
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    write_state(handoffs, "Z-died-before-stop", STOP - timedelta(minutes=35))
+    write_run_log_line(handoffs, run_log_entry())
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)])
+    check("--dry-run reads the run log too, and says the stop was read back",
+          exit_code == 0 and "Z-died-before-stop: not-running-at-the-stop" in report
+          and "read back" in report and len(run_log_lines(handoffs)) == 1,
+          report)
+
+    # A run that cannot tell where the stop was must record no stop. This is
+    # the 2026-09-10 shape: the machine reboots, the user brings A and B back
+    # by hand, and only then does this program run for the first time in the
+    # boot. Its derived anchor is Z's heartbeat, 35 minutes before the real
+    # stop — the very thing the 2026-09-11 amendment refuses to act on. If it
+    # were written down as the stop, the next run would read it back, drop the
+    # degradation because a stop was "recorded", and restart Z.
+    handoffs = root / "run-log-degraded-first-run"
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    write_state(handoffs, "B", NOW - timedelta(seconds=6))
+    write_state(handoffs, "Z-died-before-stop", STOP - timedelta(minutes=35))
+    exit_code, first_report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("a run whose anchor was stamped over offers it, as the amendment rules",
+          "Z-died-before-stop: offer" in first_report, first_report)
+    check("and records no stop, keeping only the anchor it worked from",
+          run_log_lines(handoffs)[0]["stop_at"] is None
+          and run_log_lines(handoffs)[0]["anchor_at"]
+          == (STOP - timedelta(minutes=35)).isoformat(),
+          run_log_lines(handoffs))
+    exit_code, second_report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("so the run after it still refuses to restart a seat that died earlier",
+          "Z-died-before-stop: offer" in second_report, second_report)
+    # The verdicts above were right all along; the sentence printed beside them
+    # was not. Run 1 left a line, so saying it left none is false — and this
+    # case drove exactly this state while asserting only on verdicts, which is
+    # why the suite stayed green through it (found in review of bbb66d4).
+    check("and does not claim the earlier run left no line, when it left one",
+          "left no line in the run log" not in second_report, second_report)
+    check("it says instead that the earlier run recorded no stop",
+          "recorded no stop" in second_report, second_report)
+    check("a boot with no line at all still says there is none",
+          "left no line in the run log" in first_report, first_report)
+
+    # The whole point, end to end: run 1 selects and records; the seats it
+    # restarts stamp over the evidence; run 2 reads the stop back.
+    handoffs = root / "run-log-round-trip"
+    write_state(handoffs, "A", STOP)
+    write_state(handoffs, "B", STOP - timedelta(seconds=6))
+    write_state(handoffs, "Z-died-before-stop", STOP - timedelta(minutes=35))
+    exit_code, first_report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("the first run in a boot restarts the seats that were running at the stop",
+          "A: restart" in first_report and "B: restart" in first_report
+          and "Z-died-before-stop: not-running-at-the-stop" in first_report,
+          first_report)
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    write_state(handoffs, "B", NOW - timedelta(seconds=6))
+    exit_code, second_report, errors = run_main(["--handoff-dir", str(handoffs)])
+    check("the second run reads the stop back instead of re-deriving it",
+          "Z-died-before-stop: not-running-at-the-stop" in second_report
+          and "A: stamped-since-boot" in second_report,
+          second_report)
+    check("and does not claim this boot's restart left no line in the run log",
+          "already run" not in second_report, second_report)
+    check("each run is one line in the log",
+          len(run_log_lines(handoffs)) == 2, run_log_lines(handoffs))
+
+    # The same round trip with the boot instant a second later on run 2, which
+    # is what a clock correction after boot produces. Without the tolerance
+    # the read-back is silently lost and the seat that did not come back drops
+    # from restart to offer — back to the behaviour the ruling moved past.
+    handoffs = root / "run-log-round-trip-with-the-boot-drifting"
+    write_state(handoffs, "A", STOP)
+    write_state(handoffs, "C-never-came-back", STOP - timedelta(seconds=4))
+    run_main(["--handoff-dir", str(handoffs)])
+    write_state(handoffs, "A", NOW - timedelta(seconds=3))
+    exit_code, drifted_report, errors = run_main(["--handoff-dir", str(handoffs)],
+                                                 boot_at=BOOT_AT + timedelta(seconds=1))
+    check("a run whose boot instant drifted a second still reads the stop back",
+          "C-never-came-back: restart" in drifted_report and "read back" in drifted_report,
+          drifted_report)
+
+    # Real stamps carry microseconds (handoff-supervisor.py writes
+    # datetime.now(timezone.utc).isoformat()), so the stop written down and
+    # the stop read back have to agree to the microsecond.
+    handoffs = root / "run-log-microsecond-stop"
+    precise_stop = STOP + timedelta(microseconds=123456)
+    write_state(handoffs, "A", precise_stop)
+    write_state(handoffs, "B", precise_stop - timedelta(seconds=6))
+    run_main(["--handoff-dir", str(handoffs)])
+    check("a stop carrying microseconds is recorded and read back exactly",
+          run_log_lines(handoffs)[0]["stop_at"] == precise_stop.isoformat()
+          and read_recorded_stop(handoffs, BOOT_AT) == precise_stop,
+          run_log_lines(handoffs))
+
+    # The window role (nedschorus#116; user-ruled 2026-09-14): on the Mac,
+    # every run asks the box which seats are alive and opens a window onto
+    # each, whatever the verdicts, because every login has lost them.
+    handoffs = root / "box-windows-opened"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\nprof\n", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("the box is asked once, without a prompt, at the launcher's alias",
+          len(box.queries) == 1
+          and box.queries[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+          and box.queries[0][5] == restart.agent_box()
+          and box.queries[0][6] == restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND,
+          box.queries)
+    check("a window is opened onto each live box seat through the opener, running the "
+          "launcher by absolute path",
+          exit_code == 0 and box.windows == [
+              [str(SCRIPT_PATH.with_name("open-iterm-window-running-command")),
+               str(SCRIPT_PATH.with_name("launch-claude-ubuntu")), "gatekeeper"],
+              [str(SCRIPT_PATH.with_name("open-iterm-window-running-command")),
+               str(SCRIPT_PATH.with_name("launch-claude-ubuntu")), "prof"]],
+          (exit_code, box.windows))
+    check("the report names each window, and the run log records what was opened",
+          "window opened onto gatekeeper" in report and "window opened onto prof" in report
+          and run_log_lines(handoffs)[0]["box_windows"]
+          == {"answered": True, "opened": ["gatekeeper", "prof"]},
+          (report, run_log_lines(handoffs)))
+    real_box = os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
+    try:
+        default_alias = restart.box_seat_query_command()[5]
+        os.environ["NEDSCHORUS_AGENT_BOX"] = "ned-wifi"
+        overridden_alias = restart.box_seat_query_command()[5]
+    finally:
+        os.environ.pop("NEDSCHORUS_AGENT_BOX", None)
+        if real_box is not None:
+            os.environ["NEDSCHORUS_AGENT_BOX"] = real_box
+    check("the box alias is the launcher's: ned by default, NEDSCHORUS_AGENT_BOX when set",
+          default_alias == "ned" and overridden_alias == "ned-wifi",
+          (default_alias, overridden_alias))
+    check("the remote listing keeps only names with a seat home, so fleet-anchor is not a seat",
+          "list-sessions" in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND
+          and '[ -d "${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/$seat_name" ]'
+          in restart.LIST_LIVE_BOX_SEATS_REMOTE_COMMAND)
+
+    handoffs = root / "box-no-live-seats"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box with no live seats opens nothing and says so",
+          exit_code == 0 and box.windows == [] and "no live seats, so no windows" in report
+          and run_log_lines(handoffs)[0]["box_windows"] == {"answered": True, "opened": []},
+          (exit_code, report))
+
+    # The box not answering (ssh exit 255) is retried for a bounded time —
+    # both machines may have rebooted — then reported as missing windows,
+    # with the by-hand command, and it is not a failure of this run.
+    handoffs = root / "box-answers-late"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(255, "", "Connection refused"), (255, "", "Connection refused"),
+                           (0, "gatekeeper\n", "")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box that answers on the third try gets its windows, after two waits",
+          exit_code == 0 and len(box.queries) == 3 and box.slept == [5.0, 5.0]
+          and [c[-1] for c in box.windows] == ["gatekeeper"],
+          (exit_code, len(box.queries), box.slept, box.windows))
+    handoffs = root / "box-never-answers"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(255, "", "No route to host")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box that never answers is retried until the deadline, then its windows are "
+          "reported missing with the by-hand command, and the run still exits 0",
+          exit_code == 0 and box.windows == []
+          and sum(box.slept) >= restart.BOX_QUERY_DEADLINE_SECONDS
+          and "did not answer" in report and "No route to host" in report
+          and "its windows are missing" in report
+          and f"{SCRIPT_PATH.with_name('launch-claude-ubuntu')} <seat>" in report
+          and run_log_lines(handoffs)[0]["box_windows"] == {"answered": False, "opened": []},
+          (exit_code, box.slept[-3:], report))
+    handoffs = root / "box-answers-with-an-error"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(1, "", "tmux: command not found")])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a box that answers with an error is not retried; the error is the report",
+          exit_code == 0 and len(box.queries) == 1 and box.slept == []
+          and "exit 1: tmux: command not found" in report,
+          (exit_code, len(box.queries), report))
+
+    # A window that cannot be opened is reported by seat and fails the run,
+    # the other windows still opened.
+    handoffs = root / "box-one-window-fails"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "a-seat\nb-seat\n", "")], opener_failing=["a-seat"])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a window that cannot be opened is reported with the by-hand command and fails the run; "
+          "the others open",
+          exit_code == 1 and "NO WINDOW onto a-seat" in report and "no iTerm" in report
+          and "window opened onto b-seat" in report
+          and "1 box window(s) could not be opened: a-seat" in report
+          and run_log_lines(handoffs)[0]["box_windows"] == {"answered": True, "opened": ["b-seat"]},
+          (exit_code, report))
+
+    # Not on the box, and not on a dry run.
+    handoffs = root / "box-role-not-on-the-box"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\n", "")], platform="linux")
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("on the box the window role does not run: no query, no window, null in the log",
+          exit_code == 0 and box.commands == []
+          and not [line for line in report.splitlines() if line.startswith("  box ")]
+          and run_log_lines(handoffs)[0]["box_windows"] is None,
+          (exit_code, box.commands, report))
+    handoffs = root / "box-role-dry-run"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\nprof\n", "")])
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)], box=box)
+    check("--dry-run asks the box once and says which windows it would open, opening none",
+          exit_code == 0 and len(box.queries) == 1 and box.windows == []
+          and "would open a window onto each live seat: gatekeeper, prof" in report,
+          (exit_code, box.commands, report))
+    box = BoxStub(answers=[(255, "", "down")])
+    exit_code, report, errors = run_main(["--dry-run", "--handoff-dir", str(handoffs)], box=box)
+    check("--dry-run does not wait on a box that is down: one attempt, reported",
+          exit_code == 0 and len(box.queries) == 1 and box.slept == []
+          and "did not answer" in report,
+          (exit_code, len(box.queries), box.slept))
+
     exit_code, report, errors = run_main(["--dry-run", "--handoff-dir",
                                           str(root / "measured-2026-09-01")])
     check("--dry-run reports the boot, the stop, and one line per seat",

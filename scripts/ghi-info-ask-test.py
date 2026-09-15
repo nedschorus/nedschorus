@@ -544,6 +544,140 @@ try:
 finally:
     ghi_ask.subprocess.run = subprocess_run_orig
 
+# --- the seat checkout is fast-forwarded before each ask -------------------
+# Ruled 2026-09-15 (nedschorus#324/#334). The freshness hook's merge used to
+# be the only thing keeping this checkout current, and that merge is gone; it
+# is this caller's job now. ghi-info reads the pair documents and wiki pages
+# from this disk, so a stale checkout is stale ANSWERS about the designs the
+# issues point at. Real git repositories here: the whole value is in what git
+# actually refuses.
+
+import subprocess as _subprocess
+
+
+def _git(arguments, cwd):
+    return _subprocess.run(["git", *arguments], cwd=str(cwd),
+                           capture_output=True, text=True, check=False)
+
+
+def _commit(repository, name, content, message):
+    (repository / name).write_text(content, encoding="utf-8")
+    _git(["add", name], repository)
+    _git(["commit", "-q", "-m", message], repository)
+
+
+def _make_origin_and_seat(root, seat_name):
+    """An origin repository and a seat checkout of it on its own branch —
+    the box's layout: ghi-info sits on a branch named `ghi-info`, never main."""
+    origin = root / f"{seat_name}-origin"
+    origin.mkdir()
+    _git(["init", "-q", "-b", "main"], origin)
+    _git(["config", "user.email", "test@example.invalid"], origin)
+    _git(["config", "user.name", "ghi test"], origin)
+    _commit(origin, "shared.txt", "first\n", "first commit")
+    seat = root / seat_name
+    _git(["clone", "-q", str(origin), str(seat)], root)
+    _git(["config", "user.email", "test@example.invalid"], seat)
+    _git(["config", "user.name", "ghi test"], seat)
+    _git(["checkout", "-q", "-b", "ghi-info"], seat)
+    return origin, seat
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+
+    origin, seat = _make_origin_and_seat(root, "ff-behind")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("a behind seat checkout is fast-forwarded before the ask",
+          (seat / "design.md").exists(), line)
+    check("and it says how far it moved",
+          "refreshed the seat checkout 1 commit(s)" in line, line)
+    check("on its own branch, not main — the reference-checkout rule does not apply here",
+          _git(["rev-parse", "--abbrev-ref", "HEAD"], seat).stdout.strip() == "ghi-info")
+
+    check("a checkout already level with main says nothing",
+          ghi_ask.fast_forward_seat_checkout(seat) == "",
+          ghi_ask.fast_forward_seat_checkout(seat))
+
+    # Freshness must never cost work. Each of the next three leaves the
+    # checkout exactly as it was and lets the ask proceed.
+    origin, seat = _make_origin_and_seat(root, "ff-dirty")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    (seat / "shared.txt").write_text("edit in progress\n", encoding="utf-8")
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("a checkout with uncommitted tracked work is not refreshed",
+          "uncommitted tracked change(s)" in line and not (seat / "design.md").exists(), line)
+    check("and that work is untouched",
+          (seat / "shared.txt").read_text(encoding="utf-8") == "edit in progress\n")
+
+    # ghi-info commits its own document-side link repairs, so a checkout
+    # carrying a commit main does not have is a real state, not debris.
+    origin, seat = _make_origin_and_seat(root, "ff-diverged")
+    _commit(seat, "repair.md", "a link repair\n", "ghi-info repairs a link")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    head_before = _git(["rev-parse", "HEAD"], seat).stdout.strip()
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("a diverged checkout is reported and left alone, never merged",
+          "would not fast-forward" in line
+          and _git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before, line)
+    check("no merge state is left behind",
+          not (seat / ".git" / "MERGE_HEAD").exists())
+
+    not_a_checkout = root / "not-a-checkout"
+    not_a_checkout.mkdir()
+    line = ghi_ask.fast_forward_seat_checkout(not_a_checkout)
+    check("a seat that is not a git checkout is one line, not a traceback",
+          "not a git checkout" in line, line)
+
+    # The mirror and the state file live in the seat directory untracked;
+    # they must not read as work in progress and stop the refresh.
+    origin, seat = _make_origin_and_seat(root, "ff-untracked")
+    (seat / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR).mkdir(parents=True, exist_ok=True)
+    (seat / ghi_ask.mirror_refresh.DEFAULT_MIRROR_DIR / "issues-open.md").write_text(
+        "open", encoding="utf-8")
+    ghi_ask.save_state(seat / ghi_ask.STATE_FILE_NAME,
+                       {"session_id": "s", "closes_since_birth": 0, "recent_matches": []})
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("the mirror and state file do not read as work in progress",
+          (seat / "design.md").exists(), line)
+
+    # --- the wiring: under the lock, and only under the lock ---------------
+    origin, seat = _make_origin_and_seat(root, "ff-wired")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    fake_refresh_queue([([1], {"1": issue(1)}, None)])
+    fake_claude_queue([
+        ({"session_id": "sess-FF", "result": "(ack)"}, None),
+        ({"session_id": "sess-FF", "result": "read #1"}, None),
+    ])
+    answer, error = ghi_ask.ask("what covers X?", False, seat, "x/y")
+    check("an ordinary ask refreshes the checkout on the way in",
+          answer == "read #1" and (seat / "design.md").exists(), (answer, error))
+
+    # A contended run publishes into a throwaway mirror precisely so it
+    # cannot disturb the lock holder. Swapping the checkout's files beneath
+    # the holder's running claude would undo that.
+    origin, seat = _make_origin_and_seat(root, "ff-contended")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    fake_refresh_queue([([], {}, None)])
+    fake_claude_queue([
+        ({"session_id": "sess-THROWAWAY", "result": "(ack)"}, None),
+        ({"session_id": "sess-THROWAWAY", "result": "read #9"}, None),
+    ])
+    lock_path = seat / ghi_ask.LOCK_FILE_NAME
+    held_handle = open(lock_path, "a+")
+    fcntl.flock(held_handle.fileno(), fcntl.LOCK_EX)
+    try:
+        answer, error = ghi_ask.ask("q", False, seat, "x/y")
+    finally:
+        fcntl.flock(held_handle.fileno(), fcntl.LOCK_UN)
+        held_handle.close()
+    check("a CONTENDED ask still answers", answer == "read #9", (answer, error))
+    check("but never moves the checkout under the lock holder's running claude",
+          not (seat / "design.md").exists(), list(seat.iterdir()))
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")

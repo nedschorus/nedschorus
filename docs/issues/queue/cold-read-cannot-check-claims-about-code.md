@@ -12,7 +12,7 @@ different defect class. Nothing here is built or ruled.
 
 ## The evidence
 
-`docs/cross-project/fleet-git-worktree-working-model.md` went to main
+`docs/nedschorus-wiki/fleet-git-worktree-working-model.md` went to main
 through PR #95 after a full md-review pass (eight reviewers across two
 runtimes) plus the user's own read. Within minutes of merging, three
 findings arrived from `chatgpt-codex-connector`'s inline review on the pull

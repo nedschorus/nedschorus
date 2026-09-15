@@ -44,7 +44,9 @@
 # selection below reaches them there instead of starting a duplicate.
 #
 # --no-attach creates the session without attaching this terminal (for
-# scripts and checks); attach later by running the plain form.
+# scripts and checks); attach later by running the plain form. An attached
+# window reconnects on its own when the connection drops (see the attach
+# loop below); a detached launch does not, it is one ssh command.
 #
 # Requires on the box: tmux, claude on ~/.local/bin, ~/Projects/nedschorus.
 
@@ -363,9 +365,56 @@ cd \\\"$AFTER_EXIT_ROOT/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
 # standalone set-option beforehand would find no server — and repeating them
 # on an attach is harmless. \\; reaches the box as \;, a tmux command
 # separator rather than a shell one.
+# An attached window is the user's only view of a box seat, and iTerm2 closes
+# the window when its process ends. So the attach is a loop, not an exec
+# (nedschorus#116 window role, user-ruled 2026-09-14: box seats are not
+# reconnected by hand). ssh exits 255 for a connection-level failure — the box
+# rebooting, the connection dropped, the box not up yet — and for nothing
+# else; on 255 the launcher waits and tries again, doubling the wait up to
+# 30s, one line per attempt. Any other exit is the remote command's own
+# status (a detach, the after-exit shell closing, a prepare step failing) and
+# ends the launcher as before.
+#
+# Two things the remote side does before attaching, both because of a box
+# that has just booted. First, it waits out the box's own seat restart:
+# restart-live-seats-at-login.service runs seconds after boot, and sshd
+# answers in the same second, so a reconnect can arrive before the seat is
+# back; a `new-session -A` then would CREATE a fresh seat and the box's
+# restart would find it live and refuse — the transcript resume lost. So
+# while the seat is absent AND that unit is still activating, the remote
+# side polls, bounded at 180s (the restart's 120s deadline plus its settle).
+# On a box that has been up for hours the unit is inactive and the wait is
+# nothing. Second, the prepare step — the Claude update, the trust mark, the
+# checkout — runs only when the seat does NOT already exist: an attach onto a
+# live seat has nothing to prepare, and N windows reconnecting after a boot
+# would otherwise each run `claude update` at once under live sessions
+# (nedschorus#62).
+SEAT_EXISTS_COMMAND="{ tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null || tmux -L default has-session -t '=$AGENT_NAME' 2>/dev/null; }"
+SEAT_RESTART_WAIT_COMMAND="{ SEAT_WAITED=0; \
+while ! $SEAT_EXISTS_COMMAND && [ \"\$(systemctl --user is-active restart-live-seats-at-login.service 2>/dev/null)\" = activating ] && [ \$SEAT_WAITED -lt 180 ]; do \
+[ \$SEAT_WAITED -eq 0 ] && echo 'launch-claude-ubuntu: the box is restarting its seats after a boot; waiting for $AGENT_NAME before attaching'; \
+sleep 2; SEAT_WAITED=\$((SEAT_WAITED + 2)); done; }"
+PREPARE_UNLESS_RUNNING_COMMAND="{ $SEAT_EXISTS_COMMAND || { $PREPARE_COMMAND; }; }"
 if [ "$ATTACH" = yes ]; then
-    exec ssh -t "$AGENT_BOX" \
-        "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -A -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S'"
+    # The wait doubles across failed attempts and resets once a session has
+    # actually run: an ssh that lasted longer than RECONNECT_SESSION_SECONDS
+    # was a live attach that dropped, not a failed retry, so the next
+    # reconnect starts from 2s again rather than from wherever a boot's worth
+    # of retries left it (PR #365 review).
+    RECONNECT_WAIT_SECONDS=2
+    RECONNECT_SESSION_SECONDS=60
+    while :; do
+        SSH_STATUS=0
+        SSH_STARTED_AT=$(date +%s)
+        ssh -t "$AGENT_BOX" \
+            "$SEAT_RESTART_WAIT_COMMAND && $PREPARE_UNLESS_RUNNING_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -A -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S'" \
+            || SSH_STATUS=$?
+        [ "$SSH_STATUS" -eq 255 ] || exit "$SSH_STATUS"
+        [ $(( $(date +%s) - SSH_STARTED_AT )) -lt "$RECONNECT_SESSION_SECONDS" ] || RECONNECT_WAIT_SECONDS=2
+        echo "launch-claude-ubuntu: the connection to $AGENT_BOX for $AGENT_NAME dropped or could not be made (ssh exit 255); retrying in ${RECONNECT_WAIT_SECONDS}s — Ctrl-C stops this window" >&2
+        sleep "$RECONNECT_WAIT_SECONDS"
+        [ "$RECONNECT_WAIT_SECONDS" -ge 30 ] || RECONNECT_WAIT_SECONDS=$((RECONNECT_WAIT_SECONDS * 2))
+    done
 fi
 exec ssh "$AGENT_BOX" \
     "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" \\; set-option -g set-titles on \\; set-option -g set-titles-string '#S' 2>/dev/null || echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'"
