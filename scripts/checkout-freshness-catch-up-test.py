@@ -93,39 +93,40 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(origin, "advance-one.txt", "one\n", "advance one")
 
     result = run_catch_up(["--cwd", str(seat)])
-    # A LANDED merge is an attention state (user-ruled 2026-08-31), so this run
-    # speaks one channel: a single decision:block object carrying every line the
-    # run produced, the reference checkout's included.
-    #
-    # Parsing the WHOLE of stdout is the assertion that matters, and it is the
-    # regression test for the mixing this design exists to prevent: a merge lands
-    # only when origin/main advanced, which is exactly when the reference
-    # checkout also has something to say. A JSON object with a plain line
-    # appended is neither valid JSON nor plain text — Claude Code reports it as a
-    # hook error and the block is lost. Substring checks against raw stdout would
-    # pass either way, since the same text sits inside the JSON.
-    try:
-        emitted_merge = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        emitted_merge = None
-    check("a landed merge emits exactly one JSON object on stdout",
-          isinstance(emitted_merge, dict), result.stdout + result.stderr)
-    merge_reason = (emitted_merge or {}).get("reason", "")
-    check("a landed merge blocks, so the agent hears it rather than the display",
-          (emitted_merge or {}).get("decision") == "block", result.stdout)
-    check("a clean behind seat is merged",
-          "merged origin/main into seat" in merge_reason, merge_reason)
-    check("the merge names the files it changed",
-          "advance-one.txt" in merge_reason, merge_reason)
-    check("the merge warns against amending onto it",
-          "--amend" in merge_reason and "git show --stat" in merge_reason,
-          merge_reason)
-    check("the seat now has the remote commit", (seat / "advance-one.txt").exists())
-    check("the reference clone fast-forwarded on the same pass, reported inside "
-          "the same object",
-          "reference checkout" in merge_reason and (reference / "advance-one.txt").exists(),
-          merge_reason)
-    check("the stamp records zero behind after the merge", stamp_of(seat).get("behind") == 0,
+    # Ruled 2026-09-14 (nedschorus#324): the hook never merges into the
+    # working branch. A behind seat is REPORTED — plain text on the display,
+    # never a decision:block — and its tree and HEAD are left exactly as
+    # they were. Parsing the whole of stdout as JSON is the channel
+    # assertion: a block object would parse, plain text does not.
+    head_before = git(["rev-parse", "HEAD"], seat).stdout.strip()
+    check("a behind seat is reported on the display, never as a block",
+          emitted_object(result) is None and "catch-up: seat is 1 behind origin/main" in result.stdout,
+          result.stdout + result.stderr)
+    check("the report says it did not merge, and why new work starts from origin/main",
+          "Not merged (ruled 2026-09-14)" in result.stdout
+          and "new work starts from origin/main" in result.stdout, result.stdout)
+    check("the seat's tree did not gain the remote commit", not (seat / "advance-one.txt").exists())
+    check("the seat's HEAD did not move",
+          git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before)
+    check("a fresh branch reports zero own commits and an unpushed head",
+          "0 own commit(s), 0 ahead counting merges; head unpushed" in result.stdout,
+          result.stdout)
+    check("the reference clone fast-forwarded on the same pass, reported in the same output",
+          (reference / "advance-one.txt").exists() and "reference checkout" in result.stdout
+          and "fast-forwarded" in result.stdout, result.stdout)
+    check("the stamp records the behind count, the own count, and the head state",
+          stamp_of(seat).get("behind") == 1 and stamp_of(seat).get("own") == 0
+          and stamp_of(seat).get("head_state") == "unpushed"
+          and "not merged" in stamp_of(seat).get("last_action", ""),
+          str(stamp_of(seat)))
+
+    # Reported on change only: the same facts at the next turn end are
+    # silent, so a seat behind for the life of a review is not nagged; the
+    # stamp still carries the numbers for the status line.
+    again = run_catch_up(["--cwd", str(seat)])
+    check("the same facts at the next run are not reported again",
+          again.stdout.strip() == "", again.stdout)
+    check("and the stamp still carries the count", stamp_of(seat).get("behind") == 1,
           str(stamp_of(seat)))
 
     # Throttle: with a fresh stamp and a long interval, no fetch happens, so a
@@ -137,108 +138,114 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     )
     check("a fresh stamp suppresses the fetch (throttle)", quiet.stdout.strip() == "",
           quiet.stdout)
-    check("the throttled run merged nothing", not (seat / "advance-two.txt").exists())
+    check("the throttled run still recorded 1 behind", stamp_of(seat).get("behind") == 1)
 
     result = run_catch_up(["--cwd", str(seat)])
-    check("interval zero fetches and merges the new commit",
-          (seat / "advance-two.txt").exists(), result.stdout + result.stderr)
+    check("interval zero fetches, and the changed count is reported once",
+          "seat is 2 behind origin/main" in result.stdout, result.stdout + result.stderr)
+    check("and still nothing was merged", not (seat / "advance-two.txt").exists())
 
-    # A dirty tracked file blocks the merge with its reason.
-    commit_file(origin, "advance-three.txt", "three\n", "advance three")
+    # A dirty tree changes nothing: there is no merge for it to block.
     (seat / "shared.txt").write_text("local edit in progress\n", encoding="utf-8")
     result = run_catch_up(["--cwd", str(seat)])
-    check("uncommitted tracked changes block the merge",
-          "not merged" in result.stdout and "uncommitted tracked change" in result.stdout,
+    check("a dirty tree is neither reported nor touched (nothing to block)",
+          result.stdout.strip() == ""
+          and (seat / "shared.txt").read_text(encoding="utf-8") == "local edit in progress\n",
           result.stdout)
-    check("the blocked merge changed nothing", not (seat / "advance-three.txt").exists())
     git(["checkout", "--", "shared.txt"], seat)
 
-    # Untracked-only dirt does not block.
-    (seat / "scratch-note.txt").write_text("scratch\n", encoding="utf-8")
-    result = run_catch_up(["--cwd", str(seat)])
-    check("untracked-only dirt does not block the merge",
-          (seat / "advance-three.txt").exists(), result.stdout + result.stderr)
-    (seat / "scratch-note.txt").unlink()
-
-    # A conflicting advance: attempted, aborted, tree left exactly as it was.
+    # A branch that would conflict with main is not attempted: no merge
+    # state appears, HEAD and the tree stay as they were.
     commit_file(seat, "shared.txt", "seat version\n", "seat edits shared")
     commit_file(origin, "shared.txt", "origin version\n", "origin edits shared")
-    before = git(["rev-parse", "HEAD"], seat).stdout.strip()
-    result = run_catch_up(["--cwd", str(seat)])
-    check("a conflicting merge reports instead of landing",
-          "would conflict" in result.stdout, result.stdout + result.stderr)
-    check("the conflict abort restored HEAD", git(["rev-parse", "HEAD"], seat).stdout.strip() == before)
-    check("no merge state is left behind", not (Path(git(["rev-parse", "--absolute-git-dir"], seat).stdout.strip()) / "MERGE_HEAD").exists())
-    check("the tree is clean after the abort", git(["status", "--porcelain"], seat).stdout.strip() == "",
-          git(["status", "--porcelain"], seat).stdout)
-
-    # Resolve the conflict so later cases start clean: take origin's version.
-    git(["merge", "--no-edit", "-X", "theirs", "origin/main"], seat)
-    git(["checkout", "--theirs", "shared.txt"], seat)
-    git(["add", "shared.txt"], seat)
-    git(["commit", "-q", "--no-edit", "--allow-empty", "-m", "resolve for tests"], seat)
-
-    # An in-progress git operation blocks the merge.
-    commit_file(origin, "advance-four.txt", "four\n", "advance four")
+    head_before = git(["rev-parse", "HEAD"], seat).stdout.strip()
     seat_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], seat).stdout.strip())
-    (seat_git_dir / "BISECT_LOG").write_text("simulated\n", encoding="utf-8")
     result = run_catch_up(["--cwd", str(seat)])
-    check("an in-progress operation blocks the merge",
-          "in progress" in result.stdout, result.stdout)
-    (seat_git_dir / "BISECT_LOG").unlink()
+    check("a branch that would conflict is reported with its own commit counted, not attempted",
+          "seat is 3 behind origin/main" in result.stdout
+          and "1 own commit(s), 1 ahead counting merges" in result.stdout,
+          result.stdout)
+    check("no merge state appears", not (seat_git_dir / "MERGE_HEAD").exists())
+    check("HEAD is unchanged and the tree is clean",
+          git(["rev-parse", "HEAD"], seat).stdout.strip() == head_before
+          and git(["status", "--porcelain"], seat).stdout.strip() == "")
+    check("a seat-path run never emits a block, whatever the branch's shape",
+          emitted_object(result) is None, result.stdout)
 
-    # Detached HEAD blocks with its reason. Advance the remote first so the
-    # detached checkout is genuinely behind — a current one exercises nothing.
-    commit_file(origin, "advance-detached.txt", "detached\n", "advance for detached case")
+    # Own commits exclude merges: a branch carrying one catch-up merge and
+    # nothing else reads "0 own, 1 ahead" — the shape the ruling measured on
+    # supervisor-assumed-alive-says-only-what-is-kept (3 ahead, 0 own).
+    # Cut behind main on purpose: the reference has fast-forwarded by now, so
+    # a branch cut at its tip has nothing to merge.
+    merge_seat = tmp / "merge-only-worktree"
+    git(["worktree", "add", "-q", "-b", "merge-only", str(merge_seat), "main~1"], reference)
+    configure_identity(merge_seat)
+    git(["fetch", "-q", "origin"], merge_seat)
+    git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "origin/main"], merge_seat)
+    commit_file(origin, "advance-four.txt", "four\n", "advance four")
+    result = run_catch_up(["--cwd", str(merge_seat)])
+    check("own commits exclude merge commits: a merge-only branch reads 0 own, 1 ahead",
+          "0 own commit(s), 1 ahead counting merges" in result.stdout, result.stdout)
+
+    # The three head states, from git alone: pushed and equal to
+    # origin/<branch> is the frozen one.
+    git(["push", "-q", "origin", "seat"], seat)
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a pushed head equal to its remote branch is reported frozen",
+          "head pushed and equal to origin/seat (frozen" in result.stdout, result.stdout)
+    check("the stamp records the head state", stamp_of(seat).get("head_state") == "pushed",
+          str(stamp_of(seat)))
+    commit_file(seat, "more.txt", "more\n", "a commit on top of the pushed head")
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a pushed head with local commits on top says how many",
+          "head pushed, with 1 local commit(s) not on origin/seat" in result.stdout,
+          result.stdout)
+    # Pushing that commit changes the head state alone — behind and own stay
+    # as they were — and that alone is a changed fact worth one line.
+    git(["push", "-q", "origin", "seat"], seat)
+    result = run_catch_up(["--cwd", str(seat)])
+    check("a changed head state alone is a changed fact, reported although behind and own did not change",
+          "head pushed and equal to origin/seat" in result.stdout and "seat is 4 behind" in result.stdout,
+          result.stdout)
+
+    # Detached HEAD is named, not compared against origin/HEAD.
     detached = tmp / "detached-worktree"
-    git(["worktree", "add", "-q", "--detach", str(detached), "main"], reference)
+    git(["worktree", "add", "-q", "--detach", str(detached), "main~1"], reference)
     result = run_catch_up(["--cwd", str(detached)])
-    check("detached HEAD is named as the blocker", "detached HEAD" in result.stdout,
+    check("a detached HEAD is reported as such, and not merged",
+          "detached HEAD" in result.stdout and "Not merged" in result.stdout, result.stdout)
+
+    # The ghi-info shape (nedschorus#334): a branch with no commits of its
+    # own, far behind, reported and not moved — and never a block, which is
+    # the half of #334 this ruling removes.
+    ghi = tmp / "ghi-info-worktree"
+    first_commit = git(["rev-list", "--max-parents=0", "main"], reference).stdout.strip()
+    git(["worktree", "add", "-q", "-b", "ghi-info", str(ghi), first_commit], reference)
+    result = run_catch_up(["--cwd", str(ghi)])
+    check("a branch with no own commits, far behind, is reported and left where it is",
+          emitted_object(result) is None and "ghi-info is 4 behind origin/main" in result.stdout
+          and "0 own commit(s)" in result.stdout and not (ghi / "advance-four.txt").exists(),
           result.stdout)
 
-    # Foreign merge state is never aborted: with MERGE_HEAD present the hook
-    # must leave the repository exactly as found (blocking review finding).
-    commit_file(origin, "advance-foreign.txt", "foreign\n", "advance foreign")
-    (seat_git_dir / "MERGE_HEAD").write_text("simulated foreign merge\n", encoding="utf-8")
-    result = run_catch_up(["--cwd", str(seat)])
-    check("a foreign merge in progress blocks the catch-up",
-          "in progress" in result.stdout, result.stdout)
-    check("the foreign merge state survives untouched",
-          (seat_git_dir / "MERGE_HEAD").exists())
-    (seat_git_dir / "MERGE_HEAD").unlink()
-    result = run_catch_up(["--cwd", str(seat)])
-    check("the catch-up resumes once the foreign merge is gone",
-          (seat / "advance-foreign.txt").exists(), result.stdout)
-
-    # A standing conflict is reported, not retried: ORIG_HEAD must not be
-    # clobbered turn after turn for a known answer.
-    commit_file(seat, "shared.txt", "seat again\n", "seat edits shared again")
-    commit_file(origin, "shared.txt", "origin again\n", "origin edits shared again")
-    result = run_catch_up(["--cwd", str(seat)])
-    check("the fresh conflict is attempted and aborted", "would conflict" in result.stdout,
+    # A foreign merge in progress is left exactly as found; the report still
+    # comes.
+    foreign_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], ghi).stdout.strip())
+    (foreign_git_dir / "MERGE_HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
+    commit_file(origin, "advance-five.txt", "five\n", "advance five")
+    result = run_catch_up(["--cwd", str(ghi)])
+    check("a foreign merge in progress survives untouched and the count is still reported",
+          (foreign_git_dir / "MERGE_HEAD").exists() and "ghi-info is 5 behind" in result.stdout,
           result.stdout)
-    orig_head_after_abort = (seat_git_dir / "ORIG_HEAD").read_text(encoding="utf-8") \
-        if (seat_git_dir / "ORIG_HEAD").exists() else "absent"
-    result = run_catch_up(["--cwd", str(seat)])
-    check("the standing conflict is not retried", "not retried" in result.stdout,
-          result.stdout)
-    orig_head_after_repeat = (seat_git_dir / "ORIG_HEAD").read_text(encoding="utf-8") \
-        if (seat_git_dir / "ORIG_HEAD").exists() else "absent"
-    check("ORIG_HEAD survives the repeat unclobbered",
-          orig_head_after_abort == orig_head_after_repeat)
-    git(["merge", "--no-edit", "-X", "theirs", "origin/main"], seat)
-    git(["checkout", "--theirs", "shared.txt"], seat)
-    git(["add", "shared.txt"], seat)
-    git(["commit", "-q", "--no-edit", "--allow-empty", "-m", "resolve second conflict"], seat)
+    (foreign_git_dir / "MERGE_HEAD").unlink()
 
     # The reference copy with a local commit is left alone, loudly.
     commit_file(reference, "local-on-main.txt", "local\n", "a commit main does not have")
-    commit_file(origin, "advance-five.txt", "five\n", "advance five")
+    commit_file(origin, "advance-six.txt", "six\n", "advance six")
     result = run_catch_up(["--cwd", str(reference)])
     check("a reference with local commits is left alone",
           "left alone" in result.stdout and "local commit" in result.stdout,
           result.stdout)
-    check("the diverged reference was not moved", not (reference / "advance-five.txt").exists())
+    check("the diverged reference was not moved", not (reference / "advance-six.txt").exists())
 
     # A session seated outside any repository does nothing, silently.
     nowhere = tmp / "not-a-repo"
@@ -253,21 +260,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "behind" in result.stdout and "ahead" in result.stdout and "fetched" in result.stdout,
           result.stdout)
 
-# The attention emitter must produce Stop-hook JSON that forces a turn —
-# plain text there would reach nobody (the routine lines are plain on
-# purpose; only the attention state pays for delivery).
+# The module, imported for the cases below that call into it directly.
 import importlib.util
 specification = importlib.util.spec_from_file_location("catch_up_module", SCRIPT_PATH)
 catch_up_module = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(catch_up_module)
 import contextlib, io
-captured = io.StringIO()
-with contextlib.redirect_stdout(captured):
-    catch_up_module.emit_attention("tree needs attention")
-emitted = json.loads(captured.getvalue())
-check("the attention emitter speaks Stop-hook JSON",
-      emitted.get("decision") == "block" and "attention" in emitted.get("reason", ""),
-      captured.getvalue())
 
 # ---------------------------------------------------------------------------
 # PR #87's review: git's prose must be read in a stable locale
@@ -376,80 +374,6 @@ with tempfile.TemporaryDirectory() as no_git_scratch:
           unlaunchable.returncode != 1, str(unlaunchable.returncode))
     check("callers still see it as a failure",
           unlaunchable.returncode != 0, str(unlaunchable.returncode))
-
-# ---------------------------------------------------------------------------
-# Channel classification. The landed-merge case pins its own channel; without
-# these, no other path is pinned to one. A substring assertion against raw
-# stdout matches identically whether the text is plain or wrapped in a
-# decision:block object, so a path reclassified in either direction passes
-# unnoticed — verified by sabotage, review finding 2026-08-31.
-# ---------------------------------------------------------------------------
-
-with tempfile.TemporaryDirectory() as channel_scratch:
-    tmp = Path(channel_scratch)
-    origin = tmp / "origin-repo"
-    origin.mkdir()
-    git(["init", "-q", "-b", "main"], origin)
-    configure_identity(origin)
-    commit_file(origin, "shared.txt", "first\n", "first commit")
-    reference = tmp / "reference-clone"
-    git(["clone", "-q", str(origin), str(reference)], tmp)
-    configure_identity(reference)
-    seat = tmp / "seat-worktree"
-    git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
-    configure_identity(seat)
-
-    # ROUTINE stays on the display: a dirty tree blocks the merge, and that is
-    # the agent's own doing — it does not need a forced turn to learn it.
-    commit_file(origin, "advance.txt", "one\n", "advance")
-    (seat / "shared.txt").write_text("local edit in progress\n", encoding="utf-8")
-    blocked = run_catch_up(["--cwd", str(seat)])
-    check("a blocked merge reports on the display, not to the agent",
-          emitted_object(blocked) is None and "not merged" in blocked.stdout,
-          blocked.stdout)
-    git(["checkout", "--", "shared.txt"], seat)
-
-    # ATTENTION reaches the agent: a conflicted merge whose abort FAILED leaves
-    # the tree mid-merge. This is the state emit_attention was built for, and
-    # nothing exercised the PATH to it — only the emitter in isolation. The
-    # abort is made to fail by a git shim that forwards everything else.
-    real_git = shutil.which("git")
-    shim_directory = tmp / "git-shim"
-    shim_directory.mkdir()
-    shim = shim_directory / "git"
-    shim.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = merge ]; then\n'
-        '  for argument in "$@"; do\n'
-        '    case "$argument" in (--abort) echo "shim: abort refused" >&2; exit 1;; esac\n'
-        "  done\n"
-        "fi\n"
-        f'exec {real_git} "$@"\n', encoding="utf-8")
-    shim.chmod(0o755)
-    commit_file(seat, "shared.txt", "seat version\n", "seat edits the shared file")
-    commit_file(origin, "shared.txt", "origin version\n", "origin edits the same file")
-
-    # ROUTINE again, and a DIFFERENT routine path from the dirty tree above: a
-    # merge that would conflict is attempted, aborted cleanly, and reported to
-    # the display. The tree is exactly as the agent left it, so there is nothing
-    # it must act on before its next turn.
-    conflicted = run_catch_up(["--cwd", str(seat)])
-    check("a would-conflict merge reports on the display, not to the agent",
-          emitted_object(conflicted) is None and "would conflict" in conflicted.stdout,
-          conflicted.stdout)
-
-    # A fresh conflict pair, so the standing-conflict throttle does not skip the
-    # retry the failed-abort case needs.
-    commit_file(origin, "shared.txt", "origin version two\n", "origin edits it again")
-    stuck = run_catch_up(["--cwd", str(seat)], path_prefix=str(shim_directory))
-    stuck_object = emitted_object(stuck)
-    check("a failed abort reaches the agent as one JSON object",
-          isinstance(stuck_object, dict) and stuck_object.get("decision") == "block",
-          stuck.stdout + stuck.stderr)
-    check("the failed abort says the tree needs attention",
-          "needs attention" in (stuck_object or {}).get("reason", ""),
-          (stuck_object or {}).get("reason", ""))
-    git(["merge", "--abort"], seat)
 
 # ---------------------------------------------------------------------------
 # --reference-pull must still speak. Its only other case exercises the
