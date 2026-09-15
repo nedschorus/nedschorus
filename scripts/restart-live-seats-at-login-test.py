@@ -258,29 +258,31 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a seat 21 seconds behind the anchor is not",
           seen["twenty-one-behind"][0] == "not-running-at-the-stop", seen)
 
-    # Ruled 2026-09-02: an anchor long before boot asks rather than acts.
+    # Ruled 2026-09-15 (the user: "I'd just restart anything that looks like
+    # it was accidentally shut down at roughly the time of shutdown. It's
+    # easy to shut down an agent that isn't useful"): however long the
+    # machine sat off, the seats live at the stop are restarted. This
+    # replaces the 2026-09-02 rule that an anchor more than an hour before
+    # boot only offered them.
     handoffs = root / "old-anchor"
     old_stop = BOOT_AT - timedelta(days=3)
     write_state(handoffs, "mac-prof", old_stop)
     write_state(handoffs, "beside-mac-prof", old_stop - timedelta(seconds=5))
     write_state(handoffs, "long-gone", old_stop - timedelta(days=9))
     anchor, seen = verdicts(handoffs)
-    check("seats at an anchor more than an hour before boot are offered, not restarted",
-          seen["mac-prof"][0] == "offer" and seen["beside-mac-prof"][0] == "offer",
+    check("seats at an anchor days before boot are restarted, not offered",
+          seen["mac-prof"][0] == "restart" and seen["beside-mac-prof"][0] == "restart",
           seen)
-    check("the offer names the three outcomes",
-          all(word in seen["mac-prof"][1] for word in ("restart", "park", "finished")),
-          seen["mac-prof"])
+    check("the reason still says how long before boot the stop was",
+          "3d before boot" in seen["mac-prof"][1], seen["mac-prof"])
     check("a seat far behind an old anchor is still not running",
           seen["long-gone"][0] == "not-running-at-the-stop", seen)
-
-    # The one-hour bound, pinned on both sides.
-    for minutes_before_boot, expected in ((59, "restart"), (60, "restart"), (61, "offer")):
+    for minutes_before_boot in (59, 61, 24 * 60 * 30):
         handoffs = root / f"anchor-{minutes_before_boot}-minutes-before-boot"
         write_state(handoffs, "late-seat", BOOT_AT - timedelta(minutes=minutes_before_boot))
         anchor, seen = verdicts(handoffs)
-        check(f"an anchor {minutes_before_boot} minutes before boot: {expected}",
-              seen["late-seat"][0] == expected, seen)
+        check(f"an anchor {minutes_before_boot} minutes before boot: restart, no age bound",
+              seen["late-seat"][0] == "restart", seen)
 
     # A heartbeat since boot belongs to a seat that has had a supervisor since
     # boot. It must not be the anchor: if it were, every seat stamped before
@@ -609,8 +611,8 @@ with tempfile.TemporaryDirectory() as temporary:
     old_stop = BOOT_AT - timedelta(days=3)
     write_state(handoffs, "mac-prof", old_stop)
     anchor, seen = verdicts(handoffs, recorded_stop=old_stop)
-    check("a recorded stop long before boot is still offered, never restarted silently",
-          seen["mac-prof"][0] == "offer", seen)
+    check("a recorded stop long before boot restarts its seats too (ruled 2026-09-15)",
+          seen["mac-prof"][0] == "restart", seen)
 
     handoffs = root / "run-log-append"
     write_state(handoffs, "MD-skills", STOP)
@@ -811,8 +813,12 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # An offered seat is not launched: nothing is started silently, and the
     # report says how to bring it back by hand. Parking it is #242 change 3.
+    # Since the 2026-09-15 ruling the only offer left is the 2026-09-11
+    # amendment's: seats already written since boot, so the derived anchor
+    # may not be the stop.
     handoffs = root / "run-log-main-offer-not-launched"
-    write_state(handoffs, "old-seat", STOP - timedelta(hours=3))
+    write_state(handoffs, "restarted-by-hand", NOW - timedelta(seconds=4))
+    write_state(handoffs, "old-seat", STOP)
     recovery = RecoveryToolStub()
     exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], recovery=recovery)
     check("an offered seat is not launched, and the run says how to bring it back by hand, "

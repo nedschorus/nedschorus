@@ -49,12 +49,14 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     supervisor since boot — recovered by hand, started by an earlier run of
     this program, or caught mid-write while it runs now. It is neither the
     anchor nor restarted.
-  - Anchor within an hour before boot: the seats whose heartbeats are within
-    LIVE_SET_WINDOW_SECONDS of it were running at the stop, and are
-    restarted.
-  - Anchor longer before boot: either nothing was running when the machine
-    stopped, or it sat off a long time. Nothing is started silently; those
-    seats are offered — restart, park, or finished.
+  - The seats whose heartbeats are within LIVE_SET_WINDOW_SECONDS of the
+    anchor were running at the stop, and are restarted — however long before
+    boot the anchor is. Ruled 2026-09-15 (the user: "I'd just restart
+    anything that looks like it was accidentally shut down at roughly the
+    time of shutdown. It's easy to shut down an agent that isn't useful"),
+    replacing the 2026-09-02 rule that an anchor more than an hour before
+    boot only offered its seats: a seat restarted wrongly costs one stop,
+    a seat left down costs its work.
   - Amended 2026-09-11 (review of 8b15919): once any seat has been written
     since boot, this boot's restart has already run, by hand or by this
     program. The seats that were running at the stop have stamped over
@@ -116,9 +118,6 @@ _recovery_spec.loader.exec_module(recovery)
 # interval through timing alone; the two live seats of the 2026-09-01
 # measurement were stamped 8 seconds apart.
 LIVE_SET_WINDOW_SECONDS = 2 * supervisor.HEARTBEAT_INTERVAL_SECONDS
-# Ruled 2026-09-02: an anchor within this long before boot means seats were
-# running when the machine stopped; an older one asks rather than acts.
-RECENT_ANCHOR_BEFORE_BOOT_SECONDS = 3600
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
 # One JSON object per line, appended, never rewritten (user-ruled 2026-09-11:
 # "a log ... not a single file"). It lives beside the state files, as
@@ -360,9 +359,6 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
     anchor = recorded_stop if recorded_stop is not None else max(
         (heartbeat_at for _, heartbeat_at, _, _, _ in readings
          if heartbeat_at < boot_at), default=None)
-    anchor_is_recent = (anchor is not None
-                        and (boot_at - anchor).total_seconds()
-                        <= RECENT_ANCHOR_BEFORE_BOOT_SECONDS)
     # The 2026-09-11 amendment degrades a restart to an offer once any seat
     # has been written since boot, because the anchor derived then may no
     # longer be the stop. A stop read back from the run log is not derived,
@@ -387,10 +383,6 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
         elif (anchor - heartbeat_at).total_seconds() > LIVE_SET_WINDOW_SECONDS:
             verdict, reason = "not-running-at-the-stop", (
                 f"last heartbeat {describe_gap(anchor - heartbeat_at)} before the stop")
-        elif not anchor_is_recent:
-            verdict, reason = "offer", (
-                f"running at a stop {describe_gap(boot_at - anchor)} before boot, "
-                "too long to restart silently: offer restart, park, or finished")
         elif restart_already_ran:
             verdict, reason = "offer", (
                 "the newest heartbeat left from before boot, but seats have been "

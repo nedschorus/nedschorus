@@ -284,6 +284,20 @@ time is not — `last -x reboot shutdown` returns nothing on either (measured
   restart, park, or finished. `mac-prof`, stamped three days before the stop,
   lands here rather than being resumed.
 
+**Ruled 2026-09-15, replacing the second bullet.** Asked whether a window
+reconnecting after a box boot should stop at such an offer rather than create
+the seat, the user ruled the offer itself away: *"I'd just restart anything that
+looks like it was accidentally shut down at roughly the time of shutdown. It's
+easy to shut down an agent that isn't useful."* So the seats within the
+20-second window of the newest stamp before boot are restarted however long the
+machine sat off; the age bound (one hour) is gone from the selector. The cost
+the 2026-09-02 rule guarded against — a seat that had been stopped on purpose
+long before the shutdown coming back as the "newest" one — is accepted: a seat
+restarted wrongly costs one stop, a seat left down costs its work. The
+2026-09-11 amendment stands, because it is about a different thing: once seats
+have been brought back by hand before this program ran, the newest remaining
+stamp is not the stop at all, and those seats are still only offered.
+
 This also corrects a claim below. "A seat whose supervisor died while the machine
 kept running is not restarted" does not follow from the relative rule on its own:
 a supervisor that died one second before shutdown falls inside the window, and if
