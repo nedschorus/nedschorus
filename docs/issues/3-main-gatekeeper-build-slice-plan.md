@@ -931,9 +931,10 @@ exactly: merge-lane presented two shapes with a recommendation for shape A;
 the user's whole reply was "a". Every other word in this section is
 merge-lane's. The specification's Implementation status paragraph and the
 state machine's § 3.4 each carry the ruling in one sentence; this section
-is its record. Issue #3's "Still open" line still lists the question: its
-body is over the ghi-write word cap, so the split that edit needs is owed,
-not done.
+is its record. The ghi-write split that makes room in issue #3's body for
+this ruling is § The per-file staleness report — slice 8's requirement:
+that requirement's substance lives here now, and the body keeps a summary
+and a pointer to it.
 
 **Shape A, ruled.** The gate's pull request carries the single candidate
 commit the gate composes today — one commit on top of current main, the
@@ -973,12 +974,58 @@ here; slice 9's owner is unruled, and this table proposes no answer to it.
 | Slice | Delivers | Spec tests | Retires |
 |---|---|---|---|
 | 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Ruled 2026-09-15: shape A** — the pull request carries the single candidate commit and the merge lane merges it as a merge commit; § What the gate's pull request carries and how it merges — ruled 2026-09-15 | none yet | `attempt_push`'s direct push to main |
-| 8 | The per-file staleness report (user-ruled 2026-08-31, issue #3 body): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
+| 8 | The per-file staleness report (user-ruled 2026-08-31; in full below, § The per-file staleness report — slice 8's requirement): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
 | 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR #63): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
 | 10 | The C2 move: the gate runs from the dedicated Unix user, on the deployed root-owned copy, pushing on the `ned-git-gatekeeper` token rather than on its caller's credential (specification § The credential and enforcement, the Unix-user boundary bullet) | none yet | pushing on whatever credential the caller's environment carries |
 
 Cross-machine callers (C8, specification § Open) stay open and are not a
 slice.
+
+### The per-file staleness report — slice 8's requirement
+
+Moved here from issue #3's body by the ghi-write split: that body stood at
+1135 words, over the skill's 1000-word cap, and a body over the cap splits
+rather than being shortened. The requirement and the quoted words are the
+user's; the arrangement is merge-lane's. The body keeps the summary.
+
+**The requirement.** For every path a check-in carries, the gate says
+whether main has changed that same path since the check-in's base commit,
+naming how many commits and the latest pull request. It is a report, not a
+refusal: the false-positive case is real — two agents editing different
+parts of one file merge cleanly — and a refusal that misjudges wedges the
+caller.
+
+**Why it belongs to the gate rather than to a session hook.** This is the
+same computation the gate already performs one comparison-point away — its
+concurrency control refuses `conflict` on same-path overlap between
+competing landings; this measures overlap between the caller's base and
+main. The user ruled it belongs here precisely so it is not built twice:
+"I think were moving to the git gatekeeper, so I guess this functionality
+has to be incorporated into that. I don't want to design a system that
+we'll have to redo assuming the git gatekeeper is good." (His words predate
+the rename to main-gatekeeper — pull request
+[#257](https://github.com/nedschorus/nedschorus/pull/257), merged
+2026-09-06 — and are quoted as spoken.)
+
+**Why per-file rather than a branch-level count**, in his words and the
+measured reason: a branch-level "you are N commits behind" is ignorable,
+since most of those commits touch nothing the caller cares about. Naming
+the file in front of the caller is not, and it catches the failure that
+costs most — an agent edits its stale copy, opens a pull request, and the
+diff silently reverts someone else's landed change to that same file.
+Measured 2026-08-31 at the MD-skills seat: a checkout 112 commits behind
+main, whose hand merge hit twelve conflicts, every one of them this exact
+shape (the branch's older copy against main's landed version).
+
+**The interim, accepted deliberately.** Until the gate is live, nothing
+enforces this. The session-start half exists — the ignition prompt carries
+the branch-sync result and, per pull request
+[#220](https://github.com/nedschorus/nedschorus/pull/220), tells the
+successor to catch up with main before its first substantive action — and
+the harness already refuses an edit to a file that changed on disk since
+the session read it. But nothing knows about `origin/main` at push or
+pull-request time. That gap is accepted rather than filled with a hook this
+requirement would later replace.
 
 ### Shape 2 — a reviewer attached to the gate, deferred
 
