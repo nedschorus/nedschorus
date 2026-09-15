@@ -2,7 +2,7 @@
 
 A list of the phrases and terms of this project approved by the user, in alphabetical order, skills first. Generic SDLC vocabulary is deliberately absent.
 
-Every project-specific term is listed here; a term this page does not list is not a project term. A term made from ordinary words is a hyphenated phrase, never a bare generic word: agent-seat, not seat. The hyphens mark it as a defined term with a project meaning, so a reader knows to look it up here and an ordinary word keeps its ordinary meaning (user-ruled 2026-09-15).
+Every project-specific term is listed here; a term this page does not list is not a project term. A term takes one of three forms: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat, never a bare generic word such as seat. The hyphens mark a phrase as a defined term with a project meaning, so a reader knows to look it up here and an ordinary word keeps its ordinary meaning (user-ruled 2026-09-15).
 
 - **/cold-read** — a skill used to improve the readability of prose.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
