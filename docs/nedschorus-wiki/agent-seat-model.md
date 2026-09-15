@@ -41,11 +41,12 @@ They are different, and confusing them loses work.
 
 **Paused** — the seat's current series is done and nobody is using it. Exit the session; the supervisor stops with it. The handoff, worktree and branch all stay exactly as they are. This is the ordinary way to leave a seat, and it needs no cleanup.
 
-**Retired** — the name is being freed or repurposed. Three steps, in order:
+**Retired** — the name is being freed or repurposed. Four steps, in order:
 
 1. **Stop the supervisor first.** A running seat writes a fresh handoff at every reincarnation, so archiving while its supervisor is alive only clears the file until the next one. Exit the session and confirm no supervisor process remains for the seat.
-2. **Archive the handoff**, do not delete it — these files are on the seat's machine only and not in git, so a delete is unrecoverable. Rename it `~/.claude/handoffs/<seat>-handoff-retired-YYYY-MM-DD.md`. If that name already exists, append `-2`, `-3`; never rename onto an existing archive.
+2. **Archive the handoff**, do not delete it — these files are on the seat's machine only and not in git, so a delete is unrecoverable. Move it to `~/.claude/handoffs/retired/<seat>-handoff-YYYY-MM-DD.md`, creating the directory if needed; if that name exists, append `-2`, `-3` before `.md`; never move onto an existing archive.
 3. **Release the worktree and the branch.** On the seat's machine, `git -C ~/Projects/nedschorus worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch, `git -C ~/Projects/nedschorus branch -d <seat>`, since removing a worktree leaves its branch behind. A seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
+4. **Retire the brief.** Put a dated retirement notice at the top of `docs/agents/<seat>-instructions.md`, naming what survives, in a pull request.
 
 ## Launching a seat
 
@@ -79,6 +80,6 @@ The launcher creates the seat's worktree on its own branch **before the session 
 
 Each seat's worktree holds one branch at a time, its own seat branch or a topic branch cut from main, and git refuses to check one branch out in two worktrees. That keeps two seats off one branch and nothing more: it is a check rather than a guarantee, since `git worktree add --force` overrides it and a separate clone is invisible to it, and two seats editing the same file on different branches meet at the merge.
 
-It protects nothing outside git. `~/.claude/handoffs/` and the tmux socket (`tmux -L <seat>`, one server per seat since 2026-08-21, so one server crash takes down one seat) are per-machine state keyed by the seat's name. Two seats using the same name on one machine would collide there regardless of branches, which is why one name means one seat.
+It protects nothing outside git. `~/.claude/handoffs/` and the tmux socket (`tmux -L <seat>`, one server per seat since 2026-08-21, so one server crash takes down one seat) are per-machine state keyed by the seat's name. Two seats using the same name would collide in that directory and in cross-session addressing, which is why one name means one seat across both machines.
 
 **Nothing that matters is left only in a session.** Work belongs in commits and pushes; decisions belong in the wiki, the designs and the issues. The handoff is the one durable thing that is never pushed: it lives on the seat's machine only, and a seat exited without one keeps its committed work and loses its thread.
