@@ -76,6 +76,13 @@ class LaunchHarness:
                    'exit 0\n')
         write_stub(self.stubs, "timeout", "exit 0\n")
         write_stub(self.stubs, "git", "exit 0\n")
+        # The remote side asks whether the box's own seat restart is still
+        # running; "inactive" is the answer on a box that has been up a while,
+        # so no case waits unless it says so. sleep records instead of
+        # sleeping, on both sides of the transport.
+        write_stub(self.stubs, "systemctl", 'echo "${LCU_UNIT_STATE:-inactive}"\n')
+        write_stub(self.stubs, "sleep",
+                   'printf \'%s\\n\' "$1" >> "$LCU_TEST_DIR/sleep-calls.txt"\n')
         # The supervisor call also records its ENVIRONMENT, not just its argv:
         # the task-list binding is an exported variable, so the only place it
         # can be measured is the environment of the process the pane command
@@ -132,7 +139,54 @@ class LaunchHarness:
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
             "LCU_TEST_DIR": str(self.captures),
+            "LCU_UNIT_STATE": self.unit_state,
         }
+
+    unit_state = "inactive"
+
+    def seat_exists_on_the_box(self, after_polls: int = 0):
+        """Make the tmux stub answer has-session with "exists" — at once, or
+        only after after_polls polls have failed, the way a seat the box is
+        restarting appears part-way through the wait. One poll is two
+        has-session calls: the per-seat socket, then the default one."""
+        after_polls *= 2
+        tmux = self.stubs / "tmux"
+        tmux.write_text(tmux.read_text(encoding="utf-8").replace(
+            '  case "$argument" in (has-session) exit 1;; esac\n',
+            '  case "$argument" in (has-session) '
+            'echo x >> "$LCU_TEST_DIR/has-session-calls.txt"; '
+            f'[ "$(wc -l < "$LCU_TEST_DIR/has-session-calls.txt")" -gt {after_polls} ] '
+            '&& exit 0 || exit 1;; esac\n'), encoding="utf-8")
+
+    def ssh_answers(self, exit_codes):
+        """Make the ssh stub exit with each code in turn, the last one
+        repeating: [255, 255, 0] is a box that answers on the third try."""
+        codes = " ".join(str(code) for code in exit_codes)
+        write_stub(self.stubs, "ssh",
+                   'printf \'%s\\n\' "$@" > "$LCU_TEST_DIR/ssh-argv.txt"\n'
+                   'echo x >> "$LCU_TEST_DIR/ssh-calls.txt"\n'
+                   'n=$(wc -l < "$LCU_TEST_DIR/ssh-calls.txt")\n'
+                   f'set -- {codes}\n'
+                   'while [ $# -gt 1 ] && [ "$n" -gt 1 ]; do shift; n=$((n - 1)); done\n'
+                   'exit "$1"\n')
+
+    def clock_advances(self, seconds_per_call: int):
+        """Make `date +%s` answer a clock that moves seconds_per_call per
+        call: the launcher reads it before and after each ssh, so this is
+        how long each attach appears to have lasted."""
+        write_stub(self.stubs, "date",
+                   'echo x >> "$LCU_TEST_DIR/date-calls.txt"\n'
+                   f'echo $(( $(wc -l < "$LCU_TEST_DIR/date-calls.txt") * {seconds_per_call} ))\n')
+
+    def count(self, capture_name: str) -> int:
+        path = self.captures / capture_name
+        return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
+
+    def prepare_ran(self) -> bool:
+        """The prepare step's trust mark is a python3 -c call naming
+        hasTrustDialogAccepted; the supervisor call never does."""
+        calls = self.captures / "python3-calls.txt"
+        return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
 
     def run(self, launcher_arguments, agents_root=None, extra_arguments=None):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
@@ -438,6 +492,108 @@ def main() -> int:
               and result["after_exit_environment"].get(
                   "CLAUDE_CODE_ENABLE_TODO_TOOLS") == "1",
               result["after_exit_environment"])
+
+        # --- the window role (nedschorus#116, user-ruled 2026-09-14): an
+        # attached window reconnects on its own, and the remote side neither
+        # re-prepares a live seat nor races the box's own restart.
+
+        # 9. An attach onto a seat that already exists skips the prepare
+        # step: nothing to prepare, and N windows reconnecting after a boot
+        # would otherwise each run `claude update` under live sessions.
+        harness = LaunchHarness(root / "attach-existing-seat")
+        harness.seat_exists_on_the_box()
+        result = harness.run(["seat-k"])
+        check("attach onto a live seat: the prepare step does not run",
+              result["replay"].returncode == 0 and not harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:200]))
+        check("attach onto a live seat: the attach itself still happens",
+              "handoff-supervisor.py" in " ".join(result["supervisor_argv"]),
+              result["supervisor_argv"])
+        harness = LaunchHarness(root / "attach-new-seat")
+        result = harness.run(["seat-l"])
+        check("attach onto no seat: the prepare step runs, and nothing waited",
+              result["replay"].returncode == 0 and harness.prepare_ran()
+              and harness.count("sleep-calls.txt") == 0,
+              (result["replay"].returncode, harness.count("sleep-calls.txt")))
+
+        # 10. The box is restarting its seats after a boot (the unit is
+        # activating) and the seat is not back yet: the remote side polls
+        # until the seat appears, then attaches without preparing.
+        harness = LaunchHarness(root / "wait-for-the-box-restart")
+        harness.unit_state = "activating"
+        harness.seat_exists_on_the_box(after_polls=2)
+        result = harness.run(["seat-m"])
+        check("box restarting: the remote side waits, says so, and attaches once the seat is back",
+              result["replay"].returncode == 0
+              and harness.count("sleep-calls.txt") == 2
+              and "waiting for seat-m before attaching" in result["replay"].stdout
+              and not harness.prepare_ran(),
+              (result["replay"].returncode, harness.count("sleep-calls.txt"),
+               result["replay"].stdout[:200], harness.prepare_ran()))
+        harness = LaunchHarness(root / "wait-bounded")
+        harness.unit_state = "activating"
+        result = harness.run(["seat-n"])
+        check("box restarting but the seat never returns: the wait is bounded at 180s, "
+              "then the seat is prepared and created",
+              result["replay"].returncode == 0
+              and harness.count("sleep-calls.txt") == 90 and harness.prepare_ran(),
+              (result["replay"].returncode, harness.count("sleep-calls.txt")))
+
+        # 11. The connection drops (ssh exit 255): the launcher waits, doubling
+        # to 30s, and tries again; any other exit ends it as before, and a
+        # detached launch never retries.
+        harness = LaunchHarness(root / "reconnect")
+        harness.ssh_answers([255, 255, 0])
+        result = harness.run(["seat-o"])
+        check("a dropped connection is retried until the box answers, then the launcher exits 0",
+              result["launched"].returncode == 0 and harness.count("ssh-calls.txt") == 3,
+              (result["launched"].returncode, harness.count("ssh-calls.txt"),
+               result["launched"].stderr[:300]))
+        check("each retry says so, names the seat, and doubles the wait",
+              result["launched"].stderr.count("retrying in") == 2
+              and "seat-o" in result["launched"].stderr
+              and "Ctrl-C" in result["launched"].stderr
+              and (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8").split()
+              == ["2", "4"],
+              result["launched"].stderr[:400])
+        # The wait resets after a session that actually ran: with each ssh
+        # appearing to last 100s, every drop is a live attach lost, and each
+        # retry starts from 2s; with each lasting 1s, they are failed
+        # attempts and the wait keeps doubling (PR #365 review).
+        harness = LaunchHarness(root / "reconnect-after-long-sessions")
+        harness.ssh_answers([255, 255, 255, 0])
+        harness.clock_advances(100)
+        result = harness.run(["seat-o2"])
+        check("a drop after a long session retries from 2s again, not from the doubled wait",
+              result["launched"].returncode == 0
+              and (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8").split()
+              == ["2", "2", "2"],
+              (result["launched"].returncode,
+               (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8")
+               if (harness.captures / "sleep-calls.txt").is_file() else None))
+        harness = LaunchHarness(root / "reconnect-after-short-attempts")
+        harness.ssh_answers([255, 255, 255, 0])
+        harness.clock_advances(1)
+        result = harness.run(["seat-o3"])
+        check("drops after short attempts keep doubling: 2, 4, 8",
+              result["launched"].returncode == 0
+              and (harness.captures / "sleep-calls.txt").read_text(encoding="utf-8").split()
+              == ["2", "4", "8"],
+              ((harness.captures / "sleep-calls.txt").read_text(encoding="utf-8")
+               if (harness.captures / "sleep-calls.txt").is_file() else None))
+        harness = LaunchHarness(root / "remote-failure")
+        harness.ssh_answers([1])
+        result = harness.run(["seat-p"])
+        check("a remote command failure (not 255) ends the launcher with that status, no retry",
+              result["launched"].returncode == 1 and harness.count("ssh-calls.txt") == 1
+              and "retrying" not in result["launched"].stderr,
+              (result["launched"].returncode, harness.count("ssh-calls.txt")))
+        harness = LaunchHarness(root / "detached-no-retry")
+        harness.ssh_answers([255, 0])
+        result = harness.run(["seat-q", "--no-attach"])
+        check("a detached launch does not retry: one ssh, exit 255 passed through",
+              result["launched"].returncode == 255 and harness.count("ssh-calls.txt") == 1,
+              (result["launched"].returncode, harness.count("ssh-calls.txt")))
 
     print()
     if failures:

@@ -72,7 +72,10 @@ the session this change came from, and 8.7 ms on the largest transcript
 measured, 3.9 MB. Those are 2.0 and 2.23 ms per megabyte; the rate is
 given to one figure because it is a sizing aid, not a model, and an
 idle machine is what it assumes — the same scan under eight concurrent
-review subprocesses measured 24 to 48 ms. It is paid only between the threshold and the fire:
+review subprocesses measured 24 to 48 ms. Adding the background-task launch
+key (2026-09-14) cost one more substring test per line: 12.3 ms against
+10.7 ms without it on that day's 3.8 MB transcript, best of five, with the
+seat working. It is paid only between the threshold and the fire:
 never below the threshold, and never once the fired marker is written. A
 silent deferred boundary still pays it, because whether the wait is over is
 exactly what it is asking.
@@ -119,14 +122,48 @@ subagent stopped by TaskStop takes the same path as any other finish and is
 untested, because no specimen exists. A completion the scan misses errs the
 other way and defers the handoff no further than the ceiling.
 
+A RUNNING BACKGROUND BASH TASK COUNTS TOO, FOR A BOUNDED WHILE (user-ruled
+2026-09-14). The deferral above saw only Agent-tool subagents, and on
+2026-09-14 session 831c08ee handed off at 50% with the cold-read grid
+(scripts/cold-read-grid.py) running as a background Bash task: the scan found
+nothing in flight, the reincarnation killed the grid and its six reviewer
+cells 12.7 minutes in, and five of the six reports were lost, because a cell
+writes its report as its last act. The user's ruling, verbatim: "do 72 - if
+you know how to see if the background tasks is not stuck or not open ended,
+or we have some reasonable threshold like 15 minutes." Nothing in the
+transcript can tell a running task from a stuck one: the harness records no
+pid, the Bash tool's `timeout` input is not enforced on a background task
+(a 600000 ms timeout on the 27-minute grid run of 2026-09-14), and the
+task's output file is silent whenever the command redirects its own stdout,
+as the grid's did. So the threshold is the instrument: a background task
+holds the handoff only while it is younger than
+--background-task-wait-minutes, and past that it is presumed stuck or
+open-ended and holds nothing. The default is 30, not the 15 the ruling
+offered as an example, because 15 would have killed the very run this is
+for: the 2026-09-11 grid died at 12.7 minutes needing about 20, and across
+365 finished background tasks on the Mac (measured 2026-09-14) the 90th
+percentile is 20 minutes and the 95th is 31, with cold-read grid runs at
+8 to 27 minutes. The ceiling still bounds everything.
+
+A launch is a tool result carrying `backgroundTaskId`, which a Monitor's
+result and a subagent's spawn do not; its age is read from the launch
+record's own timestamp, and a launch with no readable timestamp counts as
+in flight, failing closed like the rest of the scan. Its finish is the same
+`<task-id>` notification a subagent's is. Both are read in the one pass the
+subagent scan already makes, so the cost is one more substring test per
+line; a line carrying the launch key that does not parse raises
+TranscriptCouldNotBeFullyRead exactly as a half-written spawn does.
+
 Threshold: --threshold-used-percentage, default 50.
 Ceiling: --ceiling-used-percentage, default 65.
+Background task wait: --background-task-wait-minutes, default 30.
 """
 
 import argparse
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
@@ -160,22 +197,29 @@ FIRST_TAIL_READ_BYTES = 256 * 1024
 HANDOFF_INSTRUCTION = "Run the handoff skill now."
 
 # The deferral says the opposite of the instruction above, so it must not read
-# like it: the agent is being told to keep working, and told the one thing that
-# would extend the wait indefinitely.
+# like it: the agent is being told to keep working, and told the two things
+# that would extend the wait indefinitely. {running} is the phrase
+# running_phrase() builds: "1 subagent(s)", "1 background task(s)", or both.
 HANDOFF_DEFERRED_NOTICE = (
-    "Context at {used_percentage:.0f}% — handoff deferred while "
-    "{subagent_count} subagent(s) run. Spawn no new subagents; the handoff "
-    "fires when they finish, or when context reaches the ceiling."
+    "Context at {used_percentage:.0f}% — handoff deferred while {running} run. "
+    "Spawn no new subagents and start no new background tasks; the handoff "
+    "fires when they finish, when a background task outlives its "
+    "{wait_minutes:g} minute wait, or when context reaches the ceiling."
 )
 
 # Said instead of the notice above when the scan could not finish. It reports
 # the wait without a count, because the count is exactly what is not known.
 HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "Context at {used_percentage:.0f}% — handoff deferred: the transcript "
-    "could not be fully read, so how many subagents are running is unknown. "
-    "Spawn no new subagents; the handoff fires when they finish, or when "
-    "context reaches the ceiling."
+    "could not be fully read, so what is running is unknown. Spawn no new "
+    "subagents and start no new background tasks; the handoff fires when "
+    "they finish, or when context reaches the ceiling."
 )
+
+# A background Bash task older than this no longer holds the handoff. Why 30
+# and not the 15 the ruling offered: the module docstring, with the
+# measurements.
+DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 30.0
 
 class TranscriptCouldNotBeFullyRead(Exception):
     """The in-flight scan could not read the whole transcript, so what it
@@ -190,6 +234,12 @@ class TranscriptCouldNotBeFullyRead(Exception):
 
 # What a spawned subagent's tool result carries and a Monitor's does not.
 SPAWNED_SUBAGENT_STATUS = "async_launched"
+
+# What a background Bash task's tool result carries and neither a Monitor's
+# (`taskId`, `persistent`) nor a subagent's spawn (`agentId`) does. Tested as
+# a key of toolUseResult, never as a bare word: a grep over a transcript
+# prints the word into an ordinary foreground Bash result.
+BACKGROUND_TASK_LAUNCH_KEY = "backgroundTaskId"
 
 # A completion notification names the agent that finished in this tag, in every
 # record shape that carries the notification.
@@ -281,8 +331,64 @@ def context_used_percentage_from_transcript(transcript_path: str):
     return 100.0 * used_tokens / context_window_for(message.get("model", ""))
 
 
+class WorkInFlight:
+    """What the scan found still running: Agent-tool subagents and background
+    Bash tasks, each in launch order.
+
+    A class rather than a tuple so that `if flight:` means "something is
+    running": a two-field tuple is truthy even when both fields are empty,
+    and that reading would defer a handoff behind nothing.
+    """
+
+    def __init__(self, subagent_ids, background_task_ids):
+        self.subagent_ids = list(subagent_ids)
+        self.background_task_ids = list(background_task_ids)
+
+    def __bool__(self):
+        return bool(self.subagent_ids or self.background_task_ids)
+
+
+def running_phrase(flight: WorkInFlight) -> str:
+    """The counts for the deferral notice, naming only the kinds present."""
+    parts = []
+    if flight.subagent_ids:
+        parts.append(f"{len(flight.subagent_ids)} subagent(s)")
+    if flight.background_task_ids:
+        parts.append(f"{len(flight.background_task_ids)} background task(s)")
+    return " and ".join(parts)
+
+
+def record_age_seconds(record, now):
+    """Seconds from the record's own timestamp to `now`, or None when the
+    record has no timestamp or it does not parse. Transcript timestamps are
+    ISO 8601 with a trailing Z, which fromisoformat accepts only from Python
+    3.11, hence the replace."""
+    stamp = record.get("timestamp") if isinstance(record, dict) else None
+    if not isinstance(stamp, str):
+        return None
+    try:
+        launched_at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if launched_at.tzinfo is None:
+        launched_at = launched_at.replace(tzinfo=timezone.utc)
+    return (now - launched_at).total_seconds()
+
+
 def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
     """Return the ids of the session's Agent-tool subagents still running.
+
+    The subagent half of work_in_flight(), kept as the name the subagent
+    deferral was built under; the one-pass scan and its rules are documented
+    there. Background tasks are not reported here whatever their age.
+    """
+    return work_in_flight(transcript_path, background_task_wait_seconds=0).subagent_ids
+
+
+def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
+                   now=None) -> WorkInFlight:
+    """Return the session's Agent-tool subagents and background Bash tasks
+    still running, from one pass over the whole transcript.
 
     A subagent is in flight when the transcript holds its spawn and no
     completion notification naming it. Both halves are read from the whole
@@ -290,17 +396,27 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
     session that missed one would kill a subagent it did not know about,
     which is the failure this exists to prevent (2026-08-27).
 
-    The cheap substring test on each line is what keeps the whole-file read
+    A background task is in flight when the transcript holds its launch, no
+    completion notification names it, AND the launch is no older than
+    `background_task_wait_seconds` as measured against `now` (the clock,
+    unless a test supplies one). Past the wait it is presumed stuck or
+    open-ended and holds nothing (user-ruled 2026-09-14; the module docstring
+    has the measurements behind the default). A launch whose timestamp is
+    missing or unreadable has no age and counts as in flight, bounded by the
+    ceiling like every other thing the scan cannot tell.
+
+    The cheap substring tests on each line are what keep the whole-file read
     affordable — a transcript is mostly large tool results, and only the few
     lines that could matter are parsed. Cost and limits are in the module
     docstring.
 
     A spawn is identified structurally, by `status: async_launched` plus an
-    `agentId` in the tool result. Monitors and background shell commands also
-    produce task notifications, but their tool results carry no agentId, so
-    they never enter the spawned set and their notifications match nothing.
+    `agentId` in the tool result; a background task by a `backgroundTaskId`
+    key in the tool result. Monitors produce task notifications too, but
+    their tool results carry neither, so they never enter either set and
+    their notifications match nothing.
 
-    Order is spawn order, so a caller reporting the ids reports them in the
+    Order is launch order, so a caller reporting the ids reports them in the
     order the agent created them.
 
     THE SCAN FAILS CLOSED (merge-lane review of PR #180, 2026-08-28). It
@@ -319,50 +435,72 @@ def spawned_subagent_ids_in_flight(transcript_path: str) -> list:
     one of those two answers kills work. Failing closed costs at most a
     deferral to the ceiling.
 
-    Only a line carrying the spawn marker is parsed at all, so an ordinary
-    unparsed line is not a candidate and raises nothing. That also bounds what
-    this guard can catch: a spawn record truncated before its marker is
-    invisible to it. Completion tags are matched as text, so a truncated
-    notification loses a completion instead of gaining one, which fails closed
-    the same way: the subagent stays in flight and the handoff waits.
+    Only a line carrying the spawn marker or the launch key is parsed at all,
+    so an ordinary unparsed line is not a candidate and raises nothing. That
+    also bounds what this guard can catch: a record truncated before its
+    marker is invisible to it. Completion tags are matched as text, so a
+    truncated notification loses a completion instead of gaining one, which
+    fails closed the same way: the work stays in flight and the handoff
+    waits.
 
-    A transcript that is absent altogether still reports [], not unknown. It
-    is not a failure to read: a session with no transcript spawned nothing,
-    and main() cannot reach this scan on a transcript it could not read,
-    because the used-share read runs first on the same file and exits the
-    hook when it returns None.
+    A transcript that is absent altogether still reports nothing running,
+    not unknown. It is not a failure to read: a session with no transcript
+    launched nothing, and main() cannot reach this scan on a transcript it
+    could not read, because the used-share read runs first on the same file
+    and exits the hook when it returns None.
     """
     path = Path(transcript_path).expanduser() if transcript_path else None
     if path is None or not path.is_file():
-        return []
+        return WorkInFlight([], [])
+    if now is None:
+        now = datetime.now(timezone.utc)
 
     spawned_ids = []
+    launched_task_ids = []
+    launched_task_age = {}  # id -> seconds since launch, or None when unreadable
     finished_ids = set()
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                if SPAWNED_SUBAGENT_STATUS in line:
+                is_spawn_candidate = SPAWNED_SUBAGENT_STATUS in line
+                is_launch_candidate = BACKGROUND_TASK_LAUNCH_KEY in line
+                if is_spawn_candidate or is_launch_candidate:
                     try:
                         record = json.loads(line)
                     except (json.JSONDecodeError, UnicodeDecodeError) as problem:
-                        # A candidate spawn record that will not parse: this
-                        # line may be the spawn of a subagent running right
+                        # A candidate record that will not parse: this line
+                        # may be the spawn or launch of work running right
                         # now, half-written as the session appends it.
                         raise TranscriptCouldNotBeFullyRead(
-                            f"{path}: a spawn record did not parse"
+                            f"{path}: a spawn or launch record did not parse"
                         ) from problem
                     tool_result = record.get("toolUseResult") if isinstance(record, dict) else None
-                    if isinstance(tool_result, dict) and \
+                    if not isinstance(tool_result, dict):
+                        tool_result = {}
+                    if is_spawn_candidate and \
                             tool_result.get("status") == SPAWNED_SUBAGENT_STATUS:
                         agent_id = tool_result.get("agentId")
                         if agent_id and agent_id not in spawned_ids:
                             spawned_ids.append(agent_id)
+                    if is_launch_candidate:
+                        task_id = tool_result.get(BACKGROUND_TASK_LAUNCH_KEY)
+                        if task_id and task_id not in launched_task_age:
+                            launched_task_ids.append(task_id)
+                            launched_task_age[task_id] = record_age_seconds(record, now)
                 if "<task-id>" in line:
                     finished_ids.update(TASK_NOTIFICATION_TASK_ID_PATTERN.findall(line))
     except OSError as problem:
         raise TranscriptCouldNotBeFullyRead(f"{path}: {problem}") from problem
 
-    return [agent_id for agent_id in spawned_ids if agent_id not in finished_ids]
+    def still_within_wait(task_id):
+        age = launched_task_age[task_id]
+        return age is None or age <= background_task_wait_seconds
+
+    return WorkInFlight(
+        [agent_id for agent_id in spawned_ids if agent_id not in finished_ids],
+        [task_id for task_id in launched_task_ids
+         if task_id not in finished_ids and still_within_wait(task_id)],
+    )
 
 
 def main(argv=None) -> int:
@@ -370,7 +508,13 @@ def main(argv=None) -> int:
     parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
-        help="above this used share the handoff fires even with subagents in flight",
+        help="above this used share the handoff fires even with work in flight",
+    )
+    parser.add_argument(
+        "--background-task-wait-minutes", type=float,
+        default=DEFAULT_BACKGROUND_TASK_WAIT_MINUTES,
+        help="a background Bash task older than this no longer holds the handoff: "
+             "it is presumed stuck or open-ended",
     )
     arguments = parser.parse_args(argv)
 
@@ -391,8 +535,10 @@ def main(argv=None) -> int:
     if fired_marker.exists():
         return 0  # already asked this session; do not nag every turn
 
-    # Below the ceiling, a running subagent postpones the handoff rather than
-    # dying with the session (user-ruled 2026-08-27; module docstring).
+    # Below the ceiling, a running subagent (user-ruled 2026-08-27) or a
+    # background Bash task younger than the wait (user-ruled 2026-09-14)
+    # postpones the handoff rather than dying with the session; module
+    # docstring.
     if used < arguments.ceiling_used_percentage:
         # A scan that could not finish is treated as work in flight, not as an
         # all-clear: "could not tell" and "nothing running" are different
@@ -401,13 +547,14 @@ def main(argv=None) -> int:
         # entirely, so an unknown postpones the handoff no further than a
         # known subagent does.
         try:
-            subagents_in_flight = spawned_subagent_ids_in_flight(transcript_path)
+            flight = work_in_flight(
+                transcript_path, arguments.background_task_wait_minutes * 60)
             count_is_known = True
         except TranscriptCouldNotBeFullyRead:
-            subagents_in_flight = None
+            flight = None
             count_is_known = False
 
-        if not count_is_known or subagents_in_flight:
+        if not count_is_known or flight:
             deferred_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-deferred"
             if deferred_marker.exists():
                 return 0  # said once already; let the session go idle and wait
@@ -420,7 +567,8 @@ def main(argv=None) -> int:
 
             notice = (
                 HANDOFF_DEFERRED_NOTICE.format(
-                    used_percentage=used, subagent_count=len(subagents_in_flight)
+                    used_percentage=used, running=running_phrase(flight),
+                    wait_minutes=arguments.background_task_wait_minutes,
                 )
                 if count_is_known
                 else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(used_percentage=used)

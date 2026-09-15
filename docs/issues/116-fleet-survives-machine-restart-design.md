@@ -146,6 +146,66 @@ is unreachable, or answers with nothing usable, the Mac still recovers its own
 seats and restores the windows onto them, and reports the box's windows as
 missing rather than opening nothing quietly.
 
+**Ruled 2026-09-14, after both halves of step 4 landed:** the user does not
+reconnect box seats by hand. Asked what happens to box seats opened over ssh
+from the Mac, the answer was that the seats survive either reboot but the Mac
+windows onto them do not come back on their own, and the by-hand recovery is
+`launch-claude-ubuntu <seat>`, which attaches to the existing tmux session.
+The user's ruling: *"I do not want to ssh open nedbox agents by hand. That
+should be in the claude-ubuntu script or whatever we call it."* So the window
+role is the next build, and it has two triggers, not one: a Mac login (the
+role as designed above), and a box reboot while the Mac stays up, when the ssh
+windows drop and nothing on the Mac notices. The second trigger is built into
+`launch-claude-ubuntu` (PR #365, 2026-09-14): the attach is a loop, not an
+exec, so the window outlives the box's reboot instead of being reopened after
+it. ssh exits 255 for a connection-level failure and nothing else; on 255 the
+launcher waits and tries again, doubling to 30 s, one line per attempt naming
+the seat and Ctrl-C. Any other exit — a detach, the after-exit shell closing,
+the seat's tmux server dying — ends the launcher as before, so a window never
+recreates a seat that was deliberately stopped. Two remote-side decisions ride
+with it: the attach waits out the box's own seat restart while that unit is
+still activating (bounded at 180 s), because sshd answers in the same second
+the unit starts and a `new-session -A` arriving first would create a fresh
+seat that the box's restart then refuses, the transcript resume lost; and the
+prepare step (the Claude update, the trust mark, the checkout) runs only when
+the seat does not already exist, so N windows reconnecting after a boot do not
+each run `claude update` under live sessions (nedschorus#62). Measured
+2026-09-15 with a canary seat: a window attached through the launcher, the
+connection's sshd process killed on the box, and a new tmux client attached
+four seconds later with the window still open; killing the seat's tmux server
+instead ended the launcher and the window, with no seat recreated. Restarting
+the box's sshd does not drop existing connections, so that is not a test.
+
+The first trigger is built into `restart-live-seats-at-login.py` (PR #367,
+2026-09-15): on the Mac, after its own seats and whatever their verdicts, a
+run asks the box over ssh which seats are alive — every session on every
+per-seat tmux server, kept only when a seat home of that name exists, the
+listing `launch-claude-ubuntu`'s usage prints — and opens an iTerm window
+onto each through `open-iterm-window-running-command`, running
+`launch-claude-ubuntu` by absolute path, which attaches. The query uses the
+launcher's box alias with BatchMode, since under the LaunchAgent there is no
+terminal to answer a prompt. A box that does not answer (ssh exit 255) is
+retried every 5 s for 150 s, because both machines may have rebooted, then
+its windows are reported missing with the by-hand command; that is not a
+failure of the run. A window that cannot be opened fails the run. Duplicate
+windows on a by-hand rerun are accepted in this version. The run-log line
+gains `box_windows`. Measured 2026-09-15 under a throwaway LaunchAgent with
+one canary seat live on the box: ssh reached the box with no prompt, the
+window opened and attached, the job exited 0 within three seconds. With both
+triggers on main and the product plist installed, a Mac logout and login is
+the test of the whole role; it has not been run yet.
+
+Two questions the #365 reviews left open, both in the launcher: the
+reconnect wait doubles to 30 s and is never reset after a successful attach,
+so every later drop in that window's life waits 30 s before its first retry
+(a slower reconnect, not a lost seat); and after a box boot a reconnecting
+window, once the box's restart has finished, creates via `new-session -A` a
+seat that restart decided only to *offer* — what a by-hand relaunch did
+before, now automatic on every reconnect. Whether the window should stop at
+the offer instead is the user's call. Unmeasured by any review: a real box
+reboot under an attached window (the measurements were an sshd-session kill
+and a tmux-server kill); the next planned box reboot is the measurement.
+
 ## Ruled 2026-08-31 — the heartbeat answers "which seats were running"
 
 **The snapshot only covers a planned restart.** The original relaunch step said

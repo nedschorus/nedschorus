@@ -16,7 +16,16 @@ brought back, and asking about it in a window, is nedschorus#242 change 3 and
 is not built; until then the failed seat is reported and left down.
 
 On the Mac this program is run at login by a LaunchAgent, installed by
-install-restart-live-seats-at-login-launch-agent.py.
+install-restart-live-seats-at-login-launch-agent.py, and it has a second job
+there (the #116 design's window role; user-ruled 2026-09-14, box seats are
+not reconnected by hand): every login has lost the Mac's windows onto the
+box's seats, though the seats themselves run on. So on the Mac, after its
+own seats, a run asks the box over ssh which seats are alive and opens an
+iTerm window onto each, running launch-claude-ubuntu, which attaches. When
+the box does not answer — it may be rebooting too — the run retries for a
+bounded time and then reports the box's windows as missing, with the by-hand
+command, rather than opening nothing quietly. On the box this job does not
+exist: the box has no display.
 
 The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
 § Ruled 2026-08-31 and its amendments:
@@ -77,9 +86,11 @@ Usage:
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -269,7 +280,7 @@ def read_stop_of_run_log_line(entry: dict):
 
 def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
                                 anchor, anchor_is_the_stop: bool, decisions,
-                                run_at: datetime, launched=None):
+                                run_at: datetime, launched=None, box_windows=None):
     """One line per run, appended: the run, the boot, the stop, the anchor it
     worked from, the verdict per seat, and what was actually launched.
 
@@ -306,6 +317,13 @@ def append_selection_to_run_log(handoff_directory: Path, boot_at: datetime,
         "anchor_at": None if anchor is None else anchor.isoformat(),
         "seats": {seat: verdict for seat, verdict, _ in decisions},
         "launched": None if launched is None else sorted(launched),
+        # The window role's outcome (the Mac only): null when it was not
+        # attempted, else whether the box answered and the seats a window
+        # was opened onto, so a later reader can tell "no live box seats"
+        # from "the box never answered".
+        "box_windows": None if box_windows is None or not box_windows.get("attempted")
+        else {"answered": box_windows["answered"],
+              "opened": sorted(box_windows["opened"])},
     }
     try:
         handoff_directory.mkdir(parents=True, exist_ok=True)
@@ -384,6 +402,120 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
                 f"stop, which was {describe_gap(boot_at - anchor)} before boot")
         decisions.append((seat, verdict, stands_in + reason))
     return anchor, decisions, anchor_is_the_stop
+
+
+# The window role's pieces, all beside this program: the launcher that attaches
+# a window to a box seat (and reconnects when the box drops), and the opener,
+# the only sanctioned way to open an iTerm window running a command.
+BOX_LAUNCHER_PATH = Path(__file__).with_name("launch-claude-ubuntu")
+WINDOW_OPENER_PATH = Path(__file__).with_name("open-iterm-window-running-command")
+# ssh reaches the box the way launch-claude-ubuntu does. Under the LaunchAgent
+# there is no terminal, so ssh must never wait on a prompt: BatchMode.
+BOX_QUERY_SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
+# When both machines rebooted, the box may still be coming up while the Mac
+# logs in; a connection-level failure (ssh exit 255) is retried this long
+# before the windows are reported missing. Any other failure is not retried:
+# the box answered, and the answer is what the report says.
+BOX_QUERY_DEADLINE_SECONDS = 150.0
+BOX_QUERY_RETRY_SECONDS = 5.0
+# One name per line: every session on every per-seat tmux server (and the
+# default server, where seats launched before per-seat servers live), kept
+# only when a seat home of that name exists — fleet-anchor, the box's tmux
+# keep-alive session, has none. A seat's after-exit shell keeps its session
+# name and counts: that is where the user typed exit, and the window belongs
+# there. The listing is the one launch-claude-ubuntu's usage() prints.
+LIST_LIVE_BOX_SEATS_REMOTE_COMMAND = (
+    'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
+    '[ -S "$seat_socket_path" ] || continue; '
+    'tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null; '
+    'done | sort -u | while read -r seat_name; do '
+    '[ -d "${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/$seat_name" ] && echo "$seat_name"; '
+    'done; true'
+)
+
+
+def agent_box() -> str:
+    """The ssh destination for the box, as launch-claude-ubuntu resolves it."""
+    return os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
+
+
+def box_seat_query_command(box: str = None) -> list:
+    return ["ssh", *BOX_QUERY_SSH_OPTIONS, box or agent_box(), LIST_LIVE_BOX_SEATS_REMOTE_COMMAND]
+
+
+def ask_the_box_which_seats_are_alive(run=subprocess.run, deadline_seconds=BOX_QUERY_DEADLINE_SECONDS,
+                                      retry_seconds=BOX_QUERY_RETRY_SECONDS, sleep=time.sleep,
+                                      monotonic=time.monotonic):
+    """(seats, detail): the live seat names the box reported, or None with why
+    not. ssh exit 255 — the box down, not up yet, unreachable — is retried
+    until the deadline; any other nonzero exit is the box's own answer and
+    is returned at once. A run that cannot start ssh at all is a failure of
+    the same kind as an answer, reported, not retried."""
+    started = monotonic()
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            finished = run(box_seat_query_command(), stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, text=True)
+        except OSError as error:
+            return None, f"could not run ssh: {error}"
+        if finished.returncode == 0:
+            return sorted({line.strip() for line in finished.stdout.splitlines()
+                           if line.strip()}), f"answered on attempt {attempts}"
+        if finished.returncode != 255:
+            return None, (f"the box answered with exit {finished.returncode}: "
+                          f"{finished.stderr.strip()}")
+        if monotonic() - started >= deadline_seconds:
+            return None, (f"unreachable for {int(deadline_seconds)}s over {attempts} "
+                          f"attempt(s) (ssh exit 255: {finished.stderr.strip()})")
+        sleep(retry_seconds)
+
+
+def window_command_for_box_seat(seat: str) -> list:
+    """The opener, the launcher by absolute path, the seat: two plain words
+    after the opener, so its multi-argument form is safe."""
+    return [str(WINDOW_OPENER_PATH), str(BOX_LAUNCHER_PATH), seat]
+
+
+def open_windows_onto_box_seats(seats, run=subprocess.run):
+    """(opened, reports): the seats a window was opened onto, and one
+    (seat, opened, detail) per attempt. One seat's failure leaves the rest
+    to be tried."""
+    opened, reports = [], []
+    for seat in seats:
+        try:
+            finished = run(window_command_for_box_seat(seat), stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, text=True)
+        except OSError as error:
+            reports.append((seat, False, f"could not run the opener: {error}"))
+            continue
+        detail = (finished.stdout.strip() or finished.stderr.strip())
+        if finished.returncode == 0:
+            opened.append(seat)
+            reports.append((seat, True, detail))
+        else:
+            reports.append((seat, False, f"opener exit {finished.returncode}: {detail}"))
+    return opened, reports
+
+
+def restore_box_windows(dry_run: bool, platform: str = sys.platform, run=subprocess.run,
+                        sleep=time.sleep, monotonic=time.monotonic):
+    """The window role, on the Mac only. Returns a dict: attempted (False on
+    the box, and nothing else is set), answered (whether the box reported),
+    detail (how the query went), seats (what it reported), opened (the
+    seats a window was opened onto), reports (per window). A dry run asks
+    the box once — a read — and opens nothing."""
+    if platform != "darwin":
+        return {"attempted": False}
+    seats, detail = ask_the_box_which_seats_are_alive(
+        run=run, deadline_seconds=0 if dry_run else BOX_QUERY_DEADLINE_SECONDS,
+        sleep=sleep, monotonic=monotonic)
+    outcome = {"attempted": True, "answered": seats is not None, "detail": detail,
+               "seats": seats, "opened": [], "reports": []}
+    if seats and not dry_run:
+        outcome["opened"], outcome["reports"] = open_windows_onto_box_seats(seats, run=run)
+    return outcome
 
 
 def recovery_command_for_seat(seat: str, handoff_directory: Path,
@@ -472,9 +604,12 @@ def main(argv=None) -> int:
         launched, reports = None, []
     else:
         launched, reports = launch_seats_decided_restart(decisions, arguments.handoff_dir)
+    # Then the windows onto the box's seats: every login has lost them,
+    # whatever the verdicts above, so this runs on every Mac run.
+    box_windows = restore_box_windows(arguments.dry_run)
     recorded = None if arguments.dry_run else append_selection_to_run_log(
         arguments.handoff_dir, boot_at, anchor, anchor_is_the_stop, decisions, now,
-        launched=launched)
+        launched=launched, box_windows=box_windows)
 
     print("restart-live-seats-at-login: "
           + ("dry run, the selection only; nothing is launched and nothing is recorded"
@@ -515,6 +650,26 @@ def main(argv=None) -> int:
             # same handoff directory the run did (PR #354 review, finding 2).
             print("    not launched; to bring it back by hand: " + " ".join(
                 recovery_command_for_seat(seat, arguments.handoff_dir)[1:]))
+    windows_not_opened = []
+    if box_windows["attempted"]:
+        box = agent_box()
+        if not box_windows["answered"]:
+            print(f"  box {box}: did not answer ({box_windows['detail']}) — its windows are "
+                  f"missing; when it is back, one window per seat by hand: "
+                  f"{BOX_LAUNCHER_PATH} <seat>")
+        elif not box_windows["seats"]:
+            print(f"  box {box}: no live seats, so no windows to open")
+        elif arguments.dry_run:
+            print(f"  box {box}: would open a window onto each live seat: "
+                  + ", ".join(box_windows["seats"]))
+        else:
+            for seat, opened, detail in box_windows["reports"]:
+                if opened:
+                    print(f"  box {box}: window opened onto {seat} ({detail})")
+                else:
+                    windows_not_opened.append(seat)
+                    print(f"  box {box}: NO WINDOW onto {seat} — {detail}; by hand: "
+                          f"{BOX_LAUNCHER_PATH} {seat}")
     did_not_come_back = [seat for seat, came_up, _ in reports if not came_up]
     if recorded is True:
         print(f"  recorded in {log_path}")
@@ -525,8 +680,10 @@ def main(argv=None) -> int:
         print(f"  {len(did_not_come_back)} seat(s) decided for restart did not come "
               f"back: {', '.join(did_not_come_back)} — each is left down and reported "
               "above (parking it and asking is nedschorus#242 change 3, not built)")
-        return 1
-    return 0
+    if windows_not_opened:
+        print(f"  {len(windows_not_opened)} box window(s) could not be opened: "
+              f"{', '.join(windows_not_opened)} — reported above")
+    return 1 if did_not_come_back or windows_not_opened else 0
 
 
 if __name__ == "__main__":
