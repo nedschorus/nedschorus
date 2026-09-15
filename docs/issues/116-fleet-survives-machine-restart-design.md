@@ -146,6 +146,20 @@ is unreachable, or answers with nothing usable, the Mac still recovers its own
 seats and restores the windows onto them, and reports the box's windows as
 missing rather than opening nothing quietly.
 
+**Ruled 2026-09-14, after both halves of step 4 landed:** the user does not
+reconnect box seats by hand. Asked what happens to box seats opened over ssh
+from the Mac, the answer was that the seats survive either reboot but the Mac
+windows onto them do not come back on their own, and the by-hand recovery is
+`launch-claude-ubuntu <seat>`, which attaches to the existing tmux session.
+The user's ruling: *"I do not want to ssh open nedbox agents by hand. That
+should be in the claude-ubuntu script or whatever we call it."* So the window
+role is the next build, and it has two triggers, not one: a Mac login (the
+role as designed above), and a box reboot while the Mac stays up, when the ssh
+windows drop and nothing on the Mac notices. The second trigger is not designed
+here yet; the candidate is that the window's own command keeps retrying the
+ssh attach until the box answers, so the window outlives the box's reboot
+instead of being reopened after it.
+
 ## Ruled 2026-08-31 — the heartbeat answers "which seats were running"
 
 **The snapshot only covers a planned restart.** The original relaunch step said
