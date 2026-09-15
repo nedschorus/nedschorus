@@ -416,8 +416,12 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a background task older than the wait is no longer in flight",
           flight.background_task_ids == [], str(flight.background_task_ids))
 
+    # The launch is at 22:41:47.899, so this now makes the age exactly
+    # 1800.000 s: a whole-second now left it 1799.101 and pinned nothing
+    # (merge-lane review of #361, confirmed by mutation: <= flipped to <
+    # still passed).
     flight = hook.work_in_flight(str(grid_running), thirty_minutes,
-                                 now=datetime(2026, 9, 14, 23, 11, 47, tzinfo=timezone.utc))
+                                 now=datetime(2026, 9, 14, 23, 11, 47, 899000, tzinfo=timezone.utc))
     check("a background task exactly at the wait is still in flight",
           flight.background_task_ids == ["b27dndn4c"], str(flight.background_task_ids))
 
