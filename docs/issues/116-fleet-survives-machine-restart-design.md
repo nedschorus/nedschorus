@@ -155,10 +155,28 @@ The user's ruling: *"I do not want to ssh open nedbox agents by hand. That
 should be in the claude-ubuntu script or whatever we call it."* So the window
 role is the next build, and it has two triggers, not one: a Mac login (the
 role as designed above), and a box reboot while the Mac stays up, when the ssh
-windows drop and nothing on the Mac notices. The second trigger is not designed
-here yet; the candidate is that the window's own command keeps retrying the
-ssh attach until the box answers, so the window outlives the box's reboot
-instead of being reopened after it.
+windows drop and nothing on the Mac notices. The second trigger is built into
+`launch-claude-ubuntu` (PR #365, 2026-09-14): the attach is a loop, not an
+exec, so the window outlives the box's reboot instead of being reopened after
+it. ssh exits 255 for a connection-level failure and nothing else; on 255 the
+launcher waits and tries again, doubling to 30 s, one line per attempt naming
+the seat and Ctrl-C. Any other exit — a detach, the after-exit shell closing,
+the seat's tmux server dying — ends the launcher as before, so a window never
+recreates a seat that was deliberately stopped. Two remote-side decisions ride
+with it: the attach waits out the box's own seat restart while that unit is
+still activating (bounded at 180 s), because sshd answers in the same second
+the unit starts and a `new-session -A` arriving first would create a fresh
+seat that the box's restart then refuses, the transcript resume lost; and the
+prepare step (the Claude update, the trust mark, the checkout) runs only when
+the seat does not already exist, so N windows reconnecting after a boot do not
+each run `claude update` under live sessions (nedschorus#62). Measured
+2026-09-15 with a canary seat: a window attached through the launcher, the
+connection's sshd process killed on the box, and a new tmux client attached
+four seconds later with the window still open; killing the seat's tmux server
+instead ended the launcher and the window, with no seat recreated. Restarting
+the box's sshd does not drop existing connections, so that is not a test. The
+first trigger — a Mac login opening a window onto each live box seat — is the
+next build.
 
 ## Ruled 2026-08-31 — the heartbeat answers "which seats were running"
 
