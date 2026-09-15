@@ -44,7 +44,7 @@ They are different, and confusing them loses work.
 **Retired** — the name is being freed or repurposed. Four steps, in order:
 
 1. **Stop the supervisor first.** A running seat writes a fresh handoff at every reincarnation, so archiving while its supervisor is alive only clears the file until the next one. Exit the session and confirm no supervisor process remains for the seat.
-2. **Archive the handoff**, do not delete it — these files are on the seat's machine only and not in git, so a delete is unrecoverable. Move it to `~/.claude/handoffs/retired/<seat>-handoff-YYYY-MM-DD.md`, creating the directory if needed; if that name exists, append `-2`, `-3` before `.md`; never move onto an existing archive.
+2. **Archive the handoff.** Move it to `~/.claude/handoffs/retired/<seat>-handoff-YYYY-MM-DD.md`, creating the directory if needed; if that name exists, append `-2`, `-3` before `.md`; never move onto an existing archive.
 3. **Release the worktree and the branch.** On the seat's machine, `git -C ~/Projects/nedschorus worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch, `git -C ~/Projects/nedschorus branch -d <seat>`, since removing a worktree leaves its branch behind. A seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
 4. **Retire the brief.** Put a dated retirement notice at the top of `docs/agents/<seat>-instructions.md`, naming what survives, in a pull request.
 
