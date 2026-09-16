@@ -790,6 +790,23 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
 
+    # --- A skill's record is named after the skill, not after SKILL.md -----
+    # Every skill is .claude/skills/<name>/SKILL.md, so a record named after
+    # the stem is <date>-SKILL for every skill read that day (measured
+    # 2026-09-15: the second one shipped as 2026-09-15-SKILL-2). The name
+    # comes from the skill's directory instead.
+    repository = build_scratch_repository(scratch, "checkout-skill-record-name")
+    skill_relative_path = ".claude/skills/some-named-skill/SKILL.md"
+    write_target(repository, skill_relative_path)
+    result = run_grid(repository, stubs, target_relative_path=skill_relative_path)
+    all_records = sorted(p.name for p in (repository / "cold-read-records").glob("*"))
+    check("a skill target's record directory is named after the skill's directory",
+          result.returncode == 0
+          and any(name.endswith("-some-named-skill") for name in all_records),
+          f"exit {result.returncode}; records={all_records}; stderr={result.stderr[-300:]!r}")
+    check("and not after its SKILL.md stem",
+          not any("-SKILL" in name for name in all_records), all_records)
+
 
     # --- The target is frozen into the record, and the record is shipped ------
     # User-ruled 2026-09-07: the record carries the exact bytes reviewed at the

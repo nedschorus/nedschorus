@@ -160,9 +160,27 @@ directory it is kept, not deleted (user-ruled 2026-08-25), and its FAILED
 line says what the Opus cell reported."""
 
 
+# Document stems that name a KIND of file rather than the document: every
+# skill in this project is `.claude/skills/<name>/SKILL.md`, so its stem is
+# "SKILL" and says nothing about which skill (measured 2026-09-15: two skills
+# read on one day both wanted 2026-09-15-SKILL, and the second went to the
+# store as 2026-09-15-SKILL-2). For these stems the record is named after
+# the parent directory instead. Compared case-insensitively; every other
+# stem is used as it is. Restated in scripts/cold-read-fast-read.py.
+GENERIC_DOCUMENT_STEMS = ("skill", "readme", "index")
+
+
+def record_name_for_target(target: pathlib.Path) -> str:
+    """The document's part of a record name: its stem, or its parent
+    directory's name when the stem is one of GENERIC_DOCUMENT_STEMS."""
+    if target.stem.lower() in GENERIC_DOCUMENT_STEMS and target.parent.name:
+        return target.parent.name
+    return target.stem
+
+
 def make_record_dir(target: pathlib.Path) -> pathlib.Path:
     date = datetime.date.today().isoformat()
-    base = f"{date}-{target.stem}"
+    base = f"{date}-{record_name_for_target(target)}"
     record_dir = RECORDS_DIR / base
     suffix = 2
     while record_dir.exists():

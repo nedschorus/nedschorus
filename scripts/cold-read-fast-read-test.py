@@ -217,6 +217,33 @@ with tempfile.TemporaryDirectory() as scratch:
     counter = scratch / "stub-launch-counter"
     today = time.strftime("%Y-%m-%d")
 
+    # --- The record-name rule: a skill's document is SKILL.md ---------------
+    # The record is named after the document, and every skill in this project
+    # is .claude/skills/<name>/SKILL.md -- so a stem-based name is
+    # <date>-SKILL for every skill read that day. Measured 2026-09-15:
+    # 2026-09-15-SKILL and 2026-09-15-SKILL-2 in the store, neither saying
+    # which skill. The name comes from the skill's directory instead; every
+    # other stem is unchanged, so no existing record shape moves.
+    name_module = script_under_test_module()
+    record_name = name_module.record_name_for_target
+    check("a skill's record is named after the skill's directory, not SKILL",
+          record_name(Path("/r/.claude/skills/pull-request-review-write/SKILL.md"))
+          == "pull-request-review-write")
+    check("the generic-stem match is case-insensitive",
+          record_name(Path("/r/.claude/skills/handoff/skill.md")) == "handoff")
+    check("a README is named after its directory too",
+          record_name(Path("/r/docs/nedschorus-wiki/README.md")) == "nedschorus-wiki")
+    check("an ordinary document keeps its stem, so no existing record shape changes",
+          record_name(Path("/r/docs/drafts/explain-skill-draft.md")) == "explain-skill-draft")
+    check("a stem that merely contains a generic word is not generic",
+          record_name(Path("/r/docs/skill-index-notes.md")) == "skill-index-notes")
+    skill_report = name_module.fast_read_report_path_for_target(
+        Path("/r/.claude/skills/cold-read-record-name-case/SKILL.md"), "2026-09-16")
+    check("the fast read's record directory and report carry the skill's name",
+          skill_report.parent.name.startswith("2026-09-16-cold-read-record-name-case")
+          and skill_report.name == "cold-read-record-name-case-fast-read.md",
+          str(skill_report))
+
     # --- The report-path rule: a walk draft ------------------------------
     repository = build_scratch_repository(scratch)
     walk_draft_relative = "docs/walk/a-walk-item-draft.md"
