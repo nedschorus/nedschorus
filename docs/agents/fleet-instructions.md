@@ -4,8 +4,6 @@ Read [the seat model](../nedschorus-wiki/agent-seat-model.md) first: it defines 
 
 Your work is **the machinery that runs agents**: the launchers, the handoff supervisor and its reincarnation cycle, seat isolation, and the tooling around keeping several agents straight. You own the *implementation* of that machinery — the scripts and hooks — not the seat model's policy. Which seats exist, how work is grouped, and how a seat is retired are the user's rulings recorded in the model; you build what they require and propose changes rather than making them.
 
-**Your work is done when** the riders below are either built, ruled out, or left with their blocking question written down; the open PRs in your work are merged or their remaining work is stated; and the user knows what machinery exists and what does not. Then write a handoff and stop.
-
 ## The state of the machinery
 
 Accurate as of 2026-08-13. Where something is described as pending, check before relying on it: `git log --oneline -5 origin/main` and `gh pr view <n> --repo nedschorus/nedschorus --json state,mergedAt`.
@@ -17,9 +15,7 @@ Accurate as of 2026-08-13. Where something is described as pending, check before
 - **The reincarnation trigger** — `scripts/handoff-context-threshold-hook.py`, a `Stop` hook that asks the agent to hand off once context passes 50%.
 - **The instruction-file guard** — `.claude/hooks/instruction-file-guard.py`, a `PreToolUse` hook on Edit, Write and NotebookEdit. It blocks changes to `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and `.claude/` unless the user's approval is quoted into `.walk-approved`, which it then consumes. It cannot see writes made through shell commands, so the rule binds regardless of the hook.
 
-**Pending in [PR #58](https://github.com/nedschorus/nedschorus/pull/58):** the seat briefs' cold-read corrections, `docs/agents/seat-first-prompt.md`, and the launcher change that creates the home as a checkout. Until it merges, a seat launched from main gets the pre-review versions.
-
-PR states go stale within hours — three of this seat's were closed the same day they were listed — so check rather than trust any list of them here: `gh pr list --repo nedschorus/nedschorus --state open`. As of 2026-08-13 there is also [#59](https://github.com/nedschorus/nedschorus/pull/59) (status-line compatibility with an older python3), opened by another stream and touching your machinery.
+PR states go stale within hours — three of this seat's were closed the same day they were listed — so check rather than trust any list of them here: `gh pr list --repo nedschorus/nedschorus --state open`.
 
 ## Your queue
 
@@ -27,7 +23,7 @@ PR states go stale within hours — three of this seat's were closed the same da
 
 Rider 1 — a guard enforcing one live session per directory — is **blocked on a question, not on effort**. The obvious detection method (scanning `/proc` for two Claude processes sharing a working directory) was tried on 2026-08-13 and proved unreliable: an attached background session's process reports the directory where `claude attach` was typed, not the directory the session works in, so real collisions hide and viewer windows look like sessions. Before building anything, answer: *what source of truth reports a session's actual working directory?* Candidates worth testing are the session's own transcript, which records it, and asking the session directly. Detection is solved when you can, from outside a session, name its working directory correctly for all three ways a session is created — launched by the supervisor, forked, and started as a background job. Until then the guard should not be built; a guard whose detection is wrong teaches the wrong lesson at the worst moment.
 
-Issues in your work: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#50](https://github.com/nedschorus/nedschorus/issues/50) (worktree file hygiene), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state their git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup via CLAUDE.md lines is superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (injecting a message into an idle session, steering an active one), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console text insertion and stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (agents watching each other's work).
+Issues in your work: [#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents), [#34](https://github.com/nedschorus/nedschorus/issues/34) (successors must state their git context), [#33](https://github.com/nedschorus/nedschorus/issues/33) (fast-handoff pickup via CLAUDE.md lines is superseded), [#37](https://github.com/nedschorus/nedschorus/issues/37) (injecting a message into an idle session, steering an active one), [#27](https://github.com/nedschorus/nedschorus/issues/27) (console text insertion and stuck-state detection), [#36](https://github.com/nedschorus/nedschorus/issues/36) and [#38](https://github.com/nedschorus/nedschorus/issues/38) (agents watching each other's work).
 
 The fast-handoff findings ([PR #52](https://github.com/nedschorus/nedschorus/pull/52)) are already on main; that PR was closed 2026-08-13 as already landed rather than rejected. `docs/cross-project/fast-handoff-design.md` is the design your machinery implements — read it before changing the supervisor.
 
@@ -52,6 +48,6 @@ Expensive to learn, easy to lose:
 
 ## First action
 
-From the box, where you are: confirm what is on main (`git log --oneline -5 origin/main`), check whether PR #58 has merged, and run the machinery's tests — `python3 scripts/handoff-supervisor-test.py`, `python3 scripts/handoff-write-and-check-supervisor-test.py`, and `python3 .claude/hooks/instruction-file-guard-test.py`. Report what is live, what is pending, and whether the tests pass.
+From the box, where you are: confirm what is on main (`git log --oneline -5 origin/main`) and run the machinery's tests — `python3 scripts/handoff-supervisor-test.py`, `python3 scripts/handoff-write-and-check-supervisor-test.py`, and `python3 .claude/hooks/instruction-file-guard-test.py`. Report what is live, what is pending, and whether the tests pass.
 
 Then ask the user which rider he wants, noting that rider 1 is blocked on its detection question. Do not verify the launchers yourself: they run from the Mac, and you have no shell there — if that needs testing, say so and let him run it.
