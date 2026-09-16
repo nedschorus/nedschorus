@@ -101,7 +101,8 @@ Running a sanity-check, and reading its output:
   plus the warning lines described below. `saved text is not a report` is an
   agent that exited 0 with text lacking a section its audit's prompt requires
   — on 2026-09-15, a claude agent's reply to a hook's note (nedschorus#397) —
-  and nothing is saved for it. Exit 0 when every launched agent saved; 1 when any launched agent
+  and the refused text is printed in the run's output, before that line, and
+  nothing is saved for it. Exit 0 when every launched agent saved; 1 when any launched agent
   failed (a skipped agent is not launched); 2 when the invocation itself is
   unusable — a missing file, a broken prompt boundary, a bad flag.
 - Without `--problem-statement` the fresh-eyes agents print `SKIPPED`, loudly,
@@ -966,9 +967,10 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
     # After the worktree check, so a cell that ran to the end has its writes
     # compared whatever it returned; before the quote scan and the write, so a
-    # text that is not a report raises no warnings to triage and never lands
-    # as a report (nedschorus#397).
+    # text that is not a report raises no warnings to triage, never lands as a
+    # report, and is printed so the runtime's words survive (nedschorus#397).
     if missing_report_phrases(attack, output):
+        print(output, flush=True)
         print(f"FAILED: {cell} saved text is not a report", flush=True)
         return cell, False
     if not fresh_eyes:

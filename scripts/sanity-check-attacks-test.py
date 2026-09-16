@@ -738,9 +738,15 @@ def main():
                       cell_ok and report_written and "saved:" in output
                       and "FAILED:" not in output, f"output was {output!r}")
             else:
+                failed_line = f"FAILED: cut-{runtime} saved text is not a report\n"
                 check(f"a {runtime} text that is not a report prints the FAILED line",
-                      f"FAILED: cut-{runtime} saved text is not a report\n" in output
+                      failed_line in output
                       and "saved:" not in output, f"output was {output!r}")
+                check(f"a {runtime} text that is not a report is printed before "
+                      f"the FAILED line",
+                      non_report in output and failed_line in output
+                      and output.index(non_report) < output.index(failed_line),
+                      f"output was {output!r}")
                 check(f"a {runtime} text that is not a report writes no report "
                       f"and fails the cell", not cell_ok and not report_written,
                       f"cell_ok={cell_ok}, report written={report_written}")
