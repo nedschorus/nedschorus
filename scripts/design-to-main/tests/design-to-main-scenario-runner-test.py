@@ -4,8 +4,9 @@
 the real machine and their traces say what the machine did — the happy
 path ends passed naming every state in the design's order; the walk's
 example scenario carries the counters and stands where row 62 sends it;
-the ceiling scenario pauses at the arbitrator's third entry; a malformed
-scenario is refused with its line.
+the ceiling scenario pauses at the arbitrator's third entry; a step the
+machine refuses before the topic branch is cut ends the trace in the
+machine's words; a malformed scenario is refused with its line.
 
 Run: python3 scripts/design-to-main/tests/design-to-main-scenario-runner-test.py
 """
@@ -200,6 +201,76 @@ class TwoCoverageTypesInEitherSpellingPlayAsTheMachineReadsThem(unittest.TestCas
         self.assertEqual(comma.trace, flow_list.trace)
         self.assertEqual(comma.ending, flow_list.ending)
         self.assertEqual(runner.format_trace(comma), runner.format_trace(flow_list))
+
+
+class AStepTheMachineRefusesBeforeTheTopicBranchIsCut(unittest.TestCase):
+    """Review 2026-09-16 by mac-claude on PR #407, inline comment
+    4029297591: an illegal state-exit from initiate-design-to-main is not
+    routed as a machine error, because row 1 has not cut the topic branch;
+    the machine refuses it (RefusedBeforeTopicBranchCut), the refusal
+    being its report to whoever invoked it — here, the runner — and it
+    escaped the runner as a traceback, exit 1. The machine played the
+    step and refused it, as it plays a verdict no row allows and pauses
+    (AScenarioTheMachineCallsAMachineError): the trace ends on the
+    refusal in the machine's own words, and the runner exits 0."""
+
+    WRONG_DESTINATION = ("scenario: initiator names a wrong destination\n"
+                         "steps:\n"
+                         "  - state: initiate-design-to-main\n"
+                         "    verdict: invoked\n"
+                         "    fields:\n"
+                         "      destination: ended\n")
+    NAMED_FILE_NOT_THERE = ("scenario: initiator names a file that is not there\n"
+                            "steps:\n"
+                            "  - state: initiate-design-to-main\n"
+                            "    verdict: invoked\n"
+                            "    fields:\n"
+                            "      named-files: docs/no-such-file.md\n")
+    REFUSAL_LINE_START = "REFUSED at initiate-design-to-main before the topic branch was cut: "
+
+    def run_runner_on_scenario_text(self, text):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "refused-before-topic-branch-cut.yaml"
+            path.write_text(text)
+            return subprocess.run([sys.executable, str(RUNNER_PATH), str(path)],
+                                  capture_output=True, text=True)
+
+    def check_the_trace_ends_on_the_machine_s_refusal(self, text, scenario_name, machine_s_words):
+        result = self.run_runner_on_scenario_text(text)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        lines = result.stdout.splitlines()
+        # No step line: the refused state-exit was not routed, and the run
+        # did not start.
+        self.assertEqual(len(lines), 2, result.stdout)
+        self.assertEqual(lines[0], "scenario: %s" % scenario_name)
+        self.assertTrue(lines[1].startswith(self.REFUSAL_LINE_START), lines[1])
+        self.assertIn("'invoked' from initiate-design-to-main is refused before the topic branch is cut: "
+                      + machine_s_words, lines[1])
+        self.assertTrue(lines[1].endswith("; the run does not start and the checkout is as it was"),
+                        lines[1])
+
+    def test_a_wrong_destination_is_the_machine_s_refusal_in_the_trace_exit_zero(self):
+        self.check_the_trace_ends_on_the_machine_s_refusal(
+            self.WRONG_DESTINATION, "initiator names a wrong destination",
+            "row 1 pairs 'invoked' from initiate-design-to-main with design-writing, not ended")
+
+    def test_a_named_file_not_there_is_the_machine_s_refusal_in_the_trace_exit_zero(self):
+        self.check_the_trace_ends_on_the_machine_s_refusal(
+            self.NAMED_FILE_NOT_THERE, "initiator names a file that is not there",
+            "'invoked' from initiate-design-to-main names files that are not there: "
+            "docs/no-such-file.md (section 9)")
+
+    def test_the_run_stands_unstarted_and_a_step_after_the_refusal_is_never_reached(self):
+        played = play_scenario_text(self.WRONG_DESTINATION + "  - design-writing: emitted\n")
+        self.assertEqual(played.trace, [])
+        self.assertEqual(played.run.current_state, T.INITIATE_DESIGN_TO_MAIN)
+        self.assertFalse(played.run.topic_branch_cut)
+        self.assertTrue(played.ending.startswith(self.REFUSAL_LINE_START), played.ending)
+        self.assertEqual(played.never_reached.step.line, 7)
+        self.assertIn("the machine refused the run at initiate-design-to-main before it",
+                      str(played.never_reached))
 
 
 class TheScenarioFile(unittest.TestCase):
