@@ -753,7 +753,7 @@ class DesignToMainStateMachineFlow:
     def assemble_state_package(self, run, state):
         composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(state, state)
         row = tables.STATE_TABLE_BY_NAME[composite]
-        return {
+        state_package = {
             "state": state,
             "composite-state": composite,
             "component": run.component,
@@ -767,6 +767,23 @@ class DesignToMainStateMachineFlow:
             # from 1 over the State: trailers of the branch above its cut.
             "evidence-directory": self.git_record.evidence_directory_for_the_next_instance(state),
         }
+        # The investigation report's path, reports/investigation-<n>.md, n
+        # counted like the evidence directory's, which only the machine
+        # knows (sections 2 and 9; user-ruled 2026-09-14, the tenth walk,
+        # item 17). At investigate-workflow, the report the talking agent
+        # — initiator or arbitrator, the same package — writes before the
+        # dialog opens (section 6.6). At design-writing entered as a
+        # redesign — the test enter() counts the redesign by — the report
+        # of the investigation whose resume opened it (section 3.1); not on
+        # a re-entry within the redesign's version, whose initiator already
+        # holds it (section 1). No other package names it.
+        if state == tables.INVESTIGATE_WORKFLOW:
+            state_package["investigation-report"] = (
+                self.git_record.investigation_report_path_for_the_next_instance())
+        elif state == tables.DESIGN_WRITING and run.previous_state == tables.INVESTIGATE_WORKFLOW:
+            state_package["investigation-report"] = (
+                self.git_record.investigation_report_path_of_the_latest_instance())
+        return state_package
 
     # -- routing -----------------------------------------------------------------
 
