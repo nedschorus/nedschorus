@@ -650,6 +650,63 @@ class ResumingAnInvestigation(unittest.TestCase):
                          "- the exit status of a refusal is 3 (user-ruled 2026-09-08)\n")
 
 
+class TheDesignApprovedAfterARedesignEntersImplementationWritingOnly(unittest.TestCase):
+    """Row 18 goes to implementation-writing only, and after a redesign the
+    tests begin again by row 24 (user-ruled 2026-09-16, the walk
+    design-tables-checker-findings-from-pr-409, item 2). Row 18 once also
+    entered test-design-writing when tests had begun in the design version;
+    that could never hold, since a redesign starts a new version, which
+    resets tests-begun, and the clause and its code were deleted. This pins
+    the order the walk's scenario showed: tests begun, a reviewer's
+    escalate-to-user with investigation-focus design, a resume to
+    design-writing, the new design approved, row 18, row 24."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_row_18_enters_implementation_writing_only_and_row_24_begins_the_tests_again(self):
+        script = fixture.prefix_to_tests_begun() + [
+            fixture.test_design_write(),
+            (T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+             {"investigation_focus": T.FOCUS_DESIGN}),                              # row 69
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),  # row 72
+            (T.DESIGN_WRITING, T.V_EMITTED, {}),                                     # row 2
+            (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),                     # row 5
+            (T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                         # row 16
+            (T.DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE, {}),                          # row 18
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed],
+                         ["1", "2", "5", "16", "18", "21", "24", "32", "69", "72",
+                          "2", "5", "16", "18"])
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.design_version, 2)
+        self.assertTrue(run.design_approved)
+        self.assertFalse(run.tests_begun)
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+        self.assertEqual(run.implementation_work_stream_position, T.IMPLEMENTATION_WRITING)
+        self.assertIsNone(run.test_work_stream_position)
+        self.assertNotIn(T.TEST_DESIGN_WRITING, run.writing_state_entry_reason)
+
+        machine.launcher.script.extend([
+            fixture.implementation_write(),                                          # row 21
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                 # row 24
+        ])
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-3:], ["18", "21", "24"])
+        self.assertEqual(machine.machine_errors, [])
+        self.assertTrue(run.tests_begun)
+        self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
+        self.assertEqual(run.test_work_stream_position, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.writing_state_entry_reason[T.TEST_DESIGN_WRITING],
+                         T.ENTRY_REASON_FIRST_WRITE)
+
+
 class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
     """Section 6.6: an investigation pauses the run — whatever agent was
     working is ended, its uncommitted work discarded, and its state re-run

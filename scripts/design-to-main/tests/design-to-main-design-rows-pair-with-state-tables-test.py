@@ -187,8 +187,8 @@ def to_state_mismatch(prose_row, code_row, state_names):
 
     A to-state that is a state or sub-state must be the FIRST state the To
     cell backticks: later ones are what follows ("then `design-writing` as
-    a redesign", "and, if tests have begun, `test-design-writing`"), and a
-    to-state that is only among them is wrong."""
+    a redesign", "and back to `design-reviewing`"), and a to-state that is
+    only among them is wrong."""
     states_in_cell = [token for token in backticked_tokens(prose_row.to_cell)
                       if token in state_names]
     first = states_in_cell[0] if states_in_cell else None
@@ -346,11 +346,11 @@ class TheMatcherFailsOnDrift(unittest.TestCase):
             self.mismatches_with(replace_transition_row("24", to_state=T.TEST_WRITING)), "row 24:")
 
     def test_a_to_state_that_the_to_cell_names_only_as_what_follows_fails(self):
-        # Row 18's To cell: "`implementation-writing`; and, if tests have
-        # begun in this design version, `test-design-writing`".
+        # Row 14's To cell: "`design-writing`, ...; then the program check
+        # and back to `design-reviewing`".
         self.assert_one_mismatch_naming(
-            self.mismatches_with(replace_transition_row("18", to_state=T.TEST_DESIGN_WRITING)),
-            "row 18:")
+            self.mismatches_with(replace_transition_row("14", to_state=T.DESIGN_REVIEWING)),
+            "row 14:")
         # Row 11's: "`investigate-workflow`, ..., then `design-writing` as a redesign".
         self.assert_one_mismatch_naming(
             self.mismatches_with(replace_transition_row("11", to_state=T.DESIGN_WRITING)),

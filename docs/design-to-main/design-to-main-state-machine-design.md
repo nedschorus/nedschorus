@@ -146,7 +146,7 @@ This table is normative. The Trigger column names the state-exit verdict and any
 | 15 | `design-reviewing` | `reject contract` from `design-acceptance-by-agent`, the counter at its ceiling | `design-writing`, the same initiator, which brings the user into the conversation with all the notes | — |
 | 16 | any reviewing state but `contract-reviewing`, whose program check's `advance` has its own rows above | `advance` from an acceptance-check that is not the state's last | the state's next acceptance-check, in the order §3.1 lists | — |
 | 17 | `design-reviewing` | `discuss` from `design-acceptance-by-user` | `design-writing` | — (the user's own time) |
-| 18 | `design-reviewing` | `advance` | `implementation-writing`; and, if tests have begun in this design version, `test-design-writing` | — |
+| 18 | `design-reviewing` | `advance` | `implementation-writing` | — |
 | 19 | `contract-revising` | `emitted` | `contract-reviewing` | — (counted on entry) |
 | 20 | `contract-revising` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
 | 21 | `implementation-writing` | `emitted` | `implementation-reviewing` | implementation-writes, only when the state was entered by a `reject implementation` from review, by the user's `discuss`, or as the first write; a write forced by an upstream change or ordered by the arbitrator charges nothing here (§7, the three buckets) |
@@ -217,90 +217,122 @@ Four rules the table relies on:
 
 ### 3.3 The diagram
 
-Derived from §3.2 and not normative where they differ. Mermaid identifiers cannot carry hyphens, so `design-writing` appears as `design_writing`; the names are the same names. The composite reviewing states are drawn with their sub-states; the counter guards, the retry loops, the user's `discuss` returns, and the arbitrator's `advance` from a reviewer's ceiling, which continues that work-stream, are not drawn.
+Generated from `TRANSITION_TABLE` in `scripts/design-to-main/design-to-main-state-tables.py` by `scripts/design-to-main/design-to-main-state-diagram-generator.py`, and not normative where they differ from §3.2; a test fails when these blocks are not what the generator writes, so change §3.2 and the table, then run the generator, and never edit the blocks by hand. Mermaid identifiers cannot carry hyphens, so `design-writing` appears as `design_writing`; the names are the same names. The machine is drawn as four views of the one table — the main path, rework and arbitration, the investigation, and inside the reviewing states — and each row drawn appears in exactly one; an edge is labelled with its verdict and, in brackets, its guard, as UML writes a transition, and a row entered from many states is drawn once, from a box around them; the counter guards, the retry loops, the user's `discuss` returns, and the arbitrator's `advance` from a reviewer's ceiling, which continues that work-stream, are not drawn.
+
+#### 3.3.1 The main path
 
 ```mermaid
 stateDiagram-v2
     [*] --> initiate_design_to_main
     initiate_design_to_main --> design_writing: invoked
     design_writing --> contract_reviewing: emitted
-    state contract_reviewing {
-        contract_acceptance_by_program --> contract_acceptance_by_agent: advance
-        contract_acceptance_by_agent --> contract_acceptance_by_user: reject contract
-    }
-    contract_reviewing --> contract_revising: reject contract
-    contract_reviewing --> investigate_workflow: reject contract / redesign / escalate-to-user
-    contract_reviewing --> design_reviewing: advance
-    contract_reviewing --> implementation_writing: advance
-    contract_reviewing --> test_design_writing: advance
-    state design_reviewing {
-        design_acceptance_by_agent --> design_acceptance_by_user: advance
-    }
-    design_reviewing --> design_writing: reject design / reject contract
+    contract_reviewing --> design_reviewing: advance [the design not yet approved]
     design_reviewing --> implementation_writing: advance
-    design_reviewing --> investigate_workflow: escalate-to-user
-    contract_revising --> contract_reviewing: emitted
-    contract_revising --> investigate_workflow: input-quick-check-failed (design) / escalate-to-user
     implementation_writing --> implementation_reviewing: emitted
-    implementation_writing --> contract_revising: input-quick-check-failed (contract)
-    implementation_writing --> investigate_workflow: input-quick-check-failed (design)
-    implementation_writing --> contract_acceptance_by_user: input-quick-check-failed (contract)
-    state implementation_reviewing {
-        implementation_acceptance_by_agent --> implementation_acceptance_by_user: advance
-    }
-    implementation_reviewing --> test_design_writing: advance
-    implementation_reviewing --> test_suite_executing: advance
+    implementation_reviewing --> test_design_writing: advance [tests not yet begun]
+    test_design_writing --> test_design_reviewing: emitted
+    test_design_reviewing --> test_writing: advance
+    test_writing --> test_reviewing: emitted
+    test_reviewing --> test_suite_executing: advance [the implementation-work-stream at ready-for-test-suite]
+    test_suite_executing --> submit_to_PR_gate: pass
+    submit_to_PR_gate --> ended: accepted
+    ended --> [*]
+```
+
+#### 3.3.2 Rework and arbitration
+
+```mermaid
+stateDiagram-v2
+    contract_reviewing --> contract_revising: reject contract [first time] / reject contract
+    contract_reviewing --> implementation_writing: advance [on a contract-revision]
+    contract_reviewing --> test_design_writing: advance [on a contract-revision]
+    design_reviewing --> design_writing: reject design / reject contract
+    contract_revising --> contract_reviewing: emitted
+    implementation_writing --> contract_revising: input-quick-check-failed [against the component-contract]
+    implementation_reviewing --> test_suite_executing: advance [tests begun, the test-work-stream at ready-for-test-suite] / advance [tests begun, the test-work-stream not yet there]
     implementation_reviewing --> implementation_writing: reject implementation
     implementation_reviewing --> test_suite_arbitrating: reject implementation
     implementation_reviewing --> contract_revising: reject contract
-    implementation_reviewing --> investigate_workflow: reject design / escalate-to-user
-    implementation_reviewing --> contract_acceptance_by_user: reject contract
-    test_design_writing --> test_design_reviewing: emitted
-    test_design_writing --> contract_revising: input-quick-check-failed (contract)
-    test_design_writing --> investigate_workflow: input-quick-check-failed (design) / escalate-to-user
-    test_design_writing --> contract_acceptance_by_user: input-quick-check-failed (contract)
-    state test_design_reviewing {
-        test_design_acceptance_by_agent --> test_design_acceptance_by_user: advance / reject test-design
-    }
-    test_design_reviewing --> test_design_writing: reject test-design
+    test_design_writing --> contract_revising: input-quick-check-failed [against the component-contract]
+    test_design_reviewing --> test_design_writing: reject test-design [before the test-design's approval] / reject test-design [after the test-design's approval]
     test_design_reviewing --> contract_revising: reject contract
-    test_design_reviewing --> investigate_workflow: reject design / escalate-to-user
-    test_design_reviewing --> test_writing: advance
-    test_design_reviewing --> contract_acceptance_by_user: reject contract
-    test_writing --> test_reviewing: emitted
-    test_writing --> test_design_writing: input-quick-check-failed (test-design)
-    test_writing --> test_design_acceptance_by_user: input-quick-check-failed (test-design)
-    test_writing --> contract_revising: input-quick-check-failed (contract)
-    test_writing --> investigate_workflow: input-quick-check-failed (design)
-    test_writing --> contract_acceptance_by_user: input-quick-check-failed (contract)
-    state test_reviewing {
-        test_acceptance_by_agent --> test_acceptance_by_user: advance
-    }
-    test_reviewing --> test_suite_executing: advance
+    test_writing --> test_design_writing: input-quick-check-failed [against the test-design]
+    test_writing --> contract_revising: input-quick-check-failed [against the component-contract]
+    test_reviewing --> test_suite_executing: advance [the implementation-work-stream not yet there]
     test_reviewing --> test_writing: reject tests
     test_reviewing --> test_suite_arbitrating: reject tests
     test_reviewing --> test_design_writing: reject test-design
-    test_reviewing --> test_design_acceptance_by_user: reject test-design
     test_reviewing --> contract_revising: reject contract
-    test_reviewing --> investigate_workflow: reject design / escalate-to-user
-    test_reviewing --> contract_acceptance_by_user: reject contract
-    test_suite_executing --> submit_to_PR_gate: pass
-    test_suite_executing --> test_suite_arbitrating: fail / could-not-run
+    test_suite_executing --> test_suite_arbitrating: fail / could-not-run [the second consecutive]
     test_suite_arbitrating --> implementation_writing: reject implementation / reject implementation and tests
-    test_suite_arbitrating --> test_writing: reject tests / flaky-test / reject implementation and tests
-    test_suite_arbitrating --> investigate_workflow: entered for the third time in the design version / escalate-to-user
+    test_suite_arbitrating --> test_writing: reject tests, flaky-test / reject implementation and tests
     test_suite_arbitrating --> contract_revising: reject contract
-    test_suite_arbitrating --> contract_acceptance_by_user: reject contract
+```
+
+#### 3.3.3 The investigation
+
+```mermaid
+stateDiagram-v2
+    state "row 69's from-states" as row_69_from_states {
+        contract_reviewing
+        design_reviewing
+        contract_revising
+        implementation_reviewing
+        test_design_writing
+        test_design_reviewing
+        test_reviewing
+        test_suite_arbitrating
+    }
+    contract_reviewing --> investigate_workflow: reject contract [second consecutive time] / redesign
+    contract_revising --> investigate_workflow: input-quick-check-failed [against the design]
+    implementation_writing --> investigate_workflow: input-quick-check-failed [against the design]
+    implementation_reviewing --> investigate_workflow: reject design
+    test_design_writing --> investigate_workflow: input-quick-check-failed [against the design]
+    test_design_reviewing --> investigate_workflow: reject design
+    test_writing --> investigate_workflow: input-quick-check-failed [against the design]
+    test_reviewing --> investigate_workflow: reject design
+    test_suite_arbitrating --> investigate_workflow: [entered for the third time in the design version] / escalate-to-user [no investigation-focus named by the agent]
+    row_69_from_states --> investigate_workflow: escalate-to-user [investigation-focus design or test-design as the agent names it]
     investigate_workflow --> ended: stop / resume
     investigate_workflow --> submit_to_PR_gate: submit-to-PR-gate
-    investigate_workflow --> design_writing: resume, design edited
-    investigate_workflow --> contract_reviewing: resume, component-contract edited
-    investigate_workflow --> test_design_reviewing: resume, test-design edited
-    investigate_workflow --> implementation_reviewing: resume, implementation edited
-    investigate_workflow --> test_reviewing: resume, tests edited
-    submit_to_PR_gate --> ended: accepted
-    submit_to_PR_gate --> investigate_workflow: gate-rejection / gatekeeper-refusal
+    investigate_workflow --> design_writing: resume [design edited]
+    investigate_workflow --> contract_reviewing: resume [component-contract edited]
+    investigate_workflow --> test_design_reviewing: resume [test-design edited]
+    investigate_workflow --> implementation_reviewing: resume [implementation edited]
+    investigate_workflow --> test_reviewing: resume [tests edited]
+    submit_to_PR_gate --> investigate_workflow: gate-rejection / gatekeeper-refusal [an infrastructure refusal, the fifth attempt#59; or an integration or scope refusal] / gatekeeper-refusal [a form refusal]
     ended --> [*]
+```
+
+#### 3.3.4 Inside the reviewing states
+
+```mermaid
+stateDiagram-v2
+    state contract_reviewing {
+        contract_acceptance_by_program --> contract_acceptance_by_agent: advance [on a contract-revision]
+        contract_acceptance_by_agent --> contract_acceptance_by_user: reject contract
+    }
+    state design_reviewing {
+        design_acceptance_by_agent --> design_acceptance_by_user: advance
+    }
+    state "row 67's from-states" as row_67_from_states {
+        implementation_writing
+        state implementation_reviewing {
+            implementation_acceptance_by_agent --> implementation_acceptance_by_user: advance
+        }
+        test_design_writing
+        state test_design_reviewing {
+            test_design_acceptance_by_agent --> test_design_acceptance_by_user: advance / reject test-design [after the test-design's approval]
+        }
+        test_writing
+        state test_reviewing {
+            test_acceptance_by_agent --> test_acceptance_by_user: advance
+        }
+        test_suite_arbitrating
+    }
+    test_writing --> test_design_acceptance_by_user: input-quick-check-failed [against the test-design]
+    test_reviewing --> test_design_acceptance_by_user: reject test-design
+    row_67_from_states --> contract_acceptance_by_user: reject contract, input-quick-check-failed [a reject of, or a failed check against, the component-contract]
 ```
 
 ### 3.4 How a run ends
