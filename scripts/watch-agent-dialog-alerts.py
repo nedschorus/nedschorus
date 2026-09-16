@@ -55,7 +55,9 @@ Output contract — one stdout line per event, flushed immediately:
                              in the filter too, so a failure says WHY
   WATCH mac: started ...     the baseline, one line, at startup
   WATCH mac: NOT WATCHING ...  the stream ended, with how long it held and
-                             the child's exit status
+                             the child's exit status; or this program was
+                             interrupted (exit 130) or terminated (exit
+                             143), which it says rather than dying quietly
   WATCH mac: coverage RESTORED ...  the stream has held the hold bar again
 
 Everything else the dialog stream says is dropped. That includes
@@ -141,6 +143,7 @@ event to announce, not a reason to stop watching.
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -241,8 +244,21 @@ SSH_SESSION_TEARDOWN_PATTERN = re.compile(
 
 LAST_OUTPUT_LINE_SNIPPET_CHARS = 200
 
+# Terminal escape sequences (CSI: ESC [ parameters, intermediates, one final
+# byte), stripped from every line before it is filtered or quoted. The pty
+# that FORCE_REMOTE_PTY_OPTION forces makes the remote Python colourise its
+# traceback, so an exception line arrived with raw escapes in it, eating the
+# snippet's budget and able to split a phrase the filter matches on (the
+# #398 reviewer measured this; it checked that the `Traceback (most recent`
+# header itself is not coloured, so that alert still fired).
+TERMINAL_ESCAPE_SEQUENCE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+# 128 + SIGTERM, the status a shell reports for a process the signal killed.
+SIGTERM_EXIT_CODE = 128 + signal.SIGTERM
+
 # How long a terminated child is given to die before it is killed. It only
-# runs on the interrupt path, where the operator is waiting.
+# runs on the interrupt and termination paths, where the operator (or
+# Monitor's 8-second SIGKILL) is waiting.
 CHILD_SHUTDOWN_SECONDS = 5.0
 
 _emit_lock = threading.Lock()
@@ -258,6 +274,24 @@ def emit(line):
 
 def warn(line):
     print(line, file=sys.stderr, flush=True)
+
+
+class WatcherTerminated(BaseException):
+    """SIGTERM, delivered as an exception so the watch can say it stopped.
+    A BaseException, like KeyboardInterrupt, so that nothing catching
+    Exception on the way out swallows it."""
+
+
+def raise_watcher_terminated(signal_number, frame):
+    """The SIGTERM handler. It only raises: announcing from inside a
+    handler would take the announcer's lock, which the interrupted code may
+    already hold, and that is a deadlock in the one place a watcher must
+    not hang. The announcement happens where the exception is caught."""
+    raise WatcherTerminated()
+
+
+def strip_terminal_escape_sequences(line):
+    return TERMINAL_ESCAPE_SEQUENCE_PATTERN.sub("", line)
 
 
 def one_line_snippet(text, limit):
@@ -425,17 +459,22 @@ class StreamCoverageAnnouncer:
             return False
 
     def interrupted(self):
+        self._stopped("interrupted")
+
+    def terminated(self):
+        self._stopped("terminated (SIGTERM)")
+
+    def _stopped(self, how):
         with self.lock:
             self.emit_line(
                 f"WATCH {self.label}: NOT WATCHING — this watcher was "
-                f"interrupted; nothing is being seen here until it is "
-                f"restarted")
+                f"{how}; nothing is being seen here until it is restarted")
 
 
 def stop_child(process):
-    """Used on the interrupt path only: ask, then insist. A child left
-    running would hold the transcript files open and, on the remote target,
-    leave a python running on ned-box."""
+    """Used on the interrupt and termination paths only: ask, then insist.
+    A child left running would hold the transcript files open and, on the
+    remote target, leave a python running on ned-box."""
     if process.poll() is not None:
         return
     try:
@@ -461,6 +500,14 @@ def run_one_stream(command, alert_filter, label, emit_line=emit):
     """
     process = subprocess.Popen(
         command,
+        # Not inherited. The child never reads stdin, and on the remote
+        # target `ssh -tt` with an inherited INTERACTIVE terminal puts that
+        # terminal into raw mode (the #398 reviewer measured ISIG, ICANON
+        # and ECHO all cleared): a by-hand Ctrl-C was then forwarded to the
+        # remote instead of reaching this program's interrupt path, and the
+        # terminal stayed raw if this program was killed. /dev/null closes
+        # both and leaves the remote pty alone.
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -476,14 +523,14 @@ def run_one_stream(command, alert_filter, label, emit_line=emit):
             raw_line = process.stdout.readline()
             if not raw_line:
                 break
-            line = raw_line.rstrip("\r\n")
+            line = strip_terminal_escape_sequences(raw_line.rstrip("\r\n"))
             if not line.strip():
                 continue
             if not is_ssh_session_teardown_line(line):
                 last_output_line = line
             if alert_filter.search(line):
                 emit_line(f"ALERT {label}: {line}")
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, WatcherTerminated):
         stop_child(process)
         raise
     finally:
@@ -577,6 +624,12 @@ def main(argv=None):
     announcer = StreamCoverageAnnouncer(label, arguments.target,
                                         arguments.hold_seconds,
                                         arguments.retry_seconds)
+    # From here a SIGTERM is announced, not silent. Measured before this
+    # handler existed: SIGINT announced and exited 130, SIGTERM printed
+    # nothing and exited -15. Monitor's expiry sends SIGTERM to the whole
+    # process group, so this is the signal that ends the watch every thirty
+    # minutes in normal operation.
+    signal.signal(signal.SIGTERM, raise_watcher_terminated)
     try:
         while True:
             attempt_id = announcer.start_attempt()
@@ -604,6 +657,9 @@ def main(argv=None):
         # covers the retry sleep as well as the stream itself.
         announcer.interrupted()
         return 130
+    except WatcherTerminated:
+        announcer.terminated()
+        return SIGTERM_EXIT_CODE
 
 
 if __name__ == "__main__":
@@ -613,6 +669,10 @@ if __name__ == "__main__":
         # Interrupted before the watch began (argument parsing, the
         # baseline): there is no coverage to announce the loss of.
         sys.exit(130)
+    except WatcherTerminated:
+        # Only reachable in the instant between the handler's installation
+        # and the watch's own try; same reasoning as above.
+        sys.exit(SIGTERM_EXIT_CODE)
     except BrokenPipeError:
         # The consumer closed the pipe; die quietly, not with a traceback.
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
