@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Run one Antigravity (`agy`) cell of a cold read against a document.
+"""Run one Antigravity (`agy`) cold-read-cell against a cold-read-target.
 
-One invocation = one cell — the third leg beside the Claude cell launcher
-(scripts/cold-read-claude-cell.py) and the Codex cell launcher
-(scripts/cold-read-codex-cell.py). Everything the three do apart from
-invoking their model lives in scripts/cold-read-cell-common.py and is
-imported by all of them, so the legs cannot drift. Read that file for the
-report contract, the write-detection rule, and why the reviewer writes a
+One invocation = one cold-read-cell — the third leg beside the Claude
+cold-read-cell launcher (scripts/cold-read-claude-cell.py) and the Codex
+cold-read-cell launcher (scripts/cold-read-codex-cell.py). Everything the three
+do apart from invoking their model lives in scripts/cold-read-cell-common.py
+and is imported by all of them, so the legs cannot drift. Read that file for
+the report contract, the write-detection rule, and why the reviewer writes a
 file rather than answering in chat.
 
 Usage:
@@ -17,25 +17,25 @@ Usage:
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
 
-Exit codes: 0 a model produced a report; 1 every model in the tier's chain
-failed to produce one, including the case where `agy` never started because
-the binary is not on PATH (the common module names that on stderr and lets
-the chain advance, so a 1 always means "no review was produced"); 64 this
-program refused the invocation and never launched agy, naming its own fix.
-64 rather than the conventional 2 for the reason written beside
-EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which every cell
-shares.
+Exit codes: 0 a model produced a report; 1 every model in the cold-read-tier's
+chain failed to produce one, including the case where `agy` never started
+because the binary is not on PATH (the common module names that on stderr
+and lets the chain advance, so a 1 always means "no review was produced");
+64 this program refused the invocation and never launched agy, naming its
+own fix. 64 rather than the conventional 2 for the reason written beside
+EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which every
+cold-read-cell shares.
 
 WHAT THIS LEG IS FOR (user-ruled 2026-09-07 at the cold-read-research seat,
 after measurements, superseding the earlier ruling that day for low): the
-fast cold read runs on Gemini 3.8 Flash at MEDIUM, replacing gpt-5.6-terra at
-low. The measurements: about 100-110 s per document (single runs on a
-658-word skill and a 1,967-word walk draft); on the ghi-write candidate
-defect list, medium found 42% of the rows against 19% at low, and medium and
-high hit the same rows. It is the one tier this launcher pins. The good and
-floor tiers stay on the Claude and Codex launchers, and this launcher refuses
-them (exit 64 from argparse) rather than running a Gemini model under a stamp
-that names a tier the roster never measured it on.
+cold-read-fast-read runs on Gemini 3.8 Flash at MEDIUM, replacing gpt-5.6-terra
+at low. The measurements: about 100-110 s per document (single runs on a
+658-word skill and a 1,967-word walk draft); on the ghi-write candidate defect
+list, medium found 42% of the rows against 19% at low, and medium and high hit
+the same rows. It is the one cold-read-tier this launcher pins. The good and
+floor cold-read-tiers stay on the Claude and Codex launchers, and this launcher
+refuses them (exit 64 from argparse) rather than running a Gemini model under a
+stamp that names a cold-read-tier the roster never measured it on.
 
 THE INVOCATION, as measured working in the 2026-09-04 campaign
 (cold-read-records/2026-09-03-cold-read-tier-roster-campaign/tools/
@@ -81,34 +81,35 @@ _common_spec.loader.exec_module(common)
 
 PROGRAM = "cold-read-agy-cell"
 
-# Tier -> the Antigravity models to try, in order. One tier, one model
-# (user-ruled 2026-09-07, after measurements, superseding the earlier ruling
-# for low): the fast cold read is gemini-3.8-flash at medium, and Antigravity's
-# id for that is the model name with the effort as its suffix (`agy models`
-# lists gemini-3.8-flash-low, -medium, -high). A single-entry chain, like
-# every pinned chain on the other two legs: the shared loop still clears the
-# report path before the attempt and after a failed one, and a second entry is
-# one line if a ruling ever wants one.
+# cold-read-tier -> the Antigravity models to try, in order. One
+# cold-read-tier, one model (user-ruled 2026-09-07, after measurements,
+# superseding the earlier ruling for low): the cold-read-fast-read is
+# gemini-3.8-flash at medium, and Antigravity's id for that is the model name
+# with the effort as its suffix (`agy models` lists
+# gemini-3.8-flash-low, -medium, -high). A single-entry chain, like every
+# pinned chain on the other two legs: the shared loop still clears the report
+# path before the attempt and after a failed one, and a second entry is one
+# line if a ruling ever wants one.
 TIER_TO_AGY_MODEL_CHAIN = {
     "fast": ("gemini-3.8-flash-medium",),
 }
 
-# Tier -> reasoning effort, pinned explicitly so a cell's behavior never
-# depends on the machine's own default. The CLI accepts low, medium, high;
-# medium is the ruling (2026-09-07: recall 42% at medium against 19% at low
-# on the ghi-write candidate defect list, and high hit the same rows as
-# medium). Passed alongside the suffixed model id exactly as the 2026-09-04
-# campaign passed both.
+# cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's
+# behavior never depends on the machine's own default. The CLI accepts low,
+# medium, high; medium is the ruling (2026-09-07: recall 42% at medium against
+# 19% at low on the ghi-write candidate defect list, and high hit the same
+# rows as medium). Passed alongside the suffixed model id exactly as the
+# 2026-09-04 campaign passed both.
 TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
 # How long `agy --print` waits for the model before giving up on the turn.
-# The campaign's value, kept as measured: a fast read at medium was measured
-# at about 100-110 s per document (2026-09-07, single runs on a 658-word skill
-# and a 1,967-word walk draft), so a run that reaches this limit has hung, and
-# the CLI's non-zero exit then fails the cell the ordinary way. Shortening it
-# is a calibration the user makes, here.
+# The campaign's value, kept as measured: a cold-read-fast-read at medium
+# was measured at about 100-110 s per document (2026-09-07, single runs on
+# a 658-word skill and a 1,967-word walk draft), so a run that reaches this
+# limit has hung, and the CLI's non-zero exit then fails the cold-read-cell the
+# ordinary way. Shortening it is a calibration the user makes, here.
 AGY_PRINT_TIMEOUT = "30m"
 
 # The fewest words the runtime's stdout must hold to be taken as the review
@@ -128,7 +129,7 @@ def stdout_is_a_review(runtime_stdout: str) -> str:
 
 
 def invocation_builder(effort: str):
-    """The one thing that differs between the cells.
+    """The one thing that differs between the cold-read-cells.
 
     Returns the callback the shared chain runner uses: given a model and the
     composed prompt, it yields the argv to run and the text to feed on stdin.
