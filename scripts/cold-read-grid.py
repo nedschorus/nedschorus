@@ -4,8 +4,10 @@
 One invocation = one review: six cold-read-cells launched in parallel -- the
 defect-hunt pass in four ({good, floor} x {claude, codex}) and the
 terminology pass in two (good x {claude, codex}) -- every report saved
-into a dated cold-read-record, progress and next-step instructions printed
-for the reviewing agent as reviews land.
+into a cold-read-record named
+`cold-read-records/<YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>/`
+(a -2, -3 suffix when two runs start in one minute), progress and next-step
+instructions printed for the reviewing agent as reviews land.
 
 Usage:
   scripts/cold-read-grid.py --target docs/drafts/foo.md
@@ -29,6 +31,7 @@ import argparse
 import datetime
 import hashlib
 import importlib.util
+import os
 import pathlib
 import re
 import subprocess
@@ -164,27 +167,63 @@ directory it is kept, not deleted (user-ruled 2026-08-25), and its FAILED
 line says what the Opus cell reported."""
 
 
-# Document stems that name a KIND of file rather than the document: every
-# skill in this project is `.claude/skills/<name>/SKILL.md`, so its stem is
-# "SKILL" and says nothing about which skill (measured 2026-09-15: two skills
-# read on one day both wanted 2026-09-15-SKILL, and the second went to the
-# store as 2026-09-15-SKILL-2). For these stems the cold-read-record is named
-# after the parent directory instead. Compared case-insensitively; every other
-# stem is used as it is. Restated in scripts/cold-read-fast-read.py.
-GENERIC_DOCUMENT_STEMS = ("skill", "readme", "index")
+# THE RECORD-NAME RULE, for every document, with no special cases (user-ruled
+# 2026-09-16): `<YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>`, the
+# date and 24-hour time local and from one clock read. It replaced
+# `<YYYY-MM-DD>-<file stem>` and its patch for SKILL, README and index, for
+# two measured reasons: the patch left every other shared file name colliding
+# (`.claude/skills/cold-read/prompts/terminology.md` still took the name of
+# any other `terminology.md`), and the date did not separate re-reads of one
+# document on one day (of 104 records on the user's Mac, eight carried a -2
+# or -3 from a same-day re-read, which says nothing about which draft each
+# read). The parent directory's leading dots are stripped, so a file in
+# `~/.claude/` gives `claude-CLAUDE`; a parent with no name left gives the
+# stem alone. Restated, not imported, in scripts/cold-read-fast-read.py,
+# because the cold-read-grid is a program rather than a module; the two must
+# stay identical. Every file the cold-read-grid writes into the
+# cold-read-record is named from the whole record directory name (see
+# cell_report_path), so it carries the date, time and document part too.
+RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
+RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
+
+
+def record_clock_reading() -> datetime.datetime:
+    """The ONE local clock reading a cold-read-record's date and time are both
+    taken from, so the two cannot disagree across midnight.
+
+    COLD_READ_RECORD_CLOCK_OVERRIDE, when set as `YYYY-MM-DDTHH:MM`, is read
+    instead of the clock: it is how the test suites name a cold-read-record
+    exactly without depending on the wall clock or flaking across a minute
+    boundary.
+    The override is a clock value, not a finished name, so the tests still go
+    through the formatting below.
+    """
+    override = os.environ.get(RECORD_CLOCK_OVERRIDE_VARIABLE)
+    if override:
+        return datetime.datetime.strptime(override, RECORD_CLOCK_OVERRIDE_FORMAT)
+    return datetime.datetime.now()
 
 
 def record_name_for_target(target: pathlib.Path) -> str:
-    """The cold-read-target's part of a cold-read-record name: its stem, or its
-    parent directory's name when the stem is one of GENERIC_DOCUMENT_STEMS."""
-    if target.stem.lower() in GENERIC_DOCUMENT_STEMS and target.parent.name:
-        return target.parent.name
-    return target.stem
+    """The cold-read-target's part of a cold-read-record name: the parent
+    directory's name without leading dots, a hyphen, and the file stem; the
+    stem alone when the parent's name is empty."""
+    parent_name = target.parent.name.lstrip(".")
+    return f"{parent_name}-{target.stem}" if parent_name else target.stem
 
 
-def make_record_dir(target: pathlib.Path) -> pathlib.Path:
-    date = datetime.date.today().isoformat()
-    base = f"{date}-{record_name_for_target(target)}"
+def record_directory_name_for_target(
+    target: pathlib.Path, now: datetime.datetime,
+) -> str:
+    """`<YYYY-MM-DD>-<HHMM>-<document part>`, before any -2, -3 suffix."""
+    return (f"{now.strftime('%Y-%m-%d')}-{now.strftime('%H%M')}-"
+            f"{record_name_for_target(target)}")
+
+
+def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
+    """Create and return the record directory: the minute's name, or the
+    first of -2, -3, ... that is not taken (two runs started in one minute)."""
+    base = record_directory_name_for_target(target, now)
     record_dir = RECORDS_DIR / base
     suffix = 2
     while record_dir.exists():
@@ -565,7 +604,7 @@ def main() -> int:
             print(f"cold-read-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
             return 2
 
-    record_dir = make_record_dir(target)
+    record_dir = make_record_dir(target, record_clock_reading())
     reference_integrity_pre_pass(target, record_dir)
 
     print(f"Launched six reviewers against {target}. Reports appear in "
