@@ -162,8 +162,30 @@ def fast_read_report_path_for_target(target: pathlib.Path, today: str) -> pathli
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
         return REPO_ROOT / WALK_DIRECTORY_RELATIVE / f"{name}-suggestions.md"
-    name = target.stem
+    name = record_name_for_target(target)
     return fresh_record_dir(RECORDS_DIR / f"{today}-{name}") / f"{name}-fast-read.md"
+
+
+# Document stems that name a KIND of file rather than the document: every
+# skill in this project is `.claude/skills/<name>/SKILL.md`, so its stem is
+# "SKILL" and says nothing about which skill. Measured 2026-09-15: two skills
+# fast-read on one day both wanted the record name 2026-09-15-SKILL; the
+# shipper refused the second (correctly, on provenance) and it went to the
+# store as 2026-09-15-SKILL-2, which says neither which skill nor what the
+# -2 distinguishes. For these stems the record is named after the parent
+# directory instead, which is the name that means something. Compared
+# case-insensitively; every other stem is used as it is, so no existing
+# record shape changes. Restated in scripts/cold-read-grid.py, which is a
+# program rather than a module.
+GENERIC_DOCUMENT_STEMS = ("skill", "readme", "index")
+
+
+def record_name_for_target(target: pathlib.Path) -> str:
+    """The document's part of a record name: its stem, or its parent
+    directory's name when the stem is one of GENERIC_DOCUMENT_STEMS."""
+    if target.stem.lower() in GENERIC_DOCUMENT_STEMS and target.parent.name:
+        return target.parent.name
+    return target.stem
 
 
 def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
