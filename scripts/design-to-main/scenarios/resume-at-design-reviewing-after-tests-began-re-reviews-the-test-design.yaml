@@ -1,0 +1,17 @@
+# Tests have begun when the test-design reviewer escalates on the design;
+# the user resumes at design-reviewing, so no new design version starts
+# and tests stay begun. Row 18 approves the design again and sends it to
+# implementation-writing only; row 26 holds the implementation, and the
+# test-design already written is reviewed again, not rewritten (user-ruled
+# 2026-09-16: "only restart if you have to"). PR #429's review found the path.
+scenario: resume at design-reviewing after tests began, the test-design re-reviewed
+steps:
+  - state: test-design-acceptance-by-agent
+    verdict: escalate-to-user
+    fields:
+      investigation_focus: design
+  - state: investigate-workflow
+    verdict: resume
+    fields:
+      destination: design-reviewing
+  - submit-to-PR-gate: accepted

@@ -654,12 +654,14 @@ class TheDesignApprovedAfterARedesignEntersImplementationWritingOnly(unittest.Te
     """Row 18 goes to implementation-writing only, and after a redesign the
     tests begin again by row 24 (user-ruled 2026-09-16, the walk
     design-tables-checker-findings-from-pr-409, item 2). Row 18 once also
-    entered test-design-writing when tests had begun in the design version;
-    that could never hold, since a redesign starts a new version, which
-    resets tests-begun, and the clause and its code were deleted. This pins
-    the order the walk's scenario showed: tests begun, a reviewer's
-    escalate-to-user with investigation-focus design, a resume to
-    design-writing, the new design approved, row 18, row 24."""
+    entered test-design-writing when tests had begun in the design version,
+    and the clause and its code were deleted. After a redesign it cannot
+    hold, since a redesign starts a new version, which resets tests-begun;
+    a resume naming design-reviewing keeps the version, and the next class
+    pins what row 18 does then. This pins the order the walk's scenario
+    showed: tests begun, a reviewer's escalate-to-user with
+    investigation-focus design, a resume to design-writing, the new design
+    approved, row 18, row 24."""
 
     def setUp(self):
         self.repository = fixture.ThrowawayRepository()
@@ -705,6 +707,63 @@ class TheDesignApprovedAfterARedesignEntersImplementationWritingOnly(unittest.Te
         self.assertEqual(run.test_work_stream_position, T.TEST_DESIGN_WRITING)
         self.assertEqual(run.writing_state_entry_reason[T.TEST_DESIGN_WRITING],
                          T.ENTRY_REASON_FIRST_WRITE)
+
+
+class TheDesignReapprovedWithoutARedesignReReviewsTheTestDesign(unittest.TestCase):
+    """A resume naming design-reviewing after tests began starts no new
+    design version, so tests-begun stays set when row 18 approves the
+    design again (PR #429's review found the path). Row 18 goes to
+    implementation-writing only; the test-work-stream keeps its position,
+    so the test-design already written is reviewed again, not rewritten,
+    and is rewritten only when its reviewer rejects it (user-ruled
+    2026-09-16: "only restart if you have to")."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def test_row_18_with_tests_begun_holds_the_implementation_and_re_reviews_the_test_design(self):
+        script = fixture.prefix_to_tests_begun() + [
+            fixture.test_design_write(),
+            (T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_ESCALATE_TO_USER,
+             {"investigation_focus": T.FOCUS_DESIGN}),                                  # row 69
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_REVIEWING}),  # row 72
+            (T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                             # row 16
+            (T.DESIGN_ACCEPTANCE_BY_USER, T.V_ADVANCE, {}),                              # row 18
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed],
+                         ["1", "2", "5", "16", "18", "21", "24", "32", "69", "72",
+                          "16", "18"])
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.design_version, 1)
+        self.assertTrue(run.tests_begun)
+        self.assertEqual(run.current_state, T.IMPLEMENTATION_WRITING)
+        self.assertEqual(run.test_work_stream_position, T.TEST_DESIGN_REVIEWING)
+
+        machine.launcher.script.extend([
+            fixture.implementation_write(),                                              # row 21
+            (T.IMPLEMENTATION_ACCEPTANCE_BY_AGENT, T.V_ADVANCE, {}),                     # row 26
+        ])
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-2:], ["21", "26"])
+        self.assertEqual(machine.machine_errors, [])
+        self.assertEqual(run.current_state, T.TEST_DESIGN_REVIEWING)
+        self.assertEqual(run.implementation_work_stream_position, T.READY_FOR_TEST_SUITE)
+        self.assertEqual(run.test_work_stream_position, T.TEST_DESIGN_REVIEWING)
+        launched = [package["state"] for package in machine.launcher.launched]
+        self.assertNotIn(T.TEST_DESIGN_WRITING, launched[launched.index(T.INVESTIGATE_WORKFLOW):])
+
+        machine.launcher.script.append(
+            (T.TEST_DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_TEST_DESIGN, {}))              # row 35
+        fixture.drive(machine, run)
+        self.assertEqual([row.row for row, _, _ in machine.routed][-1:], ["35"])
+        self.assertEqual(run.current_state, T.TEST_DESIGN_WRITING)
+        self.assertEqual(run.writing_state_entry_reason[T.TEST_DESIGN_WRITING],
+                         T.ENTRY_REASON_REJECT_FROM_REVIEW)
 
 
 class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):

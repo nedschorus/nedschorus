@@ -4,7 +4,8 @@
 the real machine and their traces say what the machine did — the happy
 path ends passed naming every state in the design's order; the walk's
 example scenario carries the counters and stands where row 62 sends it;
-the ceiling scenario pauses at the arbitrator's third entry; a step the
+the ceiling scenario pauses at the arbitrator's third entry; a resume at
+design-reviewing after tests began re-reviews the test-design; a step the
 machine refuses before the topic branch is cut ends the trace in the
 machine's words; a malformed scenario is refused with its line.
 
@@ -33,6 +34,8 @@ EXAMPLE_SCENARIO = SCENARIOS_DIR / (
     "implementation-rejected-twice-then-suite-fails-and-arbitrator-calls-flaky.yaml")
 CEILING_SCENARIO = SCENARIOS_DIR / (
     "implementation-rejected-at-its-ceiling-until-the-arbitrators-third-entry-pauses.yaml")
+RE_REVIEW_SCENARIO = SCENARIOS_DIR / (
+    "resume-at-design-reviewing-after-tests-began-re-reviews-the-test-design.yaml")
 
 
 def play_file(path):
@@ -148,6 +151,25 @@ class TheArbitratorsThirdEntryScenario(unittest.TestCase):
             [("implementation-writes", 3, 3)], [("arbitrator-rulings", 1, 2)],
             [("arbitrator-rulings", 2, 2)]])
         self.assertIn("(that writer anyway, fresh)", self.text)
+
+
+class TheResumeAtDesignReviewingScenario(unittest.TestCase):
+    """Tests begun, the user resumes at design-reviewing: row 18 approves
+    the design again, row 26 holds the implementation, and the
+    test-design is reviewed again, never rewritten (user-ruled 2026-09-16:
+    "only restart if you have to")."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.played = play_file(RE_REVIEW_SCENARIO)
+
+    def test_the_test_design_is_re_reviewed_and_the_run_ends_passed(self):
+        self.assertEqual([line.row for line in self.played.trace],
+                         ["1", "2", "5", "16", "18", "21", "24", "32", "69", "72",
+                          "16", "18", "21", "26", "16", "41", "42", "47", "56", "74"])
+        self.assertEqual(self.played.trace[13].to_state, T.TEST_DESIGN_REVIEWING)
+        self.assertEqual([line.from_state for line in self.played.trace].count(T.TEST_DESIGN_WRITING), 1)
+        self.assertEqual(self.played.ending, "ENDED passed")
 
 
 class AScenarioTheMachineCallsAMachineError(unittest.TestCase):
