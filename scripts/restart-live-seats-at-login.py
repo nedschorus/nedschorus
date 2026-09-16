@@ -529,7 +529,11 @@ def recovery_command_for_seat(seat: str, handoff_directory: Path,
 def seat_came_up(exit_code, report: str) -> bool:
     """Whether one recovery run brought its seat back. The recovery tool
     exits nonzero when any seat it was given failed — one seat, so this
-    seat — and marks each failed report; either says the seat is down."""
+    seat — and marks each failed report; either says the seat is down. A
+    seat the recovery tool found already running is reported ALREADY
+    RUNNING, which is not a failure (user-ruled 2026-09-16): it exits zero
+    and carries no marker, so it reads here as up, and is listed with the
+    seats that came up although nothing was launched for it."""
     return exit_code == 0 and not any(
         marker in report for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS)
 

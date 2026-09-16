@@ -14,9 +14,13 @@ with the refusals that make it safe to run at any time.
 What it does, per seat:
   1. Prove the seat is actually DEAD: no tmux session holding its name (the
      seat's own per-seat socket and the default socket both checked), no
-     live supervisor heartbeat, no process rooted in the seat directory.
-     Refuse otherwise — this tool recovers crashes; it never kills live
-     work, and unlike resupervise-seat.py it has no kill step at all.
+     live supervisor of it, no process rooted in the seat directory. A seat
+     found running — its tmux session alive, or a supervisor of it live — is
+     reported ALREADY RUNNING and left alone, which is not a failure
+     (user-ruled 2026-09-16). Every other doubt is REFUSED, and a refusal
+     counts as a seat not recovered. Either way this tool recovers crashes;
+     it never kills live work, and unlike resupervise-seat.py it has no kill
+     step at all.
   2. Defer when an unconsumed handoff IS waiting: relaunching plain is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
@@ -545,9 +549,15 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
                 projects_root: Path):
     """Decide what recovery this seat needs.
 
-    Returns (verdict, detail): refuse / defer-to-boot-ignition / resume
-    (detail is (session_id, transcript_path)) / ignite (detail is the
-    reason no resume is possible).
+    Returns (verdict, detail): seat-already-running / refuse /
+    defer-to-boot-ignition / resume (detail is (session_id,
+    transcript_path)) / ignite (detail is the reason no resume is possible).
+
+    seat-already-running is not a refusal (user-ruled 2026-09-16, on the
+    question PR #426's reviewer asked): a seat whose tmux session is alive,
+    or that a live supervisor holds, was not recovered because it did not
+    need to be, and --all lists every seat that ever ran, live ones
+    included. Everything else this function cannot prove safe stays refuse.
     """
     seat_directory = agents_root / name
     if not seat_directory.is_dir():
@@ -557,19 +567,21 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if alive is None:
         return "refuse", detail
     if alive:
-        return "refuse", f"{detail} — this tool recovers crashes, it never touches live seats"
+        return ("seat-already-running",
+                f"{detail} — this tool recovers crashes, it never touches live seats")
 
     # A supervisor lock held by a live supervisor means one is starting or
     # racing this assessment (PR #131 review, question 3): the launch this
     # script would start exits at once against that lock, and finding-1's fix
-    # would then report a failure — refusing earlier is clearer. This is the
-    # check that catches a supervisor which has claimed its lock but not yet
-    # written a state file, which supervisor_liveness cannot see.
+    # would then report a failure — reporting the seat as running here is
+    # clearer. This is the check that catches a supervisor which has claimed
+    # its lock but not yet written a state file, which supervisor_liveness
+    # cannot see.
     #
     # Held by a live SUPERVISOR OF THIS SEAT, not merely a live process
     # (nedschorus#242 change 1): this file outlives a reboot and process ids
-    # are reused across it, so a bare check refuses the very seat the login
-    # restart was asked to bring back.
+    # are reused across it, so a bare check would call the very seat the login
+    # restart was asked to bring back already running, and leave it down.
     lock_path = handoff_directory / f"{name}-supervisor.lock"
     if lock_path.is_file():
         try:
@@ -578,14 +590,19 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
             holder = None  # stale or unreadable lock: the launcher's own reclaim handles it
         if holder is not None:
             held, identity = supervisor.process_is_supervisor_for_agent(holder, name)
+            # Also where ps could not be run and a process with the lock's id
+            # exists: the predicate then assumes a supervisor and says so in
+            # the detail (nedschorus#346), so that assumption is reported as
+            # already running too.
             if held:
-                return "refuse", (f"the supervisor lock at {lock_path} is held by a live "
-                                  f"supervisor — {identity}")
+                return "seat-already-running", (
+                    f"the supervisor lock at {lock_path} is held by a live "
+                    f"supervisor — {identity}")
 
     state_path = handoff_directory / f"{name}-supervisor-state.json"
     supervisor_alive, liveness_detail = supervisor.supervisor_liveness(state_path)
     if supervisor_alive:
-        return "refuse", f"a supervisor is watching this seat ({liveness_detail})"
+        return "seat-already-running", f"a supervisor is watching this seat ({liveness_detail})"
 
     occupied, occupancy_detail = seat_directory_occupied(seat_directory)
     if occupied:
@@ -714,6 +731,9 @@ def came_up_or_failure_report(name: str, handoff_directory: Path,
 
 
 # Every report class that means the seat is NOT running once this tool is done.
+# ALREADY RUNNING is deliberately not one: that seat is running, and --all lists
+# every seat that ever ran, so counting it made one live seat fail a whole run
+# (user-ruled 2026-09-16, on the question PR #426's reviewer asked).
 # main counts these for its exit code, and the suite enumerates this same tuple,
 # so a failure report is covered the moment it is named here. It is one named
 # tuple rather than substrings spelled into main because that is exactly how
@@ -727,6 +747,9 @@ SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     "LAUNCH FAILED",
     "LAUNCHED BUT DID NOT COME UP",
 )
+# The report class for assess_seat's seat-already-running verdict. Named so the
+# suites can pin that it contains none of the markers above.
+SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
 
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
@@ -748,6 +771,11 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         return "; would open an iTerm window running: " + iterm_window_command_text(
             name, seat_directory, handoff_directory, extra_supervisor_arguments,
             first_prompt_file)
+
+    # Before any dry-run or launch branch: a dry run reports the same class,
+    # and nothing is launched for a seat that is already running.
+    if verdict == "seat-already-running":
+        return f"{name}: {SEAT_ALREADY_RUNNING_REPORT_MARKER} — {detail}"
 
     if verdict == "refuse":
         return f"{name}: REFUSED — {detail}"

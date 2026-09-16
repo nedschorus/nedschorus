@@ -6,9 +6,9 @@ handoff directory, and projects root — with tmux and lsof answered by
 monkeypatched functions, so no test touches a real seat, server, or
 process listing. The launch step is captured, never executed.
 
-The refusal cases are the script's whole safety story: it must never act
-on a live seat, a watched seat, an occupied directory, or an unprovable
-answer. The recovery cases prove the 2026-08-21 hand procedure is what
+The refusal and already-running cases are the script's whole safety story:
+it must never act on a live seat, a watched seat, an occupied directory, or
+an unprovable answer. The recovery cases prove the 2026-08-21 hand procedure is what
 actually runs: newest real transcript wins, empty successors are skipped,
 and the resume rides --resume-session-id to the supervisor.
 
@@ -312,13 +312,17 @@ def run_came_up_cases(root: Path):
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
 
-    # --- refusals -----------------------------------------------------------
+    # --- refusals, and seats already running ---------------------------------
+    # A seat found running is not refused (user-ruled 2026-09-16, on the
+    # question PR #426's reviewer asked): it is its own verdict, and is still
+    # never touched.
     workspace = Workspace(root / "w1")
     patch("tmux_session_alive_anywhere",
           lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
     verdict, detail = workspace.assess()
-    check("a live tmux session refuses (per-seat socket)",
-          verdict == "refuse" and "never touches live seats" in detail, (verdict, detail))
+    check("a live tmux session is already running, not refused (per-seat socket)",
+          verdict == "seat-already-running" and "never touches live seats" in detail,
+          (verdict, detail))
 
     patch("tmux_session_alive_anywhere", lambda name: (False, ""))
     state_path = workspace.handoffs / f"{workspace.name}-supervisor-state.json"
@@ -630,7 +634,8 @@ with tempfile.TemporaryDirectory() as temporary:
           verdict == "refuse" and "restart-counter" in detail
           and "delete it" in detail, (verdict, detail))
 
-    # Q3: a supervisor lock held by a live supervisor refuses.
+    # Q3: a supervisor lock held by a live supervisor stops the recovery: the
+    # seat is already running (user-ruled 2026-09-16; it was a refusal before).
     workspace = Workspace(root / "r8")
     all_dead()
     lock_path = workspace.handoffs / f"{workspace.name}-supervisor.lock"
@@ -643,8 +648,13 @@ with tempfile.TemporaryDirectory() as temporary:
     try:
         lock_path.write_text(f"{holder.pid}\n", encoding="utf-8")
         verdict, detail = workspace.assess()
-        check("Q3: a supervisor lock held by a live supervisor refuses",
-              verdict == "refuse" and "supervisor lock" in detail, (verdict, detail))
+        check("Q3: a supervisor lock held by a live supervisor is already running",
+              verdict == "seat-already-running" and "supervisor lock" in detail,
+              (verdict, detail))
+        report = workspace.recover()
+        check("Q3: and it is reported ALREADY RUNNING, not REFUSED",
+              report.startswith(f"{workspace.name}: ALREADY RUNNING — the supervisor lock")
+              and "REFUSED" not in report, report)
     finally:
         holder.kill()
         holder.wait()
@@ -699,16 +709,20 @@ with tempfile.TemporaryDirectory() as temporary:
         # this very interpreter, which is certainly not a supervisor. With ps
         # working, Q3 above proves such a lock does not block; without it the
         # predicate assumes a supervisor rather than risk a second one, and
-        # assess_seat refuses. The discriminating assertion is the assumption
-        # wording, not the refusal: a true-supervisor refusal (Q3) says
+        # assess_seat stops there. Since 2026-09-16 that stop is the
+        # seat-already-running verdict, as the held lock of Q3 is: assess_seat
+        # sees only the predicate's True, and telling the assumption apart would
+        # mean reading its detail text. The discriminating assertion is the
+        # assumption wording, not the verdict: a true-supervisor stop (Q3) says
         # "supervisor lock" too, and the predicate's promise is that this detail
         # SAYS it is an assumption rather than pretending to certainty.
         lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
         operator_line = io.StringIO()
         with redirect_stderr(operator_line):
             verdict, detail = workspace.assess()
-        check("#346: unknown ps, pid exists: refuses, and the detail says it is assumed",
-              verdict == "refuse" and "supervisor lock" in detail
+        check("#346: unknown ps, pid exists: stops as already running, and the detail "
+              "says it is assumed",
+              verdict == "seat-already-running" and "supervisor lock" in detail
               and "ps could not be run" in detail and "assumed present" in detail,
               (verdict, detail))
         check("#346: unknown ps, pid exists: the operator line on stderr names the seat",
@@ -1696,16 +1710,34 @@ with tempfile.TemporaryDirectory() as temporary:
     check("LOG: --dry-run logs nothing — it changes nothing, and it is the probe",
           exit_code == 0 and after_dry_run == log_text,
           after_dry_run)
+    # A refusal is a decision too. Before 2026-09-16 this case refused a live
+    # seat; a live seat is now ALREADY RUNNING (below), so the refusal here is
+    # one that still means something is wrong: tmux could not be asked.
     patch("tmux_session_alive_anywhere",
-          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+          lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+                              "checked — refusing rather than guessing"))
     exit_code = recovery.main(["seat-a",
                                "--agents-root", str(workspace.agents_root),
                                "--handoff-dir", str(workspace.handoffs),
                                "--projects-root", str(workspace.projects)])
     after_refusal = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
     check("LOG: a refusal is a decision too — logged, run exits 1",
-          exit_code == 1 and "REFUSED" in after_refusal,
-          after_refusal)
+          exit_code == 1 and after_refusal.startswith(log_text)
+          and "seat-a: REFUSED — tmux cannot be run here" in after_refusal[len(log_text):],
+          (exit_code, after_refusal))
+    patch("tmux_session_alive_anywhere",
+          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+    exit_code = recovery.main(["seat-a",
+                               "--agents-root", str(workspace.agents_root),
+                               "--handoff-dir", str(workspace.handoffs),
+                               "--projects-root", str(workspace.projects)])
+    after_already_running = (log_path.read_text(encoding="utf-8")
+                             if log_path.is_file() else "")
+    check("LOG: a seat already running is logged as ALREADY RUNNING, and the run exits 0",
+          exit_code == 0 and after_already_running.startswith(after_refusal)
+          and "seat-a: ALREADY RUNNING — tmux session 'seat-a' is alive"
+              in after_already_running[len(after_refusal):],
+          (exit_code, after_already_running))
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(
@@ -1801,6 +1833,20 @@ with tempfile.TemporaryDirectory() as temporary:
         patch("recover_seat",
               lambda *a, **k: f"{workspace.name}: relaunched plain — it came back")
         check("EXIT: and a seat that did come back exits zero", main_on(workspace) == 0)
+        # A seat already running is not a seat not recovered (user-ruled
+        # 2026-09-16, on the question PR #426's reviewer asked), so its class
+        # must not contain any declared marker, or main would count it.
+        check("EXIT: the ALREADY RUNNING class contains no not-recovered marker",
+              not any(marker in recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER
+                      or recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER in marker
+                      for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+              (recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER,
+               recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS))
+        patch("recover_seat", lambda *a, **k: (
+            f"{workspace.name}: {recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER} — "
+            "tmux session is alive"))
+        check("EXIT: and a seat reported ALREADY RUNNING exits zero",
+              main_on(workspace) == 0)
     finally:
         patch("recover_seat", real_recover_seat)
 
@@ -1817,12 +1863,119 @@ with tempfile.TemporaryDirectory() as temporary:
                       for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
               (exit_code, logged))
 
+    # Refused for a reason that still means something is wrong. This case used
+    # to refuse a live seat, which is ALREADY RUNNING since 2026-09-16 (cases
+    # below); a handoff whose restart-counter nobody can read is refused still.
     workspace = Workspace(root / "exit-refused", name="exit-refused-seat")
     all_dead()
     capture_launches(workspace)
-    patch("tmux_session_alive_anywhere",
-          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
     a_real_failure_path_does_not_exit_zero("a seat that was refused", workspace)
+
+    # Every refusal the 2026-09-16 ruling kept as a failure, through the real
+    # assess_seat and recover_seat: each is reported REFUSED, never ALREADY
+    # RUNNING, and makes the run exit 1.
+    def refused_for_no_seat_directory(workspace):
+        (workspace.agents_root / workspace.name).rmdir()
+
+    def refused_for_tmux_that_cannot_be_asked(workspace):
+        patch("tmux_session_alive_anywhere",
+              lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+                                  "checked — refusing rather than guessing"))
+
+    def refused_for_an_occupied_seat_directory(workspace):
+        patch("seat_directory_occupied",
+              lambda directory: (True, f"a live process is rooted in {directory}"))
+
+    def refused_for_an_unprovable_vacancy(workspace):
+        patch("seat_directory_occupied",
+              lambda directory: (True, "lsof is not installed, so the seat cannot be "
+                                       "proven vacant"))
+
+    def refused_for_an_unreadable_restart_counter(workspace):
+        (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+            "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
+
+    for refusal in (refused_for_no_seat_directory, refused_for_tmux_that_cannot_be_asked,
+                    refused_for_an_occupied_seat_directory, refused_for_an_unprovable_vacancy,
+                    refused_for_an_unreadable_restart_counter):
+        workspace = Workspace(root / f"exit-{refusal.__name__}", name="still-refused-seat")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+        refusal(workspace)
+        report = workspace.recover()
+        exit_code = main_on(workspace)
+        check(f"EXIT: {refusal.__name__.replace('_', ' ')} is REFUSED, counted, and exits 1",
+              report.startswith(f"{workspace.name}: REFUSED — ")
+              and recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER not in report
+              and exit_code == 1 and workspace.launches == [],
+              (report, exit_code, workspace.launches))
+
+    # The three ways a seat is found already running (user-ruled 2026-09-16):
+    # its tmux session is alive, its supervisor lock is held by a live
+    # supervisor of it, or a supervisor is watching it. Each is reported
+    # ALREADY RUNNING, keeps its own detail, launches nothing, is reported the
+    # same by a dry run, and leaves the exit code zero.
+    real_process_is_supervisor_for_agent = recovery.supervisor.process_is_supervisor_for_agent
+    real_supervisor_liveness = recovery.supervisor.supervisor_liveness
+
+    def already_running_in_tmux(workspace):
+        patch("tmux_session_alive_anywhere",
+              lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+        return (f"tmux session '{workspace.name}' is alive on socket '{workspace.name}' — "
+                "this tool recovers crashes, it never touches live seats")
+
+    def already_running_under_a_held_supervisor_lock(workspace):
+        (workspace.handoffs / f"{workspace.name}-supervisor.lock").write_text(
+            "4321\n", encoding="utf-8")
+        recovery.supervisor.process_is_supervisor_for_agent = (
+            lambda process_id, agent_name: (
+                True, f"process {process_id} is the supervisor of {agent_name}"))
+        return (f"the supervisor lock at {workspace.handoffs}/{workspace.name}-supervisor.lock "
+                f"is held by a live supervisor — process 4321 is the supervisor of "
+                f"{workspace.name}")
+
+    def already_running_under_a_watching_supervisor(workspace):
+        # No lock file, so the lock check cannot answer first: this is the only
+        # way to reach the watching-supervisor check on its own.
+        recovery.supervisor.supervisor_liveness = (
+            lambda state_path: (True, "supervisor alive — last heartbeat 3s ago"))
+        return "a supervisor is watching this seat (supervisor alive — last heartbeat 3s ago)"
+
+    for running in (already_running_in_tmux, already_running_under_a_held_supervisor_lock,
+                    already_running_under_a_watching_supervisor):
+        workspace = Workspace(root / f"exit-{running.__name__}", name="running-seat")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+        try:
+            detail = running(workspace)
+            verdict, _ = workspace.assess()
+            report = workspace.recover()
+            dry_run_report = workspace.recover(dry_run=True)
+            exit_code = main_on(workspace)
+        finally:
+            recovery.supervisor.process_is_supervisor_for_agent = (
+                real_process_is_supervisor_for_agent)
+            recovery.supervisor.supervisor_liveness = real_supervisor_liveness
+        log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+        logged = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+        case_name = running.__name__.replace("_", " ")
+        check(f"RUNNING: {case_name} is the seat-already-running verdict",
+              verdict == "seat-already-running", verdict)
+        check(f"RUNNING: {case_name} is reported ALREADY RUNNING with its own detail",
+              report == f"{workspace.name}: ALREADY RUNNING — {detail}", (report, detail))
+        check(f"RUNNING: {case_name} carries no not-recovered marker",
+              not any(marker in report
+                      for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS), report)
+        check(f"RUNNING: {case_name} reads the same under a dry run",
+              dry_run_report == report, (dry_run_report, report))
+        check(f"RUNNING: {case_name} launches nothing, is logged, and exits 0",
+              workspace.launches == [] and exit_code == 0
+              and f"{workspace.name}: ALREADY RUNNING — " in logged,
+              (workspace.launches, exit_code, logged))
 
     workspace = Workspace(root / "exit-launch-failed", name="exit-launch-failed-seat")
     all_dead()
@@ -1845,7 +1998,10 @@ with tempfile.TemporaryDirectory() as temporary:
     # fleet came back. Driven through the real recover_seat with a launch stub
     # that fails for the seats named, so a failure in the middle of the run is
     # also shown not to stop the seats after it from being tried and reported.
-    def main_on_seats(case_directory, names, failing):
+    # A seat named in running is found with its tmux session alive, so it is
+    # ALREADY RUNNING (user-ruled 2026-09-16); selection is what main is given
+    # in place of the names, so --all and --dry-run can be driven too.
+    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None):
         workspace = Workspace(case_directory, name=names[0])
         for name in names:
             (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
@@ -1853,6 +2009,9 @@ with tempfile.TemporaryDirectory() as temporary:
                 workspace.agents_root / name, workspace.projects),
                 f"resume-{name}", "real work", records=4)
         all_dead()
+        patch("tmux_session_alive_anywhere",
+              lambda name: ((True, f"tmux session '{name}' is alive on socket '{name}'")
+                            if name in running else (False, "")))
         capture_launches(workspace)
 
         def launch_failing_for_the_seats_named(name, seat_directory, handoff_directory,
@@ -1862,7 +2021,7 @@ with tempfile.TemporaryDirectory() as temporary:
         patch("launch_seat", launch_failing_for_the_seats_named)
         printed = io.StringIO()
         with redirect_stdout(printed):
-            exit_code = recovery.main([*names,
+            exit_code = recovery.main([*(names if selection is None else selection),
                                        "--agents-root", str(workspace.agents_root),
                                        "--handoff-dir", str(workspace.handoffs),
                                        "--projects-root", str(workspace.projects)])
@@ -1870,16 +2029,24 @@ with tempfile.TemporaryDirectory() as temporary:
         logged = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
         return exit_code, printed.getvalue(), logged, workspace.launches
 
-    def every_seat_reported(names, failing, printed, logged, launches):
+    def every_seat_reported(names, failing, printed, logged, launches, running=frozenset()):
         """One printed line and one log line per seat, in the order given, each
-        saying what became of that seat, and every seat's launch attempted."""
+        saying what became of that seat, and every seat's launch attempted —
+        except a seat already running, which is launched nothing and reported
+        ALREADY RUNNING, in a line carrying no not-recovered marker."""
         printed_lines = printed.splitlines()
         logged_lines = logged.splitlines()
         return (len(printed_lines) == len(names) and len(logged_lines) == len(names)
-                and [launch[0] for launch in launches] == list(names)
+                and [launch[0] for launch in launches]
+                    == [name for name in names if name not in running]
                 and all(line.startswith(f"recover-crashed-seats: {name}: ")
+                        and ("ALREADY RUNNING" in line) == (name in running)
                         and ("LAUNCH FAILED" in line) == (name in failing)
-                        and ("relaunched resuming" in line) == (name not in failing)
+                        and ("relaunched resuming" in line)
+                            == (name not in failing and name not in running)
+                        and (name not in running
+                             or not any(marker in line for marker
+                                        in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS))
                         and f" {name}: " in logged_line
                         for name, line, logged_line
                         in zip(names, printed_lines, logged_lines)))
@@ -1904,6 +2071,55 @@ with tempfile.TemporaryDirectory() as temporary:
         root / "exit-several-all-down", names, set(names))
     check("EXIT: several seats none recovered still exits 1",
           exit_code == 1 and every_seat_reported(names, set(names), printed, logged, launches),
+          (exit_code, printed, logged, launches))
+
+    # A seat already running is not a seat that failed (user-ruled 2026-09-16,
+    # on the question PR #426's reviewer asked): one running beside seats that
+    # came back exits zero, and one running beside a seat that genuinely failed
+    # still exits 1.
+    names = ("several-first-seat-up", "several-middle-seat-already-running",
+             "several-last-seat-up")
+    running = {"several-middle-seat-already-running"}
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-several-one-already-running", names, set(), running)
+    check("EXIT: several seats, one already running and the rest recovered, exits zero",
+          exit_code == 0, (exit_code, printed))
+    check("EXIT: and the running seat is reported ALREADY RUNNING, launched nothing",
+          every_seat_reported(names, set(), printed, logged, launches, running),
+          (printed, logged, launches))
+
+    names = ("several-first-seat-already-running", "several-middle-seat-down",
+             "several-last-seat-up")
+    running, failing = {"several-first-seat-already-running"}, {"several-middle-seat-down"}
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-several-already-running-and-down", names, failing, running)
+    check("EXIT: several seats, one already running and one genuinely failed, exits 1",
+          exit_code == 1
+          and every_seat_reported(names, failing, printed, logged, launches, running),
+          (exit_code, printed, logged, launches))
+
+    # The reviewer's own probe: --all lists every seat that ever ran, live ones
+    # included, so one live seat used to fail the whole run, dry run and all.
+    names = ("all-seat-already-running", "all-seat-crashed")
+    running = {"all-seat-already-running"}
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-all-one-already-running", names, set(), running, selection=["--all"])
+    check("EXIT: --all with one seat already running and the crashed seat recovered exits zero",
+          exit_code == 0
+          and every_seat_reported(names, set(), printed, logged, launches, running),
+          (exit_code, printed, logged, launches))
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-all-dry-run-one-already-running", names, set(), running,
+        selection=["--all", "--dry-run"])
+    check("EXIT: and so does --all --dry-run, reporting the running seat ALREADY RUNNING",
+          exit_code == 0 and launches == [] and logged == ""
+          and printed.splitlines() == [
+              "recover-crashed-seats: all-seat-already-running: ALREADY RUNNING — tmux "
+              "session 'all-seat-already-running' is alive on socket "
+              "'all-seat-already-running' — this tool recovers crashes, it never touches "
+              "live seats",
+              "recover-crashed-seats: all-seat-crashed: would resume session "
+              "resume-all-seat-crashed (0KB transcript) under a supervisor"],
           (exit_code, printed, logged, launches))
 
 
