@@ -34,7 +34,7 @@ All under `scripts/` unless named otherwise; the files they keep for the handoff
 
 - [nedschorus#242](https://github.com/nedschorus/nedschorus/issues/242) changes 2, 3 and 5, to `recover-crashed-seats.py` and, for 2 and 5, `handoff-supervisor.py`: record how the agent exited; a durable parking marker for an agent-seat the user set aside; a by-hand launch that resumes a crashed agent-seat. Changes 1, 4 and 6 are built.
 - [nedschorus#116](https://github.com/nedschorus/nedschorus/issues/116): surfacing a pending reboot when a launcher starts an agent-seat; handling an agent-seat `restart-live-seats-at-login.py` cannot bring back (waits on #242 change 3); the Mac's real login after a real reboot, unmeasured.
-- [nedschorus#350](https://github.com/nedschorus/nedschorus/issues/350): `recover-crashed-seats.py` never reads a session-handoff's `dont-restart` field when it relaunches an agent-seat whose session-handoff is waiting. [nedschorus#349](https://github.com/nedschorus/nedschorus/issues/349): a run over several agent-seats exits zero if any one of them came back.
+- [nedschorus#350](https://github.com/nedschorus/nedschorus/issues/350): `recover-crashed-seats.py` never reads a session-handoff's `dont-restart` field when it relaunches an agent-seat whose session-handoff is waiting.
 - [nedschorus#341](https://github.com/nedschorus/nedschorus/issues/341): whether the handoff-supervisor passes a permission mode at launch; an open decision.
 - [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45): the handoff-supervisor's adoption of a running agent-session (`--adopt-session-id`) is built, and no launcher or recovery script reaches it.
 
