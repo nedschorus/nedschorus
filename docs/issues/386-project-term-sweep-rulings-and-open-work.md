@@ -1,6 +1,6 @@
 ---
 status: rulings record and working material for nedschorus#386
-as-of: 2026-09-15
+as-of: 2026-09-16
 ---
 
 # The project-term sweep: what the user ruled, and the work it leaves
@@ -16,6 +16,14 @@ Landed in [PR #384](https://github.com/nedschorus/nedschorus/pull/384), merged 2
 Two rulings behind it, his words: "There's either stuff in the glossary or not", and, on how a new term arrives, "I think a walk is overkill for something as simple as this". A new term is proposed to him in one message, not walked.
 
 Earlier the same day he ruled the renames themselves ("rename.") and how they happen: "I think as we find problematic names we should fix them. And so we'll have to update the skill. However maybe I should approve these global name changes, just in case."
+
+### Changed on 2026-09-16
+
+The rule above is no longer in `CLAUDE.md`, and the rulings below were made under it. Read them against the rule as it now stands:
+
+- **The three sentences are gone.** [PR #422](https://github.com/nedschorus/nedschorus/pull/422), merged 2026-09-16 20:12Z, removed them. His words: "it's not true because we have not auditted the project and the project keeps changing", and "remove 3 trms". What `CLAUDE.md` keeps is one sentence in its glossary bullet: "If you need to coin a new term, a word with a meaning specific to this project, propose it to the user."
+- **A bare word no longer needs a hyphen.** The three term forms now live only in the glossary's preamble. [PR #428](https://github.com/nedschorus/nedschorus/pull/428), merged 21:06Z, dropped "never a bare generic word such as seat" there and added his test: "A word needs a defined term only where this project does something unexpected with it or gives it a meaning that would be hard to guess; otherwise it stays ordinary prose." His words behind it: "Just because a term means something to this project, doesn't mean it needs a defined term. It needs a defined term if this project is doing something unexpected or imputing a specific mean to a term that would be hard to guess."
+- **"runtime" becomes `agent-cli`.** At item 10 of the MD-skills seat's walk of the #413 design's cold read, he asked "how about agent-cli - is that better" and answered "y" to the scope put to him. The glossary gets the entry, the files that say "runtime" move to `agent-cli` through this sweep, and the provenance stamp field `runtime=` stays. That replaces "runtime stays a bare word" under "Terms the MD-skills seat proposes" below.
 
 ## The five rulings of the 2026-09-15 walk
 
