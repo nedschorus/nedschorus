@@ -15,12 +15,14 @@ What it does, per seat:
   1. Prove the seat is actually DEAD: no tmux session holding its name (the
      seat's own per-seat socket and the default socket both checked), no
      live supervisor of it, no process rooted in the seat directory. A seat
-     found running — its tmux session alive, or a supervisor of it live — is
-     reported ALREADY RUNNING and left alone, which is not a failure
-     (user-ruled 2026-09-16). Every other doubt is REFUSED, and a refusal
-     counts as a seat not recovered. Either way this tool recovers crashes;
-     it never kills live work, and unlike resupervise-seat.py it has no kill
-     step at all.
+     with a live supervisor of it CONFIRMED by ps is reported ALREADY RUNNING
+     and left alone, which is not a failure (user-ruled 2026-09-16). Every
+     other doubt is REFUSED — a tmux session alive with no confirmed
+     supervisor, and a supervisor only assumed because ps could not be run,
+     included — and a refusal counts as a seat not recovered. Either way this
+     tool recovers crashes; it never kills live work, never launches into a
+     live tmux session, and unlike resupervise-seat.py it has no kill step at
+     all.
   2. Defer when an unconsumed handoff IS waiting: relaunching plain is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
@@ -545,6 +547,58 @@ def open_seat_in_iterm_window(name: str, seat_directory: Path, handoff_directory
     return subprocess.run([str(opener), command_text], check=False).returncode
 
 
+# The three answers seat_supervisor_confirmed_by_ps gives. Only the first lets
+# assess_seat call a seat already running (user-ruled 2026-09-16).
+SUPERVISOR_CONFIRMED_BY_PS = "confirmed-by-ps"
+SUPERVISOR_ASSUMED_WITHOUT_PS = "assumed-without-ps"
+SUPERVISOR_NOT_CONFIRMED = "supervisor-not-confirmed"
+
+
+def seat_supervisor_confirmed_by_ps(name: str, lock_path: Path):
+    """(answer, identity): is the holder of this seat's supervisor lock a live
+    supervisor of this seat, CONFIRMED by ps?
+
+    SUPERVISOR_CONFIRMED_BY_PS: ps ran, and the holder runs the supervisor for
+    this seat. SUPERVISOR_ASSUMED_WITHOUT_PS: process_is_supervisor_for_agent
+    said yes only because ps could not be run and a process with the lock's
+    id exists. SUPERVISOR_NOT_CONFIRMED: anything else — no lock, an
+    unreadable one (the launcher's own reclaim handles a stale lock), or a
+    holder that is not this seat's supervisor. identity is the predicate's
+    sentence, or why there was no process to ask about.
+
+    The predicate is used unchanged, because its other callers act on its
+    assumption deliberately (see its docstring) and a second copy of its
+    identity rules would drift. What this adds is knowing whether ps answered
+    without reading the predicate's English: the reader handed to it records
+    that. supervisor.read_process_command_line is looked up when the reader
+    runs, not bound as a default argument, so a test that replaces the module
+    attribute reaches this function — unlike the predicate's own default
+    reader, which its docstring's NOTE warns about.
+    """
+    try:
+        holder = int(lock_path.read_text(encoding="utf-8").strip())
+    except FileNotFoundError:
+        return SUPERVISOR_NOT_CONFIRMED, f"no supervisor lock at {lock_path}"
+    except (ValueError, OSError) as error:
+        return SUPERVISOR_NOT_CONFIRMED, (
+            f"the supervisor lock at {lock_path} is unreadable: {error}")
+
+    ps_answered_each_time = []
+
+    def read_command_line_recording_whether_ps_answered(process_id):
+        command_line, ps_answered = supervisor.read_process_command_line(process_id)
+        ps_answered_each_time.append(ps_answered)
+        return command_line, ps_answered
+
+    held, identity = supervisor.process_is_supervisor_for_agent(
+        holder, name, read_command_line=read_command_line_recording_whether_ps_answered)
+    if not held:
+        return SUPERVISOR_NOT_CONFIRMED, identity
+    if ps_answered_each_time and all(ps_answered_each_time):
+        return SUPERVISOR_CONFIRMED_BY_PS, identity
+    return SUPERVISOR_ASSUMED_WITHOUT_PS, identity
+
+
 def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
                 projects_root: Path):
     """Decide what recovery this seat needs.
@@ -554,10 +608,14 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     transcript_path)) / ignite (detail is the reason no resume is possible).
 
     seat-already-running is not a refusal (user-ruled 2026-09-16, on the
-    question PR #426's reviewer asked): a seat whose tmux session is alive,
-    or that a live supervisor holds, was not recovered because it did not
-    need to be, and --all lists every seat that ever ran, live ones
-    included. Everything else this function cannot prove safe stays refuse.
+    question PR #426's reviewer asked): a seat a live supervisor of which is
+    confirmed was not recovered because it did not need to be, and --all
+    lists every seat that ever ran, live ones included. The supervisor must
+    be CONFIRMED by ps (user-ruled 2026-09-16, on PR #426's review of this
+    verdict): a tmux session alive with no confirmed supervisor, and a
+    supervisor only assumed because ps could not be run, are refuse — each
+    is a liveness question this tool could not answer, not a seat found
+    running. Everything else this function cannot prove safe stays refuse.
     """
     seat_directory = agents_root / name
     if not seat_directory.is_dir():
@@ -566,9 +624,6 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     alive, detail = tmux_session_alive_anywhere(name)
     if alive is None:
         return "refuse", detail
-    if alive:
-        return ("seat-already-running",
-                f"{detail} — this tool recovers crashes, it never touches live seats")
 
     # A supervisor lock held by a live supervisor means one is starting or
     # racing this assessment (PR #131 review, question 3): the launch this
@@ -582,27 +637,61 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     # (nedschorus#242 change 1): this file outlives a reboot and process ids
     # are reused across it, so a bare check would call the very seat the login
     # restart was asked to bring back already running, and leave it down.
+    #
+    # Asked here, before the tmux answer is acted on, because a live tmux
+    # session needs the same confirmation.
     lock_path = handoff_directory / f"{name}-supervisor.lock"
-    if lock_path.is_file():
-        try:
-            holder = int(lock_path.read_text(encoding="utf-8").strip())
-        except (ValueError, OSError):
-            holder = None  # stale or unreadable lock: the launcher's own reclaim handles it
-        if holder is not None:
-            held, identity = supervisor.process_is_supervisor_for_agent(holder, name)
-            # Also where ps could not be run and a process with the lock's id
-            # exists: the predicate then assumes a supervisor and says so in
-            # the detail (nedschorus#346), so that assumption is reported as
-            # already running too.
-            if held:
-                return "seat-already-running", (
-                    f"the supervisor lock at {lock_path} is held by a live "
-                    f"supervisor — {identity}")
+    supervisor_answer, identity = seat_supervisor_confirmed_by_ps(name, lock_path)
+
+    # A live tmux session is not proof that the seat is running: an attached
+    # launch leaves its pane open at a shell in the seat's directory after the
+    # supervisor exits (scripts/launch-claude-mac, AFTER_EXIT_COMMAND), so the
+    # session outlives the supervisor. Refused unless a live supervisor of this
+    # seat is confirmed (user-ruled 2026-09-16, PR #426 review 5228560398) —
+    # and either way nothing is launched into a live session.
+    if alive:
+        if supervisor_answer == SUPERVISOR_CONFIRMED_BY_PS:
+            return "seat-already-running", (
+                f"{detail}, and {identity} — this tool recovers crashes, it never "
+                "touches live seats")
+        return "refuse", (
+            f"{detail}, but no live supervisor of this seat is confirmed ({identity}) — "
+            "this tool never touches a live tmux session. If the seat's supervisor has "
+            "exited, that session is the shell an attached launch leaves open: exit it, "
+            "then rerun this recovery")
+
+    if supervisor_answer == SUPERVISOR_CONFIRMED_BY_PS:
+        return "seat-already-running", (
+            f"the supervisor lock at {lock_path} is held by a live supervisor — {identity}")
+    # ps could not be run and a process with the lock's id exists: the
+    # predicate assumes a supervisor rather than risk a second one
+    # (nedschorus#346), and this tool launches nothing on that assumption. But
+    # it is an assumption, not a seat found running, so it is refused and
+    # counts as not recovered (user-ruled 2026-09-16, PR #426 review
+    # 5228492424): an unattended caller must not be told the seat is up.
+    if supervisor_answer == SUPERVISOR_ASSUMED_WITHOUT_PS:
+        return "refuse", (
+            f"the supervisor lock at {lock_path} names a live process, but ps could not "
+            f"confirm it is a supervisor of this seat — {identity}")
 
     state_path = handoff_directory / f"{name}-supervisor-state.json"
     supervisor_alive, liveness_detail = supervisor.supervisor_liveness(state_path)
     if supervisor_alive:
-        return "seat-already-running", f"a supervisor is watching this seat ({liveness_detail})"
+        # supervisor_liveness reads the same lock through the same predicate,
+        # so it says yes on its own only when a supervisor claimed the lock
+        # after the check above — and it says yes by the same assumption when
+        # ps cannot be run, which it does not report apart. So the lock is
+        # asked again, and only a confirmed supervisor is already running.
+        watching_answer, watching_identity = seat_supervisor_confirmed_by_ps(name, lock_path)
+        if watching_answer == SUPERVISOR_CONFIRMED_BY_PS:
+            return ("seat-already-running",
+                    f"a supervisor is watching this seat ({liveness_detail})")
+        why_unconfirmed = ("ps could not confirm it"
+                           if watching_answer == SUPERVISOR_ASSUMED_WITHOUT_PS
+                           else "it could not be confirmed when asked again")
+        return "refuse", (
+            f"a supervisor may be watching this seat ({liveness_detail}), but "
+            f"{why_unconfirmed} — {watching_identity}")
 
     occupied, occupancy_detail = seat_directory_occupied(seat_directory)
     if occupied:

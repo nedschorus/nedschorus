@@ -756,13 +756,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a nonzero exit is a seat that did not, whatever the report says",
           restart.seat_came_up(1, "recover-crashed-seats: s: relaunched fresh") is False)
     # A seat already running when this program hands it over is not down
-    # (user-ruled 2026-09-16): the recovery tool reports it ALREADY RUNNING and
-    # exits zero, so it reads as up.
+    # (user-ruled 2026-09-16): the recovery tool reports it ALREADY RUNNING —
+    # only with a live supervisor of it confirmed by ps — and exits zero, so it
+    # reads as up.
     check("a report that the seat was already running, with exit 0, is a seat that is up",
           restart.seat_came_up(
               0, f"recover-crashed-seats: s: "
                  f"{restart.recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER} — tmux session "
-                 "'s' is alive on socket 's'") is True)
+                 "'s' is alive on socket 's', and process 4321 is the supervisor of s — "
+                 "this tool recovers crashes, it never touches live seats") is True)
 
     # A seat that did not come back: reported as such, left out of the run
     # log's launched list while its verdict stays restart, and the run exits
