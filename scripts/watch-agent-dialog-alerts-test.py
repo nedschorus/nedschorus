@@ -24,7 +24,13 @@ What these cases are defending, in the order the defects actually happened
     crashed with 3 as rc=0, and one that exited 9 as rc=1. Cases here run
     exactly those two statuses;
   - a stream that cannot hold the bar is announced once, not once per
-    attempt, and the return to coverage is announced when it happens.
+    attempt, and the return to coverage is announced when it happens;
+  - the child does not inherit this program's stdin (the #398 reviewer
+    measured `ssh -tt` putting an inherited interactive terminal into raw
+    mode), a SIGTERM is announced with exit 143 rather than silent (it was
+    measured silent, exit -15), and terminal escape sequences are stripped
+    before a line is filtered or quoted (the pty colourised a remote
+    traceback, and the escapes reached the quoted snippet).
 
 Synchronization without sleeps: the fake stream appends a timestamp per
 attempt, so a case can wait for the Nth attempt rather than guessing a
@@ -67,6 +73,10 @@ with attempts.open("a", encoding="utf-8") as handle:
 attempt_number = len(attempts.read_text(encoding="utf-8").splitlines())
 plan = json.loads((control / "plan.json").read_text(encoding="utf-8"))
 step = plan[min(attempt_number - 1, len(plan) - 1)]
+if step.get("probe_stdin"):
+    # What stdin held, or EOF at once: the wrapper must have given /dev/null.
+    (control / "stdin-probe.txt").write_text(
+        "read:" + repr(sys.stdin.read()), encoding="utf-8")
 for line in step.get("stdout", []):
     print(line, flush=True)
 for line in step.get("stderr", []):
@@ -272,6 +282,46 @@ def run_unit_cases():
     run_announcer_cases()
 
 
+def run_escape_and_termination_unit_cases():
+    strip = watcher_module.strip_terminal_escape_sequences
+    coloured = ("\x1b[0;31mValueError\x1b[0m: \x1b[1mthe seats list "
+                "was empty\x1b[0m")
+    check("terminal colour escapes are stripped from a line",
+          strip(coloured) == "ValueError: the seats list was empty",
+          repr(strip(coloured)))
+    check("a line without escapes is returned unchanged",
+          strip("bridge CMD: git push --force main")
+          == "bridge CMD: git push --force main")
+    check("a cursor-movement escape (non-colour CSI) is stripped too",
+          strip("\x1b[2K\x1b[1Gseat died") == "seat died",
+          repr(strip("\x1b[2K\x1b[1Gseat died")))
+    check("the SIGTERM exit status is 143, the shell's 128 + 15",
+          watcher_module.SIGTERM_EXIT_CODE == 143,
+          str(watcher_module.SIGTERM_EXIT_CODE))
+    check("the SIGTERM handler raises rather than announcing (announcing "
+          "would take a lock the interrupted code may hold)",
+          _raises_watcher_terminated(),
+          "handler did not raise WatcherTerminated")
+    emitted = []
+    announcer = watcher_module.StreamCoverageAnnouncer(
+        "mac", watcher_module.TARGET_MAC, 300.0, 60.0,
+        emit_line=emitted.append)
+    announcer.terminated()
+    check("a termination is announced as NOT WATCHING, naming SIGTERM",
+          len(emitted) == 1 and emitted[0].startswith("WATCH mac: NOT WATCHING")
+          and "terminated (SIGTERM)" in emitted[0], "\n".join(emitted))
+
+
+def _raises_watcher_terminated():
+    try:
+        watcher_module.raise_watcher_terminated(signal.SIGTERM, None)
+    except watcher_module.WatcherTerminated:
+        return True
+    except BaseException:
+        return False
+    return False
+
+
 def new_announcer(hold_seconds=300.0):
     """An announcer printing into a list instead of stdout."""
     lines = []
@@ -443,13 +493,20 @@ def remote_environment(control_directory, fake_bin_directory):
 class WatcherProcess:
     """The wrapper as a subprocess, both its streams drained by threads."""
 
-    def __init__(self, *flags, environment=None):
+    def __init__(self, *flags, environment=None, stdin_text=None):
         self.lines = []
         self.error_lines = []
+        # stdin_text gives the wrapper a real, readable stdin with content
+        # in it; the stdin case needs that, because a wrapper inheriting a
+        # runner's /dev/null would pass the case with or without the fix.
         self.process = subprocess.Popen(
             [sys.executable, "-u", str(WATCH_SCRIPT), *flags],
+            stdin=(subprocess.PIPE if stdin_text is not None else None),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", env=environment)
+        if stdin_text is not None:
+            self.process.stdin.write(stdin_text)
+            self.process.stdin.close()
         self._threads = [
             threading.Thread(target=self._drain, args=(self.process.stdout,
                                                        self.lines), daemon=True),
@@ -477,7 +534,13 @@ class WatcherProcess:
         return sum(1 for line in self.lines if fragment in line)
 
     def interrupt_and_wait(self, timeout=15.0):
-        self.process.send_signal(signal.SIGINT)
+        return self.signal_and_wait(signal.SIGINT, timeout)
+
+    def terminate_and_wait(self, timeout=15.0):
+        return self.signal_and_wait(signal.SIGTERM, timeout)
+
+    def signal_and_wait(self, signal_number, timeout=15.0):
+        self.process.send_signal(signal_number)
         try:
             returncode = self.process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -500,11 +563,21 @@ class WatcherProcess:
         return list(self.lines)
 
 
-def watcher_against(stream, *flags, environment=None):
+def watcher_against(stream, *flags, environment=None, stdin_text=None):
     return WatcherProcess("--target", "mac",
                           "--local-dialog-script-path", str(stream.path),
                           *flags,
-                          environment=environment or stream.environment())
+                          environment=environment or stream.environment(),
+                          stdin_text=stdin_text)
+
+
+def wait_until_gone(marker, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not process_is_running(marker):
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def process_is_running(marker):
@@ -747,9 +820,97 @@ def run_subprocess_cases():
         check("an interrupt takes the dialog stream with it",
               child_gone, f"{stream.marker} still running")
 
+        # --------------------------------------------------------------
+        # A SIGTERM — what Monitor's expiry sends, every thirty minutes —
+        # is announced and exits 143. Measured before the handler: silent,
+        # exit -15.
+        # --------------------------------------------------------------
+        stream = FakeDialogStream(scratch / "terminate", [
+            {"stdout": ["assess AGENT: holding steady"], "hold_seconds": 120,
+             "exit_code": 0}])
+        watcher = watcher_against(stream, "--hold-seconds", "60",
+                                  "--retry-seconds", "30")
+        started = watcher.wait_for("WATCH mac: started")
+        stream.wait_for_attempts(1)
+        returncode = watcher.terminate_and_wait()
+        child_gone = wait_until_gone(stream.marker)
+        check("a SIGTERM announces that nothing is being watched now, "
+              "naming the signal",
+              started and any("NOT WATCHING" in line
+                              and "terminated (SIGTERM)" in line
+                              for line in watcher.lines),
+              "\n".join(watcher.lines))
+        check("a SIGTERM exits 143, not -15", returncode == 143,
+              f"rc={returncode}")
+        check("a SIGTERM takes the dialog stream with it",
+              child_gone, f"{stream.marker} still running")
+
+        # A SIGTERM during the retry sleep, when there is no child at all,
+        # is announced the same way.
+        stream = FakeDialogStream(scratch / "terminate-in-retry",
+                                  [{"exit_code": 1}])
+        watcher = watcher_against(stream, "--hold-seconds", "30",
+                                  "--retry-seconds", "120")
+        broken = watcher.wait_for("keeps ending after only")
+        returncode = watcher.terminate_and_wait()
+        check("a SIGTERM during the retry sleep is announced and exits 143",
+              broken and returncode == 143
+              and any("terminated (SIGTERM)" in line for line in watcher.lines),
+              f"rc={returncode}\n" + "\n".join(watcher.lines))
+
+        # --------------------------------------------------------------
+        # The child does not inherit stdin. The wrapper is given a real
+        # stdin with content; the fake stream reads its own stdin and
+        # records what it got, which must be EOF at once.
+        # --------------------------------------------------------------
+        stream = FakeDialogStream(scratch / "stdin", [
+            {"probe_stdin": True, "exit_code": 0}])
+        watcher = watcher_against(stream, "--hold-seconds", "60",
+                                  "--retry-seconds", "30",
+                                  stdin_text="MUST-NOT-REACH-THE-CHILD\n")
+        watcher.wait_for("watch-agent-dialogs.py rc=0")
+        watcher.stop()
+        probe_path = stream.directory / "stdin-probe.txt"
+        probe = (probe_path.read_text(encoding="utf-8")
+                 if probe_path.is_file() else "<no probe written>")
+        check("the dialog stream does not inherit the wrapper's stdin "
+              "(it reads EOF at once, not what the wrapper was given)",
+              probe == "read:''", probe)
+
+        # --------------------------------------------------------------
+        # Terminal escapes are stripped before the filter and the snippet.
+        # A coloured exception line is quoted clean, and a phrase the
+        # filter matches on still matches with an escape splitting it.
+        # --------------------------------------------------------------
+        stream = FakeDialogStream(scratch / "escapes", [{
+            "stdout": ["bridge AGENT: the seat \u001b[31mdied\u001b[0m "
+                       "in its sleep"],
+            "stderr": ["Traceback (most recent call last):",
+                       "\u001b[0;31mValueError\u001b[0m: \u001b[1mthe "
+                       "coloured seats list was empty\u001b[0m"],
+            "exit_code": 3,
+        }])
+        watcher = watcher_against(stream, "--hold-seconds", "60",
+                                  "--retry-seconds", "30")
+        split_alert = watcher.wait_for(
+            "ALERT mac: bridge AGENT: the seat died in its sleep")
+        ended = watcher.wait_for("NOT WATCHING")
+        lines = watcher.stop()
+        check("an alert phrase split by a colour escape still matches, and "
+              "is passed through clean",
+              split_alert, "\n".join(lines))
+        check("a coloured exception line is quoted without its escapes",
+              ended and any("last output: ValueError: the coloured seats "
+                            "list was empty" in line
+                            for line in lines if "NOT WATCHING" in line),
+              "\n".join(lines))
+        check("no escape byte reaches any output line",
+              not any("\x1b" in line for line in lines), "\n".join(lines))
+
 
 if __name__ == "__main__":
     run_unit_cases()
+    run_escape_and_termination_unit_cases()
     run_subprocess_cases()
     print()
     if failures:
