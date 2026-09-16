@@ -86,7 +86,7 @@ A **cold read** is the fleet's fresh-reader review, `.claude/skills/cold-read/SK
 
 The test suite ends `pass`, `fail`, or `could-not-run` (§6.4); the words were the seat's `green` and `red` until the user asked for labels that make sense (2026-09-07, the sixth walk, item 8).
 
-**Work-streams.** After the design is approved the run has two: the **implementation-work-stream**, `implementation-writing` and `implementation-reviewing`, and the **test-work-stream**, `test-design-writing`, `test-design-reviewing`, `test-writing` and `test-reviewing`. They meet at `test-suite-executing`.
+**Work-streams.** After the design is approved the run has two: the **implementation-work-stream**, `implementation-writing` and `implementation-reviewing`, and the **test-work-stream**, `test-design-writing`, `test-design-reviewing`, `test-writing` and `test-reviewing`. They are orthogonal regions in the UML sense — two machines running side by side inside one — and `test-suite-executing` is their join; the "hold at `ready-for-test-suite`" rows of §3.2 are the waiting side of that join.
 
 **Skills and agent-instructions.** A skill is agent-instructions a person invokes. This workflow has five of its own: `initiate-design-to-main`, `investigate-workflow`, `design-review`, `test-design-review`, `contract-review`; it also uses the fleet's cold-read skill. The instructions every other state launches its agent with are that state's agent-instructions, not skills (user-ruled 2026-09-06). All of them are the MD-skills seat's to write.
 
@@ -125,88 +125,88 @@ Every state is named by the document or code it works on and the work it does on
 
 ### 3.2 The transitions
 
-This table is normative. The Trigger column names the state-exit verdict and any guard on it. The machine holds the table, derives the destination from the row, checks that the destination the state-exit names is that row's, and treats any other as a machine error: the run pauses in `investigate-workflow`, investigation-focus `unknown`, the illegal state-exit in the arbitrator's report. A state-exit whose state-package commit is not the branch's current commit is discarded as stale, and the state is re-run.
+This table is normative. The Trigger column names the state-exit verdict and any guard on it. The machine holds the table, derives the destination from the row, checks that the destination the state-exit names is that row's, and treats any other as a machine error: the run pauses in `investigate-workflow`, investigation-focus `unknown`, the illegal state-exit in the arbitrator's report. A state-exit whose state-package commit is not the branch's current commit is discarded as stale, and the state is re-run. The Row column is an identifier, not a position: a new row takes the next unused number and sits where it reads best, and no row is ever renumbered, so a row cited by number in the code or its tests names the same row for good.
 
-| From | Trigger | To | Counter (§7) |
-| --- | --- | --- | --- |
-| `initiate-design-to-main` | `invoked` | `design-writing`, after the machine has cut the topic branch (§9) | — |
-| `design-writing` | `emitted` | `contract-reviewing`, program check only | redesigns are counted on entry, not here |
-| `contract-reviewing` | `reject contract` from the program check, first time | `contract-revising` | — (not counted; a structural failure) |
-| `contract-reviewing` | `reject contract` from the program check, second consecutive time | `investigate-workflow`, investigation-focus `contract` — the contract-revising agent cannot satisfy the script, which is the machine's to look at | — |
-| `contract-reviewing` | `advance` from the program check, the design not yet approved | `design-reviewing` | — |
-| `contract-reviewing` | `advance` from the program check, on a contract-revision | `contract-acceptance-by-agent` | — |
-| `contract-reviewing` | `reject contract` from `contract-acceptance-by-agent`, the revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `contract-reviewing` | `reject contract` from `contract-acceptance-by-agent`, the counter at its ceiling | `contract-acceptance-by-user`, a dialog with the initiator or an arbitrator (§6.6) | — |
-| `contract-reviewing` | `advance` from `contract-acceptance-by-agent` or `-by-user`, on a contract-revision | both work-streams re-enter their writing states (the revised-contract invalidation rule below) | — |
-| `contract-reviewing` | `discuss` from `contract-acceptance-by-user` | `contract-revising`, with the user's ruling | — (the user's own time) |
-| `contract-reviewing` | `redesign` from `contract-acceptance-by-user` | `investigate-workflow`, investigation-focus `contract`, then `design-writing` as a redesign | redesigns, on entry to `design-writing` |
-| `design-reviewing` | `reject design` from `design-acceptance-by-agent`, the design-revisions counter below its ceiling | `design-writing`, the same initiator, with the notes; it revises alone | design-revisions |
-| `design-reviewing` | `reject design` from `design-acceptance-by-agent`, the counter at its ceiling | `design-writing`, the same initiator, which brings the user into the conversation with all the notes | — |
-| `design-reviewing` | `reject contract` from `design-acceptance-by-agent`, the design-revisions counter below its ceiling | `design-writing`, the same initiator, which fixes the component-contract in the conversation; then the program check and back to `design-reviewing` | design-revisions |
-| `design-reviewing` | `reject contract` from `design-acceptance-by-agent`, the counter at its ceiling | `design-writing`, the same initiator, which brings the user into the conversation with all the notes | — |
-| any reviewing state but `contract-reviewing`, whose program check's `advance` has its own rows above | `advance` from an acceptance-check that is not the state's last | the state's next acceptance-check, in the order §3.1 lists | — |
-| `design-reviewing` | `discuss` from `design-acceptance-by-user` | `design-writing` | — (the user's own time) |
-| `design-reviewing` | `advance` | `implementation-writing`; and, if tests have begun in this design version, `test-design-writing` | — |
-| `contract-revising` | `emitted` | `contract-reviewing` | — (counted on entry) |
-| `contract-revising` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
-| `implementation-writing` | `emitted` | `implementation-reviewing` | implementation-writes, only when the state was entered by a `reject implementation` from review, by the user's `discuss`, or as the first write; a write forced by an upstream change or ordered by the arbitrator charges nothing here (§7, the three buckets) |
-| `implementation-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `implementation-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
-| `implementation-reviewing` | `advance`, tests not yet begun | `test-design-writing` | — |
-| `implementation-reviewing` | `advance`, tests begun and the test-work-stream at `ready-for-test-suite` | `test-suite-executing` | — |
-| `implementation-reviewing` | `advance`, tests begun and the test-work-stream not yet there | this work-stream holds at `ready-for-test-suite` | — |
-| `implementation-reviewing` | `reject implementation`, the implementation-writes counter below its ceiling | `implementation-writing` | — |
-| `implementation-reviewing` | `reject implementation`, the counter at or above its ceiling | `test-suite-arbitrating`, which rules (§7) | arbitrator-rulings, on entry |
-| `implementation-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `implementation-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
-| `implementation-reviewing` | `discuss` from `implementation-acceptance-by-user` | `implementation-writing` | — (the user's own time; the write it forces is counted like any other) |
-| `test-design-writing` | `emitted` | `test-design-reviewing` | — |
-| `test-design-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `test-design-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
-| `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent`, before the test-design's approval | `test-design-writing`, with the notes | — (a re-write before approval) |
-| `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent` after its approval, the corrections counter below its ceiling | `test-design-writing`, with the notes | test-design-corrections (§7; user-ruled 2026-09-14, the tenth walk, item 7) |
-| `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent` after its approval, the counter at its ceiling | `test-design-acceptance-by-user` | — |
-| `test-design-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `test-design-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
-| `test-design-reviewing` | `discuss` from `test-design-acceptance-by-user` | `test-design-writing` | — |
-| `test-design-reviewing` | `advance` | `test-writing` | — |
-| `test-writing` | `emitted` | `test-reviewing` | test-writes, on the same rule |
-| `test-writing` | `input-quick-check-failed` against the test-design, the corrections counter below its ceiling | `test-design-writing` | test-design-corrections |
-| `test-writing` | `input-quick-check-failed` against the test-design, the counter at its ceiling | `test-design-acceptance-by-user` | — |
-| `test-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `test-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
-| `test-reviewing` | `advance`, the implementation-work-stream at `ready-for-test-suite` | `test-suite-executing` | — |
-| `test-reviewing` | `advance`, the implementation-work-stream not yet there | this work-stream holds at `ready-for-test-suite` | — |
-| `test-reviewing` | `reject tests`, the test-writes counter below its ceiling | `test-writing` | — |
-| `test-reviewing` | `reject tests`, the counter at or above its ceiling | `test-suite-arbitrating`, which rules (§7) | arbitrator-rulings, on entry |
-| `test-reviewing` | `reject test-design`, the corrections counter below its ceiling | `test-design-writing` | test-design-corrections |
-| `test-reviewing` | `reject test-design`, the counter at its ceiling | `test-design-acceptance-by-user` | — |
-| `test-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| `test-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
-| `test-reviewing` | `discuss` from `test-acceptance-by-user` | `test-writing` | — (the user's own time) |
-| `test-suite-executing` | `pass` | `submit-to-PR-gate` | — |
-| `test-suite-executing` | `fail` | `test-suite-arbitrating` | — |
-| `test-suite-executing` | `could-not-run`, the first of consecutive entries | `test-suite-executing` (retry) | — |
-| `test-suite-executing` | `could-not-run`, the second consecutive | `test-suite-arbitrating` | — |
-| `test-suite-arbitrating` | `advance`, entered from a reviewer's ceiling (the reviewer was wrong, §6.5) | wherever that reviewing state's own `advance` goes: the artifact continues as if the reviewer had advanced it | — |
-| `test-suite-arbitrating` | `reject implementation`, the writer's counter below its ceiling | `implementation-writing` | arbitrator-rulings, charged on entry to `test-suite-arbitrating`, as every row of this state |
-| `test-suite-arbitrating` | `reject tests` or `flaky-test`, the writer's counter below its ceiling | `test-writing` | — |
-| `test-suite-arbitrating` | `reject implementation`, `reject tests` or `flaky-test` whose writer's counter is at or above its ceiling | that writer anyway, fresh: the writer's counter stops deciding and is not reset; the write is bounded by arbitrator-rulings, and past that by the user's resume (§7) | — |
-| `test-suite-arbitrating` | `reject implementation and tests`, one verdict, both artifacts contradicting the component-contract | both writers (§1), the implementation-work-stream first; each write bounded as above | — |
-| `test-suite-arbitrating` | entered for the third time in the design version: applied on entry, no arbitrator launched here | `investigate-workflow`, investigation-focus `unknown`; the arbitrator rules there, and the ruling it would have made rides in its report and on its `resume` state-exit (§6.6) | — |
-| `test-suite-arbitrating` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
-| any state above | a reject of, or a failed check against, the component-contract with the contract-revisions counter at its ceiling | `contract-acceptance-by-user` (§5.3, §6.6) | — |
-| `test-suite-arbitrating` | `escalate-to-user`, no investigation-focus named | `investigate-workflow`, investigation-focus `unknown` | — |
-| a reviewing sub-state by agent, `contract-revising`, `test-design-writing` or `test-suite-arbitrating` | `escalate-to-user` | `investigate-workflow`, investigation-focus `design` or `test-design` as the agent names it | — |
-| `investigate-workflow` | `stop` | `ended`, outcome `stopped-by-user` | — |
-| `investigate-workflow` | `submit-to-PR-gate` | `submit-to-PR-gate` (the user's override; the gate still reviews) | — |
-| `investigate-workflow` | `resume`, the redesigns counter below its ceiling or the destination not `design-writing` | the earliest state downstream of what the user changed, by the machine's diff of the branch (§6.6); or the destination the user names; or, nothing changed and no destination, the state that was paused, or the held ruling applied (§6.6) | redesigns, if the destination is `design-writing`; the six per-version counters start from zero on every resume (§7) |
-| `investigate-workflow` | `resume` to `design-writing`, the redesigns counter at its ceiling | `ended`, outcome `failed`; the user is told in the investigation before it closes | — |
-| `submit-to-PR-gate` | `accepted` | `ended`, outcome `passed` | — |
-| `submit-to-PR-gate` | `gate-rejection` | `investigate-workflow`, investigation-focus `unknown`, the gate's findings in the report | — |
-| `submit-to-PR-gate` | `gatekeeper-refusal`, an infrastructure refusal, fewer than five attempts | `submit-to-PR-gate` (retry, backed off) | — |
-| `submit-to-PR-gate` | `gatekeeper-refusal`, an infrastructure refusal, the fifth attempt; or an integration or scope refusal | `investigate-workflow`, investigation-focus `unknown` | — |
-| `submit-to-PR-gate` | `gatekeeper-refusal`, a form refusal | `investigate-workflow`, investigation-focus `unknown` — a machine error, the submit state built a bad request | — |
+| Row | From | Trigger | To | Counter (§7) |
+| --- | --- | --- | --- | --- |
+| 1 | `initiate-design-to-main` | `invoked` | `design-writing`, after the machine has cut the topic branch (§9) | — |
+| 2 | `design-writing` | `emitted` | `contract-reviewing`, program check only | redesigns are counted on entry, not here |
+| 3 | `contract-reviewing` | `reject contract` from the program check, first time | `contract-revising` | — (not counted; a structural failure) |
+| 4 | `contract-reviewing` | `reject contract` from the program check, second consecutive time | `investigate-workflow`, investigation-focus `contract` — the contract-revising agent cannot satisfy the script, which is the machine's to look at | — |
+| 5 | `contract-reviewing` | `advance` from the program check, the design not yet approved | `design-reviewing` | — |
+| 6 | `contract-reviewing` | `advance` from the program check, on a contract-revision | `contract-acceptance-by-agent` | — |
+| 7 | `contract-reviewing` | `reject contract` from `contract-acceptance-by-agent`, the revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 8 | `contract-reviewing` | `reject contract` from `contract-acceptance-by-agent`, the counter at its ceiling | `contract-acceptance-by-user`, a dialog with the initiator or an arbitrator (§6.6) | — |
+| 9 | `contract-reviewing` | `advance` from `contract-acceptance-by-agent` or `-by-user`, on a contract-revision | both work-streams re-enter their writing states (the revised-contract invalidation rule below) | — |
+| 10 | `contract-reviewing` | `discuss` from `contract-acceptance-by-user` | `contract-revising`, with the user's ruling | — (the user's own time) |
+| 11 | `contract-reviewing` | `redesign` from `contract-acceptance-by-user` | `investigate-workflow`, investigation-focus `contract`, then `design-writing` as a redesign | redesigns, on entry to `design-writing` |
+| 12 | `design-reviewing` | `reject design` from `design-acceptance-by-agent`, the design-revisions counter below its ceiling | `design-writing`, the same initiator, with the notes; it revises alone | design-revisions |
+| 13 | `design-reviewing` | `reject design` from `design-acceptance-by-agent`, the counter at its ceiling | `design-writing`, the same initiator, which brings the user into the conversation with all the notes | — |
+| 14 | `design-reviewing` | `reject contract` from `design-acceptance-by-agent`, the design-revisions counter below its ceiling | `design-writing`, the same initiator, which fixes the component-contract in the conversation; then the program check and back to `design-reviewing` | design-revisions |
+| 15 | `design-reviewing` | `reject contract` from `design-acceptance-by-agent`, the counter at its ceiling | `design-writing`, the same initiator, which brings the user into the conversation with all the notes | — |
+| 16 | any reviewing state but `contract-reviewing`, whose program check's `advance` has its own rows above | `advance` from an acceptance-check that is not the state's last | the state's next acceptance-check, in the order §3.1 lists | — |
+| 17 | `design-reviewing` | `discuss` from `design-acceptance-by-user` | `design-writing` | — (the user's own time) |
+| 18 | `design-reviewing` | `advance` | `implementation-writing`; and, if tests have begun in this design version, `test-design-writing` | — |
+| 19 | `contract-revising` | `emitted` | `contract-reviewing` | — (counted on entry) |
+| 20 | `contract-revising` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
+| 21 | `implementation-writing` | `emitted` | `implementation-reviewing` | implementation-writes, only when the state was entered by a `reject implementation` from review, by the user's `discuss`, or as the first write; a write forced by an upstream change or ordered by the arbitrator charges nothing here (§7, the three buckets) |
+| 22 | `implementation-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 23 | `implementation-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
+| 24 | `implementation-reviewing` | `advance`, tests not yet begun | `test-design-writing` | — |
+| 25 | `implementation-reviewing` | `advance`, tests begun and the test-work-stream at `ready-for-test-suite` | `test-suite-executing` | — |
+| 26 | `implementation-reviewing` | `advance`, tests begun and the test-work-stream not yet there | this work-stream holds at `ready-for-test-suite` | — |
+| 27 | `implementation-reviewing` | `reject implementation`, the implementation-writes counter below its ceiling | `implementation-writing` | — |
+| 28 | `implementation-reviewing` | `reject implementation`, the counter at or above its ceiling | `test-suite-arbitrating`, which rules (§7) | arbitrator-rulings, on entry |
+| 29 | `implementation-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 30 | `implementation-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
+| 31 | `implementation-reviewing` | `discuss` from `implementation-acceptance-by-user` | `implementation-writing` | — (the user's own time; the write it forces is counted like any other) |
+| 32 | `test-design-writing` | `emitted` | `test-design-reviewing` | — |
+| 33 | `test-design-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 34 | `test-design-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
+| 35 | `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent`, before the test-design's approval | `test-design-writing`, with the notes | — (a re-write before approval) |
+| 36 | `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent` after its approval, the corrections counter below its ceiling | `test-design-writing`, with the notes | test-design-corrections (§7; user-ruled 2026-09-14, the tenth walk, item 7) |
+| 37 | `test-design-reviewing` | `reject test-design` from `test-design-acceptance-by-agent` after its approval, the counter at its ceiling | `test-design-acceptance-by-user` | — |
+| 38 | `test-design-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 39 | `test-design-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
+| 40 | `test-design-reviewing` | `discuss` from `test-design-acceptance-by-user` | `test-design-writing` | — |
+| 41 | `test-design-reviewing` | `advance` | `test-writing` | — |
+| 42 | `test-writing` | `emitted` | `test-reviewing` | test-writes, on the same rule |
+| 43 | `test-writing` | `input-quick-check-failed` against the test-design, the corrections counter below its ceiling | `test-design-writing` | test-design-corrections |
+| 44 | `test-writing` | `input-quick-check-failed` against the test-design, the counter at its ceiling | `test-design-acceptance-by-user` | — |
+| 45 | `test-writing` | `input-quick-check-failed` against the component-contract, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 46 | `test-writing` | `input-quick-check-failed` against the design | `investigate-workflow`, investigation-focus `design` | — |
+| 47 | `test-reviewing` | `advance`, the implementation-work-stream at `ready-for-test-suite` | `test-suite-executing` | — |
+| 48 | `test-reviewing` | `advance`, the implementation-work-stream not yet there | this work-stream holds at `ready-for-test-suite` | — |
+| 49 | `test-reviewing` | `reject tests`, the test-writes counter below its ceiling | `test-writing` | — |
+| 50 | `test-reviewing` | `reject tests`, the counter at or above its ceiling | `test-suite-arbitrating`, which rules (§7) | arbitrator-rulings, on entry |
+| 51 | `test-reviewing` | `reject test-design`, the corrections counter below its ceiling | `test-design-writing` | test-design-corrections |
+| 52 | `test-reviewing` | `reject test-design`, the counter at its ceiling | `test-design-acceptance-by-user` | — |
+| 53 | `test-reviewing` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 54 | `test-reviewing` | `reject design` | `investigate-workflow`, investigation-focus `design` | — |
+| 55 | `test-reviewing` | `discuss` from `test-acceptance-by-user` | `test-writing` | — (the user's own time) |
+| 56 | `test-suite-executing` | `pass` | `submit-to-PR-gate` | — |
+| 57 | `test-suite-executing` | `fail` | `test-suite-arbitrating` | — |
+| 58 | `test-suite-executing` | `could-not-run`, the first of consecutive entries | `test-suite-executing` (retry) | — |
+| 59 | `test-suite-executing` | `could-not-run`, the second consecutive | `test-suite-arbitrating` | — |
+| 60 | `test-suite-arbitrating` | `advance`, entered from a reviewer's ceiling (the reviewer was wrong, §6.5) | wherever that reviewing state's own `advance` goes: the artifact continues as if the reviewer had advanced it | — |
+| 61 | `test-suite-arbitrating` | `reject implementation`, the writer's counter below its ceiling | `implementation-writing` | arbitrator-rulings, charged on entry to `test-suite-arbitrating`, as every row of this state |
+| 62 | `test-suite-arbitrating` | `reject tests` or `flaky-test`, the writer's counter below its ceiling | `test-writing` | — |
+| 63 | `test-suite-arbitrating` | `reject implementation`, `reject tests` or `flaky-test` whose writer's counter is at or above its ceiling | that writer anyway, fresh: the writer's counter stops deciding and is not reset; the write is bounded by arbitrator-rulings, and past that by the user's resume (§7) | — |
+| 64 | `test-suite-arbitrating` | `reject implementation and tests`, one verdict, both artifacts contradicting the component-contract | both writers (§1), the implementation-work-stream first; each write bounded as above | — |
+| 65 | `test-suite-arbitrating` | entered for the third time in the design version: applied on entry, no arbitrator launched here | `investigate-workflow`, investigation-focus `unknown`; the arbitrator rules there, and the ruling it would have made rides in its report and on its `resume` state-exit (§6.6) | — |
+| 66 | `test-suite-arbitrating` | `reject contract`, the contract-revisions counter below its ceiling | `contract-revising` | contract-revisions |
+| 67 | any state above | a reject of, or a failed check against, the component-contract with the contract-revisions counter at its ceiling | `contract-acceptance-by-user` (§5.3, §6.6) | — |
+| 68 | `test-suite-arbitrating` | `escalate-to-user`, no investigation-focus named | `investigate-workflow`, investigation-focus `unknown` | — |
+| 69 | a reviewing sub-state by agent, `contract-revising`, `test-design-writing` or `test-suite-arbitrating` | `escalate-to-user` | `investigate-workflow`, investigation-focus `design` or `test-design` as the agent names it | — |
+| 70 | `investigate-workflow` | `stop` | `ended`, outcome `stopped-by-user` | — |
+| 71 | `investigate-workflow` | `submit-to-PR-gate` | `submit-to-PR-gate` (the user's override; the gate still reviews) | — |
+| 72 | `investigate-workflow` | `resume`, the redesigns counter below its ceiling or the destination not `design-writing` | the earliest state downstream of what the user changed, by the machine's diff of the branch (§6.6); or the destination the user names; or, nothing changed and no destination, the state that was paused, or the held ruling applied (§6.6) | redesigns, if the destination is `design-writing`; the six per-version counters start from zero on every resume (§7) |
+| 73 | `investigate-workflow` | `resume` to `design-writing`, the redesigns counter at its ceiling | `ended`, outcome `failed`; the user is told in the investigation before it closes | — |
+| 74 | `submit-to-PR-gate` | `accepted` | `ended`, outcome `passed` | — |
+| 75 | `submit-to-PR-gate` | `gate-rejection` | `investigate-workflow`, investigation-focus `unknown`, the gate's findings in the report | — |
+| 76 | `submit-to-PR-gate` | `gatekeeper-refusal`, an infrastructure refusal, fewer than five attempts | `submit-to-PR-gate` (retry, backed off) | — |
+| 77 | `submit-to-PR-gate` | `gatekeeper-refusal`, an infrastructure refusal, the fifth attempt; or an integration or scope refusal | `investigate-workflow`, investigation-focus `unknown` | — |
+| 78 | `submit-to-PR-gate` | `gatekeeper-refusal`, a form refusal | `investigate-workflow`, investigation-focus `unknown` — a machine error, the submit state built a bad request | — |
 
 Four rules the table relies on:
 
