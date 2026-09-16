@@ -429,6 +429,8 @@ def heartbeat_age_sentence(state_path: Path) -> str:
         last_poll = datetime.fromisoformat(stamped)
     except ValueError:
         return f", unreadable heartbeat {stamped!r}"
+    if last_poll.tzinfo is None:
+        last_poll = last_poll.replace(tzinfo=timezone.utc)  # the only writer stamps UTC
     age_seconds = (datetime.now(timezone.utc) - last_poll).total_seconds()
     if age_seconds >= 60:
         return f", last heartbeat {age_seconds / 60:.0f}m ago"
