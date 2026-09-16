@@ -19,7 +19,7 @@ If either check fails — not a checkout, empty output, or a branch that is not 
 2. `docs/nedschorus-wiki/agent-seat-model.md` — how seats work, and the definitions of the words your brief uses: walked approval, slice, the C-numbers.
 3. `CLAUDE.md` at the repository root — the project's standing rules.
 
-Briefs are not uniform. Most state the seat's work with its issues and pull requests, what to read, boundaries against other seats, and a first action; `sidebar` deliberately has almost none of that, because its job is answering off-topic questions and owning nothing. Read yours for what it says rather than for what this paragraph predicts.
+Briefs are not uniform. Each states the seat's work with its issues and pull requests, what to read, boundaries against other seats, and a first action, in its own proportions. Read yours for what it says rather than for what this paragraph predicts.
 
 **Step 4 — do what your brief's "First action" says**, exactly as written. Most briefs begin by reading, verifying, and reporting to the user rather than building — but your brief governs, not this sentence.
 
