@@ -14,9 +14,10 @@ Usage:
   handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
                                         [--dont-restart] [--claim]
 
-`--claim` is for one situation, and it is worth knowing before you meet it:
-this seat's FIRST handoff under a name that a handoff file already holds from
-a DIFFERENT directory. The refusal exists because two seats sharing a name
+`--claim` is for two situations, and both are worth knowing before you meet
+them: this seat's FIRST handoff under a name that a handoff file already holds
+from a DIFFERENT directory, and its first under a NEW name in a directory
+whose existing name a supervisor already answers for. The refusal exists because two seats sharing a name
 means one handoff is about to be lost unread (observed 2026-08-16, counter 10
 overwritten by counter 11 seconds later). But a seat legitimately inherits a
 name when it moves directories or is re-founded elsewhere, and then the
@@ -179,6 +180,47 @@ def claiming_directory(handoff_path: Path) -> str:
     if not handoff_path.is_file():
         return ""
     return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
+
+
+def supervised_name_for_this_directory(handoff_directory: Path, agent: str) -> str:
+    """The name a supervised seat in THIS directory already hands off under.
+
+    Returns "" when there is none, which is the ordinary case: one seat, one
+    name, nothing to correct.
+
+    What this catches, measured 2026-09-15 at the merge-lane seat. A session
+    ran this script with --agent merge-lane-51 -- its own SESSION name -- where
+    the SEAT name merge-lane was wanted. Every path here is that string pasted
+    into a filename, so the handoff went to merge-lane-51-handoff.md, which no
+    supervisor polls, and the liveness check looked for
+    merge-lane-51-supervisor-state.json, which had never existed. The script
+    therefore reported "none has ever run for this agent", the handoff skill's
+    own rule for that answer is "keep working", and the session worked on for
+    five more hours while the supervisor watching it sat on
+    merge-lane-handoff.md at counter 41. The session never reincarnated: it ran
+    out of context instead. The threshold hook had already written its
+    ask-once marker, so nothing asked again.
+
+    A SUPERVISOR STATE beside the other handoff is what makes the other name
+    the real one, and requiring it is not fussiness. That incident left a
+    stray merge-lane-51-handoff.md in the directory, stamped with the same
+    written-in. A guard keyed on "another handoff file was written from here"
+    would read that stray and refuse --agent merge-lane -- the correct name --
+    at this seat's every later handoff, locking it out of exactly the name it
+    must use. The stray has no supervisor state; the real seat does.
+    """
+    here = str(Path.cwd().resolve())
+    suffix = "-handoff.md"
+    for other_handoff in sorted(handoff_directory.glob(f"*{suffix}")):
+        other = other_handoff.name[: -len(suffix)]
+        if other == agent:
+            continue
+        if not (handoff_directory / f"{other}-supervisor-state.json").is_file():
+            continue
+        written_in = claiming_directory(other_handoff)
+        if written_in and str(Path(written_in).resolve()) == here:
+            return other
+    return ""
 
 
 def find_session_transcript(session_id: str, working_directory: Path):
@@ -587,6 +629,31 @@ def main(argv=None) -> int:
             f"writing would destroy a handoff that seat may not have acted on yet. Either "
             f"run with --agent <a name of your own> (the default is this directory's name, "
             f"{default_agent_name()}), or pass --claim to take the name from it.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Refuse a name nothing watches when a supervisor answers for this very
+    # directory under another one. The liveness report below is the whole
+    # reason this script exists, and under an unwatched name it cannot fail
+    # LOUDLY: it says "nothing is watching", which is both true of the name
+    # and false of the seat, and the caller's rule for that answer is to keep
+    # working. See supervised_name_for_this_directory for the measurement.
+    # An explicit --claim still wins, so a seat genuinely being re-founded
+    # under a new name says so and proceeds.
+    supervised_name = supervised_name_for_this_directory(handoff_directory, agent)
+    if supervised_name and not state_path.is_file() and not arguments.claim:
+        print(
+            f"handoff-write-and-check-supervisor: no supervisor has ever run under the name "
+            f"{agent}, but {handoff_directory / (supervised_name + '-handoff.md')} was written "
+            f"from this very directory ({Path.cwd()}) and has a supervisor state beside it. "
+            f"{supervised_name} is this seat's supervised name. Nothing was written, because a "
+            f"handoff under a name nothing polls is never read: the supervisor keeps waiting on "
+            f"{supervised_name}-handoff.md and this session is never reincarnated (measured "
+            f"2026-09-15, five hours and a lost session). Rerun with --agent {supervised_name}, "
+            f"or omit --agent entirely -- it defaults to this directory's name, "
+            f"{default_agent_name()} -- or pass --claim if this seat really is being re-founded "
+            f"as {agent}.",
             file=sys.stderr,
         )
         return 2

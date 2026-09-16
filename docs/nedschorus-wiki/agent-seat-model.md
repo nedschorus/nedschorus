@@ -1,22 +1,22 @@
 # The agent seat model
 
-How work on the Ubuntu box is divided among named agents, and why it is divided that way. Ruled by the user 2026-08-13, after a day in which parallel sessions accumulated faster than anyone tracked them. The per-seat briefs live beside this file as `docs/agents/<seat>-instructions.md`; every agent reads its own brief, and this file is the shared background behind all of them.
+How work is divided among named agents, and why. Every agent reads its own brief; this page is the shared background behind all of them.
 
 ## The words this model uses
 
-Defined here because the briefs use them as if established, and an agent reading one cold has nowhere else to look.
+Defined here because the briefs use them as if established; the project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, holds the rest.
 
-- **Seat** — a named, long-lived agent identity: a name, a home directory (`~/agents/<seat>`), its own git branch, and a brief. A seat is *occupied* by a session and outlives any one session. One place the word is used loosely and deliberately: the **Mac-side agent**, which reviews branches and merges them to `main`, is the user's own agent on his Mac and is not one of the seats defined here.
+- **Seat** — a named, long-lived agent identity: a name, a worktree (`~/agents/<seat>`), its own git branch, and a brief. A seat is occupied by a session while one runs, and outlives any one session.
 - **Session** — one running conversation. Sessions end and are replaced; the seat persists.
-- **Supervisor** — `scripts/handoff-supervisor.py`, the process that launches a seat's session, replaces it when it hands off, and exits when its agent stops without handing off. One supervisor per seat, holding a lock that refuses a second.
+- **Supervisor** — `scripts/handoff-supervisor.py`, the process that launches a seat's session, replaces it when it hands off, and exits when its agent stops without handing off. One supervisor per seat, holding a lock, `~/.claude/handoffs/<seat>-supervisor.lock`, that refuses a second.
 - **Reincarnate** — the supervisor replacing a session with a fresh one, carrying the handoff forward. Triggered when the agent writes a handoff, usually because the `Stop` hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
-- **Handoff** — `~/.claude/handoffs/<seat>-handoff.md`, written by a session for its successor. On this machine only, never committed. Its companion `~/.claude/handoffs/<seat>-dialog-NNNN.md` holds that session's conversation tail, which a successor reads when it needs the discussion rather than the conclusion.
+- **Handoff** — `~/.claude/handoffs/<seat>-handoff.md`, written by a session for its successor. On the seat's machine only, never committed. Its companion `~/.claude/handoffs/<seat>-dialog-NNNN.md`, numbered in sequence, holds that session's conversation tail, which a successor reads when it needs the discussion rather than the conclusion.
 - **A seat's work** — the body of related work a seat owns. A subject area with shared context, not an ordered queue: the tasks in it are named by the seat's brief, not enumerated as a list to work through in order.
 - **Brief** — `docs/agents/<seat>-instructions.md`. What a seat's occupant reads to learn its job. Briefs vary in shape; read yours for what it says.
-- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the repository root, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
-- **Agent-instructions files** — files that tell agents how to behave: `CLAUDE.md`, `~/agents/<seat>/CLAUDE.local.md`, anything under `.claude/`. They change only with walked approval.
-- **Slice** — one numbered increment of a build plan, built and landed on its own.
-- **C-numbers** (`C1`, `C3`, `C7`…) — identifiers of the main-gatekeeper's credential rulings, defined in `docs/cross-project/main-gatekeeper-design.md` § The credential and enforcement. Meaningful only inside that document.
+- **Walked approval** — the user's approval given item by item through a walk (the `walk-me-through` skill under `.claude/skills/`), not one yes to a bundle. Recorded by quoting his words into `.walk-approved` at the root of the session's own checkout, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves. Written *walked approval*; the hyphenated *walked-approval* only as a compound adjective.
+- **Agent-instructions files** — files that tell agents how to behave: `CLAUDE.md`, `~/agents/<seat>/CLAUDE.local.md`, the repository's `.claude/`. They change only with walked approval; a brief is not one of these.
+- **Slice** — one numbered increment of a build plan, built and merged on its own.
+- **C-numbers** (`C1`, `C3`, `C7`…) — identifiers of the main-gatekeeper's credential rulings, defined in `docs/cross-project/main-gatekeeper-design.md` § The credential and enforcement. Defined only there.
 
 ## The grouping rule
 
@@ -26,59 +26,31 @@ The user's reasoning, which this model serves:
 
 - An agent with focused context is smarter than one carrying unrelated history. Confusion is the expensive failure.
 - **An idle seat costs almost nothing** — no tokens, no attention — so never merge two seats' unrelated work to keep a seat busy. It is not literally free: an unretired seat holds a directory and a branch, and retiring it later takes the steps below. That cost is small and one-time.
-- The natural unit of work is a series of related tasks; at the end of one, the agent writes a handoff and the session is replaced, so the next series starts on a clean context.
+- The natural unit of work is a series of related tasks; at the end of a series, the agent writes a handoff and the session is replaced, so the next series starts on a clean context.
 - Seats are resumed weeks later, so a name must say what the seat is for without opening anything.
-
-`sidebar` is the deliberate exception to the grouping rule: it holds no work of its own and answers whatever is asked, precisely so that off-topic questions never land in a seat whose context they would pollute.
 
 ## Which seats exist
 
-**Reduced 2026-09-04 by user ruling.** This section held a roster of seven named seats. None of them was running, and the seats that existed were not in it, so the roster misled every reader who trusted it.
+The seats that exist are the directories under `~/agents` on either machine; a seat's brief under `docs/agents`, where it has one, says what it owns. The user chooses which of them run.
 
-The seats that exist are the directories under `~/agents` and the briefs under `docs/agents`, and the user chooses which of them run. Two or three at a time is the working pattern and **five is the ceiling the user set**; a fourth is allowed and unusual, and worth pausing over, because it usually means a running seat is finished. Each seat's brief remains the authority on what that seat owns.
+A seat name is one word. It is an address typed to reach an agent, not a search key, so the multi-part naming rule in `CLAUDE.md` does not apply to it. `gatekeeper` naming the seat that works on the main-gatekeeper is deliberate, not a collision to fix; the program keeps its `main-` prefix everywhere.
 
-Seven briefs under `docs/agents` still describe seats from the old roster and are stale; retiring or rewriting them is separate work.
-
-
-**On seat names being one word** (user-ruled 2026-08-13, after a cold read raised it): the project's multi-part naming rule in `CLAUDE.md` is scoped to names likely to be *grepped* — files, directories, functions, globals. A seat name is an **address**, not a search key: it is typed to reach an agent, the way a hostname is. So one word is right here, and a seat named after the system it works on is better than one that is not, because the point of the name is that the user recognises it in a session list weeks later.
-
-`gatekeeper` naming the seat that works on the main-gatekeeper is therefore deliberate, not a collision to fix. The program keeps its `main-` prefix everywhere (`scripts/main-gatekeeper.py`, `docs/cross-project/main-gatekeeper-design.md`), and every place a seat name appears carries its own suffix — `gatekeeper-instructions.md`, `~/.claude/handoffs/gatekeeper-handoff.md`, `~/agents/gatekeeper` — so the composed names stay specific even where the root word is common.
-
-## When a seat's work is done
-
-A seat's work is finished when everything in it that an *agent* can do is done, and what remains has been handed to the user with the groundwork prepared. Several seats' work ends in an act only he can perform — creating a GitHub account, applying branch protection, approving an agent-instructions change — so a seat whose completion is defined as "the outcome happened" can never finish, and an agent with no completion criterion either invents adjacent work or stalls waiting for an event it cannot observe.
-
-Each brief states its own criterion. The shared shape: **land what you can, prepare what you cannot, tell the user exactly what is left and whose it is, write a handoff, and stop.** Stopping is a legitimate ending.
-
-## The two ways a seat ends
+## Pausing and retiring a seat
 
 They are different, and confusing them loses work.
 
-**Paused** — the seat's current series is done and nobody is using it. Exit the session. Its handoff, home directory and branch all stay exactly as they are, which is what makes the seat resumable weeks later: relaunching the same name boots from that handoff. This is the ordinary ending, and it needs no cleanup.
+**Paused** — the seat's current series is done and nobody is using it. Exit the session; the supervisor stops with it. The handoff, worktree and branch all stay exactly as they are. This is the ordinary way to leave a seat, and it needs no cleanup.
 
-**Retired** — the name is being freed or repurposed. Three steps, in order:
+**Retired** — the name is being freed or repurposed. Four steps, in order:
 
-1. **Stop the stream first.** A running seat writes a fresh handoff at every reincarnation, so archiving while its supervisor is alive only clears the file until the next one. Exit the session and confirm no supervisor remains.
-2. **Archive the handoff**, do not delete it — these files are on this machine only and not in git, so a delete is unrecoverable. Rename it `~/.claude/handoffs/<seat>-handoff-retired-YYYY-MM-DD.md`. If that name already exists, append `-2`, `-3`; never rename onto an existing archive.
-3. **Release the home and the branch.** `git worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch separately with `git branch -d <seat>` if the name is to be reused, since removing a worktree leaves its branch behind. A seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
-
-`choirmaster` is the live case: the founding seat, whose work has been redistributed into the seats above. Its 2026-08-12 handoff was archived on 2026-08-13 so a future agent of that name starts fresh, and the user intends to reuse the name for a coordinating seat later. Until he does, no `choirmaster` seat is defined by this model.
-
-## Why there is a liaison, and no master
-
-**Reopened and replaced 2026-09-04 by user ruling.** This section previously recorded that a coordinating seat was considered and declined on 2026-08-13, on the evidence that `choirmaster`, created to direct, drifted into being an ordinary topic thread. That ruling named its own revisit condition: seats needing to hand work to each other without the user in the loop. Two things have since made the condition live.
-
-First, the condition is now the project's objective rather than a hypothetical. Second, the sentence this section rested on is no longer true: a seat's only channel to another seat was through the user, and cross-session messaging now exists and is in daily use between seats on this machine.
-
-What replaces the declined master is two things, deliberately separate. The **liaison** is a seat and a go-between only, never a doer: every agent the user is not directing reaches him through it, and when it is not running the fallback is a GitHub issue labelled `draft`. The **design-to-main state machine** is a program, not a seat: it routes work between nodes, counts passes and assembles escalations, and it holds no judgement. The 2026-08-13 evidence still stands against the thing it was about — an agent given nothing to do but coordinate drifts into doing — and a liaison given nothing to do but carry drifts nowhere.
-
-## Filing new work
-
-Put a new task in the seat whose existing context makes it cheapest — not the emptiest seat. If it fits none of them, it is either a question for `sidebar`, answered and forgotten, or the seed of a new seat's work, which is the user's decision rather than a default.
+1. **Stop the supervisor first.** A running seat writes a fresh handoff at every reincarnation, so archiving while its supervisor is alive only clears the file until the next one. Exit the session and confirm no supervisor process remains for the seat.
+2. **Archive the handoff.** Move it to `~/.claude/handoffs/retired/<seat>-handoff-YYYY-MM-DD.md`, creating the directory if needed; if that name exists, append `-2`, `-3` before `.md`; never move onto an existing archive.
+3. **Release the worktree and the branch.** On the seat's machine, `git -C ~/Projects/nedschorus worktree remove ~/agents/<seat>` (not `rm` — the worktree stays registered otherwise, and `git worktree prune` is then needed), and then delete the branch, `git -C ~/Projects/nedschorus branch -d <seat>`, since removing a worktree leaves its branch behind. A seat launched but never used may have an empty directory and no worktree at all; `rmdir` is correct there.
+4. **Retire the brief.** Put a dated retirement notice at the top of `docs/agents/<seat>-instructions.md`, naming what survives, in a pull request.
 
 ## Launching a seat
 
-From the **Mac**, using the Mac's own checkout of this repository:
+From the **Mac**, using the Mac's own clone of this repository:
 
 ```
 ~/Projects/nedschorus/scripts/launch-claude-ubuntu <seat> \
@@ -87,7 +59,7 @@ From the **Mac**, using the Mac's own checkout of this repository:
 
 The script runs on the Mac and reaches the box over SSH. The `--first-prompt-file` path is a **box-side** path, because the supervisor reads that file on the box. One generic file serves every seat: the agent learns its own name from its working directory, so nothing needs substituting.
 
-**Both halves must actually exist where they are named**, and they live on different machines: the script in the Mac's checkout, the prompt file in the box's. A checkout that has not pulled since these landed has neither. Check before launching a seat for the first time:
+**Both halves must actually exist where they are named**, and they are read on different machines: the script in the Mac's clone, the prompt file in the box's. A clone that has not pulled since these landed has neither. Check before launching a seat for the first time:
 
 ```
 ls ~/Projects/nedschorus/scripts/launch-claude-ubuntu                        # on the Mac
@@ -98,16 +70,16 @@ If the box's copy is missing, `ssh nedlern@ned-box 'git -C ~/Projects/nedschorus
 
 Three things about that command worth knowing before you rely on it:
 
-- **It is attach-or-create.** Running the name again attaches to the live session rather than starting a second one — and in that case `--first-prompt-file` does nothing, because there is no new session to seed. To exit a seat, exit the session inside it (`/exit`); to leave it running, detach from tmux (`Ctrl-b d`).
-- **A handoff outranks the first-prompt file.** If `~/.claude/handoffs/<seat>-handoff.md` exists, the supervisor boots from it; `--first-prompt-file` seeds only a session that has no handoff waiting, which in practice means a seat's very first launch. To seed a seat from another thread's context deliberately, copy that thread's handoff into the seat's name before launching.
-- **A session that ends without writing a handoff leaves nothing behind.** The next launch of that name starts from the first-prompt file as if new. That is why a seat being paused should hand off first, and why the handoff — not the session — is the thing that carries a seat's thread.
+- **It is attach-or-create.** Running the name again attaches to the live tmux session, or to the shell left behind when its supervisor stopped, rather than starting a second one — and in that case `--first-prompt-file` does nothing, because there is no new session to seed. To stop a seat, the user exits the session inside it (`/exit`); to leave it running, he detaches from tmux (`Ctrl-b d`).
+- **An unconsumed handoff outranks the first-prompt file.** If `~/.claude/handoffs/<seat>-handoff.md` holds a handoff the supervisor has not yet consumed, it boots from that; `--first-prompt-file` seeds every other launch. To seed a seat from another seat's context deliberately, copy that seat's handoff to `~/.claude/handoffs/<seat>-handoff.md` before launching.
+- **A session that ends without writing a handoff leaves no thread behind.** The next launch of that name starts from the first-prompt file. The handoff — not the session — is the thing that carries a seat's thread.
 
-The launcher creates the seat's home as a checkout on its own branch **before the session starts**, because project settings — the status line, the reincarnation hook, the instruction-file guard — are read from `.claude/` in the working directory at session start, and an agent booted into a bare directory runs without any of them.
+The launcher creates the seat's worktree on its own branch **before the session starts**, because project settings — the status line, the context-threshold handoff hook, the instruction-file guard — are wired through `.claude/settings.json` in the working directory, read at session start, and an agent started in a directory without it runs with none of them. When the worktree cannot be made, the launcher says so and starts the session anyway.
 
 ## What separate branches do and do not protect
 
-Each seat works on its own branch, and git permits a branch in only one worktree at a time. That is what normally keeps two seats from editing the same files or racing each other's pushes, and it is a check rather than a guarantee: `git worktree add --force` overrides it, a separate clone of the repository is invisible to it, and two seats editing the same file on different branches simply defer their collision to the merge.
+Each seat's worktree holds one branch at a time, its own seat branch or a topic branch cut from main, and git refuses to check one branch out in two worktrees. That keeps two seats off one branch and nothing more: it is a check rather than a guarantee, since `git worktree add --force` overrides it and a separate clone is invisible to it, and two seats editing the same file on different branches meet at the merge.
 
-It protects nothing outside git. `~/.claude/handoffs/` and the job scratch directories are shared uncommitted state on the one machine that every seat writes (each seat's tmux session runs on a server of its own since 2026-08-21 — `tmux -L <name>` — so one server crash cannot take the whole fleet down, but the socket is still derived from the name). Two seats using the same *name* would collide there regardless of branches — which is why one name means one seat.
+It protects nothing outside git. `~/.claude/handoffs/` and the tmux socket (`tmux -L <seat>`, one server per seat since 2026-08-21, so one server crash takes down one seat) are per-machine state keyed by the seat's name. Two seats using the same name would collide in that directory and in cross-session addressing, which is why one name means one seat across both machines.
 
-**Nothing that matters is left only in a session.** Work belongs in commits and pushes; decisions belong in the governing documents and issues. The exception is the handoff, which is durable, on this machine only, never pushed, and the one artifact that makes a paused seat resumable — so a seat exited without one loses its thread even though its committed work is safe.
+**Nothing that matters is left only in a session.** Work belongs in commits and pushes; decisions belong in the wiki, the designs and the issues. The handoff is the one durable thing that is never pushed: it lives on the seat's machine only, and a seat exited without one keeps its committed work and loses its thread.

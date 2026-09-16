@@ -662,6 +662,55 @@ with tempfile.TemporaryDirectory() as temporary:
     check("Q3: a stale lock (dead pid) does not block recovery",
           verdict == "resume", (verdict, detail))
 
+    # nedschorus#346 item 1: the two answers process_is_supervisor_for_agent
+    # gives when ps cannot be asked (PR #328), each pinned through assess_seat.
+    # The predicate's ps reader is a default argument bound at definition, so
+    # patching the module attribute would not reach it (its docstring says so);
+    # instead ps is made unaskable the way it really fails — no such program on
+    # PATH — so the real read_process_command_line returns (None, False). Both
+    # cases and their precondition run inside the same hijack.
+    empty_path_directory = root / "r8-no-ps-on-path"
+    empty_path_directory.mkdir(parents=True, exist_ok=True)
+    real_path = os.environ["PATH"]
+    os.environ["PATH"] = str(empty_path_directory)
+    try:
+        # Without this line the dead-pid case below passes whether or not ps was
+        # asked — resume either way — so it would test nothing the moment the
+        # reader learned an absolute path to ps.
+        check("#346: with no ps on PATH the reader answers 'could not be asked'",
+              recovery.supervisor.read_process_command_line(os.getpid()) == (None, False),
+              recovery.supervisor.read_process_command_line(os.getpid()))
+
+        # Answer 1: ps could not be asked and os.kill says no such process —
+        # the lock is stale, and recovery proceeds exactly as with a working ps.
+        lock_path.write_text("999999999\n", encoding="utf-8")
+        verdict, detail = workspace.assess()
+        check("#346: unknown ps, pid does not exist: the stale lock does not block",
+              verdict == "resume", (verdict, detail))
+
+        # Answer 2: ps could not be asked and a process with that id exists —
+        # this very interpreter, which is certainly not a supervisor. With ps
+        # working, Q3 above proves such a lock does not block; without it the
+        # predicate assumes a supervisor rather than risk a second one, and
+        # assess_seat refuses. The discriminating assertion is the assumption
+        # wording, not the refusal: a true-supervisor refusal (Q3) says
+        # "supervisor lock" too, and the predicate's promise is that this detail
+        # SAYS it is an assumption rather than pretending to certainty.
+        lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        operator_line = io.StringIO()
+        with redirect_stderr(operator_line):
+            verdict, detail = workspace.assess()
+        check("#346: unknown ps, pid exists: refuses, and the detail says it is assumed",
+              verdict == "refuse" and "supervisor lock" in detail
+              and "ps could not be run" in detail and "assumed present" in detail,
+              (verdict, detail))
+        check("#346: unknown ps, pid exists: the operator line on stderr names the seat",
+              f"supervisor of {workspace.name}" in operator_line.getvalue()
+              and "ps could not be run" in operator_line.getvalue(),
+              operator_line.getvalue())
+    finally:
+        os.environ["PATH"] = real_path
+
     # F4: the supervisor's resume path consumes a stale handoff instead of
     # letting the wait loop kill the resumed session. Proven through the
     # boot-sequence branch in supervise_sessions via source inspection plus
