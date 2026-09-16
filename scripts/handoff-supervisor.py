@@ -63,8 +63,11 @@ EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
-# Text appended to every launched session's system prompt, through
-# `claude --append-system-prompt-file`. The default is a COMMITTED file, and the
+# The file whose agent part is appended to every launched session's system
+# prompt: the text below its first `---` line, above which are notes to whoever
+# edits the file. The supervisor writes that part to a file of its own at each
+# launch and passes that file through `claude --append-system-prompt-file`; see
+# appended_system_prompt_file_for_launch. The default is a COMMITTED file, and the
 # supervisor rather than the launchers owns the flag on purpose: a supervisor is
 # started by launch-claude-mac, by launch-claude-ubuntu, and by
 # resupervise-seat.py, so putting it in the launchers would leave a recovered
@@ -886,6 +889,86 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             f"ready (git merge origin/main){fetch_note}")
 
 
+# The line that ends the editor notes in an appended-system-prompt file.
+APPENDED_SYSTEM_PROMPT_EDITOR_NOTES_SEPARATOR_LINE = "---"
+
+
+def agent_part_of_appended_system_prompt(file_text: str):
+    """(agent_text, separator_found) for the text of an appended-system-prompt file.
+
+    The file has two parts, split by its first line that is exactly `---` once
+    surrounding whitespace is set aside. Above it are notes to whoever edits the
+    file; below it is the text the agents receive. The agent text is everything
+    after that line with its leading blank lines dropped, and is otherwise
+    returned untouched. A file with no such line comes back whole, with
+    separator_found False, so the caller can warn.
+
+    Passing the whole file put the notes in every seat's system prompt, where an
+    agent can read "Keep it SHORT" as an instruction to itself. That was
+    observed 2026-09-16 in the cold-read-research seat's own system prompt, and
+    the user ruled "fix 2": send only the part below the line.
+    """
+    lines = file_text.splitlines(keepends=True)
+    for position, line in enumerate(lines):
+        if line.strip() == APPENDED_SYSTEM_PROMPT_EDITOR_NOTES_SEPARATOR_LINE:
+            agent_lines = lines[position + 1:]
+            while agent_lines and not agent_lines[0].strip():
+                agent_lines.pop(0)
+            return "".join(agent_lines), True
+    return file_text, False
+
+
+def appended_system_prompt_file_for_launch(source_path: str, agent_part_path: Path) -> str:
+    """The path to pass to `claude --append-system-prompt-file` for one launch.
+
+    Writes the agent part of the file at source_path (see
+    agent_part_of_appended_system_prompt) to agent_part_path and returns
+    agent_part_path. That file belongs to this supervisor. It sits beside the
+    seat's handoff and state files and is rewritten at the seat's every launch.
+    The CLI reads it once, at startup, and refuses to start if it is missing, so
+    it is written just before the launch and never deleted.
+
+    The source is read here, at every launch, not once when the supervisor
+    starts. When the CLI read the source itself, an edit reached each seat at
+    its next launch, and reading it here keeps that true.
+
+    A launch never fails because of this. The fallbacks, each with one warning
+    line:
+      * the source has no `---` line: return source_path, so the CLI gets the
+        whole file, as it did before the split;
+      * the agent part cannot be written: return source_path as well;
+      * the source cannot be read (an older checkout, or one mid-rebase):
+        return "", so the session launches without the flag, as main() does
+        when the file is missing at supervisor start.
+    An empty source_path means launch without the flag, and returns "".
+    """
+    if not source_path:
+        return ""
+    try:
+        source_text = Path(source_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"handoff-supervisor: could not read the appended-system-prompt file "
+              f"{source_path} ({error}) — launching this session without it",
+              file=sys.stderr)
+        return ""
+    agent_text, separator_found = agent_part_of_appended_system_prompt(source_text)
+    if not separator_found:
+        print(f"handoff-supervisor: no --- line in the appended-system-prompt file "
+              f"{source_path} — appending the whole file",
+              file=sys.stderr)
+        return source_path
+    try:
+        agent_part_path.write_text(agent_text, encoding="utf-8")
+    except OSError as error:
+        print(f"handoff-supervisor: could not write the agent part of {source_path} to "
+              f"{agent_part_path} ({error}) — appending the whole file",
+              file=sys.stderr)
+        return source_path
+    # Absolute, because the session resolves it from its own working directory,
+    # which need not be this supervisor's.
+    return os.path.abspath(agent_part_path)
+
+
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
                          remote_control_name: str = "",
@@ -1089,7 +1172,8 @@ class SupervisorSettings:
     # reincarnations mint fresh ids as always. The caller is responsible for having
     # checked that no unconsumed handoff waits — boot-ignition is skipped.
     resume_session_id: str = ""
-    # Appended to each launched session's system prompt; "" launches without it.
+    # The file whose part below its first `---` line is appended to each launched
+    # session's system prompt; "" launches without it.
     appended_system_prompt_file: str = ""
     # A real annotation, not a string: this module is loaded by importlib in the
     # threshold hook and the tests, where a forward reference cannot resolve.
@@ -1106,6 +1190,10 @@ class SupervisorSettings:
     @property
     def lock_path(self) -> Path:
         return self.handoff_directory / f"{self.agent}-supervisor.lock"
+
+    @property
+    def appended_system_prompt_agent_part_path(self) -> Path:
+        return self.handoff_directory / f"{self.agent}-appended-system-prompt-agent-part.md"
 
 
 def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
@@ -1281,12 +1369,18 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # tree when the plan was composed.
                 prompt = ignition_plan.compose(branch_sync_report)
                 ignition_plan = None
+            # Read after the sync: where the file sits in the seat's own
+            # checkout, the sync may just have brought it forward.
+            appended_system_prompt_file = appended_system_prompt_file_for_launch(
+                settings.appended_system_prompt_file,
+                settings.appended_system_prompt_agent_part_path,
+            )
             verb = "resuming" if resume_first_launch else "launching"
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, prompt,
                 resume=resume_first_launch, remote_control_name=settings.agent,
-                appended_system_prompt_file=settings.appended_system_prompt_file,
+                appended_system_prompt_file=appended_system_prompt_file,
                 handoff_supervisor_agent_name=settings.agent,
             )
             resume_first_launch = False  # recovery applies to the first launch only
@@ -1363,9 +1457,11 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--agent-append-system-prompt-file",
         default=str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH),
-        help="file whose text is appended to every launched session's system prompt "
-             "(default: the committed docs/agents/seat-session-appended-system-prompt.md "
-             "beside this script). Pass an empty string to launch without it.",
+        help="file whose text below its first --- line is appended to every launched "
+             "session's system prompt; a file with no such line is appended whole, with "
+             "a warning (default: the committed "
+             "docs/agents/seat-session-appended-system-prompt.md beside this script). "
+             "Pass an empty string to launch without it.",
     )
     parser.add_argument("--first-prompt", default="", help="prompt for the first session (no handoff yet)")
     parser.add_argument(
