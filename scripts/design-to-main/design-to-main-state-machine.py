@@ -1176,9 +1176,6 @@ class DesignToMainStateMachineFlow:
             run.design_approved = True
             self.enter_writing_state(run, tables.IMPLEMENTATION_WRITING, self.reason_for_advance(
                 run, tables.IMPLEMENTATION_WRITING, tables.ENTRY_REASON_REDESIGN))
-            if run.tests_begun:
-                self.enter_writing_state(run, tables.TEST_DESIGN_WRITING,
-                                         tables.ENTRY_REASON_REDESIGN)
         if row.row == tables.ROW_TEST_DESIGN_APPROVED:
             run.test_design_approved = True
             self.enter_writing_state(run, tables.TEST_WRITING, self.reason_for_advance(
