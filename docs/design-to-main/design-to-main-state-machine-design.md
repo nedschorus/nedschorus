@@ -225,73 +225,81 @@ stateDiagram-v2
     initiate_design_to_main --> design_writing: invoked
     design_writing --> contract_reviewing: emitted
     state contract_reviewing {
-        contract_acceptance_by_program --> contract_acceptance_by_agent: advance, on a revision
-        contract_acceptance_by_agent --> contract_acceptance_by_user: reject, at the ceiling
+        contract_acceptance_by_program --> contract_acceptance_by_agent: advance
+        contract_acceptance_by_agent --> contract_acceptance_by_user: reject contract
     }
-    contract_reviewing --> design_reviewing: advance, design not yet approved
     contract_reviewing --> contract_revising: reject contract
-    contract_reviewing --> implementation_writing: advance on a revision (both work-streams re-enter)
-    contract_reviewing --> investigate_workflow: second structural failure
+    contract_reviewing --> investigate_workflow: reject contract / redesign / escalate-to-user
+    contract_reviewing --> design_reviewing: advance
+    contract_reviewing --> implementation_writing: advance
+    contract_reviewing --> test_design_writing: advance
     state design_reviewing {
         design_acceptance_by_agent --> design_acceptance_by_user: advance
     }
-    design_reviewing --> design_writing: reject design (the same initiator) / discuss
-    design_reviewing --> contract_revising: reject contract
+    design_reviewing --> design_writing: reject design / reject contract
     design_reviewing --> implementation_writing: advance
-    design_reviewing --> test_design_writing: advance, tests begun
+    design_reviewing --> investigate_workflow: escalate-to-user
     contract_revising --> contract_reviewing: emitted
-    contract_revising --> investigate_workflow: input-quick-check-failed (design)
+    contract_revising --> investigate_workflow: input-quick-check-failed (design) / escalate-to-user
     implementation_writing --> implementation_reviewing: emitted
     implementation_writing --> contract_revising: input-quick-check-failed (contract)
     implementation_writing --> investigate_workflow: input-quick-check-failed (design)
+    implementation_writing --> contract_acceptance_by_user: input-quick-check-failed (contract)
     state implementation_reviewing {
-        implementation_acceptance_by_agent --> implementation_acceptance_by_user: advance, agent-instructions only
+        implementation_acceptance_by_agent --> implementation_acceptance_by_user: advance
     }
-    implementation_reviewing --> test_design_writing: advance, tests not begun
-    implementation_reviewing --> test_suite_executing: advance, both work-streams ready
-    implementation_reviewing --> implementation_writing: reject implementation / discuss
-    implementation_reviewing --> test_suite_arbitrating: reject at the ceiling
+    implementation_reviewing --> test_design_writing: advance
+    implementation_reviewing --> test_suite_executing: advance
+    implementation_reviewing --> implementation_writing: reject implementation
+    implementation_reviewing --> test_suite_arbitrating: reject implementation
     implementation_reviewing --> contract_revising: reject contract
-    implementation_reviewing --> investigate_workflow: reject design
+    implementation_reviewing --> investigate_workflow: reject design / escalate-to-user
+    implementation_reviewing --> contract_acceptance_by_user: reject contract
     test_design_writing --> test_design_reviewing: emitted
     test_design_writing --> contract_revising: input-quick-check-failed (contract)
-    test_design_writing --> investigate_workflow: input-quick-check-failed (design)
+    test_design_writing --> investigate_workflow: input-quick-check-failed (design) / escalate-to-user
+    test_design_writing --> contract_acceptance_by_user: input-quick-check-failed (contract)
     state test_design_reviewing {
-        test_design_acceptance_by_agent --> test_design_acceptance_by_user: advance
+        test_design_acceptance_by_agent --> test_design_acceptance_by_user: advance / reject test-design
     }
-    test_design_reviewing --> test_design_writing: reject test-design / discuss
+    test_design_reviewing --> test_design_writing: reject test-design
     test_design_reviewing --> contract_revising: reject contract
-    test_design_reviewing --> investigate_workflow: reject design
+    test_design_reviewing --> investigate_workflow: reject design / escalate-to-user
     test_design_reviewing --> test_writing: advance
+    test_design_reviewing --> contract_acceptance_by_user: reject contract
     test_writing --> test_reviewing: emitted
     test_writing --> test_design_writing: input-quick-check-failed (test-design)
+    test_writing --> test_design_acceptance_by_user: input-quick-check-failed (test-design)
     test_writing --> contract_revising: input-quick-check-failed (contract)
     test_writing --> investigate_workflow: input-quick-check-failed (design)
+    test_writing --> contract_acceptance_by_user: input-quick-check-failed (contract)
     state test_reviewing {
-        test_acceptance_by_agent --> test_acceptance_by_user: advance, agent-instructions only
+        test_acceptance_by_agent --> test_acceptance_by_user: advance
     }
-    test_reviewing --> test_suite_executing: advance, both work-streams ready
-    test_reviewing --> test_writing: reject tests / discuss
-    test_reviewing --> test_suite_arbitrating: reject at the ceiling
+    test_reviewing --> test_suite_executing: advance
+    test_reviewing --> test_writing: reject tests
+    test_reviewing --> test_suite_arbitrating: reject tests
     test_reviewing --> test_design_writing: reject test-design
+    test_reviewing --> test_design_acceptance_by_user: reject test-design
     test_reviewing --> contract_revising: reject contract
-    test_reviewing --> investigate_workflow: reject design
+    test_reviewing --> investigate_workflow: reject design / escalate-to-user
+    test_reviewing --> contract_acceptance_by_user: reject contract
     test_suite_executing --> submit_to_PR_gate: pass
-    test_suite_executing --> test_suite_arbitrating: fail / could-not-run twice
-    test_suite_arbitrating --> submit_to_PR_gate: advance
-    test_suite_arbitrating --> implementation_writing: reject implementation (the writer's ceiling notwithstanding)
-    test_suite_arbitrating --> test_writing: reject tests / flaky-test (the same)
+    test_suite_executing --> test_suite_arbitrating: fail / could-not-run
+    test_suite_arbitrating --> implementation_writing: reject implementation / reject implementation and tests
+    test_suite_arbitrating --> test_writing: reject tests / flaky-test / reject implementation and tests
+    test_suite_arbitrating --> investigate_workflow: entered for the third time in the design version / escalate-to-user
     test_suite_arbitrating --> contract_revising: reject contract
-    test_suite_arbitrating --> investigate_workflow: escalate-to-user / the arbitrator's third entry
-    investigate_workflow --> design_writing: resume, redesign
-    investigate_workflow --> contract_reviewing: resume, contract edited
+    test_suite_arbitrating --> contract_acceptance_by_user: reject contract
+    investigate_workflow --> ended: stop / resume
+    investigate_workflow --> submit_to_PR_gate: submit-to-PR-gate
+    investigate_workflow --> design_writing: resume, design edited
+    investigate_workflow --> contract_reviewing: resume, component-contract edited
     investigate_workflow --> test_design_reviewing: resume, test-design edited
     investigate_workflow --> implementation_reviewing: resume, implementation edited
     investigate_workflow --> test_reviewing: resume, tests edited
-    investigate_workflow --> submit_to_PR_gate: submit-to-PR-gate
-    investigate_workflow --> ended: stop / redesigns at the ceiling
     submit_to_PR_gate --> ended: accepted
-    submit_to_PR_gate --> investigate_workflow: gate-rejection / a refusal the machine cannot retry
+    submit_to_PR_gate --> investigate_workflow: gate-rejection / gatekeeper-refusal
     ended --> [*]
 ```
 
