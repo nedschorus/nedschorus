@@ -90,6 +90,14 @@ HEARTBEAT_STALE_SECONDS = 60.0
 # process_is_supervisor_for_agent for what default-argument binding costs a test.
 PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS = 15
 
+# Set in every session this supervisor launches, to the supervisor's own
+# --agent: the one name whose handoff file it polls. The handoff writer reads
+# it so that a session never has to choose the name it hands off under. On
+# 2026-09-15 a merge-lane session chose its own SESSION name, merge-lane-51,
+# wrote a handoff nothing polled, and worked on for five hours unreincarnated.
+# One copy of the name, here: the writer imports this module and reads it back.
+SUPERVISED_SEAT_NAME_ENVIRONMENT_VARIABLE = "NEDSCHORUS_SUPERVISED_SEAT_NAME"
+
 
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
 NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
@@ -869,7 +877,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
                          remote_control_name: str = "",
-                         appended_system_prompt_file: str = ""):
+                         appended_system_prompt_file: str = "",
+                         supervised_seat_name: str = ""):
     """Start one interactive session, inheriting this console's terminal.
 
     resume=True launches `--resume <id>` instead of `--session-id <id>`: the
@@ -899,7 +908,19 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     titles this replaces could not collide, because the CLI qualified them with
     the hostname. The fleet already keeps its names distinct by habit (the Mac
     runs `mac-prof` where this box runs `prof`); this makes the habit load-
-    bearing, which is why --agent's own help text now says so."""
+    bearing, which is why --agent's own help text now says so.
+
+    supervised_seat_name is written into the session's environment as
+    NEDSCHORUS_SUPERVISED_SEAT_NAME, and it is always written, never merely
+    inherited: an empty value overwrites whatever this process inherited,
+    because a name from some other supervisor's environment would send the
+    session's handoff to a file this supervisor does not poll. The handoff
+    writer takes its name from this variable, so the name the session hands
+    off under is the name its supervisor watches by construction rather than
+    a string the session types (2026-09-15: merge-lane-51 typed for merge-lane,
+    five hours unreincarnated). It is set here, in the supervisor, rather than
+    in the launchers, because every launch path -- both launchers,
+    resupervise-seat.py, crash recovery -- runs through this function."""
     flag = "--resume" if resume else "--session-id"
     command = [agent_command, flag, session_id]
     if remote_control_name:
@@ -910,7 +931,9 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     # reads it by taking the final argument, and a flag appended after it would
     # be read as the prompt.
     command.append(prompt)
-    return subprocess.Popen(command, cwd=str(working_directory))
+    session_environment = {**os.environ,
+                           SUPERVISED_SEAT_NAME_ENVIRONMENT_VARIABLE: supervised_seat_name}
+    return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 
 class AdoptedSession:
@@ -1250,6 +1273,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 settings.agent_command, session_id, settings.working_directory, prompt,
                 resume=resume_first_launch, remote_control_name=settings.agent,
                 appended_system_prompt_file=settings.appended_system_prompt_file,
+                supervised_seat_name=settings.agent,
             )
             resume_first_launch = False  # recovery applies to the first launch only
 

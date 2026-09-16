@@ -11,22 +11,43 @@ whether a supervisor is actually watching and tells the agent what that means
 for it.
 
 Usage:
-  handoff-write-and-check-supervisor.py --agent <name> --next-step-file <path>
+  handoff-write-and-check-supervisor.py [--agent <name>] --next-step-file <path>
                                         [--dont-restart] [--claim]
 
-`--claim` is for two situations, and both are worth knowing before you meet
+The name a session hands off under is told to it, not chosen by it. Every
+session handoff-supervisor.py launches carries NEDSCHORUS_SUPERVISED_SEAT_NAME,
+set to the supervisor's own --agent, which is the one name whose handoff file
+that supervisor polls. When the variable is set, the name defaults to it, and
+an --agent that differs from it is refused before any other check: a handoff
+under that name goes to a file nothing reads. Measured 2026-09-15 at the
+merge-lane seat, where a session passed its own session name, merge-lane-51,
+for the seat name merge-lane: the handoff landed in merge-lane-51-handoff.md,
+the supervisor sat on merge-lane-handoff.md, and the session worked on for
+five hours and died of context exhaustion instead of reincarnating. The
+supervised-name refusal added after that incident reads files on disk to guess
+the right name; the variable removes the guess, because the supervisor that
+launched the session is the one party that knows it. When the variable is unset or empty —
+a session no supervisor launched — the name is --agent, else the working
+directory's name, exactly as before.
+
+`--claim` is for three situations, and all are worth knowing before you meet
 them: this seat's FIRST handoff under a name that a handoff file already holds
-from a DIFFERENT directory, and its first under a NEW name in a directory
-whose existing name a supervisor already answers for. The refusal exists because two seats sharing a name
+from a DIFFERENT directory, its first under a NEW name in a directory
+whose existing name a supervisor already answers for, and a handoff under a
+name other than the one the supervisor that launched this session watches.
+The first refusal exists because two seats sharing a name
 means one handoff is about to be lost unread (observed 2026-08-16, counter 10
 overwritten by counter 11 seconds later). But a seat legitimately inherits a
 name when it moves directories or is re-founded elsewhere, and then the
 refusal is the only thing standing between it and its own first handoff.
 `--claim` takes the name, overwriting whatever handoff stands, with no
-approval check: the refusal text is the guard and the typed flag in the
-transcript is the audit trail (R9). Read the refusal before passing it — it
-names the directory currently holding the name, which is what tells you
-whether you are inheriting or colliding.
+approval check, and waives all three refusals: the refusal text is the guard
+and the typed flag in the transcript is the audit trail (R9). Read the refusal
+before passing it — it names the directory currently holding the name, or the
+name the launching supervisor watches, which is what tells you whether you are
+inheriting or colliding. A handoff claimed under a name other than the
+launching supervisor's is still never read by that supervisor; --claim makes
+the write happen, not the reincarnation.
 
 The next step arrives as a FILE rather than an argument so that backticks,
 quotes, and newlines survive: a shell mangles all three inside an inline
@@ -554,13 +575,15 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--agent", default=None,
-        help="agent name; names the handoff file. Defaults to the working "
-             "directory's name, which is unique per worktree — pass this only "
-             "to name a seat deliberately, as the launchers do.",
+        help="agent name; names the handoff file. Defaults to "
+             "NEDSCHORUS_SUPERVISED_SEAT_NAME, which the supervisor that launched this "
+             "session sets to the name it watches, else to the working directory's name, "
+             "which is unique per worktree — pass this only to name a seat deliberately.",
     )
     parser.add_argument(
         "--claim", action="store_true",
-        help="write even though another directory holds this agent name, taking the name from it",
+        help="write even though another directory holds this agent name, taking the name "
+             "from it, or the supervisor that launched this session watches another name",
     )
     parser.add_argument(
         "--next-step-file", required=True,
@@ -573,6 +596,30 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="handoff directory on this machine only, not committed")
     arguments = parser.parse_args(argv)
+
+    # The name the supervisor that launched this session watches, or "" when
+    # no supervisor launched it. Checked FIRST, before the next step is even
+    # read, because every later refusal and the liveness report below are
+    # computed from the name: under a wrong one they answer the wrong question.
+    # See the module docstring for the measurement.
+    supervised_seat_name = os.environ.get(
+        supervisor.SUPERVISED_SEAT_NAME_ENVIRONMENT_VARIABLE, "").strip()
+    if (supervised_seat_name and arguments.agent
+            and arguments.agent != supervised_seat_name and not arguments.claim):
+        handoff_directory = Path(arguments.handoff_dir).expanduser()
+        print(
+            f"handoff-write-and-check-supervisor: the supervisor that launched this session "
+            f"watches the name {supervised_seat_name} (it says so in "
+            f"{supervisor.SUPERVISED_SEAT_NAME_ENVIRONMENT_VARIABLE}), and this session passed "
+            f"--agent {arguments.agent}. Nothing was written, because a handoff under "
+            f"{arguments.agent} would go to "
+            f"{handoff_directory / (arguments.agent + '-handoff.md')}, a file nothing reads: the "
+            f"supervisor keeps waiting on {supervised_seat_name}-handoff.md and this session is "
+            f"never reincarnated (measured 2026-09-15, five hours and a lost session). Rerun "
+            f"without --agent -- the name then comes from the supervisor, {supervised_seat_name}.",
+            file=sys.stderr,
+        )
+        return 2
 
     next_step_path = Path(arguments.next_step_file).expanduser()
     if not next_step_path.is_file():
@@ -606,7 +653,7 @@ def main(argv=None) -> int:
         )
         return 2
 
-    agent = arguments.agent or default_agent_name()
+    agent = arguments.agent or supervised_seat_name or default_agent_name()
     handoff_directory = Path(arguments.handoff_dir).expanduser()
     handoff_path = handoff_directory / f"{agent}-handoff.md"
     state_path = handoff_directory / f"{agent}-supervisor-state.json"

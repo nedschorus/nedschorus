@@ -39,6 +39,11 @@ def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environme
     have the writer start a real supervisor that kills the very session
     running the tests.
 
+    NEDSCHORUS_SUPERVISED_SEAT_NAME is scrubbed too, for a reason of its own:
+    a supervised session running this suite carries it, and it renames or
+    refuses every write below. A case that wants it sets it through
+    environment_overrides, which is applied after the scrub.
+
     environment_overrides is how the roster cases point the writer at a fake
     HOME and a fake session id: the roster is derived from the running
     session's transcript, so exercising it end to end means giving the writer
@@ -48,7 +53,7 @@ def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environme
     next_step_path.write_text(next_step_text, encoding="utf-8")
     scrubbed_environment = {
         key: value for key, value in os.environ.items()
-        if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+        if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "NEDSCHORUS_SUPERVISED_SEAT_NAME")
     }
     scrubbed_environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"  # offline tests never call GitHub
     scrubbed_environment.update(environment_overrides or {})
@@ -216,11 +221,16 @@ def run_invocation_cases(workspace: Path):
     check("a refused write leaves the previous handoff intact",
           fields["next-step"] == "Stop and ask first.", fields["next-step"])
 
+    # Without the supervised seat name: set to another seat, it would refuse
+    # --agent tester with the same exit 2, and this case would pass for the
+    # wrong reason.
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "tester",
          "--next-step-file", str(workspace / "no-such-file.txt"),
          "--handoff-dir", str(workspace)],
         capture_output=True, text=True, check=False,
+        env={key: value for key, value in os.environ.items()
+             if key != "NEDSCHORUS_SUPERVISED_SEAT_NAME"},
     )
     check("a missing next-step file is refused", result.returncode == 2, result.stdout)
 
@@ -313,6 +323,7 @@ def run_console_identity_case(workspace: Path):
     next_step_path = workspace / "identity-next-step.txt"
     next_step_path.write_text("Continue the walk.", encoding="utf-8")
     environment = dict(os.environ)
+    environment.pop("NEDSCHORUS_SUPERVISED_SEAT_NAME", None)  # see run_writer
     environment["CLAUDE_CODE_SESSION_ID"] = "test-session"
     environment["CLAUDE_PID"] = "12345"
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
@@ -355,7 +366,7 @@ def run_agent_name_and_claim_cases(workspace: Path):
         next_step_path.write_text(text, encoding="utf-8")
         environment = {
             key: value for key, value in os.environ.items()
-            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "NEDSCHORUS_SUPERVISED_SEAT_NAME")
         }
         environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
         return subprocess.run(
@@ -428,7 +439,7 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
         next_step_path.write_text(text, encoding="utf-8")
         environment = {
             key: value for key, value in os.environ.items()
-            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "NEDSCHORUS_SUPERVISED_SEAT_NAME")
         }
         environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
         return subprocess.run(
@@ -510,7 +521,7 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
           and "would never be read here" in chained.stderr, chained.stderr)
     check("nothing was written on the chained refusal",
           borrowed.read_text(encoding="utf-8") == borrowed_body
-          and not (handoffs / "borrowed-name-handoff.md.tmp").exists())
+          and not (handoffs / "borrowed-name-handoff.md.partial").exists())
 
     # A supervised name in ANOTHER directory is not this directory's business.
     neighbour = workspace / "neighbour-seat"
@@ -518,6 +529,113 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     elsewhere = write_from(neighbour, "a different seat entirely", "--agent", "neighbour-seat-7")
     check("a supervised name in another directory does not refuse this one",
           elsewhere.returncode != 2, elsewhere.stderr)
+
+
+def run_seat_name_told_by_the_launching_supervisor_cases(workspace: Path):
+    """The name is told to the session by its supervisor, not chosen by it.
+
+    handoff-supervisor.py sets NEDSCHORUS_SUPERVISED_SEAT_NAME in every session
+    it launches, to its own --agent: the one name whose handoff it polls. The
+    2026-09-15 session typed merge-lane-51 for merge-lane and wrote a handoff
+    nothing read; with the variable, the name is the supervisor's unless the
+    session passes --claim.
+
+    Its own directories, so that no handoff or supervisor state from the cases
+    above can make one of the older refusals fire here by accident.
+    """
+    root = workspace / "told-by-the-launching-supervisor"
+    seat = root / "launched-seat-directory"
+    foreign = root / "foreign-seat-directory"
+    handoffs = root / "handoffs"
+    for directory in (seat, foreign, handoffs):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def write_from(directory: Path, text: str, supervised_seat_name, *extra):
+        next_step_path = directory / "next-step.txt"
+        next_step_path.write_text(text, encoding="utf-8")
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "NEDSCHORUS_SUPERVISED_SEAT_NAME")
+        }
+        environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
+        if supervised_seat_name is not None:
+            environment["NEDSCHORUS_SUPERVISED_SEAT_NAME"] = supervised_seat_name
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
+             "--handoff-dir", str(handoffs), *extra],
+            capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
+        )
+
+    watched = handoffs / "watched-seat-name-handoff.md"
+    by_directory = handoffs / "launched-seat-directory-handoff.md"
+
+    # Set, no --agent: the supervisor's name, not the directory's.
+    unnamed = write_from(seat, "named by the supervisor", "watched-seat-name")
+    check("told a seat name and given no --agent, the writer proceeds",
+          unnamed.returncode != 2, unnamed.stderr)
+    check("and writes under the name the supervisor watches, not the directory's",
+          watched.is_file() and "named by the supervisor" in watched.read_text(encoding="utf-8")
+          and not by_directory.exists(),
+          str(sorted(item.name for item in handoffs.iterdir())))
+
+    # Set but blank: no supervisor named anything, so the old default stands.
+    blank = write_from(seat, "no name was told", "  ")
+    check("a blank seat name is no name: the directory's name is used, as before",
+          blank.returncode != 2 and by_directory.is_file(), blank.stderr)
+    by_directory.unlink()
+
+    # Set, --agent equal to it: proceeds as today under that name.
+    same = write_from(seat, "the same name, typed out", "watched-seat-name",
+                      "--agent", "watched-seat-name")
+    check("an --agent equal to the told seat name proceeds",
+          same.returncode != 2, same.stderr)
+    check("and writes that name's handoff",
+          "the same name, typed out" in watched.read_text(encoding="utf-8"),
+          watched.read_text(encoding="utf-8"))
+    watched_body = watched.read_text(encoding="utf-8")
+
+    # Set, --agent different, no --claim: THE INCIDENT. Refused, nothing written.
+    session_named = handoffs / "watched-seat-name-51-handoff.md"
+    refused = write_from(seat, "would be read by nobody", "watched-seat-name",
+                         "--agent", "watched-seat-name-51")
+    check("an --agent other than the told seat name is refused with exit 2",
+          refused.returncode == 2, f"exit {refused.returncode}: {refused.stderr}")
+    check("the refusal writes nothing, under either name",
+          not session_named.exists()
+          and not (handoffs / "watched-seat-name-51-handoff.md.partial").exists()
+          and watched.read_text(encoding="utf-8") == watched_body,
+          str(sorted(item.name for item in handoffs.iterdir())))
+    check("the refusal names the told seat name as what the launching supervisor watches",
+          "the supervisor that launched this session watches the name watched-seat-name "
+          in refused.stderr, refused.stderr)
+    check("the refusal says a handoff under the passed name goes to a file nothing reads",
+          f"{session_named}, a file nothing reads" in refused.stderr, refused.stderr)
+    check("the refusal says to rerun without --agent",
+          "Rerun without --agent" in refused.stderr, refused.stderr)
+
+    # Before any other check: a name a foreign directory holds would draw the
+    # foreign-claim refusal too, and this one must be the answer given.
+    write_from(foreign, "a foreign seat's own handoff", None, "--agent", "held-elsewhere")
+    held = handoffs / "held-elsewhere-handoff.md"
+    held_body = held.read_text(encoding="utf-8") if held.is_file() else ""
+    first = write_from(seat, "would clobber a foreign seat", "watched-seat-name",
+                       "--agent", "held-elsewhere")
+    check("the told-name refusal comes before the foreign-claim refusal",
+          first.returncode == 2 and "watches the name watched-seat-name" in first.stderr
+          and "belongs to a seat in" not in first.stderr
+          and held_body and held.read_text(encoding="utf-8") == held_body,
+          first.stderr)
+
+    # Set, --agent different, with --claim: proceeds under --agent.
+    claimed = write_from(seat, "re-founded under a new name", "watched-seat-name",
+                         "--agent", "watched-seat-name-51", "--claim")
+    check("--claim proceeds under an --agent other than the told seat name",
+          claimed.returncode != 2, claimed.stderr)
+    check("and writes under --agent, leaving the told name's handoff alone",
+          session_named.is_file()
+          and "re-founded under a new name" in session_named.read_text(encoding="utf-8")
+          and watched.read_text(encoding="utf-8") == watched_body,
+          str(sorted(item.name for item in handoffs.iterdir())))
 
 
 
@@ -983,6 +1101,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_console_identity_case(Path(temporary_directory))
     run_agent_name_and_claim_cases(Path(temporary_directory))
     run_seat_name_the_supervisor_does_not_answer_to_cases(Path(temporary_directory))
+    run_seat_name_told_by_the_launching_supervisor_cases(Path(temporary_directory))
     run_spawned_subagent_roster_cases(Path(temporary_directory))
     run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
 

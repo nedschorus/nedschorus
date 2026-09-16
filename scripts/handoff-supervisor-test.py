@@ -793,8 +793,11 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
                 "CONTEXT: nothing else.")
     next_step_file = workspace / "round-trip-next-step.txt"
     next_step_file.write_text(original + "\n", encoding="utf-8")
+    # The supervised seat name is scrubbed too: a supervised session running
+    # this suite carries it, and the writer would refuse --agent roundtrip.
     environment = {key: value for key, value in os.environ.items()
-                   if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")}
+                   if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+                                  "NEDSCHORUS_SUPERVISED_SEAT_NAME")}
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     subprocess.run(
         [sys.executable, str(writer_script), "--agent", "roundtrip",
@@ -1431,6 +1434,42 @@ def run_appended_system_prompt_cases(workspace: Path):
           "--append-system-prompt-file" not in argv.splitlines(), argv)
 
 
+def run_launched_session_sees_supervised_seat_name_case(workspace: Path):
+    """Every launched session is told the seat name its supervisor watches.
+
+    The handoff writer names its file from NEDSCHORUS_SUPERVISED_SEAT_NAME, so
+    the session hands off under the name this supervisor polls without typing
+    it (2026-09-15: a session typed merge-lane-51 for merge-lane and was never
+    reincarnated). The supervisor runs here with a DIFFERENT value already in
+    its own environment, so the stub can only report the right name if the
+    supervisor sets it at the launch -- inheriting it would report the decoy,
+    and that holds whatever the shell running this suite exports.
+    """
+    handoff_directory = workspace / "seatnamereachessession"
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    record_path = handoff_directory / "seat-name-seen.txt"
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text(
+        "#!/bin/sh\n"
+        "exec >/dev/null 2>&1\n"
+        f"printf '%s\\n' \"${{NEDSCHORUS_SUPERVISED_SEAT_NAME-<unset>}}\" > '{record_path}'\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    stub_agent.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", "seatnamereachessession",
+         "--cd", str(workspace), "--handoff-dir", str(handoff_directory),
+         "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+        env={**os.environ, "NEDSCHORUS_SUPERVISED_SEAT_NAME": "inherited-decoy-seat-name"},
+    )
+    seen = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+    check("the launched session sees NEDSCHORUS_SUPERVISED_SEAT_NAME equal to the supervisor's --agent",
+          seen == "seatnamereachessession\n",
+          f"the stub saw {seen!r}; supervisor exit {result.returncode}: {result.stderr[-300:]}")
+
+
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     """The successor is told which subagents were still working when the
     session it replaces ended, and that it may need to re-commission
@@ -1632,6 +1671,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))
+    run_launched_session_sees_supervised_seat_name_case(Path(temporary_directory))
     run_first_prompt_file_cases(Path(temporary_directory))
     run_process_identity_cases(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))
