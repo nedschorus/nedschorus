@@ -81,10 +81,18 @@ DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
 # a `cd` or from a worktree -- and a handoff under the wrong name lands in a
 # file this supervisor never polls, so the session runs on to context
 # exhaustion instead of reincarnating.
+#
+# The session id rides with them because every process the session starts
+# inherits them, a child `claude -p` included (scripts/ghi-info-ask.py), and a
+# child that hands off under them reincarnates the PARENT seat with the
+# child's next step (PR #414 review, 2026-09-16). The writer trusts the name
+# and directory only where CLAUDE_CODE_SESSION_ID equals this id, and a child
+# `claude` has its own.
 HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"
 HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"
 )
+HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
 
 # The supervisor stamps its state file while polling so anyone can ask whether
 # a supervisor is still watching. Without this an agent can write a handoff,
@@ -919,7 +927,12 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     and HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE), so the
     handoff writer the agent runs names its handoff after the name this
     supervisor watches and records the directory the session was launched in,
-    wherever the agent's shell happens to be standing when it runs it."""
+    wherever the agent's shell happens to be standing when it runs it.
+    session_id reaches it too (HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE),
+    on both the --session-id and --resume paths, because the writer honours the
+    other two only in the session whose CLAUDE_CODE_SESSION_ID matches it: a
+    child `claude` the session starts inherits all three but has its own id
+    (PR #414 review, 2026-09-16)."""
     flag = "--resume" if resume else "--session-id"
     command = [agent_command, flag, session_id]
     if remote_control_name:
@@ -933,6 +946,7 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     session_environment = dict(os.environ)
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
+    session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
     return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 

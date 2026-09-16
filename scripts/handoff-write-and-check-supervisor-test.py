@@ -23,13 +23,15 @@ _spec.loader.exec_module(writer)
 failures = []
 
 # What a handoff-supervisor tells every session it launches: the seat's name
-# and directory. Scrubbed from every writer run below that is not about them.
-# These suites are run by agents inside supervised seats, where both are set,
-# and inherited they would name a fixture's handoff after the real seat and
-# record the real seat's directory in it.
+# and directory, and the session id they belong to. Scrubbed from every writer
+# run below that is not about them. These suites are run by agents inside
+# supervised seats, where all three are set, and inherited they would name a
+# fixture's handoff after the real seat and record the real seat's directory
+# in it.
 HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES = (
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID",
 )
 
 
@@ -1002,6 +1004,12 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
 
     The seat's name differs from its directory's name on purpose, so a writer
     that took the name from the seat directory instead of the variable fails.
+
+    The variables count only in the session the supervisor launched, the one
+    whose CLAUDE_CODE_SESSION_ID is the session id it passed beside them. A
+    child `claude` the session starts inherits all three but has its own id,
+    and a child that took the parent's name and directory would reincarnate
+    the parent with the child's next step (PR #414 review, 2026-09-16).
     """
     seat_name = "supervised-launch-seat"
     seat = (workspace / "launched-seat-root").resolve()
@@ -1010,6 +1018,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
     seat_environment = {
         "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
         "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": FIXTURE_SESSION_ID,
     }
 
     def write_from(directory: Path, handoffs: Path, text: str, environment_overrides, *extra,
@@ -1073,8 +1082,10 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
           succession_handoff.is_file()
           and writer.supervisor.parse_handoff_file(succession_handoff).get("written-in")
           == str(seat))
+    empty_home = workspace / "launched-seat-empty-home"
+    empty_home.mkdir(parents=True, exist_ok=True)
     succeeded = write_from(subdirectory, succession_handoffs, "the next generation, from scripts/\n",
-                           seat_environment)
+                           seat_environment, home=empty_home, session_id=FIXTURE_SESSION_ID)
     check("a later write from a subdirectory of the same seat is not refused as a foreign claim",
           succeeded.returncode != 2, succeeded.stderr)
     check("and that write replaced the seat's handoff",
@@ -1084,19 +1095,97 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
           succeeded.stdout + succeeded.stderr)
 
     # (c) Set but EMPTY is unset: the working directory decides both, as it did
-    # before the variables existed. Both variables wholly unset are pinned
-    # by run_agent_name_and_claim_cases, whose writes scrub them.
+    # before the variables existed -- even in the session they name. All three
+    # variables wholly unset are pinned by run_agent_name_and_claim_cases,
+    # whose writes scrub them.
     empty_handoffs = workspace / "launched-seat-empty-variable-handoffs"
     empty_handoffs.mkdir(parents=True, exist_ok=True)
     write_from(subdirectory, empty_handoffs, "no supervisor told this session anything\n",
                {"NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "",
-                "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": ""})
+                "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "",
+                "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": FIXTURE_SESSION_ID},
+               home=empty_home, session_id=FIXTURE_SESSION_ID)
     empty_handoff = empty_handoffs / "scripts-handoff.md"
     check("with the variables empty, the name and written-in are the working directory's",
           empty_handoff.is_file()
           and writer.supervisor.parse_handoff_file(empty_handoff).get("written-in")
           == str(subdirectory),
           str(sorted(item.name for item in empty_handoffs.iterdir())))
+
+    # (d) The reviewer's route, reproduced at 08398ce. A supervised parent seat
+    # has handed off once, and its supervisor has consumed that handoff. A
+    # child `claude -p` the parent started in another seat's directory -- as
+    # scripts/ghi-info-ask.py starts one in ghi-info -- inherits the parent's
+    # three variables but has its own CLAUDE_CODE_SESSION_ID. Its handoff must
+    # land under its own directory's name and leave the parent's untouched:
+    # taken under the parent's name, it passes the foreign-claim check, raises
+    # the parent's counter, and the parent's supervisor stops the parent
+    # mid-work and relaunches it with the child's next step.
+    parent_name = "session-match-parent"
+    parent_session_id = "00000000-0000-4000-8000-00000000fa7e"
+    parent = (workspace / "session-match-parent-seat").resolve()
+    child = (workspace / "session-match-child-seat").resolve()
+    for directory in (parent, child):
+        directory.mkdir(parents=True, exist_ok=True)
+    child_route_handoffs = workspace / "session-match-child-route-handoffs"
+    child_route_handoffs.mkdir(parents=True, exist_ok=True)
+    parent_environment = {
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": parent_name,
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(parent),
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": parent_session_id,
+    }
+    write_from(parent, child_route_handoffs, "the parent's own next step\n", parent_environment,
+               home=empty_home, session_id=parent_session_id)
+    parent_handoff = child_route_handoffs / f"{parent_name}-handoff.md"
+    parent_fields = (writer.supervisor.parse_handoff_file(parent_handoff)
+                     if parent_handoff.is_file() else {})
+    check("the parent seat's own handoff is on disk at restart-counter 1, written in from its seat",
+          parent_fields.get("restart-counter") == "1"
+          and parent_fields.get("written-in") == str(parent), str(parent_fields))
+    writer.supervisor.write_supervisor_state(
+        child_route_handoffs / f"{parent_name}-supervisor-state.json",
+        {"consumed_counter": 1, "session_id": parent_session_id, "generation": 1})
+    parent_bytes = parent_handoff.read_bytes() if parent_handoff.is_file() else b""
+    child_write = write_from(child, child_route_handoffs, "the child's next step\n",
+                             parent_environment, home=empty_home,
+                             session_id="00000000-0000-4000-8000-00000000c41d")
+    child_handoff = child_route_handoffs / f"{child.name}-handoff.md"
+    child_fields = (writer.supervisor.parse_handoff_file(child_handoff)
+                    if child_handoff.is_file() else {})
+    check("a child session carrying its parent's variables hands off under its own directory's name",
+          child_handoff.is_file(),
+          f"{sorted(item.name for item in child_route_handoffs.iterdir())} {child_write.stderr}")
+    check("and records its own directory as written-in, not the parent's",
+          child_fields.get("written-in") == str(child), str(child_fields))
+    after_bytes = parent_handoff.read_bytes() if parent_handoff.is_file() else b""
+    check("and the parent's handoff is byte-for-byte unchanged, restart-counter included",
+          parent_bytes != b"" and after_bytes == parent_bytes,
+          after_bytes.decode("utf-8", errors="replace"))
+
+    # (e) The name and directory variables without the session id they belong
+    # to, and (f) without CLAUDE_CODE_SESSION_ID, and (g) without either: no
+    # session match, so the working directory decides both. (g) is the case an
+    # unguarded comparison gets wrong, since two absent ids compare equal.
+    name_and_directory_only = {
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
+    }
+    for case_slug, case_label, environment_overrides, session_id in (
+        ("no-session-variable", "the session-id variable is absent",
+         name_and_directory_only, FIXTURE_SESSION_ID),
+        ("no-claude-session", "CLAUDE_CODE_SESSION_ID is unset", seat_environment, ""),
+        ("no-session-at-all", "both session ids are absent", name_and_directory_only, ""),
+    ):
+        unmatched_handoffs = workspace / f"launched-seat-unmatched-handoffs-{case_slug}"
+        unmatched_handoffs.mkdir(parents=True, exist_ok=True)
+        unmatched = write_from(subdirectory, unmatched_handoffs, "no session match\n",
+                               environment_overrides, home=empty_home, session_id=session_id)
+        unmatched_handoff = unmatched_handoffs / "scripts-handoff.md"
+        check(f"when {case_label}, the name and written-in are the working directory's",
+              unmatched_handoff.is_file()
+              and writer.supervisor.parse_handoff_file(unmatched_handoff).get("written-in")
+              == str(subdirectory),
+              f"{sorted(item.name for item in unmatched_handoffs.iterdir())} {unmatched.stderr}")
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:

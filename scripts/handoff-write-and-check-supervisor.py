@@ -90,6 +90,9 @@ HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = (
 HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
     supervisor.HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE
 )
+HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = (
+    supervisor.HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE
+)
 
 # The --agent default, stated the same way everywhere this script states it:
 # the option's help and every refusal that advises omitting --agent.
@@ -172,6 +175,27 @@ def next_restart_counter(handoff_path: Path, state_path: Path) -> int:
     return highest_seen + 1
 
 
+def handoff_supervisor_launched_this_session() -> bool:
+    """Whether the handoff-supervisor's name and directory variables are this
+    session's own, rather than inherited from the session that started it.
+
+    True only when CLAUDE_CODE_SESSION_ID is set and equals the session id the
+    supervisor launched. Every process a supervised session starts inherits
+    the variables, a child `claude -p` included: scripts/ghi-info-ask.py
+    starts one in the ghi-info seat with no env=, as prof did 2026-08-28. When
+    that child hands off, the parent's name and directory would pass the
+    foreign-claim check and raise the parent's counter, and the parent's
+    supervisor would stop the parent mid-work and relaunch it with the child's
+    next step -- reproduced in a sandbox in the PR #414 review, 2026-09-16. A
+    child `claude` gets its own CLAUDE_CODE_SESSION_ID (measured 2026-09-16), so
+    it fails this match and falls back to its working directory: a stray
+    handoff nothing polls, never a wrong reincarnation.
+    """
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    return bool(session_id) and session_id == os.environ.get(
+        HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE, "")
+
+
 def default_agent_name() -> str:
     """The name the handoff-supervisor that launched this session watches, else
     the working directory's name, which is already unique per seat.
@@ -184,7 +208,8 @@ def default_agent_name() -> str:
     exhaustion, the outcome measured 2026-09-15 at merge-lane (see
     supervised_name_for_this_directory). The supervisor sets the variable for
     every session it launches (user-ruled 2026-09-16); a session no supervisor
-    launched has none, and keeps the directory's name.
+    launched keeps the directory's name, including a child session that
+    inherited the variable (see handoff_supervisor_launched_this_session).
 
     An agent name selects the handoff file, the supervisor state and the lock,
     so two sessions sharing a name share all three. Nothing enforced
@@ -200,7 +225,9 @@ def default_agent_name() -> str:
     collision without anyone having to invent a name. An explicit --agent
     still wins, which is how the launchers name their seats.
     """
-    return os.environ.get(HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE, "") or Path.cwd().name
+    launched_as = (os.environ.get(HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE, "")
+                   if handoff_supervisor_launched_this_session() else "")
+    return launched_as or Path.cwd().name
 
 
 def agent_seat_working_directory() -> Path:
@@ -213,10 +240,13 @@ def agent_seat_working_directory() -> Path:
     session was LAUNCHED in. The working directory is that directory only
     until the agent runs this script after a `cd` or from a worktree; the
     supervisor's variable is it wherever the shell stands (user-ruled
-    2026-09-16). A session no supervisor launched has no variable, and its
-    working directory is all there is to go on.
+    2026-09-16). A session no supervisor launched, including a child session
+    that inherited the variable, has only its working directory to go on. The
+    same session match gates this and default_agent_name, so the name and the
+    directory come from the supervisor together or not at all.
     """
-    launched_in = os.environ.get(HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE, "")
+    launched_in = (os.environ.get(HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE, "")
+                   if handoff_supervisor_launched_this_session() else "")
     return Path(launched_in) if launched_in else Path.cwd()
 
 

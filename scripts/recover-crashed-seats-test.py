@@ -484,7 +484,7 @@ with tempfile.TemporaryDirectory() as temporary:
     class FakeProcess:
         pass
     def fake_popen(argv, cwd=None, env=None):
-        launched.append((argv, cwd))
+        launched.append((argv, cwd, (env or {}).get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")))
         return FakeProcess()
     # supervisor_module.subprocess IS the shared subprocess module: patch the
     # attribute and restore it, or every later real_subprocess.run breaks.
@@ -496,12 +496,19 @@ with tempfile.TemporaryDirectory() as temporary:
         check("supervisor resume launch uses --resume, not --session-id",
               launched and launched[0][0] == ["claude", "--resume", "abc-123", "the prompt"],
               launched)
+        # The handoff writer honours the seat's name and directory only in the
+        # session whose CLAUDE_CODE_SESSION_ID is this id; a resumed session
+        # keeps the id it resumes (PR #414 review, 2026-09-16).
+        check("supervisor resume launch tells the session the id it resumes",
+              launched and launched[0][2] == "abc-123", launched)
         launched.clear()
         supervisor_module.launch_agent_session("claude", "abc-123", Path("/tmp"),
                                                "the prompt")
         check("supervisor plain launch still uses --session-id",
               launched and launched[0][0] == ["claude", "--session-id", "abc-123", "the prompt"],
               launched)
+        check("supervisor plain launch tells the session the id it launches",
+              launched and launched[0][2] == "abc-123", launched)
         launched.clear()
         # nedschorus#142 lane: a seat launched with its own name pins the title
         # it answers to across machines, and turns Remote Control on so it is
