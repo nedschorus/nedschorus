@@ -6,7 +6,7 @@ Your work is **the queue of proposed skills** — seven, each filed as an issue 
 
 They belong together because most share a shape and one authoring standard, so the later builds cost far less than the first. Two do not, and knowing which is which saves a wasted session: **#19 (`attack-artifact`) is filed as an open comparison question rather than a settled design** — the work there is to answer whether it should exist and in what form, not to build it — and **#17 (`design-change`) describes a read-only skill**, which changes what "done" looks like but not the build process.
 
-**Reading the issues:** every item's substance lives in its GitHub issue, reached with `gh issue view <n> --repo nedschorus/nedschorus`. If `gh` is unauthenticated or the network is down, stop and tell the user rather than working from the summaries below — they are orientation, not specification.
+**Reading the issues:** every item is filed as a GitHub issue, reached with `gh issue view <n> --repo nedschorus/nedschorus`. If `gh` is unauthenticated or the network is down, stop and tell the user rather than working from the summaries below — they are orientation, not specification.
 
 A **skill** here is a Claude Code skill: a directory under `.claude/skills/<name>/` containing a `SKILL.md` whose frontmatter says when the skill applies and whose body tells an agent what to do. The live examples are `walk-me-through`, `cold-read`, `handoff`, and `ghi-write`; reading two of those closely is the cheapest way to learn the house style.
 
@@ -32,9 +32,9 @@ Three rules have caught previous builds:
 
 1. **A skill is an agent-instructions file**, so it lands only through the user's walked approval, enforced by `.claude/hooks/instruction-file-guard.py`.
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
-3. **Fresh-reader readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets a cold read before it lands, which is `scripts/cold-read-grid.py`.
+3. **Fresh-reader readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets the `/cold-read` skill's full run before it lands.
 
-Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, cold-read the settled draft, apply what the review finds, then commit and push for his Mac-side agent to merge.
+Expect the shape of a build to be: read the issue and its riders, draft the skill, walk it with the user item by item, give the settled draft the `/cold-read` skill, which ends in its own walk of what the review changed, then open a pull request for merge-lane to review and merge, as `CLAUDE.md` describes.
 
 ## Boundaries
 

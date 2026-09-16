@@ -6,20 +6,22 @@ Your work is **the machinery that runs agents**: the launchers, the handoff supe
 
 ## The state of the machinery
 
-Accurate as of 2026-08-13. Where something is described as pending, check before relying on it: `git log --oneline -5 origin/main` and `gh pr view <n> --repo nedschorus/nedschorus --json state,mergedAt`.
+Checked against main on 2026-09-16. Where something is described as pending, check before relying on it: `git log --oneline -5 origin/main` and `gh pr view <n> --repo nedschorus/nedschorus --json state,mergedAt`.
 
 **On main:**
 
-- **Launchers** — `scripts/launch-claude-ubuntu` (run from the Mac, reaches the box over SSH) and `scripts/launch-claude-mac` (local twin). Attach-or-create by tmux session name, on the seat's OWN tmux server (`tmux -L <name>`, one server per seat since 2026-08-21, so one server crash cannot take a machine's whole fleet down; seats launched before that change are still reached on the default server, and MOVE to their own server only through a relaunch: `scripts/resupervise-seat.py <name>` (at the seat's next handoff, which it requires) or exit-and-relaunch. A handoff alone does not move a seat — the supervisor makes no tmux call. Until a seat migrates, a default-server crash still takes every unmigrated seat at once); the seat's home is `~/agents/<name>`; the name typed is the whole configuration, with no roster ([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)). Both create the seat's home as a checkout on its own branch *before* the session starts, because project settings load from `.claude/` at session start.
-- **The supervisor** — `scripts/handoff-supervisor.py`. Launches each session, replaces it when it writes a handoff, exits when its agent stops without one. Before each launch it fetches and fast-forwards the seat's branch when the tree is clean and strictly behind main; on a dirty tree, a diverged branch, or a failed fetch it reports and changes nothing. It never merges automatically, and never runs on the adoption path — changing files under a live agent is the thing this must not do.
+- **Launchers** — `scripts/launch-claude-ubuntu` (run from the Mac, reaches ned-box over SSH) and `scripts/launch-claude-mac` (local twin). Both attach-or-create by tmux session name, on the seat's OWN tmux server (`tmux -L <name>`, one server per seat since 2026-08-21, so one server crash cannot take a machine's whole fleet down). The seat's home is `~/agents/<name>`, and the name typed is the whole configuration, with no roster ([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45)). Both launchers create the seat's home as a checkout on its own branch *before* the session starts, because project settings load from `.claude/` at session start.
+
+  Seats launched before 2026-08-21 are still reached on the default tmux server, and until they move, a default-server crash still takes all of them at once. A seat MOVES to its own server only through a relaunch: `scripts/resupervise-seat.py <name>`, at the seat's next handoff, which it requires, or exit-and-relaunch. A handoff alone does not move a seat, because the supervisor makes no tmux call.
+- **The supervisor** — `scripts/handoff-supervisor.py`. Launches each session, replaces it when it writes a handoff, exits when its agent stops without one. Before each launch it fetches and fast-forwards the seat's branch when the tree is clean and strictly behind main; on a dirty tree, a diverged branch, or a failed fetch it reports and changes nothing, and the session launches anyway with that report in its prompt. The update never merges, and never runs on the adoption path — changing files under a live agent is the thing this must not do.
 - **The reincarnation trigger** — `scripts/handoff-context-threshold-hook.py`, a `Stop` hook that asks the agent to hand off once context passes 50%.
-- **The instruction-file guard** — `.claude/hooks/instruction-file-guard.py`, a `PreToolUse` hook on Edit, Write and NotebookEdit. It blocks changes to `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and `.claude/` unless the user's approval is quoted into `.walk-approved`, which it then consumes. It cannot see writes made through shell commands, so the rule binds regardless of the hook.
+- **The instruction-file guard** — `.claude/hooks/instruction-file-guard.py`, a `PreToolUse` hook on Edit, Write and NotebookEdit. It blocks changes to `CLAUDE.md`, the per-agent identity file `~/agents/<seat>/CLAUDE.local.md`, and `.claude/` unless the user's approval is quoted into `.walk-approved` at the root of the session's checkout, which it then consumes. It cannot see writes made through shell commands, so the rule binds regardless of the hook.
 
 PR states go stale within hours — three of this seat's were closed the same day they were listed — so check rather than trust any list of them here: `gh pr list --repo nedschorus/nedschorus --state open`.
 
 ## Your queue
 
-`docs/issues/queue/45-session-seat-and-isolation-riders.md` holds five ideas raised and deliberately not built, each with its reasoning. Read it before proposing any of them.
+`docs/issues/queue/45-session-seat-and-isolation-riders.md` holds five ideas raised and deliberately not built, each with its reasoning, and a sixth item, a guard bug since fixed (the guard now finds the repository root from `.git`). Read it before proposing any of them.
 
 Rider 1 — a guard enforcing one live session per directory — is **blocked on a question, not on effort**. The obvious detection method (scanning `/proc` for two Claude processes sharing a working directory) was tried on 2026-08-13 and proved unreliable: an attached background session's process reports the directory where `claude attach` was typed, not the directory the session works in, so real collisions hide and viewer windows look like sessions. Before building anything, answer: *what source of truth reports a session's actual working directory?* Candidates worth testing are the session's own transcript, which records it, and asking the session directly. Detection is solved when you can, from outside a session, name its working directory correctly for all three ways a session is created — launched by the supervisor, forked, and started as a background job. Until then the guard should not be built; a guard whose detection is wrong teaches the wrong lesson at the worst moment.
 
@@ -33,15 +35,15 @@ The fast-handoff findings ([PR #52](https://github.com/nedschorus/nedschorus/pul
 
 Be honest about its status: nothing enforces this today. The detection needed for a guard is the open question above, so the rule is a discipline, not a guarantee, and the *only* mechanical protection is git's refusal to check out one branch in two worktrees — which stops the common case and nothing else.
 
-The remedy when it happens is `EnterWorktree`, a tool available to a running session: it creates a new git worktree on a fresh branch and moves the session into it, conversation intact. The session that should move is the one that arrived second — the fork or the background job — since the original owns the directory. A session that has already edited files there should say so before moving, because those edits stay behind.
+The remedy when it happens is `EnterWorktree`, a Claude Code tool available to a running session: it creates a new git worktree on a fresh branch and moves the session into it, conversation intact. The session that should move is the one that arrived second — the fork or the background job — since the original owns the directory. A session that has already edited files there should say so before moving, because those edits stay behind.
 
-## Session-management facts, verified 2026-08-13 on Claude Code 2.1.232
+## Session-management facts, verified 2026-08-13 on Claude Code 2.1.231
 
 Expensive to learn, easy to lose:
 
 - **Job ids are not session ids.** `claude attach <id>` takes the eight-character job id (the directory names under `~/.claude/jobs/`), not the session UUID.
 - **`claude agents`** opens the agent view: `Space` peeks without attaching, `Ctrl+R` renames a session, `Ctrl+T` pins it against the roughly one-hour idle reap, `Ctrl+X` stops it, and `Ctrl+S` groups by directory — which makes the shared-directory hazard visible.
-- Both list **only the machine they run on**; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
+- `claude agents` and `claude attach` see **only the machine they run on**; the box needs `ssh nedlern@ned-box -t 'claude agents'`.
 - **No side-by-side view exists** in the harness. Watching two sessions at once means two terminals.
 - **Process uptime is not idle time.** A session showing many hours of `etime` may have been active a minute ago; the honest check is the modification time of its transcript under `~/.claude/projects/<project>/<session-id>.jsonl`.
 - Non-interactive SSH shells did not see `~/.local/bin` until `~/.bashrc` was changed on 2026-08-13 to export PATH above its non-interactive early-return. That fix is machine state, not in git, so it will not survive a rebuilt box.
