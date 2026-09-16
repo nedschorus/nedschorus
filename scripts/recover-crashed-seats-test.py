@@ -483,8 +483,8 @@ with tempfile.TemporaryDirectory() as temporary:
     launched = []
     class FakeProcess:
         pass
-    def fake_popen(argv, cwd=None):
-        launched.append((argv, cwd))
+    def fake_popen(argv, cwd=None, env=None):
+        launched.append((argv, cwd, (env or {}).get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")))
         return FakeProcess()
     # supervisor_module.subprocess IS the shared subprocess module: patch the
     # attribute and restore it, or every later real_subprocess.run breaks.
@@ -496,12 +496,19 @@ with tempfile.TemporaryDirectory() as temporary:
         check("supervisor resume launch uses --resume, not --session-id",
               launched and launched[0][0] == ["claude", "--resume", "abc-123", "the prompt"],
               launched)
+        # The handoff writer honours the seat's name and directory only in the
+        # session whose CLAUDE_CODE_SESSION_ID is this id; a resumed session
+        # keeps the id it resumes (PR #414 review, 2026-09-16).
+        check("supervisor resume launch tells the session the id it resumes",
+              launched and launched[0][2] == "abc-123", launched)
         launched.clear()
         supervisor_module.launch_agent_session("claude", "abc-123", Path("/tmp"),
                                                "the prompt")
         check("supervisor plain launch still uses --session-id",
               launched and launched[0][0] == ["claude", "--session-id", "abc-123", "the prompt"],
               launched)
+        check("supervisor plain launch tells the session the id it launches",
+              launched and launched[0][2] == "abc-123", launched)
         launched.clear()
         # nedschorus#142 lane: a seat launched with its own name pins the title
         # it answers to across machines, and turns Remote Control on so it is
@@ -734,7 +741,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # **kwargs would swallow a signature change instead of failing here, and
     # this probe exists to assert what the supervisor passes at launch.
     def probe_launch(agent_command, session_id, working_directory, prompt, resume=False,
-                     remote_control_name="", appended_system_prompt_file=""):
+                     remote_control_name="", appended_system_prompt_file="",
+                     handoff_supervisor_agent_name=""):
         state_seen_at_launch.update(json.loads(
             (workspace.handoffs / "seat-a-supervisor-state.json").read_text()))
         state_seen_at_launch["resume_flag"] = resume
@@ -824,7 +832,8 @@ with tempfile.TemporaryDirectory() as temporary:
     launched_prompts = []
     # Mirrors launch_agent_session's signature exactly; see probe_launch above.
     def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False,
-                     remote_control_name="", appended_system_prompt_file=""):
+                     remote_control_name="", appended_system_prompt_file="",
+                     handoff_supervisor_agent_name=""):
         launched_prompts.append((prompt, resume))
         raise StopIteration()
     sup = supervisor_module

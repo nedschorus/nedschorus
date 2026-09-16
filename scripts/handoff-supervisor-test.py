@@ -793,8 +793,13 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
                 "CONTEXT: nothing else.")
     next_step_file = workspace / "round-trip-next-step.txt"
     next_step_file.write_text(original + "\n", encoding="utf-8")
+    # The seat variables too: run inside a supervised seat, the writer would
+    # otherwise record that seat's directory rather than this fixture's.
     environment = {key: value for key, value in os.environ.items()
-                   if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")}
+                   if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")}
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     subprocess.run(
         [sys.executable, str(writer_script), "--agent", "roundtrip",
@@ -1431,6 +1436,77 @@ def run_appended_system_prompt_cases(workspace: Path):
           "--append-system-prompt-file" not in argv.splitlines(), argv)
 
 
+def run_launched_session_seat_environment_cases(workspace: Path):
+    """Every launched session is told the seat's name and directory, and its own
+    session id.
+
+    The handoff writer the agent runs names its handoff after the name this
+    supervisor watches only if the session carries it: taken from the shell's
+    working directory instead, a `cd scripts` or a worktree names the handoff
+    after that directory, and nothing polls the file (user-ruled 2026-09-16).
+    The agent command here is a real child process that records what its
+    environment holds, so what is proven is what a launched session sees.
+    The supervisor itself is started with decoy values of all three variables,
+    as it would be when run from inside another seat's session, so an
+    inherited value cannot pass for a value the supervisor set.
+
+    The session id is what confines the name and directory to this session:
+    the writer honours them only where CLAUDE_CODE_SESSION_ID equals it, and a
+    child `claude` the session starts inherits all three under its own id
+    (PR #414 review, 2026-09-16). So it must be the id launched, the one on
+    the command line and in the state file.
+    """
+    name = "launchenvseat"
+    handoff_directory = workspace / name
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    seat_directory = workspace / "launchenvseat-directory"
+    seat_directory.mkdir(parents=True, exist_ok=True)
+    record_path = handoff_directory / "environment.json"
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"with open({str(record_path)!r}, 'w', encoding='utf-8') as handle:\n"
+        "    recorded = {variable: os.environ.get(variable) for variable in (\n"
+        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME',\n"
+        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY',\n"
+        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID')}\n"
+        "    recorded['argv'] = sys.argv[1:]\n"
+        "    json.dump(recorded, handle)\n",
+        encoding="utf-8",
+    )
+    stub_agent.chmod(0o755)
+    environment = dict(os.environ)
+    environment["NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"] = "decoy-outer-seat"
+    environment["NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"] = str(workspace / "decoy-outer-seat")
+    environment["NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"] = "decoy-outer-session"
+    subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(seat_directory),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False,
+        stdin=subprocess.DEVNULL, timeout=60, env=environment,
+    )
+    recorded = (json.loads(record_path.read_text(encoding="utf-8"))
+                if record_path.is_file() else {})
+    check("the launched session ran and recorded its environment",
+          record_path.is_file(), "the stub agent wrote no record, so no session launched")
+    check("the launched session is told the agent name its supervisor watches",
+          recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME") == name, str(recorded))
+    # main() resolves --cd, so on macOS a /var tempdir arrives as /private/var.
+    check("the launched session is told the directory its supervisor launched it in",
+          recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY")
+          == str(seat_directory.resolve()), str(recorded))
+    launched_argv = recorded.get("argv") or []
+    launched_session_id = (launched_argv[launched_argv.index("--session-id") + 1]
+                           if "--session-id" in launched_argv[:-1] else None)
+    state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
+    check("the launched session is told the session id it was launched with",
+          launched_session_id is not None
+          and recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID") == launched_session_id
+          and state.get("session_id") == launched_session_id,
+          f"{recorded} state session_id={state.get('session_id')}")
+
+
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     """The successor is told which subagents were still working when the
     session it replaces ended, and that it may need to re-commission
@@ -1632,6 +1708,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))
+    run_launched_session_seat_environment_cases(Path(temporary_directory))
     run_first_prompt_file_cases(Path(temporary_directory))
     run_process_identity_cases(Path(temporary_directory))
     run_lock_cases(Path(temporary_directory))

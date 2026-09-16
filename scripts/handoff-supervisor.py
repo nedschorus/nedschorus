@@ -74,6 +74,26 @@ DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
     / "seat-session-appended-system-prompt.md"
 )
 
+# Set in the environment of every agent session this supervisor launches, and
+# read by handoff-write-and-check-supervisor.py as the seat's name and
+# directory (user-ruled 2026-09-16). Without them the writer took both from its
+# own working directory, which is the seat's only until the agent runs it after
+# a `cd` or from a worktree -- and a handoff under the wrong name lands in a
+# file this supervisor never polls, so the session runs on to context
+# exhaustion instead of reincarnating.
+#
+# The session id rides with them because every process the session starts
+# inherits them, a child `claude -p` included (scripts/ghi-info-ask.py), and a
+# child that hands off under them reincarnates the PARENT seat with the
+# child's next step (PR #414 review, 2026-09-16). The writer trusts the name
+# and directory only where CLAUDE_CODE_SESSION_ID equals this id, and a child
+# `claude` has its own.
+HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"
+HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"
+)
+HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
+
 # The supervisor stamps its state file while polling so anyone can ask whether
 # a supervisor is still watching. Without this an agent can write a handoff,
 # stop working, and wait forever on a supervisor that died — a hang that looks
@@ -869,7 +889,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
                          remote_control_name: str = "",
-                         appended_system_prompt_file: str = ""):
+                         appended_system_prompt_file: str = "",
+                         handoff_supervisor_agent_name: str = ""):
     """Start one interactive session, inheriting this console's terminal.
 
     resume=True launches `--resume <id>` instead of `--session-id <id>`: the
@@ -899,7 +920,19 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     titles this replaces could not collide, because the CLI qualified them with
     the hostname. The fleet already keeps its names distinct by habit (the Mac
     runs `mac-prof` where this box runs `prof`); this makes the habit load-
-    bearing, which is why --agent's own help text now says so."""
+    bearing, which is why --agent's own help text now says so.
+
+    handoff_supervisor_agent_name and working_directory also reach the session
+    as environment variables (HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE
+    and HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE), so the
+    handoff writer the agent runs names its handoff after the name this
+    supervisor watches and records the directory the session was launched in,
+    wherever the agent's shell happens to be standing when it runs it.
+    session_id reaches it too (HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE),
+    on both the --session-id and --resume paths, because the writer honours the
+    other two only in the session whose CLAUDE_CODE_SESSION_ID matches it: a
+    child `claude` the session starts inherits all three but has its own id
+    (PR #414 review, 2026-09-16)."""
     flag = "--resume" if resume else "--session-id"
     command = [agent_command, flag, session_id]
     if remote_control_name:
@@ -910,7 +943,11 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     # reads it by taking the final argument, and a flag appended after it would
     # be read as the prompt.
     command.append(prompt)
-    return subprocess.Popen(command, cwd=str(working_directory))
+    session_environment = dict(os.environ)
+    session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
+    session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
+    session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
+    return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 
 class AdoptedSession:
@@ -1250,6 +1287,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 settings.agent_command, session_id, settings.working_directory, prompt,
                 resume=resume_first_launch, remote_control_name=settings.agent,
                 appended_system_prompt_file=settings.appended_system_prompt_file,
+                handoff_supervisor_agent_name=settings.agent,
             )
             resume_first_launch = False  # recovery applies to the first launch only
 
