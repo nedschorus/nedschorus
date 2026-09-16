@@ -483,7 +483,7 @@ with tempfile.TemporaryDirectory() as temporary:
     launched = []
     class FakeProcess:
         pass
-    def fake_popen(argv, cwd=None):
+    def fake_popen(argv, cwd=None, env=None):
         launched.append((argv, cwd))
         return FakeProcess()
     # supervisor_module.subprocess IS the shared subprocess module: patch the
@@ -734,7 +734,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # **kwargs would swallow a signature change instead of failing here, and
     # this probe exists to assert what the supervisor passes at launch.
     def probe_launch(agent_command, session_id, working_directory, prompt, resume=False,
-                     remote_control_name="", appended_system_prompt_file=""):
+                     remote_control_name="", appended_system_prompt_file="",
+                     handoff_supervisor_agent_name=""):
         state_seen_at_launch.update(json.loads(
             (workspace.handoffs / "seat-a-supervisor-state.json").read_text()))
         state_seen_at_launch["resume_flag"] = resume
@@ -824,7 +825,8 @@ with tempfile.TemporaryDirectory() as temporary:
     launched_prompts = []
     # Mirrors launch_agent_session's signature exactly; see probe_launch above.
     def prompt_probe(agent_command, session_id, working_directory, prompt, resume=False,
-                     remote_control_name="", appended_system_prompt_file=""):
+                     remote_control_name="", appended_system_prompt_file="",
+                     handoff_supervisor_agent_name=""):
         launched_prompts.append((prompt, resume))
         raise StopIteration()
     sup = supervisor_module

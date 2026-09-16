@@ -81,6 +81,23 @@ NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 PROJECTS_ROOT = supervisor.PROJECTS_ROOT
 project_directory_for_working_directory = supervisor.project_directory_for_working_directory
 
+# The seat's name and directory as the handoff-supervisor that launched this
+# session passes them. One copy of each variable's name, in the base module
+# that sets them.
+HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE = (
+    supervisor.HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE
+)
+HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    supervisor.HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE
+)
+
+# The --agent default, stated the same way everywhere this script states it:
+# the option's help and every refusal that advises omitting --agent.
+DEFAULT_AGENT_NAME_RULE_TEXT = (
+    f"the name the handoff-supervisor that launched this session watches "
+    f"({HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE}), else the working directory's name"
+)
+
 # One numbered field per subagent: `spawned-subagent-1`, `spawned-subagent-2`.
 # A repeated key would not work — the reader takes the first occurrence of a
 # key, so every subagent but the first would be dropped.
@@ -156,7 +173,18 @@ def next_restart_counter(handoff_path: Path, state_path: Path) -> int:
 
 
 def default_agent_name() -> str:
-    """The working directory's name, which is already unique per seat.
+    """The name the handoff-supervisor that launched this session watches, else
+    the working directory's name, which is already unique per seat.
+
+    The supervisor's name comes first because the working directory is the
+    seat's only while the agent's shell stands at the seat root. Run after a
+    `cd scripts`, or from a worktree under .claude/worktrees/, the directory's
+    name is that directory's, and a handoff under it lands in a file no
+    supervisor polls: the session never reincarnates and runs on to context
+    exhaustion, the outcome measured 2026-09-15 at merge-lane (see
+    supervised_name_for_this_directory). The supervisor sets the variable for
+    every session it launches (user-ruled 2026-09-16); a session no supervisor
+    launched has none, and keeps the directory's name.
 
     An agent name selects the handoff file, the supervisor state and the lock,
     so two sessions sharing a name share all three. Nothing enforced
@@ -168,11 +196,28 @@ def default_agent_name() -> str:
     session.
 
     A worktree directory name is unique by construction — Claude Code appends
-    a random suffix for exactly that reason — so defaulting to it removes the
+    a random suffix for exactly that reason — so falling back to it removes the
     collision without anyone having to invent a name. An explicit --agent
     still wins, which is how the launchers name their seats.
     """
-    return Path.cwd().name
+    return os.environ.get(HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE, "") or Path.cwd().name
+
+
+def agent_seat_working_directory() -> Path:
+    """The directory the handoff-supervisor launched this session in, else the
+    working directory.
+
+    Everything this script means by "this directory" is the agent-seat's: the
+    written-in field, the foreign-claim comparison, the search for a supervised
+    name, and the transcript lookup, which the harness keys on the directory a
+    session was LAUNCHED in. The working directory is that directory only
+    until the agent runs this script after a `cd` or from a worktree; the
+    supervisor's variable is it wherever the shell stands (user-ruled
+    2026-09-16). A session no supervisor launched has no variable, and its
+    working directory is all there is to go on.
+    """
+    launched_in = os.environ.get(HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE, "")
+    return Path(launched_in) if launched_in else Path.cwd()
 
 
 def claiming_directory(handoff_path: Path) -> str:
@@ -182,9 +227,11 @@ def claiming_directory(handoff_path: Path) -> str:
     return supervisor.parse_handoff_file(handoff_path).get("written-in", "")
 
 
-def supervised_name_for_this_directory(handoff_directory: Path, agent: str) -> str:
+def supervised_name_for_this_directory(handoff_directory: Path, agent: str,
+                                       seat_directory: Path) -> str:
     """The name a supervised seat in THIS directory already hands off under.
 
+    THIS directory is seat_directory, as agent_seat_working_directory gives it.
     Returns "" when there is none, which is the ordinary case: one seat, one
     name, nothing to correct.
 
@@ -209,7 +256,7 @@ def supervised_name_for_this_directory(handoff_directory: Path, agent: str) -> s
     at this seat's every later handoff, locking it out of exactly the name it
     must use. The stray has no supervisor state; the real seat does.
     """
-    here = str(Path.cwd().resolve())
+    here = str(seat_directory.resolve())
     suffix = "-handoff.md"
     for other_handoff in sorted(handoff_directory.glob(f"*{suffix}")):
         other = other_handoff.name[: -len(suffix)]
@@ -481,7 +528,7 @@ def spawned_subagent_roster_for_this_session(working_directory: Path):
 
 
 def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_restart: bool,
-                       spawned_subagent_lines=(), verbatim_lines=()) -> None:
+                       seat_directory: Path, spawned_subagent_lines=(), verbatim_lines=()) -> None:
     """Write the handoff file in one step, so no reader sees it half-written."""
     lines = [
         f"written-at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
@@ -491,7 +538,7 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
         # written-in is the discriminator, not the session id: successive
         # generations of one seat are different sessions in the SAME
         # directory, while two seats sharing a name are different directories.
-        f"written-in: {Path.cwd()}",
+        f"written-in: {seat_directory}",
         f"written-by-session: {os.environ.get('CLAUDE_CODE_SESSION_ID', 'unknown')}",
     ]
     if dont_restart:
@@ -554,9 +601,9 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--agent", default=None,
-        help="agent name; names the handoff file. Defaults to the working "
-             "directory's name, which is unique per worktree — pass this only "
-             "to name a seat deliberately, as the launchers do.",
+        help=f"agent name; names the handoff file. Defaults to {DEFAULT_AGENT_NAME_RULE_TEXT}, "
+             "which is unique per worktree — pass this only to name a seat deliberately, "
+             "as the launchers do.",
     )
     parser.add_argument(
         "--claim", action="store_true",
@@ -607,6 +654,7 @@ def main(argv=None) -> int:
         return 2
 
     agent = arguments.agent or default_agent_name()
+    seat_directory = agent_seat_working_directory()
     handoff_directory = Path(arguments.handoff_dir).expanduser()
     handoff_path = handoff_directory / f"{agent}-handoff.md"
     state_path = handoff_directory / f"{agent}-supervisor-state.json"
@@ -627,29 +675,29 @@ def main(argv=None) -> int:
     # question). When this directory has a supervised name, that name is the
     # advice and --claim is warned against; --claim is advised bare only when
     # there is no supervised name for it to override.
-    supervised_name = supervised_name_for_this_directory(handoff_directory, agent)
+    supervised_name = supervised_name_for_this_directory(handoff_directory, agent, seat_directory)
     held_by = claiming_directory(handoff_path)
     held_by_resolved = str(Path(held_by).resolve()) if held_by else ""
-    if held_by and held_by_resolved != str(Path.cwd().resolve()) and not arguments.claim:
+    if held_by and held_by_resolved != str(seat_directory.resolve()) and not arguments.claim:
         if supervised_name:
             exits = (
                 f"Rerun with --agent {supervised_name} -- this directory's supervised name, "
                 f"the only name whose handoff is read here -- or omit --agent entirely (it "
-                f"defaults to this directory's name, {default_agent_name()}). Do NOT pass "
-                f"--claim to take {agent} from {held_by}: --claim also waives the "
+                f"defaults to {DEFAULT_AGENT_NAME_RULE_TEXT}, here {default_agent_name()}). "
+                f"Do NOT pass --claim to take {agent} from {held_by}: --claim also waives the "
                 f"supervised-name check, and a handoff under {agent} would never be read here."
             )
         else:
             exits = (
-                f"Either run with --agent <a name of your own> (the default is this "
-                f"directory's name, {default_agent_name()}), or pass --claim to take the name "
-                f"from it -- knowing that --claim also waives the check that no supervisor "
-                f"answers for this directory under another name, which has just been made "
-                f"and found none."
+                f"Either run with --agent <a name of your own> (the default is "
+                f"{DEFAULT_AGENT_NAME_RULE_TEXT}, here {default_agent_name()}), or pass --claim "
+                f"to take the name from it -- knowing that --claim also waives the check that no "
+                f"supervisor answers for this directory under another name, which has just been "
+                f"made and found none."
             )
         print(
             f"handoff-write-and-check-supervisor: {handoff_path} belongs to a seat in "
-            f"{held_by}, and this session is in {Path.cwd()}. Nothing was written, because "
+            f"{held_by}, and this session is in {seat_directory}. Nothing was written, because "
             f"writing would destroy a handoff that seat may not have acted on yet. {exits}",
             file=sys.stderr,
         )
@@ -668,12 +716,12 @@ def main(argv=None) -> int:
         print(
             f"handoff-write-and-check-supervisor: no supervisor has ever run under the name "
             f"{agent}, but {handoff_directory / (supervised_name + '-handoff.md')} was written "
-            f"from this very directory ({Path.cwd()}) and has a supervisor state beside it. "
+            f"from this very directory ({seat_directory}) and has a supervisor state beside it. "
             f"{supervised_name} is this seat's supervised name. Nothing was written, because a "
             f"handoff under a name nothing polls is never read: the supervisor keeps waiting on "
             f"{supervised_name}-handoff.md and this session is never reincarnated (measured "
             f"2026-09-15, five hours and a lost session). Rerun with --agent {supervised_name}, "
-            f"or omit --agent entirely -- it defaults to this directory's name, "
+            f"or omit --agent entirely -- it defaults to {DEFAULT_AGENT_NAME_RULE_TEXT}, here "
             f"{default_agent_name()} -- or pass --claim if this seat really is being re-founded "
             f"as {agent}.",
             file=sys.stderr,
@@ -681,8 +729,8 @@ def main(argv=None) -> int:
         return 2
 
     counter = next_restart_counter(handoff_path, state_path)
-    spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(Path.cwd())
-    write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart,
+    spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
+    write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines)
     print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")

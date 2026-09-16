@@ -22,6 +22,16 @@ _spec.loader.exec_module(writer)
 
 failures = []
 
+# What a handoff-supervisor tells every session it launches: the seat's name
+# and directory. Scrubbed from every writer run below that is not about them.
+# These suites are run by agents inside supervised seats, where both are set,
+# and inherited they would name a fixture's handoff after the real seat and
+# record the real seat's directory in it.
+HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES = (
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
+)
+
 
 def check(case_name, condition, detail=""):
     if condition:
@@ -48,7 +58,8 @@ def run_writer(workspace: Path, next_step_text: str, *extra_arguments, environme
     next_step_path.write_text(next_step_text, encoding="utf-8")
     scrubbed_environment = {
         key: value for key, value in os.environ.items()
-        if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+        if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+                       *HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES)
     }
     scrubbed_environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"  # offline tests never call GitHub
     scrubbed_environment.update(environment_overrides or {})
@@ -312,7 +323,8 @@ def run_console_identity_case(workspace: Path):
     handoffs.mkdir(parents=True, exist_ok=True)
     next_step_path = workspace / "identity-next-step.txt"
     next_step_path.write_text("Continue the walk.", encoding="utf-8")
-    environment = dict(os.environ)
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES}
     environment["CLAUDE_CODE_SESSION_ID"] = "test-session"
     environment["CLAUDE_PID"] = "12345"
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
@@ -355,7 +367,8 @@ def run_agent_name_and_claim_cases(workspace: Path):
         next_step_path.write_text(text, encoding="utf-8")
         environment = {
             key: value for key, value in os.environ.items()
-            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+                           *HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES)
         }
         environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
         return subprocess.run(
@@ -428,7 +441,8 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
         next_step_path.write_text(text, encoding="utf-8")
         environment = {
             key: value for key, value in os.environ.items()
-            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+                           *HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES)
         }
         environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
         return subprocess.run(
@@ -974,6 +988,117 @@ def run_roster_never_blocks_a_handoff_cases(workspace: Path):
           "CLAUDE_CODE_SESSION_ID is unset" in unidentified.stdout, unidentified.stdout)
 
 
+def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Path):
+    """The seat's name and directory come from the handoff-supervisor, not the shell.
+
+    A handoff-supervisor watches the handoff named for the agent it was started
+    with and launches its session at the seat root. The writer used to take
+    both the name and the directory from its own working directory, so an agent
+    that ran it after `cd scripts`, or from a worktree, handed off under a name
+    nothing polls and ran on to context exhaustion -- the outcome measured
+    2026-09-15 at merge-lane. The supervisor now tells every session it
+    launches both (user-ruled 2026-09-16), and these cases run the writer from
+    a SUBDIRECTORY of the seat, where the working directory is wrong twice over.
+
+    The seat's name differs from its directory's name on purpose, so a writer
+    that took the name from the seat directory instead of the variable fails.
+    """
+    seat_name = "supervised-launch-seat"
+    seat = (workspace / "launched-seat-root").resolve()
+    subdirectory = seat / "scripts"
+    subdirectory.mkdir(parents=True, exist_ok=True)
+    seat_environment = {
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": seat_name,
+        "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": str(seat),
+    }
+
+    def write_from(directory: Path, handoffs: Path, text: str, environment_overrides, *extra,
+                   home: Path = None, session_id: str = ""):
+        next_step_path = handoffs / "next-step.txt"
+        next_step_path.write_text(text, encoding="utf-8")
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+                           *HANDOFF_SUPERVISOR_SEAT_ENVIRONMENT_VARIABLES)
+        }
+        environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
+        environment.update(environment_overrides)
+        if home is not None:
+            environment["HOME"] = str(home)
+        if session_id:
+            environment["CLAUDE_CODE_SESSION_ID"] = session_id
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
+             "--handoff-dir", str(handoffs), *extra],
+            capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
+        )
+
+    # (a) From a subdirectory, the handoff is named for the seat and records
+    # the seat's directory. The fake HOME holds this session's transcript
+    # under the SEAT's project directory -- the harness keys transcripts on
+    # the directory a session was launched in -- and a copy under a second
+    # project directory, so the search that backs up the keyed lookup finds
+    # two and gives up: only a lookup keyed on the seat's directory derives
+    # the roster.
+    handoffs = workspace / "launched-seat-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
+    home = workspace / "launched-seat-home"
+    projects = home / ".claude" / "projects"
+    seat_project = projects / writer.project_directory_for_working_directory(seat).name
+    write_fixture_transcript(seat_project / f"{FIXTURE_SESSION_ID}.jsonl")
+    write_fixture_transcript(projects / "-some-other-project" / f"{FIXTURE_SESSION_ID}.jsonl")
+    from_subdirectory = write_from(subdirectory, handoffs, "work from a subdirectory\n",
+                                   seat_environment, home=home, session_id=FIXTURE_SESSION_ID)
+    seat_handoff = handoffs / f"{seat_name}-handoff.md"
+    check("run from a subdirectory of a supervised seat, the handoff is named for the seat",
+          seat_handoff.is_file() and not (handoffs / "scripts-handoff.md").exists(),
+          f"{sorted(item.name for item in handoffs.iterdir())} {from_subdirectory.stderr}")
+    seat_fields = (writer.supervisor.parse_handoff_file(seat_handoff)
+                   if seat_handoff.is_file() else {})
+    check("and it records the seat's directory as written-in, not the subdirectory",
+          seat_fields.get("written-in") == str(seat), str(seat_fields))
+    check("and the roster is derived from the transcript keyed on the seat's directory",
+          "1 still-working subagent(s) recorded for the successor, of 3 spawned"
+          in from_subdirectory.stdout, from_subdirectory.stdout)
+
+    # (b) The seat's existing handoff was written in from the seat root, by a
+    # generation whose shell stood there. A later generation writing from a
+    # subdirectory is the same seat, not a foreign claim.
+    succession_handoffs = workspace / "launched-seat-succession-handoffs"
+    succession_handoffs.mkdir(parents=True, exist_ok=True)
+    write_from(seat, succession_handoffs, "a generation at the seat root\n", {},
+               "--agent", seat_name)
+    succession_handoff = succession_handoffs / f"{seat_name}-handoff.md"
+    check("the seat root's own handoff is on disk, written in from the seat root",
+          succession_handoff.is_file()
+          and writer.supervisor.parse_handoff_file(succession_handoff).get("written-in")
+          == str(seat))
+    succeeded = write_from(subdirectory, succession_handoffs, "the next generation, from scripts/\n",
+                           seat_environment)
+    check("a later write from a subdirectory of the same seat is not refused as a foreign claim",
+          succeeded.returncode != 2, succeeded.stderr)
+    check("and that write replaced the seat's handoff",
+          succession_handoff.is_file()
+          and "the next generation, from scripts/"
+          in succession_handoff.read_text(encoding="utf-8"),
+          succeeded.stdout + succeeded.stderr)
+
+    # (c) Set but EMPTY is unset: the working directory decides both, as it did
+    # before the variables existed. Both variables wholly unset are pinned
+    # by run_agent_name_and_claim_cases, whose writes scrub them.
+    empty_handoffs = workspace / "launched-seat-empty-variable-handoffs"
+    empty_handoffs.mkdir(parents=True, exist_ok=True)
+    write_from(subdirectory, empty_handoffs, "no supervisor told this session anything\n",
+               {"NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "",
+                "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": ""})
+    empty_handoff = empty_handoffs / "scripts-handoff.md"
+    check("with the variables empty, the name and written-in are the working directory's",
+          empty_handoff.is_file()
+          and writer.supervisor.parse_handoff_file(empty_handoff).get("written-in")
+          == str(subdirectory),
+          str(sorted(item.name for item in empty_handoffs.iterdir())))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
     run_multi_line_next_step_cases(Path(temporary_directory))
@@ -985,6 +1110,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_seat_name_the_supervisor_does_not_answer_to_cases(Path(temporary_directory))
     run_spawned_subagent_roster_cases(Path(temporary_directory))
     run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
+    run_seat_name_and_directory_from_the_handoff_supervisor_cases(Path(temporary_directory))
 
 print()
 if failures:
