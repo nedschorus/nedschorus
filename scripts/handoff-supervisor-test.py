@@ -127,6 +127,17 @@ def run_offline_cases(workspace: Path):
         check("an unreadable stamp does not kill a supervisor that is running",
               alive, explanation)
 
+        # A stamp with no timezone is read as UTC, the only writer's zone; a
+        # naive stamp used to raise TypeError on the subtraction instead.
+        bare_stamp = (datetime.now(timezone.utc) - timedelta(seconds=3)).replace(tzinfo=None)
+        supervisor.write_supervisor_state(heartbeat_state_path,
+                                          {"last_poll_at": bare_stamp.isoformat()})
+        alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
+        check("a stamp with no timezone reads as UTC, reporting its age in seconds",
+              alive and any(explanation.endswith(f", last heartbeat {age}s ago")
+                            for age in range(10)),
+              explanation)
+
         check_result = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--check", "--agent", "heartbeat",
              "--handoff-dir", str(workspace)],
