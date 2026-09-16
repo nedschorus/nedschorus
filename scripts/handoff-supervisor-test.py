@@ -960,6 +960,55 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         str(remaining),
     )
 
+    # A long dialog's -complete.md companion belongs to its generation and does
+    # not take a generation's place. Before 2026-09-16 the pruner counted files,
+    # so generation 5's companion evicted generation 4's tail on arrival.
+    retention_with_companions = workspace / "retention-with-companions"
+    retention_with_companions.mkdir()
+    for name in ("agent-dialog-0003.md", "agent-dialog-0003-complete.md",
+                 "agent-dialog-0004.md", "agent-dialog-0004-complete.md",
+                 "agent-dialog-0005.md", "agent-dialog-0005-complete.md"):
+        (retention_with_companions / name).write_text("x", encoding="utf-8")
+    supervisor.prune_old_generations(retention_with_companions, "agent-dialog")
+    remaining = sorted(item.name for item in retention_with_companions.glob("*.md"))
+    check(
+        "retention keeps both files of each of the newest two generations",
+        remaining == ["agent-dialog-0004-complete.md", "agent-dialog-0004.md",
+                      "agent-dialog-0005-complete.md", "agent-dialog-0005.md"],
+        str(remaining),
+    )
+
+    # Only a long dialog gets a companion, so neighbouring generations can
+    # differ: the newest short, the one before long.
+    retention_mixed = workspace / "retention-mixed-companions"
+    retention_mixed.mkdir()
+    for name in ("agent-dialog-0003.md", "agent-dialog-0004.md",
+                 "agent-dialog-0004-complete.md", "agent-dialog-0005.md"):
+        (retention_mixed / name).write_text("x", encoding="utf-8")
+    supervisor.prune_old_generations(retention_mixed, "agent-dialog")
+    remaining = sorted(item.name for item in retention_mixed.glob("*.md"))
+    check(
+        "retention keeps a long previous generation whole beside a short newest one",
+        remaining == ["agent-dialog-0004-complete.md", "agent-dialog-0004.md",
+                      "agent-dialog-0005.md"],
+        str(remaining),
+    )
+
+    # The handoff family is pruned in the same directory: its numbered archives
+    # go, and the live <seat>-handoff.md the next reincarnation polls stays.
+    retention_handoffs = workspace / "retention-handoff-archives"
+    retention_handoffs.mkdir()
+    for name in ("agent-handoff.md", "agent-handoff-0001.md",
+                 "agent-handoff-0002.md", "agent-handoff-0003.md"):
+        (retention_handoffs / name).write_text("x", encoding="utf-8")
+    supervisor.prune_old_generations(retention_handoffs, "agent-handoff")
+    remaining = sorted(item.name for item in retention_handoffs.glob("*.md"))
+    check(
+        "handoff retention keeps two archives and never the live handoff file's place",
+        remaining == ["agent-handoff-0002.md", "agent-handoff-0003.md", "agent-handoff.md"],
+        str(remaining),
+    )
+
     # --- Queue status -----------------------------------------------------
     project = workspace / "project"
     (project / "nc-queue").mkdir(parents=True)
