@@ -1,0 +1,6 @@
+# The canonical happy path: every state takes its advancing verdict and
+# the run ends passed. Naming only the last step lets the runner fill in
+# everything before it from the fixture's whole_run_to_passed.
+scenario: the happy path, every state advancing, ending passed
+steps:
+  - submit-to-PR-gate: accepted

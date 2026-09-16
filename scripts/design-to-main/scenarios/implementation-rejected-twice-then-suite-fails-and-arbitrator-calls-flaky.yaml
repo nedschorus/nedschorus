@@ -1,0 +1,6 @@
+scenario: implementation rejected twice, then the suite fails and the arbitrator calls it flaky
+steps:
+  - implementation-acceptance-by-agent: reject implementation
+  - implementation-acceptance-by-agent: reject implementation
+  - test-suite-executing: fail
+  - test-suite-arbitrating: flaky-test
