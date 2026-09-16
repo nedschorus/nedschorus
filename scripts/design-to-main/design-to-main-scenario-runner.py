@@ -35,12 +35,22 @@ number; the state that emitted it and the state the run moved to, with
 the qualifier the transition row carries; the verdict; the row of
 section 3.2 the machine took; every counter whose value changed, as
 `name N of ceiling`. A pause names the state and the reason in the run-
-state's words; the end names the outcome.
+state's words; the end names the outcome. A state-exit the machine refuses
+before row 1 has cut the topic branch (RefusedBeforeTopicBranchCut: from
+initiate-design-to-main, fields such as a `destination` other than
+design-writing or a named file that is not there) is not routed, so it
+leaves no step line: the trace ends `REFUSED at <state> before the topic
+branch was cut:` and the machine's refusal, verbatim.
 
 Run: python3 scripts/design-to-main/design-to-main-scenario-runner.py <scenario.yaml>
-Exit 0 whether the run passed, paused or stands mid-way — the trace is the
-product; exit 2 for a malformed scenario (an unknown state, a verdict the
-state does not have, a step the run never reaches), naming the line.
+Exit 0 whether the run passed, paused, stands mid-way or was refused before
+the topic branch was cut — the trace is the product; exit 2 for a malformed
+scenario (an unknown state, a verdict the state does not have, a step the
+run never reaches), naming the line. A refusal is exit 0, not 2: the
+refused step names a state the machine launches and a verdict that state
+has, and the run reached it; the machine played it and judged it, as it
+judges a verdict no row allows in context and pauses (exit 0 too). A step
+after the refusal is a step the run never reaches: exit 2.
 """
 
 import dataclasses
@@ -393,6 +403,7 @@ def play_scenario(scenario, max_steps=200):
         trace = []
         observe_every_routed_state_exit(machine, trace)
         never_reached = None
+        refused_before_topic_branch_cut = None
         steps = 0
         while run.current_state != tables.ENDED:
             try:
@@ -402,10 +413,24 @@ def play_scenario(scenario, max_steps=200):
             except ScenarioStepNeverReached as error:
                 never_reached = error
                 break
+            except machine_module.RefusedBeforeTopicBranchCut as error:
+                # Before row 1 has cut the topic branch the machine does
+                # not route an illegal state-exit as a machine error: it
+                # refuses it, and the refusal is its report to whoever
+                # invoked it, here the runner. The run does not start.
+                refused_before_topic_branch_cut = error
+                break
             steps += 1
             if steps > max_steps:
                 raise RuntimeError("the run did not end within %d steps" % max_steps)
-        if run.current_state == tables.ENDED:
+        if refused_before_topic_branch_cut is not None:
+            ending = "REFUSED at %s before the topic branch was cut: %s" % (
+                run.current_state, refused_before_topic_branch_cut)
+            if machine.launcher.steps:
+                never_reached = ScenarioStepNeverReached(
+                    machine.launcher.steps[0], run.current_state,
+                    "the machine refused the run at %s before it" % run.current_state)
+        elif run.current_state == tables.ENDED:
             ending = "ENDED %s" % run.outcome
             if machine.launcher.steps:
                 never_reached = ScenarioStepNeverReached(
