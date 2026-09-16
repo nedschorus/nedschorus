@@ -42,7 +42,9 @@ Operating rules:
   back to claude-opus-5 when Fable produces no review) and
   gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
-  `<audit>-<runtime>` in this runner's output.
+  `<audit>-<runtime>` in this runner's output. The claude CLI runs with
+  `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
+  are never loaded into a claude agent (nedschorus#397).
 - Run it only by deliberate decision — never wire it into automation. A
   revision of an already-sanity-checked document earns no automatic rerun. Run it after the cold read has passed, not before. It
   applies only to actionable (work-directing) MDs — designs, specs, skills,
@@ -94,8 +96,12 @@ Running a sanity-check, and reading its output:
 
 - Run it as a background task and arm a Monitor (the harness's watch tool)
   on its output; it prints a status line per review agent as each finishes —
-  `saved: <path>`, `FAILED: <audit>-<runtime> exit <code>`, or `SKIPPED:` —
-  plus the warning lines described below. Exit 0 when every launched agent saved; 1 when any launched agent
+  `saved: <path>`, `FAILED: <audit>-<runtime> exit <code>`,
+  `FAILED: <audit>-<runtime> saved text is not a report`, or `SKIPPED:` —
+  plus the warning lines described below. `saved text is not a report` is an
+  agent that exited 0 with text lacking a section its audit's prompt requires
+  — on 2026-09-15, a claude agent's reply to a hook's note (nedschorus#397) —
+  and nothing is saved for it. Exit 0 when every launched agent saved; 1 when any launched agent
   failed (a skipped agent is not launched); 2 when the invocation itself is
   unusable — a missing file, a broken prompt boundary, a bad flag.
 - Without `--problem-statement` the fresh-eyes agents print `SKIPPED`, loudly,
@@ -234,6 +240,24 @@ ATTACK_PROMPT_FILES = {
     "cut": REPO_ROOT / "docs/agents/sanity-checker-cut-attack-prompt.md",
     "mechanization": REPO_ROOT / "docs/agents/sanity-checker-mechanization-attack-prompt.md",
     "fresh-eyes": REPO_ROOT / "docs/agents/sanity-checker-fresh-eyes-attack-prompt.md",
+}
+
+# What every genuine report of an attack contains, matched case-insensitively
+# anywhere in the captured text; a text missing any of them is refused, never
+# saved. The prompts are the source: each phrase names a section its prompt
+# requires — cut's Questions and leanness certification, mechanization's
+# prompts-to-code table and its coverage list, fresh-eyes's five sections — and
+# a test pins every phrase to its prompt's body. The smallest phrase each
+# section's reports carry, not heading syntax, which the models reshape.
+# This check was rejected on 2026-08-19 with the condition "reopen on the
+# first observed miss". The miss came on 2026-09-15: two claude cells saved a
+# reply to a Stop hook's note in place of their reviews, and the runner
+# printed `saved:` for both (nedschorus#397).
+ATTACK_REPORT_REQUIRED_PHRASES = {
+    "cut": ("questions", "leanness"),
+    "mechanization": ("prompts-to-code", "coverage"),
+    "fresh-eyes": ("sketch", "hard parts", "late discoveries", "assumptions",
+                   "consulted"),
 }
 
 
@@ -384,6 +408,14 @@ def run_claude(prompt: str) -> tuple:
             "--effort", REASONING_EFFORT,
             "--output-format", "text",
             "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
+            # User settings only: this repository's .claude/settings.json wires
+            # Stop hooks, and on 2026-09-15 checkout-freshness-catch-up.py spoke
+            # inside two cells as origin/main moved; each cell answered the
+            # note, and the answer, captured as the final message, was saved in
+            # place of the review (nedschorus#397). The flag also keeps out the
+            # project's CLAUDE.md, skills and write guards (measured
+            # 2026-09-16); the write detector in run_cell covers the guards.
+            "--setting-sources", "user",
         ]
         try:
             completed = subprocess.run(
@@ -633,6 +665,16 @@ def quote_scan(corpus: tuple, report: str, cell: str) -> None:
             if not any(normalized in file_text for file_text in corpus):
                 print(f'WARNING: {cell} quote found in no tracked file: '
                       f'"{fragment[:60]}"', flush=True)
+
+
+def missing_report_phrases(attack: str, text: str) -> list:
+    """The phrases in ATTACK_REPORT_REQUIRED_PHRASES[attack] that text lacks,
+    matched case-insensitively. Empty means the text has the shape of that
+    attack's report; anything else means it is not one — a gate, unlike the
+    quote scan: a text saved as a review that is not one is lost silently."""
+    lowered = text.lower()
+    return [phrase for phrase in ATTACK_REPORT_REQUIRED_PHRASES[attack]
+            if phrase not in lowered]
 
 
 CLI_VERSION_CACHE = {}
@@ -919,11 +961,18 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         attempts = f" — {fallback_from}" if fallback_from else ""
         print(f"FAILED: {cell} exit {code}{attempts}", flush=True)
         return cell, False
-    if not fresh_eyes:
-        quote_scan(corpus, output, cell)
     stray = report_ledger.stray_paths_since(baseline_status)
     if stray:
         print(f"WARNING: {cell} modified the worktree: {', '.join(stray)}", flush=True)
+    # After the worktree check, so a cell that ran to the end has its writes
+    # compared whatever it returned; before the quote scan and the write, so a
+    # text that is not a report raises no warnings to triage and never lands
+    # as a report (nedschorus#397).
+    if missing_report_phrases(attack, output):
+        print(f"FAILED: {cell} saved text is not a report", flush=True)
+        return cell, False
+    if not fresh_eyes:
+        quote_scan(corpus, output, cell)
     revision = reviewed_revision(baseline_status)
     out_path = out_dir / f"{cell}.md"
     # Through the ledger, not straight to disk: the report lands in a directory

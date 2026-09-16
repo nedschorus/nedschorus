@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Tests for sanity-check-attacks.py — the worktree write detector, the record
 directory claim, the cells' sanctioned scratch directories, the prompt-body
-boundary, and the cells' launch flags.
+boundary, the cells' launch flags, and the refusal of a captured text that is
+not a report.
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -542,8 +543,12 @@ def main():
 
     runner_gate = load_runner()
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
+    # Report-shaped, so the cell reaches the report write the way a real one
+    # does: a text lacking the cut prompt's sections is refused (case 23).
     runner_gate.run_claude = lambda prompt: (
-        0, "the cell's report body\n", "claude-fable-5-1", "")
+        0, "the cell's report body\n\n## Questions\n\nNone.\n\n"
+           "## Leanness certification\n\n- the whole document\n",
+        "claude-fable-5-1", "")
     buffer = io.StringIO()
     # A real record directory, in a temporary tree: run_cell makes the cell's
     # scratch directory under the one it is handed, and a relative path here
@@ -687,6 +692,94 @@ def main():
           runner_substitution.PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER not in assembled,
           "the placeholder token reached the cell")
 
+    # Case 23: a text that is not a report is refused, on both runtimes. On
+    # 2026-09-15 a Stop hook's note reached two claude cells, each answered
+    # it, and the runner saved the answer — the text below opens one of them —
+    # in place of a 3,684-word review, printed `saved:` and
+    # exited 0 (nedschorus#397). The runtime stand-ins return what a cell
+    # captured; the ledger stand-in writes for real, so "no report" is
+    # checked on disk rather than read off a write that never happens.
+    non_report = ("The report above is my complete reply. The stop hook's "
+                  "freshness note concerns the branch this worktree sits on, "
+                  "not my review.\n")
+    # Headings reshaped on purpose: the check reads phrases, not syntax.
+    cut_report = ("# Cut audit\n\n## Finding 1: delete the section\n\n"
+                  "**QUESTIONS**\n\nNone.\n\nLeanness Certification:\n\n"
+                  "- the whole document\n")
+
+    class WritingStubLedger(StubLedger):
+        def __init__(self):
+            super().__init__([])
+
+        def write_report(self, out_path, text):
+            out_path.write_text(text, encoding="utf-8")
+            return False
+
+    runner_refusal = load_runner()
+    runner_refusal.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
+                                             "codex": "2.2.2-test"})
+    for runtime in runner_refusal.RUNTIMES:
+        for captured_text, is_report in ((non_report, False), (cut_report, True)):
+            answer = (0, captured_text, "a-test-model", "")
+            runner_refusal.run_claude = lambda prompt, answer=answer: answer
+            runner_refusal.run_codex = lambda prompt, answer=answer: answer
+            buffer = io.StringIO()
+            with tempfile.TemporaryDirectory() as scratch:
+                out_dir = pathlib.Path(scratch)
+                with contextlib.redirect_stdout(buffer):
+                    _, cell_ok = runner_refusal.run_cell(
+                        "cut", runtime, "docs/x.md", [],
+                        pathlib.Path("unused-problem-statement.md"), out_dir,
+                        {}, (), WritingStubLedger())
+                report_written = (out_dir / f"cut-{runtime}.md").is_file()
+            output = buffer.getvalue()
+            if is_report:
+                check(f"a {runtime} text carrying the cut sections is saved",
+                      cell_ok and report_written and "saved:" in output
+                      and "FAILED:" not in output, f"output was {output!r}")
+            else:
+                check(f"a {runtime} text that is not a report prints the FAILED line",
+                      f"FAILED: cut-{runtime} saved text is not a report\n" in output
+                      and "saved:" not in output, f"output was {output!r}")
+                check(f"a {runtime} text that is not a report writes no report "
+                      f"and fails the cell", not cell_ok and not report_written,
+                      f"cell_ok={cell_ok}, report written={report_written}")
+
+    # Case 24: the refused cell reaches the exit code. main() is driven with
+    # every expensive dependency replaced — no model, no git walk, no corpus —
+    # and the record root in a temporary directory: one runtime answering with
+    # a non-report must make the run exit 1, with only the other's report on
+    # disk; both answering with reports exits 0.
+    runner_exit = load_runner()
+    runner_exit.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
+                                          "codex": "2.2.2-test"})
+    runner_exit.worktree_snapshot = lambda *arguments: {}
+    runner_exit.tracked_files_corpus = lambda: ()
+    runner_exit.reviewed_revision = lambda baseline: "commit=test worktree=clean"
+    real_argv = sys.argv
+    for claude_text, expected_exit in ((non_report, 1), (cut_report, 0)):
+        runner_exit.run_claude = lambda prompt, text=claude_text: (
+            0, text, "a-test-model", "")
+        runner_exit.run_codex = lambda prompt: (0, cut_report, "a-test-model", "")
+        with tempfile.TemporaryDirectory() as scratch:
+            runner_exit.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
+            sys.argv = [str(RUNNER_SCRIPT), "--attack", "cut", "--target",
+                        "docs/agents/sanity-checker-cut-attack-prompt.md"]
+            buffer = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buffer):
+                    exit_code = runner_exit.main()
+            finally:
+                sys.argv = real_argv
+            saved = sorted(path.name for path
+                           in runner_exit.RECORDS_ROOT.glob("*/*.md"))
+        expected_saved = (["cut-codex.md"] if expected_exit
+                          else ["cut-claude.md", "cut-codex.md"])
+        check(f"a run whose claude cell {'is refused' if expected_exit else 'reports'} "
+              f"exits {expected_exit}, saving {', '.join(expected_saved)}",
+              exit_code == expected_exit and saved == expected_saved,
+              f"exit {exit_code}, saved {saved}, output {buffer.getvalue()!r}")
+
     # The prompt-body boundary. The marker replaced a bare `---` rule, which is
     # ordinary markdown: a horizontal rule anywhere above the intended split
     # silently truncated the prompt, and nothing failed.
@@ -802,6 +895,22 @@ def main():
               body.startswith(runner_fresh.PROMPT_BODY_FIRST_LINE),
               f"body began {body[:60]!r}")
 
+    # The phrases a report must carry come from the prompts, so each must be
+    # in its prompt's body: a section renamed there, or a phrase edited here,
+    # fails this rather than refusing every genuine report of that attack.
+    # Looked up with a default, so a runner without the table reports this
+    # case failing rather than crashing the cases after it.
+    required_phrases = getattr(runner_fresh, "ATTACK_REPORT_REQUIRED_PHRASES", {})
+    check("every attack has required report phrases",
+          set(required_phrases) == set(runner_fresh.ATTACKS),
+          sorted(required_phrases))
+    for attack in runner_fresh.ATTACKS:
+        body = runner_fresh.prompt_body(attack).lower()
+        absent = [phrase for phrase in required_phrases.get(attack, ())
+                  if phrase not in body]
+        check(f"every phrase a {attack} report must carry is in the {attack} prompt's body",
+              absent == [], f"not in the body: {absent}")
+
     # The codex cells must launch with Codex's machine-wide memory store off,
     # so a cell does not carry forward what Codex concluded reviewing this
     # project before -- the measured half. Why, in full, and what the flag
@@ -863,6 +972,11 @@ def main():
     check("the reading tools a review cell needs are still in the tool set",
           {"Read", "Grep", "Glob"} <= set(allowed_tools.split(",")),
           f"allowed tools were {allowed_tools!r}")
+    # And with user settings only, so this repository's Stop hooks cannot
+    # speak inside a cell and displace its review (nedschorus#397).
+    check("run_claude launches claude with --setting-sources user",
+          ("--setting-sources", "user") in list(zip(claude_command, claude_command[1:])),
+          f"composed command was {claude_command}")
 
     # The claude runtime's model chain. Fable 5 is obsolete (user, 2026-09-04)
     # and Fable is sometimes unavailable (user, 2026-09-11: "sometimes fable is
