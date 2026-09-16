@@ -94,8 +94,9 @@ def run_offline_cases(workspace: Path):
     # THE 60-SECOND HOLE (nedschorus#242 change 1). A heartbeat stamped a
     # moment ago says nothing about whether the supervisor is still there: it
     # was read as fresh for sixty seconds after the last stamp, so a
-    # supervisor killed seconds ago still read as alive — and the login
-    # restart runs inside exactly that window, recovering nothing.
+    # supervisor killed seconds ago still read as alive — measured on ned-box,
+    # recovery refused a killed seat until 60 seconds after the kill, and the
+    # login restart was predicted to fall inside that window on a fast boot.
     supervisor.stamp_heartbeat(heartbeat_state_path, {"session_id": "s"})
     heartbeat_lock_path.write_text("99999999\n", encoding="utf-8")
     alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
@@ -280,7 +281,7 @@ def run_adoption_cases(workspace: Path):
 
 
 def run_dont_restart_without_a_terminal_case(workspace: Path):
-    """A supervisor an agent started has no terminal. Asking `restart? y/n`
+    """A supervisor whose stdin is redirected has no terminal. Asking `restart? y/n`
     there raises EOFError before the consumed counter is recorded, so the next
     supervisor re-fires on the stale handoff — launching a session and killing
     it immediately."""

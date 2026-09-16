@@ -301,9 +301,13 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
     Heartbeat age cannot answer the question. The rule this replaced read the
     stamp as fresh for sixty seconds after the last poll, so for a minute after
-    a supervisor died its state file still said a supervisor was watching — and
-    the login restart of nedschorus#116 runs inside exactly that minute, so it
-    refused every seat it existed to bring back.
+    a supervisor died its state file still said a supervisor was watching.
+    Measured on ned-box (docs/issues/120-recover-crashed-seats-design.md § Two
+    defects): after a seat's tmux server was killed, recover-crashed-seats.py
+    refused the seat at 8, 24, 39 and 54 seconds and accepted it at 60. The
+    login restart of nedschorus#116, which runs that recovery soon after boot,
+    was predicted to be refused the same way, depending on how fast the
+    machine boots.
 
     A bare process-id check cannot answer it either. The lock file recording
     the id outlives a reboot, and ids are reused across the very reboot this
@@ -1042,9 +1046,11 @@ class AdoptedSession:
     A supervisor normally owns the process it started and can terminate it
     through that handle. A session started by hand — the founding boot, or any
     agent a person launched in a console — has no such owner, so it can never
-    reincarnate. Adoption closes that: the agent's own handoff script starts a
-    supervisor and tells it which process to watch, and everything after the
-    kill is identical to the ordinary cycle.
+    reincarnate. Adoption closes that: handoff-supervisor.py run by hand with
+    --adopt-session-id and --adopt-process-id watches the named process, and
+    everything after the kill is identical to the ordinary cycle. No launcher
+    or recovery script passes those flags (deferred 2026-08-19); the writer
+    script started an adopting supervisor itself until 2026-08-14.
     """
 
     def __init__(self, session_id: str, process_id: int):
@@ -1123,8 +1129,8 @@ def wait_for_handoff(process, handoff_path: Path, consumed_counter, state_path: 
 
     Returns the handoff fields when a counter above `consumed_counter`
     appears, or None if the session ended on its own without writing one.
-    Stamps the heartbeat while it waits, so the watched agent can tell a
-    live supervisor from a dead one.
+    Stamps the heartbeat while it waits. The stamp no longer decides liveness
+    (nedschorus#242 change 1); see HEARTBEAT_INTERVAL_SECONDS for its readers.
 
     The exit check must not preempt the file check: a headless session exits
     when its turn ends, so its handoff arrives AS a process exit — the file
@@ -1418,11 +1424,11 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
         if handoff_fields.get("dont-restart"):
             if not sys.stdin.isatty():
-                # Nobody can answer: a supervisor the agent started has no
-                # terminal, and asking would raise EOFError before the consumed
-                # counter is recorded — leaving the next supervisor to re-fire on
-                # a stale handoff. Not relaunching is the answer dont-restart asks
-                # for, so take it.
+                # Nobody can answer: this supervisor has no terminal (its stdin
+                # is redirected, not a launcher's tmux pane), and asking would
+                # raise EOFError before the consumed counter is recorded —
+                # leaving the next supervisor to re-fire on a stale handoff. Not
+                # relaunching is the answer dont-restart asks for, so take it.
                 print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
                 answer = "n"
             else:
