@@ -39,6 +39,10 @@ Every project-specific term is listed here; a term this page does not list is no
 - **NC** — this project, NedsChorus.
 - **objection-overruled** — the record of a review objection that the user overruled.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff; triggered when the agent writes a session-handoff, usually because the Stop hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
+- **sanity-check-attack** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-attack (what should be deleted), the mechanization-attack (which English instruction should be code), the fresh-eyes-attack (an independent design built from the problem alone).
+- **sanity-check-cell** — one fresh agent running one sanity-check-attack on one runtime; a run is six.
+- **sanity-check-record** — the directory one /sanity-check run leaves behind, `sanity-check-records/<date>-<target-stem>/`, holding its reports; kept as a log.
+- **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-attack: a problem statement plus off-limits and read-first lists, passed to the runner as `--problem-statement`.
 - **seat-branch** — the long-lived git branch of one agent-seat, named for the seat, that the handoff-supervisor's launcher creates; its agent-sessions work on topic-branches cut from main.
 - **seat-brief** — `docs/agents/<seat>-instructions.md`, what an agent-seat's occupant reads to learn its job. Seat-briefs vary in shape; read yours for what it says.
 - **session-handoff** — the act of transferring the key context and state of one agent-session to the next, and the file that carries it, `~/.claude/handoffs/<seat>-handoff.md`, on the seat's machine only and never committed.
