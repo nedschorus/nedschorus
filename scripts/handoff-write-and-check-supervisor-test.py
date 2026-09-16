@@ -637,6 +637,27 @@ def run_seat_name_told_by_the_launching_supervisor_cases(workspace: Path):
           and watched.read_text(encoding="utf-8") == watched_body,
           str(sorted(item.name for item in handoffs.iterdir())))
 
+    # The foreign-claim refusal's advice names the default an omitted --agent
+    # resolves to. Told a seat name, that default is the told name, not the
+    # directory's: advice naming the directory would send the reader to a
+    # name this script does not use. Reached with no --agent at all, the
+    # shape the handoff skill runs, when a foreign directory holds the name.
+    write_from(foreign, "a foreign seat under the told name", None,
+               "--agent", "foreign-held-seat-name")
+    foreign_held = handoffs / "foreign-held-seat-name-handoff.md"
+    foreign_held_body = foreign_held.read_text(encoding="utf-8") if foreign_held.is_file() else ""
+    advised = write_from(seat, "would clobber the foreign seat", "foreign-held-seat-name")
+    check("told a name a foreign directory holds, the foreign-claim refusal fires",
+          advised.returncode == 2 and "belongs to a seat in" in advised.stderr
+          and foreign_held_body
+          and foreign_held.read_text(encoding="utf-8") == foreign_held_body,
+          f"exit {advised.returncode}: {advised.stderr}")
+    check("and its advice names the told seat name as the default, not the directory's name",
+          "the default is the seat name the supervisor that launched this session gave it, "
+          "foreign-held-seat-name" in advised.stderr
+          and "this directory's name, launched-seat-directory" not in advised.stderr,
+          advised.stderr)
+
 
 
 # ---------------------------------------------------------------------------

@@ -196,6 +196,20 @@ def default_agent_name() -> str:
     return Path.cwd().name
 
 
+def omitted_agent_default_description(supervised_seat_name: str) -> str:
+    """What an omitted --agent resolves to, worded for a refusal's advice.
+
+    The refusals tell the reader to omit --agent and say what the name then
+    defaults to. Under NEDSCHORUS_SUPERVISED_SEAT_NAME that is the variable's
+    value, not the directory's name, and advice naming the directory would
+    send the reader to a name the script does not use.
+    """
+    if supervised_seat_name:
+        return (f"the seat name the supervisor that launched this session gave it, "
+                f"{supervised_seat_name}")
+    return f"this directory's name, {default_agent_name()}"
+
+
 def claiming_directory(handoff_path: Path) -> str:
     """Which directory last wrote this handoff, or '' if it does not say."""
     if not handoff_path.is_file():
@@ -682,17 +696,17 @@ def main(argv=None) -> int:
             exits = (
                 f"Rerun with --agent {supervised_name} -- this directory's supervised name, "
                 f"the only name whose handoff is read here -- or omit --agent entirely (it "
-                f"defaults to this directory's name, {default_agent_name()}). Do NOT pass "
-                f"--claim to take {agent} from {held_by}: --claim also waives the "
+                f"defaults to {omitted_agent_default_description(supervised_seat_name)}). "
+                f"Do NOT pass --claim to take {agent} from {held_by}: --claim also waives the "
                 f"supervised-name check, and a handoff under {agent} would never be read here."
             )
         else:
             exits = (
-                f"Either run with --agent <a name of your own> (the default is this "
-                f"directory's name, {default_agent_name()}), or pass --claim to take the name "
-                f"from it -- knowing that --claim also waives the check that no supervisor "
-                f"answers for this directory under another name, which has just been made "
-                f"and found none."
+                f"Either run with --agent <a name of your own> (the default is "
+                f"{omitted_agent_default_description(supervised_seat_name)}), or pass --claim "
+                f"to take the name from it -- knowing that --claim also waives the check that "
+                f"no supervisor answers for this directory under another name, which has just "
+                f"been made and found none."
             )
         print(
             f"handoff-write-and-check-supervisor: {handoff_path} belongs to a seat in "
@@ -720,9 +734,9 @@ def main(argv=None) -> int:
             f"handoff under a name nothing polls is never read: the supervisor keeps waiting on "
             f"{supervised_name}-handoff.md and this session is never reincarnated (measured "
             f"2026-09-15, five hours and a lost session). Rerun with --agent {supervised_name}, "
-            f"or omit --agent entirely -- it defaults to this directory's name, "
-            f"{default_agent_name()} -- or pass --claim if this seat really is being re-founded "
-            f"as {agent}.",
+            f"or omit --agent entirely -- it defaults to "
+            f"{omitted_agent_default_description(supervised_seat_name)} -- or pass --claim if "
+            f"this seat really is being re-founded as {agent}.",
             file=sys.stderr,
         )
         return 2
