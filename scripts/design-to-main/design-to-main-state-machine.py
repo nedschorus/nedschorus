@@ -701,7 +701,11 @@ class DesignToMainStateMachineFlow:
         guarded by the run's own `topic-branch-cut`: a run that died before
         row 1's cut, or an invocation with no run committed at HEAD at all,
         has no commit to recover from and the checkout is the invoker's —
-        refused (RefusedBeforeTopicBranchCut), nothing discarded."""
+        refused (RefusedBeforeTopicBranchCut), nothing discarded. A checkout
+        that has lost `origin/main` is not refused here as start() refuses
+        it: the next step's instance count meets git's raw
+        CalledProcessError, which is expected, not a defect (user-ruled
+        2026-09-16, GHI #282 item 11: no checkout has lost it)."""
         text = self.git_record.run_state_text_at_last_commit()
         if text is None:
             raise RefusedBeforeTopicBranchCut(
