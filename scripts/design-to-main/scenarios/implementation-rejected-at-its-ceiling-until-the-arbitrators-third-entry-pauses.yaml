@@ -1,0 +1,14 @@
+# The implementation reviewer rejects every write. The third write, at the
+# writer's ceiling, goes to the arbitrator (row 28); the arbitrator sends
+# the writer back anyway (row 63, the write bounded by arbitrator-rulings);
+# the reviewer rejects again, and again; the arbitrator's third entry in
+# the design version opens the investigation (row 65) — the user is called.
+scenario: implementation rejected at its ceiling until the arbitrator's third entry pauses the run
+steps:
+  - implementation-acceptance-by-agent: reject implementation
+  - implementation-acceptance-by-agent: reject implementation
+  - implementation-acceptance-by-agent: reject implementation
+  - test-suite-arbitrating: reject implementation
+  - implementation-acceptance-by-agent: reject implementation
+  - test-suite-arbitrating: reject implementation
+  - implementation-acceptance-by-agent: reject implementation
