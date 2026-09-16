@@ -605,9 +605,20 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                  f"({parts['behind']} commit(s) moved under your {parts['own_text']}; "
                  f"never pushed, so nothing was under review).{older}\n{AFTER_REBASE_ADVICE}")
         elif outcome == "abort-failed":
-            # No repeat key needed: rebase state is now on disk, so at the next
-            # turn end merge_blockers sees the in-progress marker and the rebase
-            # is not attempted — this fires at most once per real occurrence.
+            # No repeat key needed: this fires at most once per real
+            # occurrence, and NOT because merge_blockers sees the rebase
+            # marker — merge_blockers is only consulted inside
+            # rebase_never_pushed_branch, which is never reached again. A tree
+            # parked mid-rebase has a DETACHED HEAD sitting at origin/main's
+            # tip, so at the next turn end drift_facts counts 0 behind and
+            # returns early; and were main to advance meanwhile, head_state
+            # answers "detached", not "unpushed", so this branch is not taken
+            # either. (Traced against a real mid-rebase tree by the PR #390
+            # reviewer, after PR #388's review recorded the merge_blockers
+            # mechanism and was corrected.) While main is still nothing is
+            # said on either channel; once main advances the agent is told
+            # about its detached HEAD once per main tip. The user channel
+            # stays empty either way.
             stamp["last_action"] = "rebase failed AND could not abort"
             report(f"catch-up: {branch} was left mid-rebase — the rebase onto origin/main "
                    f"failed and `git rebase --abort` did not restore it ({detail}); "
