@@ -192,7 +192,11 @@ def parse_scenario_text(text):
                 raise MalformedScenario(line, "no state-exit field named %r (section 2); the fields are %s" % (
                     key, ", ".join(STATE_EXIT_FIELD_NAMES)))
             parsed = _field_value(value)
-            if field in TUPLE_VALUED_FIELDS and not isinstance(parsed, tuple):
+            if field == "coverage_types" and not isinstance(parsed, tuple):
+                # Section 2's comma form, `script, prompt`: split as the
+                # machine splits state-exit.json.
+                parsed = machine_module.coverage_types_from_json_field(parsed)
+            elif field in TUPLE_VALUED_FIELDS and not isinstance(parsed, tuple):
                 parsed = (parsed,)
             current["fields"][field] = parsed
         else:
@@ -232,7 +236,8 @@ def verdicts_a_state_may_emit(state):
     table adds it."""
     composite = tables.COMPOSITE_STATE_OF_SUB_STATE.get(state, state)
     verdicts = list(tables.STATE_TABLE_BY_NAME[composite].verdicts)
-    if state in tables.ACCEPTANCE_CHECKS_BY_AGENT or state in tables.STATES_WITH_ESCALATE_TO_USER:
+    if ((state in tables.ACCEPTANCE_CHECKS_BY_AGENT or state in tables.STATES_WITH_ESCALATE_TO_USER)
+            and tables.V_ESCALATE_TO_USER not in verdicts):
         verdicts.append(tables.V_ESCALATE_TO_USER)
     return tuple(verdicts)
 

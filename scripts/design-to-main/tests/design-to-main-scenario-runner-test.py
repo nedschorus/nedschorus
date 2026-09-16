@@ -164,6 +164,44 @@ class AScenarioTheMachineCallsAMachineError(unittest.TestCase):
         self.assertIn("no row of section 3.2 allows 'discuss' from contract-reviewing", last.pause)
 
 
+class TwoCoverageTypesInEitherSpellingPlayAsTheMachineReadsThem(unittest.TestCase):
+    """Review 2026-09-16 by mac-claude on PR #407, the blocking finding:
+    `coverage-type: script, prompt`, section 2's comma form, is split as
+    the machine splits state-exit.json (coverage_types_from_json_field),
+    so an implementation claiming two coverage-types is the machine error
+    in this spelling as in the flow list `[script, prompt]`."""
+
+    COMMA_FORM = ("scenario: the implementation writer claims two coverage-types\n"
+                  "steps:\n"
+                  "  - state: implementation-writing\n"
+                  "    verdict: emitted\n"
+                  "    fields:\n"
+                  "      coverage-type: script, prompt\n"
+                  "  - implementation-acceptance-by-agent: advance\n")
+    FLOW_LIST_FORM = COMMA_FORM.replace("coverage-type: script, prompt",
+                                        "coverage-type: [script, prompt]")
+
+    def test_both_field_names_split_the_comma_form(self):
+        for spelling in ("coverage-type: script, prompt", "coverage_types: script, prompt",
+                         "coverage-type: [script, prompt]"):
+            scenario = runner.parse_scenario_text(
+                self.COMMA_FORM.replace("coverage-type: script, prompt", spelling))
+            self.assertEqual(scenario.steps[0].fields, {"coverage_types": ("script", "prompt")}, spelling)
+
+    def test_the_comma_form_is_the_machine_error_and_plays_as_the_flow_list(self):
+        comma = play_scenario_text(self.COMMA_FORM)
+        flow_list = play_scenario_text(self.FLOW_LIST_FORM)
+        last = comma.trace[-1]
+        self.assertEqual((last.from_state, last.verdict, last.row, last.qualifier, last.to_state),
+                         (T.IMPLEMENTATION_WRITING, T.V_EMITTED, "—", "machine error",
+                          T.INVESTIGATE_WORKFLOW))
+        self.assertIn("an implementation has one", last.pause)
+        self.assertEqual(comma.never_reached.step.line, 7)
+        self.assertEqual(comma.trace, flow_list.trace)
+        self.assertEqual(comma.ending, flow_list.ending)
+        self.assertEqual(runner.format_trace(comma), runner.format_trace(flow_list))
+
+
 class TheScenarioFile(unittest.TestCase):
 
     def test_the_mapping_form_carries_fields_and_the_design_s_field_names(self):
@@ -191,6 +229,16 @@ class TheScenarioFile(unittest.TestCase):
                                "  - test-suite-executing: flaky-test\n")
         self.assertEqual(refused.exception.line, 4)
         self.assertIn("test-suite-executing has no verdict 'flaky-test'", str(refused.exception))
+
+    def test_the_refusal_at_the_arbitrator_names_escalate_to_user_once(self):
+        # Review 2026-09-16 by mac-claude on PR #407: its row of section 3.1
+        # already lists escalate-to-user, which was appended a second time.
+        self.assertEqual(runner.verdicts_a_state_may_emit(T.TEST_SUITE_ARBITRATING).count(
+            T.V_ESCALATE_TO_USER), 1)
+        with self.assertRaises(runner.MalformedScenario) as refused:
+            play_scenario_text("scenario: x\nsteps:\n  - test-suite-arbitrating: pass\n")
+        self.assertIn("test-suite-arbitrating has no verdict 'pass'", str(refused.exception))
+        self.assertEqual(str(refused.exception).count(T.V_ESCALATE_TO_USER), 1, str(refused.exception))
 
     def test_an_unknown_state_and_a_composite_state_are_refused_with_their_lines(self):
         with self.assertRaises(runner.MalformedScenario) as refused:
