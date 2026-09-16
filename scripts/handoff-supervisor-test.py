@@ -93,7 +93,7 @@ def run_offline_cases(workspace: Path):
 
     # THE 60-SECOND HOLE (nedschorus#242 change 1). A heartbeat stamped a
     # moment ago says nothing about whether the supervisor is still there: it
-    # is read as fresh for HEARTBEAT_STALE_SECONDS after the last stamp, so a
+    # was read as fresh for sixty seconds after the last stamp, so a
     # supervisor killed seconds ago still read as alive — and the login
     # restart runs inside exactly that window, recovering nothing.
     supervisor.stamp_heartbeat(heartbeat_state_path, {"session_id": "s"})
@@ -371,9 +371,10 @@ def run_process_identity_cases(workspace: Path):
     (nedschorus#242 change 1).
 
     The heartbeat cannot answer "is one running now". It is stamped every
-    HEARTBEAT_INTERVAL_SECONDS and read as fresh for HEARTBEAT_STALE_SECONDS
-    afterwards, so for a full minute after a supervisor dies the file still
-    says it is alive — and that minute is exactly when the login restart runs.
+    HEARTBEAT_INTERVAL_SECONDS, and the rule this replaced read it as fresh for
+    sixty seconds afterwards, so for a full minute after a supervisor died the
+    file still said it was alive — and that minute is exactly when the login
+    restart runs.
     A bare process-id check cannot answer it either: ids are reused across the
     very reboot this serves, and the lock file holding one outlives the boot.
     """

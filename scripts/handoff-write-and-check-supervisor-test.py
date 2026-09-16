@@ -264,7 +264,8 @@ def run_liveness_report_cases(workspace: Path):
 
     # "A supervisor is watching, so stop and wait" is a claim about a PROCESS,
     # not about a stamp (nedschorus#242 change 1). A heartbeat from a second ago
-    # outlives its supervisor by up to HEARTBEAT_STALE_SECONDS, and telling an
+    # outlives its supervisor (the rule this replaced read one as alive for
+    # sixty seconds), and telling an
     # agent to stop and wait for a supervisor that has died is the worst way to
     # be wrong here: it waits forever. So the watcher has to be real.
     writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"session_id": "s"})
