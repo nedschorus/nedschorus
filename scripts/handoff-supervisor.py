@@ -97,14 +97,15 @@ HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE = (
 )
 HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"
 
-# The supervisor stamps its state file while polling so anyone can ask whether
-# a supervisor is still watching. Without this an agent can write a handoff,
-# stop working, and wait forever on a supervisor that died — a hang that looks
-# like obedience. Stamped on an interval rather than every poll to keep the
-# write rate low; treated as dead at several times that interval, so a slow
-# machine does not read as a corpse.
+# The supervisor stamps its state file while polling. The stamp once decided
+# whether a supervisor was still watching: a stamp under sixty seconds old read
+# as alive, until nedschorus#242 change 1 (2026-09-12) replaced that rule with
+# a check of the supervisor's process (process_is_supervisor_for_agent). Two
+# readers remain: restart-live-seats-at-login.py, which picks the seats that
+# were running when the machine stopped, and heartbeat_age_sentence, which only
+# reports the age beside a verdict the process check has already settled.
+# Stamped on an interval rather than every poll to keep the write rate low.
 HEARTBEAT_INTERVAL_SECONDS = 10.0
-HEARTBEAT_STALE_SECONDS = 60.0
 
 # How long `ps` gets to answer before read_process_command_line gives up and
 # reports that it could not be asked. Read from the module INSIDE that function
@@ -298,9 +299,9 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
     Ruled in nedschorus#242 change 1, and it replaces two weaker tests.
 
-    Heartbeat age cannot answer the question. The stamp is read as fresh for
-    HEARTBEAT_STALE_SECONDS after the last poll, so for a minute after a
-    supervisor dies its state file still says a supervisor is watching — and
+    Heartbeat age cannot answer the question. The rule this replaced read the
+    stamp as fresh for sixty seconds after the last poll, so for a minute after
+    a supervisor died its state file still said a supervisor was watching — and
     the login restart of nedschorus#116 runs inside exactly that minute, so it
     refused every seat it existed to bring back.
 

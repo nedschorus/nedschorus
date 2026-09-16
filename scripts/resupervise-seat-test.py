@@ -114,7 +114,8 @@ def run_live_supervisor_case(workspace: Path):
 
     What makes the watcher live is its PROCESS, not the freshness of its
     heartbeat (nedschorus#242 change 1): a stamp from a second ago outlives the
-    supervisor that wrote it by up to HEARTBEAT_STALE_SECONDS. So this case
+    supervisor that wrote it (the rule this replaced read one as alive for sixty
+    seconds). So this case
     needs a real process whose command line is a supervisor's for this seat,
     and the lock file that records it.
     """
