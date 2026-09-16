@@ -300,6 +300,16 @@ def run_console_identity_case(workspace: Path):
     a full environment identity gets exactly the same answer as one without —
     handoff written, nobody watching, relaunch by hand. The identity that once
     triggered a doomed detached supervisor must trigger nothing."""
+    # Its own handoff directory. The liveness cases leave a supervised `tester`
+    # in the shared one, and every case here runs from the same working
+    # directory -- so in the shared directory `identcase` is a second seat name
+    # where a supervisor already answers to `tester`, which is exactly what the
+    # 2026-09-15 guard refuses. The isolation is not an accommodation: one seat
+    # is one directory, and two fixture seats sharing one was never the real
+    # shape. What this case is about -- an environment identity starts nothing
+    # and summons nobody -- is untouched.
+    handoffs = workspace / "console-identity-handoffs"
+    handoffs.mkdir(parents=True, exist_ok=True)
     next_step_path = workspace / "identity-next-step.txt"
     next_step_path.write_text("Continue the walk.", encoding="utf-8")
     environment = dict(os.environ)
@@ -308,11 +318,11 @@ def run_console_identity_case(workspace: Path):
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "identcase",
-         "--next-step-file", str(next_step_path), "--handoff-dir", str(workspace)],
+         "--next-step-file", str(next_step_path), "--handoff-dir", str(handoffs)],
         capture_output=True, text=True, check=False, env=environment,
     )
     check("a session with environment identity still gets no supervisor",
-          result.returncode == 1 and not (workspace / "identcase-supervisor.log").is_file(),
+          result.returncode == 1 and not (handoffs / "identcase-supervisor.log").is_file(),
           result.stdout + result.stderr)
     check("the identity path also names the supervised recovery path",
           "resupervise-seat.py identcase --machine " in result.stdout, result.stdout)
@@ -391,6 +401,94 @@ def run_agent_name_and_claim_cases(workspace: Path):
     check("--claim takes the name deliberately", claimed.returncode != 2, claimed.stderr)
     check("--claim really replaced the contents",
           "taking the name" in (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8"))
+
+
+def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
+    """A handoff under a name nothing watches is a letter to nobody.
+
+    Measured 2026-09-15 at the merge-lane seat. The session passed its own
+    session name, merge-lane-51, where the seat name merge-lane was wanted.
+    Both are strings pasted into filenames here, so the handoff landed in
+    merge-lane-51-handoff.md and the liveness check looked for a supervisor
+    state of that name, which had never existed. The report was "none has ever
+    run for this agent"; the handoff skill's rule for that answer is to keep
+    working; and the supervisor that was watching sat on merge-lane-handoff.md
+    at counter 41 while the session ran five more hours and died of context
+    exhaustion instead of reincarnating.
+    """
+    seat = workspace / "supervised-seat"
+    handoffs = workspace / "supervised-handoffs"
+    for directory in (seat, handoffs):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def write_from(directory: Path, text: str, *extra):
+        next_step_path = directory / "next-step.txt"
+        next_step_path.write_text(text, encoding="utf-8")
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID")
+        }
+        environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--next-step-file", str(next_step_path),
+             "--handoff-dir", str(handoffs), *extra],
+            capture_output=True, text=True, check=False, env=environment, cwd=str(directory),
+        )
+
+    # The seat's own handoff, under its own name, from its own directory.
+    write_from(seat, "the seat's work")
+    seat_handoff = handoffs / "supervised-seat-handoff.md"
+    check("the supervised seat wrote its own handoff", seat_handoff.is_file())
+
+    # Without a supervisor state, a suffixed name is nobody's business but the
+    # caller's: there is no supervised name in this directory to correct it to.
+    unsupervised = write_from(seat, "no supervisor anywhere", "--agent", "supervised-seat-51")
+    check("a suffixed name is allowed while no supervisor answers for the directory",
+          unsupervised.returncode != 2, unsupervised.stderr)
+    stray = handoffs / "supervised-seat-51-handoff.md"
+    check("that write really happened", stray.is_file())
+    stray_body = stray.read_text(encoding="utf-8")
+
+    # Now a supervisor answers for the seat's own name. THIS is the incident.
+    (handoffs / "supervised-seat-supervisor-state.json").write_text(
+        json.dumps({"consumed_counter": 41, "generation": 40,
+                    "session_id": "3e2a550f-adcf-4282-b033-2e6c0bb78aa4",
+                    "last_poll_at": "2026-09-15T23:57:57.174524+00:00"}),
+        encoding="utf-8")
+
+    refused = write_from(seat, "would be read by nobody", "--agent", "supervised-seat-51")
+    check("a name no supervisor answers to is refused once one answers for the directory",
+          refused.returncode == 2, refused.stderr)
+    check("the refusal names the supervised name to use instead",
+          "supervised-seat" in refused.stderr, refused.stderr)
+    check("the refusal says why it matters -- the handoff would never be read",
+          "never reincarnated" in refused.stderr, refused.stderr)
+    check("the refusal teaches both exits", "--claim" in refused.stderr, refused.stderr)
+    check("nothing was written on the refusal",
+          stray.read_text(encoding="utf-8") == stray_body)
+
+    # The asymmetry that keeps the guard off the correct name. The stray above
+    # carries the same written-in as the real handoff; a guard keyed on "another
+    # handoff was written from here" would now refuse the seat's OWN name and
+    # lock it out of the only name its supervisor reads.
+    own_name = write_from(seat, "the seat's next generation")
+    check("the seat may still hand off under its own supervised name",
+          own_name.returncode != 2, own_name.stderr)
+    check("and that write really happened",
+          "the seat's next generation" in seat_handoff.read_text(encoding="utf-8"))
+
+    # --claim is the deliberate re-founding under a new name.
+    claimed = write_from(seat, "re-founded here", "--agent", "supervised-seat-51", "--claim")
+    check("--claim re-founds the seat under the new name", claimed.returncode != 2, claimed.stderr)
+    check("--claim really wrote the new name's handoff",
+          "re-founded here" in stray.read_text(encoding="utf-8"))
+
+    # A supervised name in ANOTHER directory is not this directory's business.
+    neighbour = workspace / "neighbour-seat"
+    neighbour.mkdir(parents=True, exist_ok=True)
+    elsewhere = write_from(neighbour, "a different seat entirely", "--agent", "neighbour-seat-7")
+    check("a supervised name in another directory does not refuse this one",
+          elsewhere.returncode != 2, elsewhere.stderr)
 
 
 
@@ -855,6 +953,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_liveness_report_cases(Path(temporary_directory))
     run_console_identity_case(Path(temporary_directory))
     run_agent_name_and_claim_cases(Path(temporary_directory))
+    run_seat_name_the_supervisor_does_not_answer_to_cases(Path(temporary_directory))
     run_spawned_subagent_roster_cases(Path(temporary_directory))
     run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
 
