@@ -152,6 +152,12 @@ class WholeRunThatPasses(unittest.TestCase):
         self.assertIn(str(self.record.user_rulings_path),
                       launched[T.IMPLEMENTATION_WRITING]["standard-package"])
 
+    def test_a_run_with_no_investigation_names_no_investigation_report_in_any_package(self):
+        # Sections 2 and 9: only investigate-workflow's package, and
+        # design-writing's on a redesign, carry `investigation-report`.
+        self.assertEqual(
+            [p["state"] for p in self.machine.launcher.launched if "investigation-report" in p], [])
+
 
 class TheWriteTrailer(unittest.TestCase):
     """Section 9 after the seventh walk: `Write:` counts what the writer's
@@ -1670,6 +1676,128 @@ class TheRecordsLayout(unittest.TestCase):
         first = [p for p in machine.launcher.launched if p["state"] == T.INITIATE_DESIGN_TO_MAIN][0]
         self.assertEqual(str(first["evidence-directory"]),
                          str(record.record_directory / "evidence" / "initiate-design-to-main-1"))
+
+
+class TheInvestigationReportInTheStatePackage(unittest.TestCase):
+    """Sections 2 and 9 (user-ruled 2026-09-14, the tenth walk, item 17;
+    built as ruled, 2026-09-16, walk design-tables-checker-findings-from-pr-409,
+    item 1): the state-package names the investigation report's path as
+    `investigation-report`, `reports/investigation-<n>.md` in the record,
+    `<n>` the count of the investigate-workflow instance — counted as the
+    evidence directory counts a state's instances, since only the machine
+    knows it. It rides in investigate-workflow's package, for the report
+    the talking agent is about to write (section 6.6), and in
+    design-writing's on a redesign, for the report of the investigation
+    that opened it (section 3.1); in no other package."""
+
+    def setUp(self):
+        self.repository = fixture.ThrowawayRepository()
+
+    def tearDown(self):
+        self.repository.remove()
+
+    def escalation_from_test_design_writing(self):
+        return (T.TEST_DESIGN_WRITING, T.V_ESCALATE_TO_USER, {"investigation_focus": T.FOCUS_DESIGN})
+
+    def packages_for(self, machine, state):
+        return [p for p in machine.launcher.launched if p["state"] == state]
+
+    def report_path(self, record, instance_number):
+        return str(record.record_directory / "reports" / ("investigation-%d.md" % instance_number))
+
+    def test_the_first_investigations_package_names_investigation_1(self):
+        script = fixture.prefix_to_tests_begun() + [
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        investigations = self.packages_for(machine, T.INVESTIGATE_WORKFLOW)
+        self.assertEqual(len(investigations), 1)
+        self.assertTrue(str(investigations[0]["investigation-report"]).endswith(
+            "design-to-main-record/reports/investigation-1.md"))
+        self.assertEqual(str(investigations[0]["investigation-report"]), self.report_path(record, 1))
+
+    def test_a_second_investigation_in_the_same_run_names_investigation_2(self):
+        script = fixture.prefix_to_tests_begun() + [
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),     # nothing edited: back to test-design-writing
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual([str(p["investigation-report"])
+                          for p in self.packages_for(machine, T.INVESTIGATE_WORKFLOW)],
+                         [self.report_path(record, 1), self.report_path(record, 2)])
+
+    def test_design_writing_entered_as_a_redesign_names_the_investigation_that_opened_it(self):
+        script = fixture.prefix_to_tests_begun() + [
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),
+            (T.DESIGN_WRITING, T.V_EMITTED, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        self.assertEqual(run.design_version, 2)
+        redesign = self.packages_for(machine, T.DESIGN_WRITING)[-1]
+        self.assertEqual(redesign["design-version"], 2)
+        self.assertEqual(str(redesign["investigation-report"]), self.report_path(record, 1))
+
+    def test_a_redesign_after_two_investigations_names_the_most_recent(self):
+        script = fixture.prefix_to_tests_begun() + [
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),
+            (T.DESIGN_WRITING, T.V_EMITTED, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        redesign = self.packages_for(machine, T.DESIGN_WRITING)[-1]
+        self.assertEqual(redesign["design-version"], 2)
+        self.assertEqual(str(redesign["investigation-report"]), self.report_path(record, 2))
+
+    def test_design_writing_re_entered_within_the_redesigns_version_names_none(self):
+        # The initiator lives through the re-entries of its state in the
+        # design version (section 1) and already holds the report; the
+        # re-entry after the design's agent check rejects it is a
+        # design-revision, not a redesign (section 2).
+        script = fixture.prefix_to_tests_begun() + [
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {"destination": T.DESIGN_WRITING}),
+            (T.DESIGN_WRITING, T.V_EMITTED, {}),
+            (T.CONTRACT_ACCEPTANCE_BY_PROGRAM, T.V_ADVANCE, {}),
+            (T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN, {}),     # row 12
+            (T.DESIGN_WRITING, T.V_EMITTED, {}),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        design_writings = self.packages_for(machine, T.DESIGN_WRITING)
+        self.assertEqual(len(design_writings), 3)
+        self.assertEqual([p["design-version"] for p in design_writings], [1, 2, 2])
+        self.assertIn("investigation-report", design_writings[1])
+        self.assertNotIn("investigation-report", design_writings[2])
+
+    def test_the_first_design_write_and_ordinary_states_name_none(self):
+        script = fixture.prefix_to_tests_begun() + [
+            self.escalation_from_test_design_writing(),
+            (T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}),     # nothing edited: back to test-design-writing
+            fixture.test_design_write(),
+        ]
+        machine, run, record, _ = fixture.make_machine(script, self.repository)
+        fixture.drive(machine, run)
+        first_design_write = self.packages_for(machine, T.DESIGN_WRITING)[0]
+        self.assertEqual(first_design_write["design-version"], 1)
+        self.assertNotIn("investigation-report", first_design_write)
+        self.assertNotIn("investigation-report", self.packages_for(machine, T.IMPLEMENTATION_WRITING)[0])
+        # The state resumed after the investigation is not a redesign either.
+        resumed = self.packages_for(machine, T.TEST_DESIGN_WRITING)
+        self.assertEqual(len(resumed), 2)
+        self.assertNotIn("investigation-report", resumed[-1])
+        self.assertEqual(
+            [p["state"] for p in machine.launcher.launched if "investigation-report" in p],
+            [T.INVESTIGATE_WORKFLOW])
 
 
 class TheStateExitFile(unittest.TestCase):

@@ -106,6 +106,9 @@ EVIDENCE_DIRECTORY_NAME_PATTERN = re.compile(r"(?P<name>[A-Za-z-]+)-[0-9]+")
 MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE = {
     "evidence-directory": ("design-to-main-state-machine.py",
                            "the state-package's key for the instance's evidence directory (section 2)"),
+    "investigation-report": ("design-to-main-state-machine.py",
+                             "the state-package's key for the investigation report's path "
+                             "(sections 2 and 9)"),
     "tests-begun": ("design-to-main-run-state.py", "a run-state.json field (section 9)"),
     "reset": ("design-to-main-state-machine.py",
               "the user's ruling the machine reads in `rulings` (section 7)"),
@@ -156,13 +159,7 @@ BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES = {
 # entry the tables module now defines, or that any module of the machine
 # now spells as a string literal, fails the test, so that it is removed
 # (or moved to MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE).
-KNOWN_MISMATCHES_AWAITING_A_RULING = {
-    "investigation-report": "sections 2 and 9 name it as the state-package's key for the "
-                            "investigation report's path (user-ruled 2026-09-14, the tenth walk, "
-                            "item 17); no module of the machine defines it, and the state-package "
-                            "the machine assembles carries `evidence-directory` and no "
-                            "`investigation-report`",
-}
+KNOWN_MISMATCHES_AWAITING_A_RULING = {}
 
 
 def design_prose_without_front_matter_and_fenced_blocks(design_text):

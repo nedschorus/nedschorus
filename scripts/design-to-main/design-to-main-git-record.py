@@ -240,6 +240,27 @@ class TopicBranchGitRecord:
         return self.evidence_directory_for_instance(
             state_or_sub_state, self.instances_of_state_so_far(state_or_sub_state) + 1)
 
+    # -- section 9: reports/investigation-<n>.md -----------------------------
+
+    def investigation_report_path_for_instance(self, instance_number):
+        """The report the nth investigate-workflow instance writes, n counted
+        from 1 as its evidence directory's is (section 9; user-ruled
+        2026-09-14, the tenth walk, item 17). Relative to the repository."""
+        return (self.record_directory / tables.INVESTIGATION_REPORTS_DIRECTORY_NAME
+                / (tables.INVESTIGATION_REPORT_FILE_NAME_FORMAT % instance_number))
+
+    def investigation_report_path_for_the_next_instance(self):
+        """The report the investigate-workflow instance about to be launched
+        writes."""
+        return self.investigation_report_path_for_instance(
+            self.instances_of_state_so_far(tables.INVESTIGATE_WORKFLOW) + 1)
+
+    def investigation_report_path_of_the_latest_instance(self):
+        """The report of the last investigate-workflow instance committed on
+        the branch: on a redesign, the one whose resume opened it."""
+        return self.investigation_report_path_for_instance(
+            self.instances_of_state_so_far(tables.INVESTIGATE_WORKFLOW))
+
     def absolute(self, relative):
         return self.repository_dir / relative
 

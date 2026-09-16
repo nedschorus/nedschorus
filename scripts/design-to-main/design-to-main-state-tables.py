@@ -820,6 +820,12 @@ USER_RULINGS_FILE_NAME = "user-rulings.md"
 EVIDENCE_DIRECTORY_NAME = "evidence"
 NOTES_FILE_NAME = "notes.md"
 STATE_EXIT_FILE_NAME = "state-exit.json"
+# `<record>/reports/investigation-<n>.md`, each investigation report, `<n>`
+# the count of the investigate-workflow instance that wrote it, counted as
+# the evidence directory counts (section 9; user-ruled 2026-09-14, the
+# tenth walk, item 17).
+INVESTIGATION_REPORTS_DIRECTORY_NAME = "reports"
+INVESTIGATION_REPORT_FILE_NAME_FORMAT = "investigation-%d.md"
 
 # The fields of state-exit.json (section 2), spelled with hyphens, mapped
 # to StateExitRecord's fields (design-to-main-state-machine.py). The
