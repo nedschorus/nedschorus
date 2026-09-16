@@ -620,15 +620,37 @@ def main(argv=None) -> int:
     # Compare RESOLVED paths: on macOS /var is a symlink to /private/var, so
     # the same seat can describe itself two ways and would otherwise look
     # foreign to itself and refuse its own handoff.
+    # Computed before the first refusal, because that refusal's advice depends
+    # on it: --claim waives BOTH refusals, so advising it here without checking
+    # for a supervised name would walk the reader from this refusal straight
+    # past the next one into a handoff nothing polls (the PR #394 reviewer's
+    # question). When this directory has a supervised name, that name is the
+    # advice and --claim is warned against; --claim is advised bare only when
+    # there is no supervised name for it to override.
+    supervised_name = supervised_name_for_this_directory(handoff_directory, agent)
     held_by = claiming_directory(handoff_path)
     held_by_resolved = str(Path(held_by).resolve()) if held_by else ""
     if held_by and held_by_resolved != str(Path.cwd().resolve()) and not arguments.claim:
+        if supervised_name:
+            exits = (
+                f"Rerun with --agent {supervised_name} -- this directory's supervised name, "
+                f"the only name whose handoff is read here -- or omit --agent entirely (it "
+                f"defaults to this directory's name, {default_agent_name()}). Do NOT pass "
+                f"--claim to take {agent} from {held_by}: --claim also waives the "
+                f"supervised-name check, and a handoff under {agent} would never be read here."
+            )
+        else:
+            exits = (
+                f"Either run with --agent <a name of your own> (the default is this "
+                f"directory's name, {default_agent_name()}), or pass --claim to take the name "
+                f"from it -- knowing that --claim also waives the check that no supervisor "
+                f"answers for this directory under another name, which has just been made "
+                f"and found none."
+            )
         print(
             f"handoff-write-and-check-supervisor: {handoff_path} belongs to a seat in "
             f"{held_by}, and this session is in {Path.cwd()}. Nothing was written, because "
-            f"writing would destroy a handoff that seat may not have acted on yet. Either "
-            f"run with --agent <a name of your own> (the default is this directory's name, "
-            f"{default_agent_name()}), or pass --claim to take the name from it.",
+            f"writing would destroy a handoff that seat may not have acted on yet. {exits}",
             file=sys.stderr,
         )
         return 2
@@ -640,8 +662,8 @@ def main(argv=None) -> int:
     # and false of the seat, and the caller's rule for that answer is to keep
     # working. See supervised_name_for_this_directory for the measurement.
     # An explicit --claim still wins, so a seat genuinely being re-founded
-    # under a new name says so and proceeds.
-    supervised_name = supervised_name_for_this_directory(handoff_directory, agent)
+    # under a new name says so and proceeds. supervised_name was computed
+    # above, before the foreign-claim refusal, which needs it for its advice.
     if supervised_name and not state_path.is_file() and not arguments.claim:
         print(
             f"handoff-write-and-check-supervisor: no supervisor has ever run under the name "

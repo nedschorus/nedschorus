@@ -389,6 +389,8 @@ def run_agent_name_and_claim_cases(workspace: Path):
     check("the refusal names both directories",
           str(seat_one) in foreign.stderr and str(seat_two) in foreign.stderr, foreign.stderr)
     check("the refusal teaches the fix", "--claim" in foreign.stderr, foreign.stderr)
+    check("and, with no supervised name here, says what else --claim waives",
+          "also waives" in foreign.stderr, foreign.stderr)
     check("nothing was written on the refusal",
           (handoffs / "seat-one-handoff.md").read_text(encoding="utf-8") == first_body)
 
@@ -482,6 +484,33 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     check("--claim re-founds the seat under the new name", claimed.returncode != 2, claimed.stderr)
     check("--claim really wrote the new name's handoff",
           "re-founded here" in stray.read_text(encoding="utf-8"))
+
+    # The two refusals chained (the PR #394 reviewer's question). A name held
+    # by a FOREIGN directory, asked for from THIS directory, which a supervisor
+    # answers for under another name: the foreign-claim refusal fires first,
+    # and its old advice was "pass --claim to take the name" -- which also
+    # waives the supervised-name refusal behind it, so an agent following the
+    # advice would write a handoff nothing polls. The advice must name the
+    # supervised name and warn off --claim, not walk the reader into the trap.
+    foreign = workspace / "foreign-seat"
+    foreign.mkdir(parents=True, exist_ok=True)
+    write_from(foreign, "a foreign seat's handoff", "--agent", "borrowed-name")
+    borrowed = handoffs / "borrowed-name-handoff.md"
+    check("the foreign directory holds the borrowed name", borrowed.is_file())
+    borrowed_body = borrowed.read_text(encoding="utf-8")
+    chained = write_from(seat, "would be read by nobody, twice over", "--agent", "borrowed-name")
+    check("a foreign-held name asked for from a supervised directory is refused",
+          chained.returncode == 2, chained.stderr)
+    check("that refusal is the foreign-claim one (it names the holding directory)",
+          str(foreign) in chained.stderr, chained.stderr)
+    check("and its advice names this directory's supervised name",
+          "--agent supervised-seat " in chained.stderr, chained.stderr)
+    check("and it warns off --claim instead of advising it",
+          "Do NOT pass --claim" in chained.stderr
+          and "would never be read here" in chained.stderr, chained.stderr)
+    check("nothing was written on the chained refusal",
+          borrowed.read_text(encoding="utf-8") == borrowed_body
+          and not (handoffs / "borrowed-name-handoff.md.tmp").exists())
 
     # A supervised name in ANOTHER directory is not this directory's business.
     neighbour = workspace / "neighbour-seat"
