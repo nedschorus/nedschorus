@@ -24,7 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1838,6 +1838,73 @@ with tempfile.TemporaryDirectory() as temporary:
                          "so the session did not survive")
     write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
     a_real_failure_path_does_not_exit_zero("a launch that did not come up", workspace)
+
+    # Several seats in one run: nonzero when ANY seat was not recovered, not only
+    # when every one was (user-ruled 2026-09-16, merge-lane walk item 6). Three
+    # seats up and one down used to exit zero, telling an unattended caller the
+    # fleet came back. Driven through the real recover_seat with a launch stub
+    # that fails for the seats named, so a failure in the middle of the run is
+    # also shown not to stop the seats after it from being tried and reported.
+    def main_on_seats(case_directory, names, failing):
+        workspace = Workspace(case_directory, name=names[0])
+        for name in names:
+            (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
+            write_transcript(recovery.harness_project_directory(
+                workspace.agents_root / name, workspace.projects),
+                f"resume-{name}", "real work", records=4)
+        all_dead()
+        capture_launches(workspace)
+
+        def launch_failing_for_the_seats_named(name, seat_directory, handoff_directory,
+                                               extra_arguments, first_prompt_file=None):
+            workspace.launches.append((name, extra_arguments, first_prompt_file))
+            return 7 if name in failing else 0
+        patch("launch_seat", launch_failing_for_the_seats_named)
+        printed = io.StringIO()
+        with redirect_stdout(printed):
+            exit_code = recovery.main([*names,
+                                       "--agents-root", str(workspace.agents_root),
+                                       "--handoff-dir", str(workspace.handoffs),
+                                       "--projects-root", str(workspace.projects)])
+        log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+        logged = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+        return exit_code, printed.getvalue(), logged, workspace.launches
+
+    def every_seat_reported(names, failing, printed, logged, launches):
+        """One printed line and one log line per seat, in the order given, each
+        saying what became of that seat, and every seat's launch attempted."""
+        printed_lines = printed.splitlines()
+        logged_lines = logged.splitlines()
+        return (len(printed_lines) == len(names) and len(logged_lines) == len(names)
+                and [launch[0] for launch in launches] == list(names)
+                and all(line.startswith(f"recover-crashed-seats: {name}: ")
+                        and ("LAUNCH FAILED" in line) == (name in failing)
+                        and ("relaunched resuming" in line) == (name not in failing)
+                        and f" {name}: " in logged_line
+                        for name, line, logged_line
+                        in zip(names, printed_lines, logged_lines)))
+
+    names = ("several-first-seat-up", "several-middle-seat-down", "several-last-seat-up")
+    failing = {"several-middle-seat-down"}
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-several-one-down", names, failing)
+    check("EXIT: several seats with one not recovered exits 1, not zero",
+          exit_code == 1, (exit_code, printed))
+    check("EXIT: and every seat still gets its report line and its log line",
+          every_seat_reported(names, failing, printed, logged, launches),
+          (printed, logged, launches))
+
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-several-all-up", names, set())
+    check("EXIT: several seats all recovered exits zero",
+          exit_code == 0 and every_seat_reported(names, set(), printed, logged, launches),
+          (exit_code, printed, logged, launches))
+
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-several-all-down", names, set(names))
+    check("EXIT: several seats none recovered still exits 1",
+          exit_code == 1 and every_seat_reported(names, set(names), printed, logged, launches),
+          (exit_code, printed, logged, launches))
 
 
 print()

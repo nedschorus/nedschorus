@@ -939,7 +939,11 @@ def main(argv=None) -> int:
             append_to_recovery_log(handoff_directory, report)
         if any(marker in report for marker in SEAT_NOT_RECOVERED_REPORT_MARKERS):
             not_recovered += 1
-    return 1 if not_recovered == len(names) else 0
+    # Nonzero when ANY seat was not recovered, not only when every one was:
+    # three seats up and one down used to exit zero, telling an unattended
+    # caller the fleet came back (user-ruled 2026-09-16, merge-lane walk item
+    # 6 — the multi-seat half of the shape PR #329 fixed for one seat).
+    return 1 if not_recovered else 0
 
 
 if __name__ == "__main__":
