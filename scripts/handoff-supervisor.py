@@ -45,6 +45,7 @@ Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -741,10 +742,29 @@ class BootRecoveryIgnitionPlan:
 
 
 def prune_old_generations(directory: Path, stem: str) -> None:
-    """Keep the newest GENERATIONS_KEPT files of one family; delete older."""
-    generations = sorted(directory.glob(f"{stem}-*.md"), key=lambda item: item.name)
-    for stale in generations[:-GENERATIONS_KEPT]:
-        stale.unlink()
+    """Keep every file of the newest GENERATIONS_KEPT generations of one family.
+
+    A generation is the number after the stem: `<stem>-0041.md`, and for a
+    dialog also `<stem>-0041-complete.md`, the companion the extractor writes
+    beside the tail when the dialog runs longer than the tail carries.
+
+    This used to keep the newest GENERATIONS_KEPT FILES, so that companion took
+    one of the two places and every long dialog deleted the previous
+    generation's tail on arrival. Measured 2026-09-16 on the Mac: five seats
+    held handoff archives for two generations and dialog tails for one. Counting
+    by number keeps what the module docstring promises, the current and the
+    previous. A file under the stem whose name carries
+    no generation number is not counted and not deleted.
+    """
+    numbered_file_name = re.compile(rf"{re.escape(stem)}-(\d+)(?:-complete)?\.md")
+    files_by_generation = {}
+    for item in directory.glob(f"{stem}-*.md"):
+        match = numbered_file_name.fullmatch(item.name)
+        if match:
+            files_by_generation.setdefault(int(match.group(1)), []).append(item)
+    for generation in sorted(files_by_generation)[:-GENERATIONS_KEPT]:
+        for stale in files_by_generation[generation]:
+            stale.unlink()
 
 
 def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
