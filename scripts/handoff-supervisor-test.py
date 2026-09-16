@@ -1386,8 +1386,9 @@ def run_appended_system_prompt_cases(workspace: Path):
     and resupervise-seat.py -- and a flag living in the launchers would leave a
     recovered seat silently running without the appended text.
     """
-    def boot_once(name: str, extra_arguments: list) -> str:
-        """Boot-ignite once with an argument-recording stub; return its argv."""
+    def boot_once(name: str, extra_arguments: list):
+        """Boot-ignite once with an argument-recording stub; return its argv,
+        one argument per line, and the supervisor's stderr."""
         handoff_directory = workspace / name
         handoff_directory.mkdir(parents=True, exist_ok=True)
         (handoff_directory / f"{name}-handoff.md").write_text(
@@ -1410,24 +1411,38 @@ def run_appended_system_prompt_cases(workspace: Path):
             encoding="utf-8",
         )
         stub_agent.chmod(0o755)
-        subprocess.run(
+        finished = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
              "--handoff-dir", str(handoff_directory),
              "--agent-command", str(stub_agent)] + extra_arguments,
             capture_output=True, text=True, check=False,
             stdin=subprocess.DEVNULL, timeout=60,
         )
-        return record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+        argv = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
+        return argv, finished.stderr
 
+    def warning_lines_about_no_separator(stderr: str) -> list:
+        return [line for line in stderr.splitlines()
+                if line.startswith("handoff-supervisor: no --- line")]
+
+    # A file with no `---` line is all agent text: it goes to the CLI whole,
+    # through its own path, as every file did before the split -- with a
+    # warning, because the file may have lost the line that keeps editor notes
+    # out of the seats.
     prompt_file = workspace / "appended-system-prompt.md"
     prompt_file.write_text("You may commission subagents on your own initiative.\n",
                            encoding="utf-8")
 
-    argv = boot_once("appendon", ["--agent-append-system-prompt-file", str(prompt_file)])
+    argv, stderr = boot_once("appendon", ["--agent-append-system-prompt-file", str(prompt_file)])
     check("the launched session carries --append-system-prompt-file",
           "--append-system-prompt-file" in argv.splitlines(), argv)
-    check("it carries the path it was given",
+    check("a file with no --- line is sent whole, through the path it was given",
           str(prompt_file) in argv.splitlines(), argv)
+    check("and the supervisor prints exactly one warning line saying so",
+          len(warning_lines_about_no_separator(stderr)) == 1
+          and str(prompt_file) in warning_lines_about_no_separator(stderr)[0], stderr)
+    check("and writes no agent-part file for it",
+          not (workspace / "appendon" / "appendon-appended-system-prompt-agent-part.md").exists())
     # The prompt is read by position in the neighbouring case and by every
     # reader of this command; a flag appended after it would BE the prompt.
     lines = [line for line in argv.splitlines() if line]
@@ -1435,16 +1450,130 @@ def run_appended_system_prompt_cases(workspace: Path):
           lines and lines[-1] not in ("--append-system-prompt-file", str(prompt_file)),
           repr(lines[-3:] if lines else lines))
 
-    argv = boot_once("appendoff", ["--agent-append-system-prompt-file", ""])
+    # A file with notes above its `---` line: only the part below reaches the
+    # session. Before this, the whole file went, and every seat's system prompt
+    # carried the notes to editors, "Keep it SHORT" included (observed
+    # 2026-09-16 in the cold-read-research seat; user-ruled "fix 2").
+    split_file = workspace / "appended-system-prompt-with-notes.md"
+    split_file.write_text(
+        "# Notes heading\n"
+        "\n"
+        "Keep it SHORT. EDITOR-NOTE-MARKER\n"
+        "\n"
+        "---\n"
+        "\n"
+        "\n"
+        "AGENT-TEXT-MARKER: you may commission subagents.\n"
+        "\n"
+        "---\n"
+        "SECOND-SECTION-MARKER after a later --- line, still agent text.\n",
+        encoding="utf-8",
+    )
+    argv, stderr = boot_once("appendsplit", ["--agent-append-system-prompt-file", str(split_file)])
+    agent_part_path = workspace / "appendsplit" / "appendsplit-appended-system-prompt-agent-part.md"
+    argument_lines = argv.splitlines()
+    flag_value = (argument_lines[argument_lines.index("--append-system-prompt-file") + 1]
+                  if "--append-system-prompt-file" in argument_lines[:-1] else "")
+    check("a file with a --- line is sent through the supervisor's agent-part file",
+          flag_value == str(agent_part_path), argv)
+    check("and not through its own path",
+          str(split_file) not in argument_lines, argv)
+    sent = agent_part_path.read_text(encoding="utf-8") if agent_part_path.is_file() else ""
+    check("the text sent excludes everything above the --- line",
+          sent.strip() != ""
+          and "EDITOR-NOTE-MARKER" not in sent and "Notes heading" not in sent, sent)
+    check("the text sent is what is below it, from its first non-blank line",
+          sent.startswith("AGENT-TEXT-MARKER: you may commission subagents.\n"), repr(sent))
+    check("the split is at the FIRST --- line: a later one stays in the text sent",
+          "---\nSECOND-SECTION-MARKER" in sent, repr(sent))
+    check("a file with a --- line launches with no warning",
+          not warning_lines_about_no_separator(stderr), stderr)
+
+    # The real committed file, through the default path, end to end.
+    argv, stderr = boot_once("appendcommitted", [])
+    agent_part_path = (workspace / "appendcommitted"
+                       / "appendcommitted-appended-system-prompt-agent-part.md")
+    sent = agent_part_path.read_text(encoding="utf-8") if agent_part_path.is_file() else ""
+    check("by default the committed file is sent through the agent-part file",
+          str(agent_part_path) in argv.splitlines(), argv)
+    check("what the committed file sends carries none of its notes to editors",
+          sent.strip() != "" and "Everything above this line is a note" not in sent,
+          repr(sent[:300]))
+
+    argv, stderr = boot_once("appendoff", ["--agent-append-system-prompt-file", ""])
     check("an empty value launches with no such flag",
           "--append-system-prompt-file" not in argv.splitlines(), argv)
 
     missing = workspace / "no-such-appended-prompt.md"
-    argv = boot_once("appendmissing", ["--agent-append-system-prompt-file", str(missing)])
+    argv, stderr = boot_once("appendmissing", ["--agent-append-system-prompt-file", str(missing)])
     check("a missing file does not lose the seat -- the session still launches",
           argv.strip() != "", "the stub agent recorded nothing, so no session launched")
     check("a missing file launches with no such flag",
           "--append-system-prompt-file" not in argv.splitlines(), argv)
+
+
+def run_appended_system_prompt_agent_part_cases(workspace: Path):
+    """Where agent_part_of_appended_system_prompt splits a file, on the committed
+    file and on made-up ones, and the launch-site fallbacks that keep a launch
+    from ever failing over the appended text."""
+    split = supervisor.agent_part_of_appended_system_prompt
+
+    committed_text = supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+    agent_text, separator_found = split(committed_text)
+    check("the committed appended-system-prompt file has a --- line", separator_found)
+    check("its agent part does not contain the notes' closing sentence",
+          "Everything above this line is a note" not in agent_text, agent_text)
+    last_committed_line = [line for line in committed_text.splitlines() if line.strip()][-1]
+    check("its agent part runs to the end of the file",
+          agent_text.rstrip("\n").endswith(last_committed_line), repr(agent_text[-200:]))
+
+    agent_text, separator_found = split("notes\n  ---\t\n\n   \nagent\n\nmore agent\n")
+    check("a --- line with surrounding whitespace is the separator",
+          separator_found and agent_text == "agent\n\nmore agent\n", repr(agent_text))
+
+    for lookalike in ("----", "--- notes", "- - -", "`---`"):
+        text = f"notes\n{lookalike}\nagent\n"
+        agent_text, separator_found = split(text)
+        check(f"{lookalike!r} is not the separator, so the text comes back whole",
+              not separator_found and agent_text == text, repr(agent_text))
+
+    agent_text, separator_found = split("no separator here\n")
+    check("text with no --- line comes back whole, and says so",
+          not separator_found and agent_text == "no separator here\n", repr(agent_text))
+
+    # The launch-site fallbacks, called directly.
+    for_launch = supervisor.appended_system_prompt_file_for_launch
+    check("an empty source path launches without the flag",
+          for_launch("", workspace / "unused-agent-part.md") == "")
+
+    unreadable_stderr = io.StringIO()
+    with contextlib.redirect_stderr(unreadable_stderr):
+        chosen = for_launch(str(workspace / "vanished-appended-prompt.md"),
+                            workspace / "vanished-agent-part.md")
+    check("a source gone by launch time launches without the flag, with one warning line",
+          chosen == "" and len(unreadable_stderr.getvalue().splitlines()) == 1
+          and unreadable_stderr.getvalue().startswith("handoff-supervisor: "),
+          repr((chosen, unreadable_stderr.getvalue())))
+
+    source = workspace / "appended-prompt-unwritable-destination.md"
+    source.write_text("notes\n---\nagent\n", encoding="utf-8")
+    unwritable_stderr = io.StringIO()
+    with contextlib.redirect_stderr(unwritable_stderr):
+        chosen = for_launch(str(source), workspace / "no-such-directory" / "agent-part.md")
+    check("an agent part that cannot be written sends the whole file, with one warning line",
+          chosen == str(source) and len(unwritable_stderr.getvalue().splitlines()) == 1
+          and unwritable_stderr.getvalue().startswith("handoff-supervisor: "),
+          repr((chosen, unwritable_stderr.getvalue())))
+
+    # Read at every launch: an edit between two launches reaches the second.
+    agent_part_path = workspace / "reread-agent-part.md"
+    source.write_text("notes\n---\nfirst agent text\n", encoding="utf-8")
+    for_launch(str(source), agent_part_path)
+    source.write_text("notes\n---\nsecond agent text\n", encoding="utf-8")
+    for_launch(str(source), agent_part_path)
+    check("the source is re-read at each launch, so an edit reaches the next one",
+          agent_part_path.read_text(encoding="utf-8") == "second agent text\n",
+          agent_part_path.read_text(encoding="utf-8"))
 
 
 def run_launched_session_seat_environment_cases(workspace: Path):
@@ -1719,6 +1848,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))
+    run_appended_system_prompt_agent_part_cases(Path(temporary_directory))
     run_launched_session_seat_environment_cases(Path(temporary_directory))
     run_first_prompt_file_cases(Path(temporary_directory))
     run_process_identity_cases(Path(temporary_directory))

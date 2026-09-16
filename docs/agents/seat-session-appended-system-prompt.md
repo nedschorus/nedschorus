@@ -1,8 +1,10 @@
 # Text appended to every seat session's system prompt
 
-**This file is operative, not descriptive.** Its entire contents are appended to
-the system prompt of every session the handoff supervisor launches, through
-`claude --append-system-prompt-file`. Editing it changes how every seat on every
+**This file is operative, not descriptive.** Only the text below the `---` line
+is appended to the system prompt of every session the handoff supervisor
+launches: at each launch the supervisor writes that text to a file of its own
+and passes that copy through `claude --append-system-prompt-file`. Editing it
+changes how every seat on every
 machine behaves, from that seat's next launch. It is committed for exactly that
 reason: an uncommitted per-machine override file would not be versioned, would not be
 reviewed, would not be restored by a checkout, and would drift between the Mac
