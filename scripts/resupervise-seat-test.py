@@ -167,7 +167,8 @@ def load_supervisor():
 
 
 def run_stale_heartbeat_case(workspace: Path):
-    """A stale heartbeat is the real trigger: a supervisor that died mid-run.
+    """A dead supervisor is the real trigger: one that died mid-run, leaving a
+    stale heartbeat and no lock or process behind it.
 
     This is the 2026-08-18 shape -- state file present from a supervisor that
     is gone, agent still running -- and it must proceed, not refuse.

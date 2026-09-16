@@ -12,9 +12,12 @@ in every session type, headless included — a statusline-relay fallback was
 cut 2026-08-12 because its only remaining trigger was a session whose first
 turn had not completed, a moment the threshold cannot be crossed. A
 supervisor-liveness gate (silent unless --agent's supervisor was alive) was
-cut the same day: since self-registration (2026-08-06) a firing with no
-supervisor watching starts an adopting one, so silence only ever turned a
-dead supervisor into a permanent stall.
+cut the same day, and the reason still holds: a firing with no supervisor
+watching is what surfaces the dead one. The writer script reports that nothing
+is watching and tells the agent to have the user run resupervise-seat.py (from
+self-registration on 2026-08-06 until its removal on 2026-08-14, it started an
+adopting supervisor instead), so silence only ever turned a dead supervisor
+into a permanent stall.
 
 When the used share reaches the threshold, the hook emits a system message
 telling the agent to run the handoff skill; the supervisor takes over from

@@ -380,8 +380,9 @@ with tempfile.TemporaryDirectory() as temporary:
     verdict, detail = workspace.assess()
     # Changed with nedschorus#242 change 1. A heartbeat stamped a moment ago
     # with no supervisor process behind it is the 60-second hole this tool used
-    # to fall into: it refused a crashed seat for a full minute after the crash,
-    # which is exactly when the login restart of #116 runs. The heartbeat no
+    # to fall into: measured on ned-box, it refused a crashed seat until 60
+    # seconds after the kill, and the login restart of #116 was predicted to
+    # land inside that window on a fast enough boot. The heartbeat no
     # longer decides; the supervisor's process does, and there is none here.
     check("a fresh heartbeat alone no longer refuses, with no supervisor process behind it",
           verdict != "refuse", (verdict, detail))

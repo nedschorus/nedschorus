@@ -33,8 +33,9 @@
 # name attaches instead of duplicating, and the supervisor's own lock
 # refuses a duplicate even if tmux is bypassed.
 # Both protections are per-machine, as is every other thing an agent owns, so
-# the same name used on both machines is simply two unrelated agents — no
-# conflict, only a label you cannot tell apart in a listing spanning both.
+# nothing stops the same name on both machines. But the name is also the
+# seat's Remote Control address, which agents on the other machine send to,
+# so names are unique across the whole fleet; nothing enforces that here.
 #
 # Every seat runs on its OWN tmux server on the box (`tmux -L <name>`, one
 # socket per seat under /tmp/tmux-<uid>/), so one server crash cannot take
@@ -98,9 +99,9 @@ usage() {
     echo "(Agents on this Mac are separate: launch-claude-mac.)" >&2
     echo >&2
     echo "The two machines share no agent state — tmux sessions, home directories," >&2
-    echo "handoff files and locks are all per-machine — so the same name on both is two" >&2
-    echo "unrelated agents, not a conflict. Suffix names (-ubuntu, -mac) only if you want" >&2
-    echo "to tell them apart at a glance; nothing here requires it." >&2
+    echo "handoff files and locks are all per-machine — but a name is also the seat's" >&2
+    echo "Remote Control address, which agents on the other machine send to, so names are" >&2
+    echo "unique across the whole fleet. Nothing on either machine enforces that." >&2
     exit 2
 }
 
