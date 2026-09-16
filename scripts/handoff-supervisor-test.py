@@ -882,30 +882,33 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           "branch sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
           synced_prompt[:900])
     check("the branch-state instruction follows the sync result, exactly",
-          "branch sync: fixture-branch is 3 commit(s) behind main — if behind, "
-          "catch up with origin/main before your first substantive action; "
-          "resolve conflicts you can verify, run the affected test suites, and "
-          "explain the situation to the user if you cannot. If this seat has "
+          "branch sync: fixture-branch is 3 commit(s) behind main — If this "
+          "branch has never been pushed, rebase it onto origin/main before your "
+          "first substantive action and rerun the tests for what you touched. "
+          "If it is pushed, leave it as it is, and start new work on a branch "
+          "from origin/main. If this seat has "
           "open pull requests, check their state with `gh`: merge-lane reviews "
           "and merges them; a changes-requested one gets a fix round from a "
           "fresh agent — never extend a head you've already announced."
           in synced_prompt,
           synced_prompt[:1100])
-    # The catch-up half of that instruction, pinned as its own exact line
-    # (user-ruled 2026-08-31, verbatim). Three elements the 2026-08-30 wording
-    # did not have — WHEN to act ("before your first substantive action"), how
-    # far to go on a conflict ("resolve conflicts you can verify"), and how to
-    # know the catch-up worked ("run the affected test suites") — so each is
-    # pinned here rather than only inside the whole-instruction check above.
-    check("the catch-up instruction gives timing, a conflict bound, and verification, exactly",
-          " — if behind, catch up with origin/main before your first "
-          "substantive action; resolve conflicts you can verify, run the "
-          "affected test suites, and explain the situation to the user if you "
-          "cannot." in synced_prompt,
+    # The branch-state half of that instruction, pinned as its own exact line
+    # (user-ruled 2026-09-16, "y", item 1 of nedschorus#418, verbatim). It
+    # replaced the 2026-08-31 catch-up sentence, which a seat read as "merge
+    # main" on 2026-09-15; nedschorus#324 rules merges from main out — rebase
+    # a never-pushed branch, leave a pushed one alone.
+    check("the branch-state instruction rebases a never-pushed branch and leaves a pushed one, exactly",
+          " — If this branch has never been pushed, rebase it onto origin/main "
+          "before your first substantive action and rerun the tests for what "
+          "you touched. If it is pushed, leave it as it is, and start new work "
+          "on a branch from origin/main." in synced_prompt,
           synced_prompt[:1100])
-    check("the superseded 2026-08-30 catch-up wording is gone from the initial agent instructions",
+    check("the superseded 2026-08-30 and 2026-08-31 catch-up wordings are gone from the initial agent instructions",
           "when safe" not in synced_prompt
-          and "if you can't resolve them" not in synced_prompt,
+          and "if you can't resolve them" not in synced_prompt
+          and "catch up with origin/main" not in synced_prompt
+          and "resolve conflicts you can verify" not in synced_prompt
+          and "git merge" not in synced_prompt,
           synced_prompt[:1100])
     check("the branch-state line precedes the next step",
           "" if not synced_prompt else
@@ -1257,9 +1260,30 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["commit", "--quiet", "-m", "the agent's own work"], home)
 
     report = supervisor.sync_working_branch_with_main(home)
-    check("a diverged branch is reported, not merged", "merge when ready" in report, report)
+    check("a diverged branch is reported, not merged",
+          report.startswith("branch sync: agent-branch is 1 ahead of main"), report)
     check("the diverged report counts both directions",
           "1 ahead of main" in report and "1 behind" in report, report)
+    # Nor does the report tell the agent to merge (user-ruled 2026-09-16, "y",
+    # item 1 of nedschorus#418): on 2026-09-15 a seat handed "merge when ready
+    # (git merge origin/main)" merged main into a branch under review, which
+    # nedschorus#324 rules out. Checked on the prompt the report is composed
+    # into, which is what the seat actually reads.
+    diverged_prompt = supervisor.build_ignition_prompt(
+        Path("/tmp/dialog-0002.md"),
+        {"written-at": "2026-09-16T09:00:00Z", "next-step": "finish the review fix"},
+        branch_sync_report=report,
+    )
+    check("the diverged-branch initial agent instructions never say to merge main",
+          "git merge" not in diverged_prompt and "merge when ready" not in diverged_prompt,
+          diverged_prompt)
+    check("the diverged-branch initial agent instructions carry the rebase-or-leave-it sentence",
+          "branch sync: agent-branch is 1 ahead of main and 1 behind — If this "
+          "branch has never been pushed, rebase it onto origin/main before your "
+          "first substantive action and rerun the tests for what you touched. "
+          "If it is pushed, leave it as it is, and start new work on a branch "
+          "from origin/main." in diverged_prompt,
+          diverged_prompt)
     check("a diverged branch keeps its own commit",
           git_in(["log", "-1", "--format=%s"], home).stdout.strip() == "the agent's own work")
 
@@ -1363,13 +1387,13 @@ def run_boot_ignition_case(workspace: Path):
     check("the boot-recovery initial agent instructions carry the sync's own report",
           "branch sync:" in launched, launched[:400])
     check("the boot-recovery initial agent instructions carry the branch-state instruction, exactly",
-          " — if behind, catch up with origin/main before your first "
-          "substantive action; resolve conflicts you can verify, run the "
-          "affected test suites, and explain the situation to the user if you "
-          "cannot. If this seat has open pull requests, check their state with "
-          "`gh`: merge-lane reviews and merges them; a changes-requested one "
-          "gets a fix round from a fresh agent — never extend a head you've "
-          "already announced."
+          " — If this branch has never been pushed, rebase it onto origin/main "
+          "before your first substantive action and rerun the tests for what "
+          "you touched. If it is pushed, leave it as it is, and start new work "
+          "on a branch from origin/main. If this seat has open pull requests, "
+          "check their state with `gh`: merge-lane reviews and merges them; a "
+          "changes-requested one gets a fix round from a fresh agent — never "
+          "extend a head you've already announced."
           in launched,
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
@@ -1830,8 +1854,9 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           "written at 20" in prompt
           and "Calculate from `date` how long ago that was" in prompt, prompt)
     check("the reincarnation prompt carries the branch-state line the plan was composed with",
-          "branch sync: composer-branch is 2 commit(s) behind main — if behind, "
-          "catch up with origin/main before your first substantive action;"
+          "branch sync: composer-branch is 2 commit(s) behind main — If this "
+          "branch has never been pushed, rebase it onto origin/main before your "
+          "first substantive action"
           in prompt, prompt)
     check("the reincarnation prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)

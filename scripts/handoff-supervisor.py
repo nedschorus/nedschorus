@@ -123,19 +123,19 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 # Appended to sync_working_branch_with_main's one-line result in the ignition
 # prompt. The wording is the user's; only the sync line it follows is computed.
 # The open-pull-requests sentence is the 2026-08-30 ruling on a rendered mock
-# of the prompt. The catch-up sentence was re-ruled 2026-08-31: the successor
-# already read its branch state at launch but was told neither WHEN to act on
-# it nor how to know the catch-up had worked, and this seat's checkout sat 112
-# commits behind main while an agent cited code from it for hours. The
-# hand-run merge that followed took twelve conflicts — each resolved by
-# checking whether the branch's version had already reached main under a
-# different SHA — and was confirmed by running four suites. Hence the three
-# elements: act before other work, resolve only what you can verify, confirm
-# with tests.
+# of the prompt. The branch-state sentence was replaced by the user on
+# 2026-09-16 ("y", item 1 of nedschorus#418) to match nedschorus#324, the
+# 2026-09-14 ruling that working branches never get merges from main — the
+# rule scripts/checkout-freshness-catch-up.py enforces: a never-pushed branch
+# is rebased onto origin/main, a pushed one is left as it is. The sentence it
+# replaced (2026-08-31) said to catch up with origin/main and resolve
+# conflicts, and on 2026-09-15, thirty seconds after reading it, a seat merged
+# main into a branch whose pull request (#387) was under review.
 BRANCH_STATE_INSTRUCTION = (
-    " — if behind, catch up with origin/main before your first substantive "
-    "action; resolve conflicts you can verify, run the affected test suites, "
-    "and explain the situation to the user if you cannot. If this seat has "
+    " — If this branch has never been pushed, rebase it onto origin/main "
+    "before your first substantive action and rerun the tests for what you "
+    "touched. If it is pushed, leave it as it is, and start new work on a "
+    "branch from origin/main. If this seat has "
     "open pull requests, check their state with `gh`: merge-lane reviews and "
     "merges them; a changes-requested one gets a fix round from a fresh agent "
     "— never extend a head you've already announced."
@@ -822,11 +822,12 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
 
     Never a merge, because a conflicted merge left in the tree before the agent
     wakes is worse than being behind: the branch counts go in the report and
-    the agent, which can judge, decides. So this script deliberately does less
-    than BRANCH_STATE_INSTRUCTION asks of the agent it hands the report to —
-    that instruction says to resolve conflicts you can verify and run the
-    affected suites, work that needs an actor with judgment, which is the agent
-    and never this script.
+    the agent, which can judge, decides. The agent never merges either:
+    BRANCH_STATE_INSTRUCTION, appended to the report, tells it to rebase a
+    branch that has never been pushed and rerun the tests for what it touched,
+    and to leave a pushed branch as it is (nedschorus#324) — a rebase that can
+    conflict needs an actor with judgment, which is the agent and never this
+    script.
 
     Never call this while a session is running in that directory. Doing so
     would rewrite the files under a working agent, which believes it knows
@@ -887,8 +888,7 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
                          working_directory, timeout=30).stdout.strip() or "?"
     behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
                           working_directory, timeout=30).stdout.strip() or "?"
-    return (f"branch sync: {branch} is {ahead} ahead of main and {behind} behind — merge when "
-            f"ready (git merge origin/main){fetch_note}")
+    return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
 
 
 # The line that ends the editor notes in an appended-system-prompt file.
