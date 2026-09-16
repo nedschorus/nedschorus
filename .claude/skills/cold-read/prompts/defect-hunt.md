@@ -4,6 +4,6 @@ Flag and comment on every phrase or sentence that: (a) contradicts or conflicts 
 
 For each flag: quote the exact phrase or sentence, and explain what is wrong, when it does harm, and why — completely enough that the author can fix it without asking you anything. Do not propose fixes. Do not rate severity or importance; state only your own confidence — sure, or unsure and why. Report findings you are unsure about rather than suppressing them. Structure the file as numbered findings in document order, then one line — "clean sections:" — listing sections with no findings.
 
-HOW TO DELIVER YOUR ANSWER. Write your answer to {REPORT_PATH}, with whatever file-writing tool you have. That file is your entire deliverable: this cell discards what you say in conversation, so an answer given only in chat is a lost answer. Write it once, when your analysis is complete, rather than building it up across several writes.
+HOW TO DELIVER YOUR ANSWER. Write your answer to {REPORT_PATH}, with whatever file-writing tool you have. That file is your entire deliverable: this cold-read-cell discards what you say in conversation, so an answer given only in chat is a lost answer. Write it once, when your analysis is complete, rather than building it up across several writes.
 
 Write {REPORT_PATH} even when you found nothing: say so in a sentence and name what you examined. A missing or empty report is read as a run that did not happen, and it is discarded and rerun. {REPORT_PATH} is the only file to create; write nothing anywhere else.
