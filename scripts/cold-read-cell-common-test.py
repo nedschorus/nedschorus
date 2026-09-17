@@ -374,10 +374,10 @@ def run_claude_cell(repository, stub_directory, plan, report_path, *arguments,
 
 
 def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
-                   environment_overrides=None):
+                   environment_overrides=None, cell="restate"):
     return run_cell_launcher(repository, stub_directory, plan, report_path,
                              *arguments, runtime="codex",
-                             environment_overrides=environment_overrides)
+                             environment_overrides=environment_overrides, cell=cell)
 
 
 def report_path_for(repository, case_slug, runtime):
@@ -1027,6 +1027,96 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a cell run without --prompt-file stamps no prompt_file= field",
           "prompt_file=" not in provenance_stamp_of(report),
           repr(provenance_stamp_of(report)))
+
+    # --- One runtime's own copy of a pass's prompt ------------------------
+    # `<cell>.<runtime>.md` beside `<cell>.md` is read by that runtime's cell
+    # and by no other (user-ruled 2026-09-16: the Claude and Codex terminology
+    # reviewers take the same words in opposite directions). The copy carries
+    # a marker the shared file lacks, so the case reads which template each
+    # cell composed rather than inferring it, and the stamp's `prompt=` field
+    # says which reports were given the copy.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
+    (scratch_prompts / "terminology.codex.md").write_text(
+        "CODEX COPY MARKER. Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+        encoding="utf-8")
+    # The Codex leg passes the prompt as an argument, not on stdin, so the
+    # case reads the argv the stub was given.
+    report = report_path_for(repository, "runtime-copy-codex", "codex")
+    received_argv_path = scratch / "runtime-copy-codex-argv.json"
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one key-term\n",
+               "dump_argv": str(received_argv_path)}},
+        report, cell="terminology",
+    )
+    received_prompt = (" ".join(json.loads(received_argv_path.read_text(encoding="utf-8")))
+                       if received_argv_path.is_file() else "")
+    check("the Codex cell reads terminology.codex.md where it exists",
+          result.returncode == 0 and "CODEX COPY MARKER" in received_prompt
+          and str(report) in received_prompt and "{REPORT_PATH}" not in received_prompt,
+          f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
+    stamp = provenance_stamp_of(report)
+    check("the stamp names the runtime's copy it read",
+          " prompt=terminology.codex.md " in stamp and "prompt_file=" not in stamp,
+          repr(stamp))
+    check("target= is still the last field with prompt= present",
+          stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    report = report_path_for(repository, "runtime-copy-claude", "claude")
+    received_prompt_path = scratch / "runtime-copy-claude-received.txt"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one key-term\n",
+               "dump_prompt": str(received_prompt_path)}},
+        report, cell="terminology",
+    )
+    received_prompt = (received_prompt_path.read_text(encoding="utf-8")
+                       if received_prompt_path.is_file() else "")
+    # Compared with both paths blanked out: the cell resolves the target
+    # through the repository root, so on a temporary directory behind a
+    # symlink (macOS /var) its path is spelled differently from the test's.
+    shared_terminology_template = (
+        (scratch_prompts / "terminology.md").read_text(encoding="utf-8")
+        .replace("{TARGET_PATH}", "<path>").replace("{REPORT_PATH}", "<path>"))
+    received_prompt_paths_blanked = (
+        received_prompt
+        .replace(str((repository / TARGET_RELATIVE_PATH).resolve()), "<path>")
+        .replace(str(repository / TARGET_RELATIVE_PATH), "<path>")
+        .replace(str(report), "<path>"))
+    check("the Claude cell beside it still reads the shared terminology.md",
+          result.returncode == 0 and "CODEX COPY MARKER" not in received_prompt
+          and received_prompt_paths_blanked == shared_terminology_template,
+          f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
+    check("a cell given the shared file stamps no prompt= field",
+          " prompt=" not in provenance_stamp_of(report),
+          repr(provenance_stamp_of(report)))
+
+    # --prompt-file still wins over the runtime's copy: a trial of a draft
+    # must run the draft whichever runtime it runs on.
+    draft_prompt = repository / draft_prompt_relative_path
+    draft_prompt.parent.mkdir(parents=True, exist_ok=True)
+    draft_prompt.write_text(
+        "DRAFT PROMPT MARKER. Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
+        encoding="utf-8")
+    report = report_path_for(repository, "runtime-copy-under-prompt-file", "codex")
+    received_argv_path = scratch / "runtime-copy-under-prompt-file-argv.json"
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one key-term\n",
+               "dump_argv": str(received_argv_path)}},
+        report, "--prompt-file", draft_prompt_relative_path, cell="terminology",
+    )
+    received_prompt = (" ".join(json.loads(received_argv_path.read_text(encoding="utf-8")))
+                       if received_argv_path.is_file() else "")
+    stamp = provenance_stamp_of(report)
+    check("--prompt-file overrides the runtime's own copy",
+          result.returncode == 0 and "DRAFT PROMPT MARKER" in received_prompt
+          and "CODEX COPY MARKER" not in received_prompt
+          and f"prompt_file={draft_prompt_relative_path} " in stamp
+          and " prompt=" not in stamp,
+          f"exit {result.returncode}; prompt={received_prompt[:120]!r}; stamp={stamp!r}")
 
     # A path naming no file is a bad invocation, refused before any model
     # runs, with the path it looked for -- the trial that mistypes its

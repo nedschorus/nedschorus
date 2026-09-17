@@ -99,6 +99,19 @@ import time
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
+# ONE RUNTIME'S OWN COPY OF A PROMPT (user-ruled 2026-09-16). Where
+# `<cell>.<runtime>.md` exists beside `<cell>.md`, that runtime's cell reads
+# it instead, and the other runtime keeps the shared file. Trials of the
+# terminology prompt that day on one frozen design showed the two runtimes
+# taking the same words in opposite directions: every draft that mentioned a
+# "hard to guess" test cut the Claude reviewer's flags (35 on the shared
+# prompt; 19, 6, 9 and 19 on the drafts), while the Codex reviewer proposed
+# fewer constructed names only when fix (c) itself carried that test (2, 5
+# and 5, against 6, 8, 6 and 19 without it). The user: "we may need different
+# prompts for claude and codex". The runtime goes after a dot, not a hyphen,
+# because hyphens join the tokens of a pass name and a dot cannot appear in
+# one. See `prompt_template_path`.
+
 # The passes a cell can be asked to run; each reads its prompt from
 # .claude/skills/cold-read/prompts/<cell>.md. `fast-clarify` is the fast
 # tier's one-reviewer ask (user-ruled 2026-08-30, provisional per the same
@@ -303,22 +316,37 @@ def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
     return prompt_file
 
 
+def prompt_template_path(cell: str, runtime: str) -> pathlib.Path:
+    """The template a cell reads when no --prompt-file is given.
+
+    The runtime's own copy, `<cell>.<runtime>.md`, when one exists; the
+    pass's shared `<cell>.md` otherwise. Why a runtime may have its own copy
+    is the comment beside PROMPTS_DIR.
+    """
+    runtime_copy = PROMPTS_DIR / f"{cell}.{runtime}.md"
+    return runtime_copy if runtime and runtime_copy.is_file() else PROMPTS_DIR / f"{cell}.md"
+
+
 def compose_prompt(
     cell: str, target: pathlib.Path, report: pathlib.Path, prompt_file=None,
+    runtime: str = "",
 ) -> str:
     """The exact text the model receives.
 
-    Both runtimes read the same template, so the two legs cannot drift.
-    This function is also what the review harness calls to render a
-    prompt for review: reviewing a hand-composed approximation would be
-    reviewing a fiction that merely resembles what runs.
+    Both runtimes read the same template unless one has its own copy under
+    PROMPTS_DIR (`prompt_template_path`), so the two legs drift only where a
+    file says they do. This function is also what the review harness calls
+    to render a prompt for review: reviewing a hand-composed approximation
+    would be reviewing a fiction that merely resembles what runs.
 
     `prompt_file`, when given, is the template to read in place of the
-    cell's own under PROMPTS_DIR; the substitution is the same either way.
-    It is how a draft prompt is trialled through the ordinary launcher (see
-    --prompt-file in `build_argument_parser`).
+    cell's own under PROMPTS_DIR, the runtime's copy included; the
+    substitution is the same either way. It is how a draft prompt is
+    trialled through the ordinary launcher (see --prompt-file in
+    `build_argument_parser`).
     """
-    template_path = prompt_file if prompt_file is not None else PROMPTS_DIR / f"{cell}.md"
+    template_path = (prompt_file if prompt_file is not None
+                     else prompt_template_path(cell, runtime))
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
     return (
@@ -650,6 +678,7 @@ def stamp_provenance(
     report: pathlib.Path, *, runtime: str, model: str, effort: str,
     cell: str, tier: str, target_argument: str, duration_s: int,
     fallback_from: str = "", tokens: str = "", prompt_file_argument: str = "",
+    runtime_prompt_name: str = "",
 ) -> None:
     """Prepend the provenance line the records convention requires.
 
@@ -672,6 +701,9 @@ def stamp_provenance(
     `prompt_file=` is present only when the cell ran under --prompt-file, and
     names the template it read as it was given, so a trial's report says which
     draft produced it rather than passing as a run of the cell's own prompt.
+    `prompt=` is present only when the cell read its runtime's own copy of the
+    pass's prompt (see PROMPTS_DIR), and names that file, so two reports of
+    one pass that were given different instructions say so.
 
     FIELD ORDER IS DELIBERATE: `target=` stays last because its value is a
     path, and a path with a space in it would swallow whatever followed for
@@ -684,10 +716,13 @@ def stamp_provenance(
     tokens_note = f"tokens={tokens} " if tokens else ""
     prompt_file_note = (
         f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
+    runtime_prompt_note = (
+        f"prompt={runtime_prompt_name} " if runtime_prompt_name else "")
     stamp = (
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
         f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
-        f"{tokens_note}{prompt_file_note}target={target_argument} -->\n\n"
+        f"{tokens_note}{prompt_file_note}{runtime_prompt_note}"
+        f"target={target_argument} -->\n\n"
     )
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -697,6 +732,7 @@ def run_model_chain(
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
+    runtime_prompt_name: str = "",
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
 
@@ -906,6 +942,7 @@ def run_model_chain(
         fallback_from="+".join(failed_attempts),
         tokens=produced_tokens,
         prompt_file_argument=prompt_file_argument,
+        runtime_prompt_name=runtime_prompt_name,
     )
     report_stray_writes(program, baseline, report)
     print(f"{program}: report written to {report}", file=sys.stderr)
@@ -956,7 +993,7 @@ def run_cell(
         report = resolve_report_path(args.report)
         prompt_file = (
             resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
-        prompt = compose_prompt(args.cell, target, report, prompt_file)
+        prompt = compose_prompt(args.cell, target, report, prompt_file, runtime)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
@@ -966,6 +1003,10 @@ def run_cell(
     # names a model is answering the question the chain exists to answer, and
     # silently running a different one would defeat the request.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
+    template = prompt_template_path(args.cell, runtime)
+    runtime_prompt_name = (
+        template.name if not args.prompt_file and template.name != f"{args.cell}.md"
+        else "")
     effort = args.effort or tier_to_effort[args.tier]
 
     return run_model_chain(
@@ -976,6 +1017,7 @@ def run_cell(
         cell_started_at=cell_started_at,
         prompt_file_argument=args.prompt_file or "",
         recover_report_from_stdout=recover_report_from_stdout,
+        runtime_prompt_name=runtime_prompt_name,
     )
 
 
