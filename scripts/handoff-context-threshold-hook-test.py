@@ -293,6 +293,49 @@ with tempfile.TemporaryDirectory() as workspace:
           hook.context_used_percentage_from_transcript(str(Path(workspace) / "empty.jsonl"))
           is None)
 
+    # --- A multi-pass reply: the largest pass, not the sum ----------------
+    # Measured 2026-09-17 in session 8b3cd015: an advisor reply's top-level
+    # cache_read_input_tokens was 1,111,912, the sum of two passes of this
+    # model, against a real context of about 557,000. Read as the sum, this
+    # hook sees 111% of the window and fires above its own ceiling -- with a
+    # cold-read grid running, the failure that cost five of six reports on
+    # 2026-09-14.
+    advisor_reply = {"type": "assistant", "message": {
+        "model": "claude-fable-5",
+        "usage": {
+            "input_tokens": 4, "cache_read_input_tokens": 1_111_912,
+            "cache_creation_input_tokens": 2_013,
+            "iterations": [
+                {"type": "message", "input_tokens": 2,
+                 "cache_read_input_tokens": 555_460, "cache_creation_input_tokens": 992},
+                {"type": "advisor_message", "input_tokens": 489_161,
+                 "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+                {"type": "message", "input_tokens": 2,
+                 "cache_read_input_tokens": 556_452, "cache_creation_input_tokens": 1_021},
+            ],
+        },
+    }}
+    advisor_transcript = Path(workspace) / "advisor.jsonl"
+    advisor_transcript.write_text(json.dumps(advisor_reply) + "\n", encoding="utf-8")
+    used = hook.context_used_percentage_from_transcript(str(advisor_transcript))
+    check("an advisor reply is read as its largest own pass, not the sum",
+          used is not None and abs(used - 55.7) < 0.1, str(used))
+    check("the advisor model's own pass is left out of the share",
+          hook.used_tokens_of(advisor_reply["message"]["usage"]) == 557_475,
+          str(hook.used_tokens_of(advisor_reply["message"]["usage"])))
+    check("an ordinary reply, with no iterations, is read as before",
+          hook.used_tokens_of({"input_tokens": 10, "cache_read_input_tokens": 500_000,
+                               "cache_creation_input_tokens": 100}) == 500_110)
+    check("an iterations list with no pass of this model falls back to the top-level fields",
+          hook.used_tokens_of({"input_tokens": 7, "cache_read_input_tokens": 3,
+                               "cache_creation_input_tokens": 0,
+                               "iterations": [{"type": "advisor_message",
+                                               "input_tokens": 400_000}]}) == 10)
+    check("an iterations entry with no type is taken as this model's own pass",
+          hook.used_tokens_of({"input_tokens": 1, "cache_read_input_tokens": 1,
+                               "cache_creation_input_tokens": 0,
+                               "iterations": [{"input_tokens": 300}]}) == 300)
+
     # --- Tail read: the newest record must be found regardless of size ----
     newest = {"type": "assistant", "message": {
         "model": "claude-fable-5",

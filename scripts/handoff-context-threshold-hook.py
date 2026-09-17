@@ -7,7 +7,10 @@ settings.json; it runs at every turn boundary.
 
 Stop-hook stdin does not carry the context window, so the used share is
 computed from the session's own transcript: every assistant record carries
-the model and the token usage of the request that produced it. That works
+the model and the token usage of the request that produced it. A reply built
+from several passes of this model -- an advisor call is one -- carries them
+in usage["iterations"], and the share is the largest pass rather than the
+top-level sum, which is not a context size (see used_tokens_of). That works
 in every session type, headless included — a statusline-relay fallback was
 cut 2026-08-12 because its only remaining trigger was a session whose first
 turn had not completed, a moment the threshold cannot be crossed. A
@@ -341,12 +344,52 @@ def context_used_percentage_from_transcript(transcript_path: str):
     if message is None:
         return None
 
-    usage = message["usage"]
-    used_tokens = sum(
-        usage.get(field, 0) or 0
-        for field in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-    )
-    return 100.0 * used_tokens / context_window_for(message.get("model", ""))
+    return 100.0 * used_tokens_of(message["usage"]) / context_window_for(
+        message.get("model", ""))
+
+
+# The fields that say how much the model had in front of it.
+USED_TOKEN_FIELDS = ("input_tokens", "cache_read_input_tokens",
+                     "cache_creation_input_tokens")
+# A reply built from several passes of this model carries one entry per pass
+# in usage["iterations"], each with its own counts and a "type": the advisor
+# tool's reply has this model's passes typed "message" around the advisor
+# model's own, typed "advisor_message".
+USAGE_ITERATIONS_FIELD = "iterations"
+OWN_PASS_ITERATION_TYPE = "message"
+
+
+def used_tokens_of(usage: dict) -> int:
+    """The tokens the model last had in front of it.
+
+    THE TOP-LEVEL FIELDS ADD THE PASSES UP, WHICH IS NOT A CONTEXT SIZE
+    (measured 2026-09-17, session 8b3cd015). An advisor call makes one reply
+    from three passes -- this model asks, the advisor model answers, this
+    model carries on -- and the record's top-level cache_read_input_tokens
+    was 1,111,912: the sum of a 555,460-token pass and a 556,452-token one,
+    against a real context of about 557,000, 56% of the window. Read as a
+    context size that is 111%, and this hook would have fired a handoff at
+    half the real share -- above the ceiling, so even with a cold-read grid
+    running, which is exactly how five of six reviewer reports were lost on
+    2026-09-14.
+
+    So when the record says how it was built, the size is the largest of this
+    model's own passes, not their sum. The advisor model's pass is left out:
+    its context is its own, not this session's. A record with no iterations
+    list -- every ordinary reply -- is read from the top-level fields as
+    before, which is the same number for a single-pass reply.
+    """
+    iterations = usage.get(USAGE_ITERATIONS_FIELD)
+    if isinstance(iterations, list):
+        own_passes = [
+            sum(entry.get(field, 0) or 0 for field in USED_TOKEN_FIELDS)
+            for entry in iterations
+            if isinstance(entry, dict)
+            and entry.get("type", OWN_PASS_ITERATION_TYPE) == OWN_PASS_ITERATION_TYPE
+        ]
+        if own_passes:
+            return max(own_passes)
+    return sum(usage.get(field, 0) or 0 for field in USED_TOKEN_FIELDS)
 
 
 class WorkInFlight:
