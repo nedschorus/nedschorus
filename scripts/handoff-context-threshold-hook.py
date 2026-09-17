@@ -27,6 +27,16 @@ It fires ONCE per session: after firing it records the fact in the handoff
 directory, so the reminder does not repeat at every subsequent turn while
 the agent is composing the handoff.
 
+A SESSION ITS CALLER REINCARNATES IS LEFT ALONE. scripts/ghi-info-ask.py runs
+ghi-info as `claude -p` turns, reincarnates that session on triggers of its
+own, and returns a turn's last message as its answer. On 2026-09-16 ghi-info
+crossed the threshold at 52% while answering: it ran the handoff skill, and the
+caller received the handoff notice in place of the reading list it had just
+written. The caller now sets NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER
+in its claude's environment, which a `claude -p` Stop hook inherits (measured
+2026-09-16), and the hook stays silent while it is set. This is not the
+supervisor-liveness gate cut above: an unsupervised seat still hears the hook.
+
 WHILE A SUBAGENT IS RUNNING THE HANDOFF WAITS (user-ruled 2026-08-27). A
 reincarnation kills the session, and the session's in-process subagents die with
 it: on 2026-08-27 a seat dispatched a builder subagent at 20:38, the hook
@@ -164,12 +174,17 @@ Background task wait: --background-task-wait-minutes, default 30.
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
+
+# Set, to the calling script's name, by a caller that reincarnates the session
+# itself; the hook stays silent while it is set. Module docstring.
+REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
 
 # Context window per model, so a percentage can be computed from the transcript
 # alone — the status line is an interactive-only surface, and headless sessions
@@ -520,6 +535,9 @@ def main(argv=None) -> int:
              "it is presumed stuck or open-ended",
     )
     arguments = parser.parse_args(argv)
+
+    if os.environ.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
+        return 0  # the caller reincarnates this session; a handoff would replace its answer
 
     payload = hook_payload_from_stdin()
     session_id = payload.get("session_id", "")

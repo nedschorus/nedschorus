@@ -35,10 +35,11 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def run_hook(stdin_payload, extra_arguments=()):
+def run_hook(stdin_payload, extra_arguments=(), extra_environment=None):
     return subprocess.run(
         [sys.executable, str(HOOK_SCRIPT), *extra_arguments],
         input=json.dumps(stdin_payload), capture_output=True, text=True, check=False,
+        env={**os.environ, **(extra_environment or {})},
     )
 
 
@@ -549,9 +550,13 @@ with tempfile.TemporaryDirectory() as workspace:
         hook.HANDOFF_DIRECTORY / f"{UNKNOWN_PROBE_SESSION_ID}-handoff-asked")
     unknown_deferred_marker_file = (
         hook.HANDOFF_DIRECTORY / f"{UNKNOWN_PROBE_SESSION_ID}-handoff-deferred")
+    CALLER_OWNED_PROBE_SESSION_ID = "handoff-threshold-hook-test-caller-owned-session"
+    caller_owned_marker_file = (
+        hook.HANDOFF_DIRECTORY / f"{CALLER_OWNED_PROBE_SESSION_ID}-handoff-asked")
     for probe_marker in (deferral_marker_file, ceiling_marker_file,
                          deferred_marker_file, ceiling_deferred_marker_file,
-                         unknown_marker_file, unknown_deferred_marker_file):
+                         unknown_marker_file, unknown_deferred_marker_file,
+                         caller_owned_marker_file):
         probe_marker.unlink(missing_ok=True)
     # On a fresh machine nothing has created the handoff directory yet.
     hook.HANDOFF_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -581,6 +586,25 @@ with tempfile.TemporaryDirectory() as workspace:
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)},
                           ("--threshold-used-percentage", "75"))
         check("threshold is configurable", result.returncode == 0, f"code {result.returncode}")
+
+        # --- A session its caller reincarnates is left alone ---------------
+        # 2026-09-16: ghi-info, run by scripts/ghi-info-ask.py as `claude -p`
+        # turns, crossed the threshold mid-answer, and the handoff notice came
+        # back to the caller in place of the reading list.
+        result = run_hook(
+            {"session_id": CALLER_OWNED_PROBE_SESSION_ID, "transcript_path": str(loud)},
+            extra_environment={hook.REINCARNATION_OWNED_BY_CALLER_VARIABLE:
+                               "scripts/ghi-info-ask.py"})
+        check("hook stays silent past the threshold when the caller reincarnates the session",
+              result.returncode == 0 and not result.stderr.strip()
+              and not caller_owned_marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
+
+        result = run_hook(
+            {"session_id": CALLER_OWNED_PROBE_SESSION_ID, "transcript_path": str(loud)})
+        check("the same session fires as usual without the variable",
+              result.returncode == 2 and caller_owned_marker_file.exists(),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
 
         # --- The deferral while subagents run (user-ruled 2026-08-27) -----
         # The transcripts below are the same session at three moments: one
@@ -891,6 +915,7 @@ with tempfile.TemporaryDirectory() as workspace:
         ceiling_deferred_marker_file.unlink(missing_ok=True)
         unknown_marker_file.unlink(missing_ok=True)
         unknown_deferred_marker_file.unlink(missing_ok=True)
+        caller_owned_marker_file.unlink(missing_ok=True)
 
 print()
 if failures:
