@@ -21,6 +21,7 @@ Every project-specific term should be listed here; a term this page does not lis
 - **cold-read-fast-read** — the one-reviewer pass that precedes a cold-read-full-run, run by `scripts/cold-read-fast-read.py`.
 - **cold-read-full-run** — the six-cold-read-cell run of the /cold-read skill, launched by the cold-read-grid.
 - **cold-read-grid** — the program `scripts/cold-read-grid.py` that launches the six cold-read-cells of a cold-read-full-run.
+- **cold-read-pass** — the reviewer prompt a cold-read-cell runs, named for its prompt file: defect-hunt, terminology, restate, fast-clarify.
 - **cold-read-record** — the directory holding one run's reports, its frozen cold-read-target and its dispositions; shipped to the log-store.
 - **cold-read-target** — the document under review, frozen into the cold-read-record at launch.
 - **cold-read-tier** — which model a cold-read-cell runs, and at what effort.
