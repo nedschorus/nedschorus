@@ -54,6 +54,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/obsolete-file-edit-warning-hook.py",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {
