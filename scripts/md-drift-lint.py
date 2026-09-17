@@ -9,6 +9,7 @@ edits. Zero model cost, so unlike the judgment review it may run repeatedly.
 Checks, per file type:
 
   .md   - repo paths named in backticks or markdown links exist on disk
+          (a path this repository deliberately does not track is skipped)
         - markdown link targets resolve (external schemes skipped)
         - YYYY-MM-DD tokens are real calendar dates
         - a backtick command naming an existing project script also names
@@ -36,7 +37,9 @@ Exit codes: 0 clean, 1 findings, 2 bad invocation.
 
 import calendar
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,6 +84,96 @@ QUOTE_SKIP_MARKERS = HISTORY_MARKERS + ("deleted", "removed", "retired", "was cu
 QUOTE_EDGE_PUNCTUATION = "?.!,;:"
 
 _basename_index_cache = {}
+_git_ignore_cache = {}
+_git_ignore_warned = set()
+
+
+def repo_relative_candidates(token: str, md_path: Path, repo_root: Path):
+    """The repo-relative paths a token could name, whether or not they exist.
+
+    Mirrors resolve()'s two candidates. Built with normpath rather than
+    Path.resolve because the whole point is a path that is NOT on disk:
+    resolve() of a missing file under a missing directory is unreliable, and
+    a link target like `../wiki/page.md` has to be folded against the citing
+    document's directory before git can be asked about it.
+    """
+    token = token.lstrip("/") or token
+    for base in (repo_root, md_path.parent):
+        candidate = os.path.normpath(os.path.join(str(base), token))
+        try:
+            relative = os.path.relpath(candidate, str(repo_root))
+        except ValueError:  # different drive on Windows
+            continue
+        if not relative.startswith(".."):
+            yield relative
+
+
+def ignored_by_git(token: str, md_path: Path, repo_root: Path) -> bool:
+    """True when this repository deliberately does not track what the token names.
+
+    A path under a record store (`cold-read-records/`, `sanity-check-records/`,
+    `md-review-records/`), under the walk minutes (`docs/walk/`,
+    `walk-ledgers/`), under the issue mirror (`ghi-mirror/`), or a seat's own
+    `CLAUDE.local.md`, is a correct citation of a real file that lives in the
+    log-store on ned-box or in the seat that wrote it. It can never exist in a
+    clean checkout, so the lint reported it forever and no edit could satisfy
+    it -- while "fixing" one would delete accurate provenance. Ten of the
+    standing findings on main `bb6df3f` were exactly this (user-ruled
+    2026-09-17).
+
+    Asking git, rather than listing those directories here, also makes the
+    lint answer the same in a clean checkout and in a seat's own, where such a
+    file IS present: present-and-ignored resolves, absent-and-ignored is
+    skipped, and neither is reported. Running the lint in the wrong checkout
+    is what put a wrong pair of numbers into a merged comment on 2026-09-17.
+    """
+    return any(
+        _git_says_ignored(relative, repo_root)
+        for relative in repo_relative_candidates(token, md_path, repo_root)
+    )
+
+
+def _git_says_ignored(relative: str, repo_root: Path) -> bool:
+    key = (str(repo_root), relative)
+    if key in _git_ignore_cache:
+        return _git_ignore_cache[key]
+    _git_ignore_cache[key] = answer = _ask_git_check_ignore(relative, repo_root)
+    return answer
+
+
+def _ask_git_check_ignore(relative: str, repo_root: Path) -> bool:
+    # Outside a git repository nothing is ignored. That is the answer, not a
+    # degraded fallback, so it is silent: this script's own test fixtures are
+    # plain temporary directories, and warning there would print on every run.
+    # (A worktree's .git is a file, not a directory, so .exists() is the test.)
+    if not (repo_root / ".git").exists():
+        return False
+    # core.excludesFile is neutralized so the answer comes from the
+    # repository's own .gitignore. The fleet runs this lint on the Mac and on
+    # ned-box, and a machine's global ignore file would otherwise make the two
+    # report different findings for the same commit.
+    command = ["git", "-c", "core.excludesFile=/dev/null",
+               "check-ignore", "--quiet", "--", relative]
+    try:
+        completed = subprocess.run(command, cwd=str(repo_root), capture_output=True)
+    except OSError as error:
+        _warn_once(repo_root, f"git could not be run ({error})")
+        return False
+    # 0 ignored, 1 not ignored; anything else is git failing to answer, and a
+    # fallback is never silent (project ruling).
+    if completed.returncode in (0, 1):
+        return completed.returncode == 0
+    detail = completed.stderr.decode("utf-8", "replace").strip() or f"exit {completed.returncode}"
+    _warn_once(repo_root, f"git check-ignore failed ({detail})")
+    return False
+
+
+def _warn_once(repo_root: Path, detail: str):
+    if str(repo_root) in _git_ignore_warned:
+        return
+    _git_ignore_warned.add(str(repo_root))
+    print(f"md-drift-lint: {detail}; treating no path as deliberately untracked, "
+          f"so citations of the record stores will be reported", file=sys.stderr)
 
 
 def looks_like_repo_path(token: str) -> bool:
@@ -173,7 +266,9 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
             # attributed to.
             if "/" not in word:
                 continue
-            if looks_like_repo_path(word) and resolve(word, md_path, repo_root) is None:
+            if (looks_like_repo_path(word)
+                    and resolve(word, md_path, repo_root) is None
+                    and not ignored_by_git(word, md_path, repo_root)):
                 yield f"path does not exist: {word}"
         # Flag check: a command whose FIRST word is a project script must name
         # only flags that script's source contains.
@@ -308,7 +403,8 @@ def check_markdown_links(line: str, md_path: Path, repo_root: Path):
         bare = target.split("#", 1)[0]
         if not bare:
             continue
-        if resolve(bare, md_path, repo_root) is None:
+        if (resolve(bare, md_path, repo_root) is None
+                and not ignored_by_git(bare, md_path, repo_root)):
             yield f"link target does not exist: {bare}"
 
 
