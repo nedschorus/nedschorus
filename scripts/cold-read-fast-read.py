@@ -15,7 +15,14 @@ replacing gpt-5.6-terra at low), retries once if that cold-read-cell fails, and
 then prints exactly one line on stdout: the report's absolute path on success,
 or a line opening `FAILED` on failure. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
-was launched. Every cold-read-cell's own progress -- the launcher's stderr, the
+was launched. When the cold-read-target belongs to a class the
+/cold-read skill's step 1 sends to the cold-read-full-run -- a skill or its
+prompt, a file under docs/agents/, a wiki file, a design, a test design, a
+design contract -- the read also says that this fast read does not finish the
+review: one line on stderr and one line in the report (user-ruled 2026-09-17,
+item 4 of nedschorus#418, after a skill change merged on a fast read alone).
+It warns and never refuses, because the fast read is the cold-read-full-run's
+first step. Every cold-read-cell's own progress -- the launcher's stderr, the
 runtime's stderr, the stray-write and recovery lines -- is re-emitted on this
 program's stderr, so a caller watching stdout gets the one line and a caller
 reading stderr gets the whole account.
@@ -147,6 +154,66 @@ Write your report to {REPORT_PATH}, once, when your analysis is complete. That f
 
 PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
+
+# WHICH DOCUMENTS THIS READ DOES NOT FINISH (user-ruled 2026-09-17, item 4 of
+# nedschorus#418, after PR #332 merged a skill change on a fast read alone).
+# The /cold-read skill's step 1 sends a class of documents to the
+# cold-read-full-run and gives everything else the fast read only. Nothing
+# enforced that, so this program says so when its target is in that class:
+# one line on stderr, and one line in the report that ships with the record.
+# It is a warning, not a refusal -- the fast read is the full run's first
+# step, so running it here is right; landing on it alone is what the ruling
+# is against.
+FULL_RUN_DIRECTORIES_RELATIVE = (
+    (pathlib.Path(".claude") / "skills", "a skill or a skill's prompt"),
+    (pathlib.Path("docs") / "agents", "a file under docs/agents/"),
+    (pathlib.Path("docs") / "nedschorus-wiki", "a wiki file"),
+    (pathlib.Path("docs") / "design-to-main", "a design"),
+)
+# Designs, test designs and design contracts are named, not placed: this
+# project's designs live beside the issues and the cross-project specs. The
+# suffixes are matched whole, so `-design-notes.md` -- notes about a design,
+# not the design -- is not one of them.
+FULL_RUN_NAME_SUFFIXES = (
+    ("-test-design.md", "a test design"),
+    ("-design-contract.md", "a design contract"),
+    ("-design.md", "a design"),
+)
+# Step 1's own exceptions, which beat the classes above: a walk file, a
+# handoff, a pull request description, an issue body, and CLAUDE.md all take
+# the fast read and nothing more. Only the two that are files in this
+# checkout can be recognised here.
+FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
+
+
+def full_run_class_of_target(target: pathlib.Path):
+    """The name of the class that sends this target to the cold-read-full-run,
+    or None when the fast read is the whole review.
+
+    `target` is absolute and resolved. A file outside this checkout is not
+    classified: the class list is about where a document lives in the
+    repository, and a copy somewhere else is not that document.
+    """
+    try:
+        relative = target.relative_to(REPO_ROOT)
+    except ValueError:
+        return None
+    if relative.parent == WALK_DIRECTORY_RELATIVE or relative.name in FAST_READ_ONLY_NAMES:
+        return None
+    for directory, class_name in FULL_RUN_DIRECTORIES_RELATIVE:
+        if directory in relative.parents:
+            return class_name
+    for suffix, class_name in FULL_RUN_NAME_SUFFIXES:
+        if relative.name.endswith(suffix) and len(relative.name) > len(suffix):
+            return class_name
+    return None
+
+
+def full_run_required_line(class_name: str) -> str:
+    """The one sentence said on stderr and written into the report."""
+    return (f"the cold-read-full-run is required before this document lands "
+            f"({class_name}); this fast read is its first step, not the whole "
+            f"review. Run scripts/cold-read-grid.py --target on it.")
 
 
 def fast_read_report_path_for_target(target: pathlib.Path, today: str) -> pathlib.Path:
@@ -413,7 +480,8 @@ SENTENCE_COVERAGE_HEADING = "## Sentence coverage (added by cold-read-fast-read)
 
 def attach_sentences_and_coverage(report_text: str, sentences: dict,
                                   document: pathlib.Path = None,
-                                  marked_copy_kept: pathlib.Path = None) -> str:
+                                  marked_copy_kept: pathlib.Path = None,
+                                  full_run_class_name: str = None) -> str:
     """Put each original sentence under the restatement claiming its id, and
     append what the restatement missed.
 
@@ -476,6 +544,11 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
         coverage.append(
             f"- Cited but not in the document: {', '.join(unknown)}. "
             "The reviewer invented these ids.")
+    if full_run_class_name is not None:
+        # The record ships to the log-store, so whoever reads it later sees
+        # the same sentence the author saw on stderr.
+        sentence = full_run_required_line(full_run_class_name)
+        coverage.append(f"- {sentence[0].upper()}{sentence[1:]}")
     return "\n".join(lines).rstrip("\n") + "\n" + "\n".join(coverage) + "\n"
 
 
@@ -558,6 +631,11 @@ def main() -> int:
         print(f"FAILED (target not found: {target})")
         return EXIT_BAD_INVOCATION
 
+    full_run_class_name = full_run_class_of_target(target)
+    if full_run_class_name is not None:
+        print(f"{PROGRAM}: {full_run_required_line(full_run_class_name)}",
+              file=sys.stderr)
+
     report = fast_read_report_path_for_target(target, time.strftime("%Y-%m-%d"))
     # A walk draft's report lands in docs/walk/ and is not a cold-read-record;
     # only the records route freezes the cold-read-target and ships.
@@ -589,7 +667,8 @@ def main() -> int:
                 report.write_text(
                     attach_sentences_and_coverage(
                         report.read_text(encoding="utf-8"), sentences, target,
-                        marked_copy if on_records_route else None),
+                        marked_copy if on_records_route else None,
+                        full_run_class_name),
                     encoding="utf-8")
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)

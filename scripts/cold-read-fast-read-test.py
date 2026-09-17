@@ -34,6 +34,14 @@ WHAT IS PINNED HERE.
   - A --target that is not a file is refused, exit 64, with FAILED on stdout
     and nothing launched.
 
+  - The full-run warning. A target in the class the /cold-read skill's step 1
+    sends to the cold-read-full-run -- a skill or its prompt, a file under
+    docs/agents/, a wiki file, a design, a test design, a design contract --
+    is read with one line on stderr and one line in the report saying the
+    full run is still required; step 1's own exceptions (a walk file,
+    CLAUDE.md) and everything else are read with nothing said. The warning
+    never refuses and never touches stdout's one line.
+
 Each case that launches the read builds a throwaway git repository holding a
 copy of the scripts, as scripts/cold-read-cell-common-test.py does, so the
 read's repository root -- and with it the docs/walk and cold-read-records
@@ -717,6 +725,95 @@ check("on the walk route it says the copy was temporary and is gone",
       "marked copy of `/tmp/a-document.md`" in named
       and "was temporary and is gone" in named, named)
 
+
+# --- The full-run warning (item 4 of nedschorus#418, user-ruled 2026-09-17) --
+# The /cold-read skill's step 1 sends a class of documents to the
+# cold-read-full-run; PR #332 merged a skill change on a fast read alone
+# because nothing said so. The read now says it, and these cases pin which
+# targets it says it about.
+warning_module = script_under_test_module()
+class_of = warning_module.full_run_class_of_target
+root = warning_module.REPO_ROOT
+check("a skill is in the class",
+      class_of(root / ".claude/skills/cold-read/SKILL.md") == "a skill or a skill's prompt")
+check("a skill's prompt is in the class",
+      class_of(root / ".claude/skills/cold-read/prompts/terminology.md")
+      == "a skill or a skill's prompt")
+check("a file under docs/agents/ is in the class",
+      class_of(root / "docs/agents/ghi-instructions.md") == "a file under docs/agents/")
+check("so is one in its queue, which becomes such a file",
+      class_of(root / "docs/agents/queue/some-agent-instructions.md")
+      == "a file under docs/agents/")
+check("a wiki file is in the class",
+      class_of(root / "docs/nedschorus-wiki/nedschorus-glossary.md") == "a wiki file")
+check("a design is recognised by its name, wherever it sits",
+      class_of(root / "docs/cross-project/main-gatekeeper-design.md") == "a design"
+      and class_of(root / "docs/issues/46-ghi-info-agent-design.md") == "a design")
+check("a test design and a design contract have their own names",
+      class_of(root / "docs/issues/x-test-design.md") == "a test design"
+      and class_of(root / "docs/issues/x-design-contract.md") == "a design contract")
+check("notes about a design are not the design",
+      class_of(root / "docs/issues/142-draft-md-skill-design-notes.md") is None)
+check("step 1's own exceptions are not in the class: a walk file and CLAUDE.md",
+      class_of(root / "docs/walk/an-item-draft.md") is None
+      and class_of(root / "CLAUDE.md") is None
+      and class_of(root / "docs/agents/CLAUDE.local.md") is None)
+check("an ordinary document is not in the class",
+      class_of(root / "docs/issues/32-preservation-and-placement.md") is None)
+check("a file outside the checkout is not classified",
+      class_of(Path("/tmp/somewhere/a-design.md")) is None)
+
+# And the read itself says it, on stderr before the cell runs and in the
+# report that ships with the record. Its own scratch tree, because the one
+# above went with its temporary directory.
+with tempfile.TemporaryDirectory() as warning_scratch:
+    warning_scratch = Path(warning_scratch).resolve()
+    warning_stubs = warning_scratch / "stub-bin"
+    warning_counter = warning_scratch / "stub-launch-counter"
+    warning_today = time.strftime("%Y-%m-%d")
+
+    repository = build_scratch_repository(warning_scratch)
+    brief_relative = "docs/agents/a-seat-instructions.md"
+    brief = repository / brief_relative
+    brief.parent.mkdir(parents=True, exist_ok=True)
+    brief.write_text("# A seat\n\nOne sentence.\n", encoding="utf-8")
+    brief_report = (repository / "cold-read-records" / f"{warning_today}-a-seat-instructions"
+                    / "a-seat-instructions-fast-read.md")
+    result = run_fast_read(
+        repository, warning_stubs, {"*": {"report": "STUB FAST READ: of the brief\n"}},
+        brief_report, brief_relative, warning_counter,
+    )
+    check("the read still succeeds: the warning never refuses",
+          result.returncode == 0 and brief_report.is_file(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the warning is on stderr, naming the class",
+          "the cold-read-full-run is required before this document lands "
+          "(a file under docs/agents/)" in result.stderr, repr(result.stderr))
+    check("stdout is still exactly the report path",
+          result.stdout.strip() == str(brief_report)
+          and len(result.stdout.splitlines()) == 1, repr(result.stdout))
+    brief_report_text = brief_report.read_text(encoding="utf-8") if brief_report.is_file() else ""
+    check("the report carries the same sentence, so the shipped record says it too",
+          "The cold-read-full-run is required before this document lands" in brief_report_text,
+          repr(brief_report_text[-400:]))
+
+    # A document outside the class is read with nothing said.
+    repository = build_scratch_repository(warning_scratch)
+    plain_relative = "docs/issues/a-plain-document.md"
+    plain = repository / plain_relative
+    plain.parent.mkdir(parents=True, exist_ok=True)
+    plain.write_text("# A plain document\n\nOne sentence.\n", encoding="utf-8")
+    plain_report = (repository / "cold-read-records" / f"{warning_today}-a-plain-document"
+                    / "a-plain-document-fast-read.md")
+    result = run_fast_read(
+        repository, warning_stubs, {"*": {"report": "STUB FAST READ: of a plain document\n"}},
+        plain_report, plain_relative, warning_counter,
+    )
+    check("nothing is said about a document the fast read finishes",
+          result.returncode == 0
+          and "cold-read-full-run is required" not in result.stderr
+          and "cold-read-full-run is required" not in plain_report.read_text(encoding="utf-8"),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
 
 print()
 if failures:
