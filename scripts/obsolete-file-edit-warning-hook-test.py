@@ -164,6 +164,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(origin, "scripts/recover-crashed-seats.py", "def assess_seat():\n    pass\n",
                 "first commit")
     commit_file(origin, "scripts/untouched-by-main.py", "steady\n", "a file main will leave alone")
+    # In the merge base, so the branch below holds it too, and main RENAMES it
+    # away near the end of this file. That is the case git's rename detection
+    # hides, and the reason obsolete_path_set() passes --no-renames.
+    commit_file(origin, "scripts/main-will-rename-this.py", "held at the old path\n",
+                "a file main will later rename away from this path")
     # Remembered for the pushed-head case further down, which needs a merge
     # base old enough that MORE THAN ONE commit on main has touched the file.
     early_main_sha = git(["rev-parse", "HEAD"], origin).stdout.strip()
@@ -418,6 +423,39 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("once git answers again, the warning comes back and the cache is written",
           "scripts/recover-crashed-seats.py" in agent_text(result) and cache_path.exists(),
           result.stdout + result.stderr)
+
+    # -----------------------------------------------------------------------
+    # A FILE MAIN RENAMED AWAY from the path this branch still holds it at.
+    # Rename detection is on by default and prints only a rename's
+    # DESTINATION, so without --no-renames this path is absent from the set
+    # and editing it says nothing — the one case guaranteed to conflict,
+    # since main has deleted the path being edited. Finding in review of
+    # PR #463, the pull request that added this hook.
+    #
+    # This case FAILS against the hook as PR #463 merged it. That was checked
+    # by running this file against that revision of the hook, not assumed: a
+    # test that passes on both sides of a fix pins nothing.
+    # -----------------------------------------------------------------------
+    git(["mv", "scripts/main-will-rename-this.py", "scripts/main-renamed-it-to-this.py"],
+        origin)
+    git(["commit", "-q", "-m", "rename a file out from under the branch"], origin)
+    git(["fetch", "-q", "origin"], checkout)
+    renamed_away_file = checkout / "scripts/main-will-rename-this.py"
+    check("the branch still holds the renamed file at the old path, so the case is real",
+          renamed_away_file.is_file(), str(renamed_away_file))
+    check("and origin/main no longer has that path at all, so an edit there must conflict",
+          git(["cat-file", "-e", "origin/main:scripts/main-will-rename-this.py"],
+              checkout).returncode != 0,
+          "origin/main still has scripts/main-will-rename-this.py")
+    result = run_hook(hook_payload(checkout, renamed_away_file),
+                      path_prefix=recording_git_directory)
+    renamed_warning = agent_text(result)
+    check("editing a file main renamed away from this path warns the agent",
+          "scripts/main-will-rename-this.py" in renamed_warning,
+          result.stdout + result.stderr)
+    check("and the rename commit is counted for the path it was renamed away from",
+          "1 commit(s) on origin/main have changed since this branch's merge base"
+          in renamed_warning, renamed_warning)
 
     # A checkout with no origin/main — a repository, but nothing to compare to.
     lonely = tmp / "no-origin-main-repo"
