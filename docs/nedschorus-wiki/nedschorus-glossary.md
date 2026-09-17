@@ -26,6 +26,7 @@ Every project-specific term should be listed here; a term this page does not lis
 - **cold-read-target** — the document under review, frozen into the cold-read-record at launch.
 - **cold-read-tier** — which model a cold-read-cell runs, and at what effort.
 - **component-consumer** — anything that invokes a component or reads what it leaves; the parties a component-contract makes promises to. Defined in the design-to-main glossary.
+- **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, NNNN being the generation number, written by `scripts/handoff-extract-conversation.py` when the handoff-supervisor replaces an agent-session; the successor is told to read it first, and when the tail leaves earlier turns out, the whole dialog goes beside it as `<seat>-dialog-NNNN-complete.md`.
 - **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt`, `script-and-prompt`; a test may also be `no-tests` with a reason. Defined in the design-to-main glossary.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a submission to the gate; its design and its own glossary are in `docs/design-to-main/`. Terms that belong to it alone are defined there, not here.
 - **fresh-agent** — a minimal-context agent: one that has read only its agent-instructions, the documents selected for it to read, and (recursively) the documents linked from the selected documents.
@@ -33,13 +34,16 @@ Every project-specific term should be listed here; a term this page does not lis
 - **GHI** — GitHub issue
 - **GHI-MD** — the MD file used to explain a GitHub issue.
 - **handoff-supervisor** — the program `scripts/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
+- **handoff-system** — the subsystem that reincarnates agent-sessions. Overview: `docs/nedschorus-wiki/handoff-system-overview.md`.
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
+- **initial-agent-instructions** — defined in the agent-instructions entry above: the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
 - **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
 - **NC** — this project, NedsChorus.
 - **objection-overruled** — the record of a review objection that the user overruled.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff; triggered when the agent writes a session-handoff, usually because the Stop hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
+- **retire-seat** — freeing or repurposing an agent-seat's name: stop the handoff-supervisor, archive the session-handoff under `~/.claude/handoffs/retired/`, remove the worktree and seat branch, and date a retirement notice on the seat's brief. The steps are in `docs/nedschorus-wiki/agent-seat-model.md`. Distinct from pausing a seat.
 - **sanity-check-attack** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-attack (what should be deleted), the mechanization-attack (which English instruction should be code), the fresh-eyes-attack (an independent design built from the problem alone).
 - **sanity-check-cell** — one fresh agent running one sanity-check-attack on one runtime; a run is six.
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, `sanity-check-records/<date>-<target-stem>/`, holding its reports; kept as a log.

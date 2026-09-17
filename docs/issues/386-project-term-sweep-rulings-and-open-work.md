@@ -1,6 +1,6 @@
 ---
 status: rulings record and working material for nedschorus#386
-as-of: 2026-09-16
+as-of: 2026-09-17
 ---
 
 # The project-term sweep: what the user ruled, and the work it leaves
@@ -81,9 +81,17 @@ The older half of the naming bullet already asks for multi-part file names; the 
 
 Ruled "y": the naming rule binds new file names only. An existing file is renamed only when someone is already editing it for another reason. No full rename of existing files.
 
-## Ruled at the cold-read-research seat, ready once the sweep starts
+## Ruled at the cold-read-research seat, superseded 2026-09-17
 
-Renames for `docs/nedschorus-wiki/agent-seat-model.md`, user-ruled 2026-09-15: seat → agent-seat; handoff → session-handoff; supervisor → handoff-supervisor; session → agent-session; brief → seat-brief; slice → build-slice; walk → approval-walk (the skill name `/walk-me-through` stays); "a seat's work" → "the agent-seat's subject area". Dropped as not a term: "series" ("how is task series different from tasks"), spelled out as "a series of related tasks". That seat's branch leaves the page's words alone so the rename happens in one pass.
+Renames for `docs/nedschorus-wiki/agent-seat-model.md` were ruled at that seat on 2026-09-15. The list as it was ruled that day, kept because a record that drops a superseded ruling leaves the next reader no way to tell which version he is looking at:
+
+seat → agent-seat; handoff → session-handoff; supervisor → handoff-supervisor; session → agent-session; brief → seat-brief; slice → build-slice; walk → approval-walk (the skill name `/walk-me-through` stays); "a seat's work" → "the agent-seat's subject area". Dropped as not a term: "series" ("how is task series different from tasks"), spelled out as "a series of related tasks". That seat's branch left the page's words alone so the rename could happen in one pass.
+
+**Do not apply that list.** On 2026-09-17 the user overruled it, under the test the glossary preamble now carries (`docs/nedschorus-wiki/nedschorus-glossary.md`): a word needs a defined term only where this project does something unexpected with it or gives it a meaning that would be hard to guess. What he ruled in its place, for the seat model page and, on `docs/nedschorus-wiki/fleet-git-worktree-working-model.md`, for its Reader's key and for the per-seat briefs named in its scope note:
+
+- Three words take their glossary terms, everywhere they appear: seat → agent-seat, supervisor → handoff-supervisor, reincarnate → reincarnate-seat.
+- Session, handoff, brief, slice and walk stay plain words, and so do the branch words, "seat branch" and "topic branch".
+- "A seat's work" is not renamed at all. Its definition leaves the page's list of words and becomes body prose: an agent-seat's work is the body of related work it owns, a subject area with shared context rather than an ordered queue, its tasks named by its brief.
 
 ## Still open: the new name for `dispositions.md`
 

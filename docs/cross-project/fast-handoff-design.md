@@ -7,6 +7,8 @@ rulings-as-of: 2026-08-27
 
 **What this document is.** The handoff system is built, tested, and trial-passed; the scripts and their test suites are the normative description of what it does. This document carries only what code cannot: the rulings and their reasons, the verified harness facts the design rests on, the live holes, and the pointer below. It was gutted to that charter on 2026-08-12 (user-ruled: there is no utility in prose that documents what is better understood by reading the code — mechanism prose drifts). The full pre-gut text, mechanism descriptions included, is snapshotted at `git show db917b5:md-review-records/2026-08-12-fast-handoff-sanity-check/reviewed-fast-handoff-design.md` and in git history; the superseded 2026-07-22/24 design is at `git show e178e67:docs/cross-project/fast-handoff-design.md`.
 
+**Where the system's current shape is described.** `docs/nedschorus-wiki/handoff-system-overview.md` names the parts as they now stand; this document stays the ledger of rulings.
+
 ## The problem
 
 A fleet of interactive agents running with little attention. Reincarnate a session before its context gets heavy — the work is mostly sequential, so old turns are disposable — without the human typing into each pane. **Compaction is rejected** for this: it summarizes uniformly when value is non-uniform, and it is slow. **`--continue`/`--resume` are rejected**: they restore the context being shed. Every relaunch is a fresh session — new id, empty window, CLAUDE.md and hooks reloaded from disk.
