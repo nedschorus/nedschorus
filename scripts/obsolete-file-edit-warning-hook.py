@@ -34,10 +34,23 @@ record of, and before 2026-09-15 every report the Stop hook made was read by
 nobody for exactly that reason. No `decision` field, ever: this must never
 block a tool call or cost the agent a turn.
 
-THE SET. `git diff --name-only HEAD...origin/main`. The three dots, and why
-two would be wrong, are explained once, in checkout-freshness-catch-up.py's
-obsolete_files_by_category() docstring; read it there rather than here. This
-hook runs that one diff itself, for the reason obsolete_path_set() gives —
+THE SET. `git diff --name-only --no-renames HEAD...origin/main`. The three
+dots, and why two would be wrong, are explained once, in
+checkout-freshness-catch-up.py's obsolete_files_by_category() docstring; read
+it there rather than here.
+
+--no-renames, because rename detection is on by default and prints only a
+rename's DESTINATION. Without the flag, a file main renamed away from the
+path this branch still holds it at is absent from the set, so editing it
+draws no warning — the one case guaranteed to conflict, since main has
+deleted that path. Found in review of PR #463, the pull request that added
+this hook, and measured there against 76 renames in main's last 200 commits.
+With the flag a rename lists both paths, which is what a merge-base diff
+means by "changed": the old path lost its file and the new path gained one.
+The commit count below still measures for the old path, because `rev-list`
+with a pathspec counts the commit that deleted it.
+
+This hook runs that one diff itself, for the reason obsolete_path_set() gives —
 it needs to see the return code, which that function does not expose — and
 imports the rest of what it needs from that script: run_git(), read_stamp(),
 write_stamp() and head_state(). Its module level is imports and constants
@@ -46,7 +59,11 @@ nothing.
 
 NEVER FETCHES. The Stop hook fetches on its own throttle; this one runs at
 every edit and must be fast. It reads whatever origin/main the last fetch
-left, which is the same set the Stop hook's telling rests on.
+left — the same REF the Stop hook's telling rests on, though no longer the
+same set: --no-renames above widens this hook's set by every rename source,
+and checkout-freshness-catch-up.py's obsolete_files_by_category() still
+detects renames. That sibling is a separate topic and a separate pull
+request, by the one-topic rule.
 
 CACHED, because the diff is the only expensive call here and the answer
 changes rarely. The path set is cached in the checkout's own git directory,
@@ -199,8 +216,9 @@ def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
     # run_git returns its own GIT_DID_NOT_RUN code rather than raising when
     # git is missing or the timeout expires, so one non-zero test covers a
     # failed diff, an absent binary and a hung one alike.
-    listed = freshness.run_git(["diff", "--name-only", "HEAD...origin/main"],
-                               checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
+    listed = freshness.run_git(
+        ["diff", "--name-only", "--no-renames", "HEAD...origin/main"],
+        checkout, timeout=OBSOLETE_DIFF_TIMEOUT_SECONDS)
     if listed.returncode != 0:
         return None
     paths = set(line.strip() for line in listed.stdout.splitlines() if line.strip())
