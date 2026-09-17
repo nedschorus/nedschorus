@@ -599,8 +599,9 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
 # file, so every successor it launched died at its first need for input — the
 # desktop-app case observed 2026-08-11, the terminal-console case 2026-08-14.
 # Only a seat-owning supervisor (a tmux pane via the launchers) can reincarnate;
-# every other seat hands off by the user relaunching and pointing the fresh
-# session at the handoff file.
+# a seat with nothing watching it is restarted with scripts/resupervise-seat.py,
+# which relaunches it through the launcher so the new supervisor starts the
+# successor from the waiting handoff (see the end of main() below).
 
 
 def run_branch_protection_audit() -> str:
