@@ -341,9 +341,9 @@ def run_console_identity_case(workspace: Path):
           result.stdout + result.stderr)
     check("the identity path also names the supervised recovery path",
           "resupervise-seat.py identcase --machine " in result.stdout, result.stdout)
-    # The seat's machine must be named, never left to the default: the same agent
-    # name on both machines is two unrelated seats, so a box seat's advice run on
-    # the Mac would target a same-named Mac seat.
+    # The seat's machine must be named, never left to the default: nothing enforces
+    # unique seat names across machines, so a box seat's advice run on the Mac
+    # could target a same-named Mac seat.
     check("the advice names the machine it was printed on",
           ("--machine ubuntu" if sys.platform.startswith("linux") else "--machine mac")
           in result.stdout, result.stdout)
