@@ -311,6 +311,14 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
     state = supervisor.read_supervisor_state(handoff_directory / "noterm-supervisor-state.json")
     check("the consumed counter is recorded before stopping",
           state.get("consumed_counter") == 1, str(state))
+    # nedschorus#242 change 2: a seat stood down on dont-restart carries an exit
+    # record, so recovery offers it rather than resuming a session that asked
+    # not to be relaunched. This stop is boot-ignition's, before any launch, so
+    # the code is unknown — and present all the same.
+    check("dont-restart at boot records the agent's exit, its code unknown",
+          supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
+          str(state))
 
 
 def run_first_prompt_file_cases(workspace: Path):
@@ -1327,6 +1335,249 @@ def run_no_seat_recycle_refusal_case(workspace: Path):
     state = supervisor.read_supervisor_state(handoff_directory / "noseat-supervisor-state.json")
     check("the handoff stays unconsumed for a seated supervisor",
           state.get("consumed_counter") is None, str(state))
+    # The session is left alive at this stop, so nothing exited: no record.
+    check("a stop that leaves the session up records no agent exit",
+          supervisor.agent_exit_record_from_supervisor_state(state) is None
+          and supervisor.AGENT_EXIT_CODE_STATE_KEY not in state, str(state))
+
+
+class StubLaunchedSession:
+    """A launched session's stand-in for the in-process cases: poll() reports
+    exit_code once the session has ended, and terminate() ends it, as a real
+    session's returncode is set only when its end is observed."""
+
+    def __init__(self, exit_code, ended=True):
+        self.returncode = None
+        self.exit_code = exit_code
+        self.ended = ended
+
+    def poll(self):
+        if self.ended:
+            self.returncode = self.exit_code
+        return self.returncode
+
+    def terminate(self):
+        self.ended = True
+
+    def kill(self):
+        self.ended = True
+
+    def wait(self, timeout=None):
+        return self.poll()
+
+
+@contextlib.contextmanager
+def supervisor_names_replaced(**replacements):
+    """Replace module-level names the supervisor looks up when it runs — its
+    functions, and `input`, which it otherwise finds in builtins — and a
+    terminal on stdin when `stdin_isatty` is given; everything is put back."""
+    stdin_isatty = replacements.pop("stdin_isatty", None)
+    missing = object()
+    saved = {name: supervisor.__dict__.get(name, missing) for name in replacements}
+    saved_stdin = sys.stdin
+    for name, value in replacements.items():
+        setattr(supervisor, name, value)
+    if stdin_isatty is not None:
+        sys.stdin = SimpleNamespace(isatty=lambda: stdin_isatty)
+    try:
+        yield
+    finally:
+        sys.stdin = saved_stdin
+        for name, value in saved.items():
+            if value is missing:
+                delattr(supervisor, name)
+            else:
+                setattr(supervisor, name, value)
+
+
+def run_agent_exit_record_cases(workspace: Path):
+    """nedschorus#242 change 2 (ruled 2026-09-02, the #120 overview § Ruled
+    2026-09-02: record how the agent exited). Every stop after a session's end
+    that launches no successor records the agent's exit code and the time in
+    the state file; recover-crashed-seats.py offers such a seat instead of
+    resuming it. The record is cleared before every launch or adoption, so a
+    seat that once exited cleanly and later crashed does not read as clean."""
+    # --- End to end: the real exit code of a real session -----------------
+    name = "exitrecord"
+    handoff_directory = workspace / name
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    state_path = handoff_directory / f"{name}-supervisor-state.json"
+    stub_agent = handoff_directory / "stub-agent"
+    for case_name, stub_body, expected_code in (
+            ("a clean exit", "exit 0\n", 0),
+            ("a nonzero exit", "exit 3\n", 3),
+            # Negative, as Popen reports a signal: recorded as-is.
+            ("an exit by SIGTERM", "kill -TERM $$\n", -15)):
+        stub_agent.write_text("#!/bin/sh\n" + stub_body, encoding="utf-8")
+        stub_agent.chmod(0o755)
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
+             "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
+        )
+        state = supervisor.read_supervisor_state(state_path)
+        record = supervisor.agent_exit_record_from_supervisor_state(state)
+        try:
+            recorded_at = datetime.fromisoformat(record[1]) if record else None
+        except ValueError:
+            recorded_at = None
+        check(f"EXIT RECORD: {case_name} without a handoff records exit code {expected_code}",
+              result.returncode == 0
+              and "session ended without a handoff; supervisor stopping" in result.stdout
+              and record is not None and record[0] == expected_code
+              and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == expected_code,
+              f"{state} {result.stdout[-300:]} {result.stderr[-300:]}")
+        check(f"EXIT RECORD: {case_name} records when, in UTC, at the stop",
+              recorded_at is not None and recorded_at.tzinfo is not None
+              and before <= recorded_at <= datetime.now(timezone.utc),
+              str(state))
+
+    # The in-cycle dont-restart stop, with no terminal to ask on: the session
+    # wrote its handoff and stayed up, so the supervisor terminated it before
+    # standing the seat down — and records that termination's code as-is.
+    name = "exitrecorddontrestart"
+    handoff_directory = workspace / name
+    handoff_directory.mkdir(parents=True, exist_ok=True)
+    stub_agent = handoff_directory / "stub-agent"
+    stub_agent.write_text(
+        "#!/bin/sh\n"
+        "exec >/dev/null 2>&1\n"
+        "printf 'written-at: 2026-09-17T00:00:00Z\\nnext-step: stand down\\n"
+        "restart-counter: 1\\ndont-restart: the user closes this seat\\n' "
+        f"> '{handoff_directory}/{name}-handoff.md'\n"
+        "exec sleep 30\n",
+        encoding="utf-8",
+    )
+    stub_agent.chmod(0o755)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=90,
+    )
+    state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
+    check("EXIT RECORD: the in-cycle dont-restart stop records the terminated session's code",
+          result.returncode == 0 and "no terminal to ask on; stopping" in result.stdout
+          and state.get("consumed_counter") == 1
+          and supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
+          f"{state} {result.stdout[-300:]} {result.stderr[-300:]}")
+
+    # --- In process: the paths a subprocess cannot reach -------------------
+    def settings_for(case: str, adopted_session=None):
+        directory = workspace / f"exitrecord-in-process-{case}"
+        directory.mkdir(parents=True, exist_ok=True)
+        return supervisor.SupervisorSettings(
+            agent=f"exitrecord{case}", working_directory=workspace,
+            handoff_directory=directory, agent_command="unused-stub-agent",
+            first_prompt="", adopted_session=adopted_session)
+
+    def launch_recording(sessions, launched_state_snapshots, settings):
+        def launch(agent_command, session_id, working_directory, prompt, **_):
+            launched_state_snapshots.append(
+                json.loads(settings.state_path.read_text(encoding="utf-8")))
+            return sessions.pop(0)
+        return launch
+
+    no_branch_sync = lambda working_directory: "branch sync: not a git checkout, nothing to sync"
+
+    # Cleared at launch: a record left by an earlier stop is gone from the state
+    # file before the next session starts, and the stop after that session
+    # writes a record of its own.
+    settings = settings_for("cleared")
+    supervisor.write_supervisor_state(settings.state_path, {
+        "consumed_counter": None, "session_id": "earlier-session", "generation": 2,
+        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
+        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
+    snapshots = []
+    with supervisor_names_replaced(
+            launch_agent_session=launch_recording([StubLaunchedSession(9)], snapshots, settings),
+            sync_working_branch_with_main=no_branch_sync), \
+            contextlib.redirect_stdout(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("EXIT RECORD: an earlier record is cleared from the state file before the launch",
+          len(snapshots) == 1
+          and supervisor.AGENT_EXIT_CODE_STATE_KEY not in snapshots[0]
+          and supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY not in snapshots[0],
+          str(snapshots))
+    check("EXIT RECORD: and the launched session's own end is recorded afresh",
+          supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and state[supervisor.AGENT_EXIT_CODE_STATE_KEY] == 9
+          and state[supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY] != "2026-01-01T00:00:00+00:00",
+          str(state))
+
+    # Cleared at adoption too, and an adopted session's code is unknown — its
+    # poll() says 0 for any process that is merely gone — so it is recorded as
+    # null rather than skipped.
+    settings = settings_for("adopted", supervisor.AdoptedSession("adopted-session", 99999999))
+    supervisor.write_supervisor_state(settings.state_path, {
+        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
+        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
+    written_states = []
+    real_write_supervisor_state = supervisor.write_supervisor_state
+
+    def write_recording(state_path, state):
+        written_states.append(dict(state))
+        real_write_supervisor_state(state_path, state)
+
+    with supervisor_names_replaced(write_supervisor_state=write_recording), \
+            contextlib.redirect_stdout(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("EXIT RECORD: an earlier record is cleared before an adopted session is watched",
+          written_states and supervisor.AGENT_EXIT_CODE_STATE_KEY not in written_states[0],
+          str(written_states))
+    check("EXIT RECORD: an adopted session's end is recorded with its code unknown",
+          supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
+          str(state))
+
+    # A handoff arrives with a terminal to ask on. The session is still running
+    # when it is written, so the supervisor stops it itself (SIGTERM, -15).
+    def launch_writing_a_handoff(settings, session, handoff_text):
+        def launch(agent_command, session_id, working_directory, prompt, **_):
+            settings.handoff_path.write_text(handoff_text, encoding="utf-8")
+            return session
+        return launch
+
+    # dont-restart answered n at the terminal.
+    settings = settings_for("answeredn")
+    supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
+    with supervisor_names_replaced(
+            launch_agent_session=launch_writing_a_handoff(
+                settings, StubLaunchedSession(-15, ended=False),
+                "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n"),
+            sync_working_branch_with_main=no_branch_sync,
+            input=lambda prompt: "n", stdin_isatty=True), \
+            contextlib.redirect_stdout(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("EXIT RECORD: dont-restart answered n records the stopped session's code",
+          state.get("consumed_counter") == 2
+          and supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
+          str(state))
+
+    # The dialog extraction fails, so no successor is launched: the stopped
+    # session's end is recorded, and the handoff stays unconsumed.
+    settings = settings_for("extractionfailed")
+    supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
+    with supervisor_names_replaced(
+            launch_agent_session=launch_writing_a_handoff(
+                settings, StubLaunchedSession(-15, ended=False),
+                "restart-counter: 2\nnext-step: carry on\n"),
+            sync_working_branch_with_main=no_branch_sync,
+            extract_dialog=lambda session_id, working_directory, output_path: False,
+            stdin_isatty=True), \
+            contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("EXIT RECORD: a failed extraction records the stopped session, handoff unconsumed",
+          state.get("consumed_counter") == 1
+          and supervisor.agent_exit_record_from_supervisor_state(state) is not None
+          and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
+          str(state))
 
 
 def run_boot_ignition_case(workspace: Path):
@@ -1873,6 +2124,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_adoption_cases(Path(temporary_directory))
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
+    run_agent_exit_record_cases(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))
     run_appended_system_prompt_agent_part_cases(Path(temporary_directory))

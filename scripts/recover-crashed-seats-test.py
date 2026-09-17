@@ -2343,6 +2343,168 @@ with tempfile.TemporaryDirectory() as temporary:
               "resume-all-seat-crashed (0KB transcript) under a supervisor"],
           (exit_code, printed, logged, launches))
 
+    # --- a recorded agent exit (nedschorus#242 change 2) ----------------------
+    # Ruled 2026-09-02 (the #120 overview, § Ruled 2026-09-02: record how the
+    # agent exited): a seat whose supervisor recorded its agent's exit did not
+    # crash, so it is offered to be brought back by hand, never resumed or
+    # ignited. Presence decides, not the code: zero, nonzero, a signal's
+    # negative code and an unknown code all offer; only no record resumes. The
+    # record is written here by the supervisor's own writer, so the key names
+    # the two programs share are the ones under test.
+    def record_an_agent_exit(workspace, exit_code):
+        state_path = workspace.handoffs / f"{workspace.name}-supervisor-state.json"
+        recovery.supervisor.record_agent_exit_in_supervisor_state(
+            state_path, {"consumed_counter": None, "session_id": "resume-me",
+                         "generation": 3}, exit_code)
+        return recovery.supervisor.read_supervisor_state(state_path)[
+            recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
+
+    for exit_code in (0, 3, -15, None):
+        workspace = Workspace(root / f"exit-record-{exit_code}", name="exited-seat")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+        recorded_at = record_an_agent_exit(workspace, exit_code)
+        verdict, detail = workspace.assess()
+        check(f"EXIT RECORD: a recorded exit with code {exit_code} is offered, not resumed",
+              verdict == "offer-after-recorded-exit"
+              and detail == (exit_code, recorded_at, "resume-me"),
+              (verdict, detail))
+        report = workspace.recover()
+        check(f"EXIT RECORD: code {exit_code} is reported as not relaunched, and nothing launches",
+              report.startswith(
+                  f"exited-seat: {recovery.SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER} — "
+                  f"its supervisor recorded at {recorded_at} that its agent exited with "
+                  + ("an unknown exit code" if exit_code is None else f"exit code {exit_code}")
+                  + " and stopped without launching a successor, so this is not treated "
+                    "as a crash and nothing is launched; ")
+              and workspace.launches == [],
+              (report, workspace.launches))
+
+    workspace = Workspace(root / "exit-record-absent", name="exited-seat")
+    all_dead()
+    capture_launches(workspace)
+    write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+    (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
+        json.dumps({"consumed_counter": None, "session_id": "resume-me", "generation": 3}),
+        encoding="utf-8")
+    verdict, detail = workspace.assess()
+    check("EXIT RECORD: a seat with no exit record is still resumed",
+          verdict == "resume" and detail[0] == "resume-me", (verdict, detail))
+
+    # The report names both ways back by hand, each carrying what launch_seat
+    # would pass, and a dry run and --ignite-fallback say the same and launch
+    # nothing.
+    workspace = Workspace(root / "exit-record-report", name="exited-seat")
+    all_dead()
+    capture_launches(workspace)
+    write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+    recorded_at = record_an_agent_exit(workspace, 0)
+    report = workspace.recover()
+    resume_command = recovery.by_hand_launch_command_for_seat(
+        workspace.name, workspace.seat_directory, workspace.handoffs,
+        "--resume-session-id resume-me")
+    fresh_command = recovery.by_hand_launch_command_for_seat(
+        workspace.name, workspace.seat_directory, workspace.handoffs, "")
+    check("EXIT RECORD: the report names the by-hand resume and the by-hand fresh launch",
+          report.endswith(f"; to bring it back by hand resuming session resume-me: "
+                          f"{resume_command}; or as a fresh session: {fresh_command}"),
+          report)
+    check("EXIT RECORD: a dry run reports the same, and --ignite-fallback offers too",
+          workspace.recover(dry_run=True) == report
+          and workspace.recover(ignite_fallback=True) == report
+          and workspace.launches == [],
+          (report, workspace.launches))
+    expected_launcher_word = (str(recovery.launcher_path()) if recovery.launcher_path()
+                              else "launch-claude-ubuntu")
+    check("EXIT RECORD: the by-hand resume command parses into the launch_seat environment",
+          shlex.split(resume_command)[:4] == [
+              f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}",
+              "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
+              f"--handoff-dir {shlex.quote(str(workspace.handoffs))} --resume-session-id resume-me",
+              expected_launcher_word, workspace.name],
+          shlex.split(resume_command))
+    real_launcher_path = recovery.launcher_path
+    try:
+        patch("launcher_path", lambda: None)
+        box_command = recovery.by_hand_launch_command_for_seat(
+            workspace.name, workspace.seat_directory, workspace.handoffs, "")
+    finally:
+        patch("launcher_path", real_launcher_path)
+    check("EXIT RECORD: off the Mac the by-hand command names launch-claude-ubuntu, on the Mac",
+          box_command.endswith(f" launch-claude-ubuntu {workspace.name} (on the Mac)"),
+          box_command)
+
+    # With nothing to resume, the offer stands in for the ignite and names only
+    # the fresh launch.
+    workspace = Workspace(root / "exit-record-no-transcript", name="exited-seat")
+    all_dead()
+    capture_launches(workspace)
+    record_an_agent_exit(workspace, 0)
+    verdict, detail = workspace.assess()
+    report = workspace.recover()
+    check("EXIT RECORD: a recorded exit with nothing to resume is offered, not ignited",
+          verdict == "offer-after-recorded-exit" and detail[2] is None
+          and report.endswith("; to bring it back by hand as a fresh session: "
+                              + recovery.by_hand_launch_command_for_seat(
+                                  workspace.name, workspace.seat_directory,
+                                  workspace.handoffs, ""))
+          and workspace.launches == [],
+          (verdict, detail, report, workspace.launches))
+
+    # What the record does not reach: a waiting handoff still defers to
+    # boot-ignition, and a live tmux session with no confirmed supervisor is
+    # still refused (user-ruled 2026-09-16).
+    workspace = Workspace(root / "exit-record-waiting-handoff", name="exited-seat")
+    all_dead()
+    record_an_agent_exit(workspace, 0)
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+    verdict, detail = workspace.assess()
+    check("EXIT RECORD: a waiting handoff still defers to boot-ignition over the record",
+          verdict == "defer-to-boot-ignition", (verdict, detail))
+    workspace = Workspace(root / "exit-record-live-tmux", name="exited-seat")
+    all_dead()
+    record_an_agent_exit(workspace, 0)
+    patch("tmux_session_alive_anywhere",
+          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+    verdict, detail = workspace.assess()
+    check("EXIT RECORD: a live tmux session is still refused whatever the record says",
+          verdict == "refuse" and "never touches a live tmux session" in detail,
+          (verdict, detail))
+
+    # Through main: logged in its report class, counted as not recovered, and
+    # under --all a recorded seat launches nothing while a crashed seat beside
+    # it is still resumed.
+    workspace = Workspace(root / "exit-record-main", name="all-seat-exited")
+    (workspace.agents_root / "all-seat-crashed").mkdir()
+    for name in ("all-seat-exited", "all-seat-crashed"):
+        write_transcript(recovery.harness_project_directory(
+            workspace.agents_root / name, workspace.projects),
+            f"resume-{name}", "real work", records=4)
+    all_dead()
+    capture_launches(workspace)
+    record_an_agent_exit(workspace, 0)
+    printed = io.StringIO()
+    with redirect_stdout(printed):
+        exit_code = recovery.main(["--all", "--agents-root", str(workspace.agents_root),
+                                   "--handoff-dir", str(workspace.handoffs),
+                                   "--projects-root", str(workspace.projects)])
+    log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+    logged = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
+    logged_lines = logged.splitlines()
+    check("EXIT RECORD: --all resumes the crashed seat and launches nothing for the exited one",
+          [launch[0] for launch in workspace.launches] == ["all-seat-crashed"],
+          workspace.launches)
+    check("EXIT RECORD: the offer is logged in its report class, timestamped, and the run exits 1",
+          exit_code == 1 and len(logged_lines) == 2  # --all goes in name order
+          and "+00:00 all-seat-crashed: relaunched resuming resume-all-seat-crashed"
+              in logged_lines[0]
+          and logged_lines[1][:4].isdigit()
+          and "+00:00 all-seat-exited: NOT RELAUNCHED AFTER A RECORDED EXIT — its supervisor "
+              "recorded at " in logged_lines[1],
+          (exit_code, logged, printed.getvalue()))
+
 
 print()
 if failures:

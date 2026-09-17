@@ -30,6 +30,12 @@ What it does, per seat:
      consulted before a relaunch (dont-restart): then nothing is launched,
      and the seat is reported NOT RELAUNCHED, AT ITS OWN REQUEST, which
      counts as not recovered.
+  2a. Launch nothing when the seat's supervisor recorded its agent's exit
+     (nedschorus#242 change 2, ruled 2026-09-02): a supervisor that outlived
+     its agent saw the ending, so the seat did not crash. Any recorded exit
+     counts, whatever its code. The report says so and gives the commands to
+     bring the seat back by hand, and it counts as a seat not recovered. Only a
+     seat with no record goes on to the resume below.
   3. Find the seat's most recent real transcript under the harness project
      directory: newest *.jsonl by mtime, skipping failed successors — small
      sessions whose first turn this machinery itself composed and which
@@ -425,6 +431,24 @@ def compose_supervisor_arguments_for_seat_launch(handoff_directory: Path,
     return supervisor_arguments
 
 
+def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_directory: Path,
+                                    extra_supervisor_arguments: str) -> str:
+    """The command an operator types to launch this seat under a supervisor,
+    carrying what launch_seat would pass: the agents root and the supervisor
+    arguments. On the Mac it runs launch-claude-mac; elsewhere it names
+    launch-claude-ubuntu, which is run on the Mac and drives the box."""
+    launcher = launcher_path()
+    command = " ".join([
+        f"NEDSCHORUS_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}",
+        "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
+            compose_supervisor_arguments_for_seat_launch(handoff_directory,
+                                                         extra_supervisor_arguments)),
+        "launch-claude-ubuntu" if launcher is None else shlex.quote(str(launcher)),
+        shlex.quote(name),
+    ])
+    return command if launcher is not None else f"{command} (on the Mac)"
+
+
 def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
                 extra_supervisor_arguments: str, first_prompt_file: Path = None):
     """Start the seat detached under its supervisor, on its own tmux server.
@@ -607,8 +631,16 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     """Decide what recovery this seat needs.
 
     Returns (verdict, detail): seat-already-running / refuse /
-    defer-to-boot-ignition / seat-asked-to-be-consulted / resume (detail is (session_id,
-    transcript_path)) / ignite (detail is the reason no resume is possible).
+    defer-to-boot-ignition / seat-asked-to-be-consulted /
+    offer-after-recorded-exit (detail is (exit_code, recorded_at, session_id),
+    session_id None when nothing could be resumed) / resume (detail is
+    (session_id, transcript_path)) / ignite (detail is the reason no resume is
+    possible).
+
+    offer-after-recorded-exit launches nothing (nedschorus#242 change 2): the
+    seat's supervisor recorded that its agent exited, so it is not a crash, and
+    the seat is offered to be brought back by hand. Any recorded exit counts,
+    code zero or not, known or not; only a seat with no record is resumed.
 
     seat-already-running is not a refusal (user-ruled 2026-09-16, on the
     question PR #426's reviewer asked): a seat a live supervisor of which is
@@ -741,6 +773,17 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
 
     session_id, found = newest_real_transcript(
         harness_project_directory(seat_directory, projects_root))
+
+    # After the handoff checks, which a waiting handoff still settles, and in
+    # place of both automatic launches below (nedschorus#242 change 2, ruled
+    # 2026-09-02): a supervisor that outlived its agent recorded the exit, so
+    # the seat did not crash, whatever the code says.
+    exit_record = supervisor.agent_exit_record_from_supervisor_state(
+        supervisor.read_supervisor_state(state_path))
+    if exit_record is not None:
+        exit_code, recorded_at = exit_record
+        return "offer-after-recorded-exit", (exit_code, recorded_at, session_id)
+
     if session_id is None:
         return "ignite", str(found)
     return "resume", (session_id, found)
@@ -852,11 +895,15 @@ def came_up_or_failure_report(name: str, handoff_directory: Path,
 # A seat that asked to be consulted is left down on purpose, but it is down: were
 # it not counted, the login restart would list it with the seats that came up.
 SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER = "NOT RELAUNCHED, AT ITS OWN REQUEST"
+# So is a seat whose supervisor recorded its agent's exit (nedschorus#242
+# change 2): nothing is launched for it, and it is down.
+SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER = "NOT RELAUNCHED AFTER A RECORDED EXIT"
 SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     "REFUSED",
     "LAUNCH FAILED",
     "LAUNCHED BUT DID NOT COME UP",
     SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER,
+    SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER,
 )
 # The report class for assess_seat's seat-already-running verdict. Named so the
 # suites can pin that it contains none of the markers above.
@@ -894,6 +941,24 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     # Also before the dry-run branch: nothing is launched either way.
     if verdict == "seat-asked-to-be-consulted":
         return f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — {detail}"
+
+    # Also before the dry-run branches: nothing is launched either way.
+    if verdict == "offer-after-recorded-exit":
+        exit_code, recorded_at, session_id = detail
+        code_text = "an unknown exit code" if exit_code is None else f"exit code {exit_code}"
+        fresh = by_hand_launch_command_for_seat(name, seat_directory, handoff_directory, "")
+        if session_id is None:
+            by_hand = f"to bring it back by hand as a fresh session: {fresh}"
+        else:
+            resume = by_hand_launch_command_for_seat(
+                name, seat_directory, handoff_directory,
+                f"--resume-session-id {shlex.quote(session_id)}")
+            by_hand = (f"to bring it back by hand resuming session {session_id}: {resume}; "
+                       f"or as a fresh session: {fresh}")
+        return (f"{name}: {SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER} — its "
+                f"supervisor recorded at {recorded_at} that its agent exited with "
+                f"{code_text} and stopped without launching a successor, so this is not "
+                f"treated as a crash and nothing is launched; {by_hand}")
 
     if verdict == "defer-to-boot-ignition":
         if dry_run:

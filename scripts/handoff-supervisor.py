@@ -217,6 +217,42 @@ def stamp_heartbeat(state_path: Path, state: dict) -> None:
     write_supervisor_state(state_path, state)
 
 
+# The exit record (nedschorus#242 change 2, ruled 2026-09-02; the #120 overview,
+# § Ruled 2026-09-02: record how the agent exited). A supervisor that outlived its
+# agent saw the ending, and one killed with the machine or the tmux server never
+# gets to write this — so recover-crashed-seats.py offers a seat carrying a
+# record instead of resuming it, and resumes one without. Presence is the
+# signal, not the code: the code is null where this supervisor had no child
+# process to read it from.
+AGENT_EXIT_CODE_STATE_KEY = "agent_exit_code"
+AGENT_EXIT_RECORDED_AT_STATE_KEY = "agent_exit_recorded_at"
+
+
+def record_agent_exit_in_supervisor_state(state_path: Path, state: dict, exit_code) -> None:
+    """Write the exit record, as the last thing before a supervisor stops without
+    launching a successor. exit_code is the session's own, a negative one for a
+    signal, or None when it is unknown."""
+    state[AGENT_EXIT_CODE_STATE_KEY] = exit_code
+    state[AGENT_EXIT_RECORDED_AT_STATE_KEY] = datetime.now(timezone.utc).isoformat(
+        timespec="seconds")
+    write_supervisor_state(state_path, state)
+
+
+def clear_agent_exit_record_from_supervisor_state(state: dict) -> None:
+    """Drop the exit record before a session is launched or adopted, so the record
+    always describes the most recent session: a seat that once exited cleanly
+    and later crashed must read as crashed."""
+    state.pop(AGENT_EXIT_CODE_STATE_KEY, None)
+    state.pop(AGENT_EXIT_RECORDED_AT_STATE_KEY, None)
+
+
+def agent_exit_record_from_supervisor_state(state: dict):
+    """(exit_code, recorded_at) when the state carries an exit record, else None."""
+    if AGENT_EXIT_RECORDED_AT_STATE_KEY not in state:
+        return None
+    return state.get(AGENT_EXIT_CODE_STATE_KEY), state[AGENT_EXIT_RECORDED_AT_STATE_KEY]
+
+
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
 SUPERVISOR_LOCK_FILE_SUFFIX = "-supervisor.lock"
 # This script's own name, as it appears in a running supervisor's command line.
@@ -1053,6 +1089,10 @@ class AdoptedSession:
     script started an adopting supervisor itself until 2026-08-14.
     """
 
+    # Not this supervisor's child, so its exit status cannot be read: poll()'s 0
+    # means only "gone". The exit record stores the code as unknown.
+    returncode = None
+
     def __init__(self, session_id: str, process_id: int):
         self.session_id = session_id
         self.process_id = process_id
@@ -1256,7 +1296,11 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
-    """Launch, watch, and reincarnate sessions until one ends without a handoff."""
+    """Launch, watch, and reincarnate sessions until one ends without a handoff.
+
+    Every stop that follows a session's end without launching a successor writes
+    the exit record first (record_agent_exit_in_supervisor_state); the stop that
+    leaves a live session up for a seated supervisor does not."""
     state = read_supervisor_state(settings.state_path)
     generation = state.get("generation", 0)
     if settings.first_prompt:
@@ -1326,16 +1370,19 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             if boot_fields.get("dont-restart"):
                 # The handoff asks for a consultation before any relaunch;
                 # boot-ignition must not steamroll it. Same terminal rule as
-                # the in-cycle dont-restart branch below.
+                # the in-cycle dont-restart branch below. Stopping here is a
+                # seat stood down on purpose, so it is recorded as an exit —
+                # its code unknown, since the session ended before this
+                # supervisor started.
                 if not sys.stdin.isatty():
                     print("handoff-supervisor: dont-restart, and no terminal to ask on; stopping")
                     state["consumed_counter"] = boot_counter
-                    write_supervisor_state(settings.state_path, state)
+                    record_agent_exit_in_supervisor_state(settings.state_path, state, None)
                     return 0
                 if input("handoff-supervisor: restart? y/n ").strip().lower() != "y":
                     print("handoff-supervisor: stopping at the agent's request")
                     state["consumed_counter"] = boot_counter
-                    write_supervisor_state(settings.state_path, state)
+                    record_agent_exit_in_supervisor_state(settings.state_path, state, None)
                     return 0
             generation += 1
             retiring_session_id = state.get("session_id")
@@ -1357,6 +1404,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
 
     while True:
         state.update({"session_id": session_id, "generation": generation})
+        clear_agent_exit_record_from_supervisor_state(state)
         write_supervisor_state(settings.state_path, state)
 
         if adopted is not None:
@@ -1398,6 +1446,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
         )
         if handoff_fields is None:
+            # wait_for_handoff saw poll() report the exit, which is what sets a
+            # launched session's returncode; an adopted one's stays None.
+            record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             print("handoff-supervisor: session ended without a handoff; supervisor stopping")
             return 0
 
@@ -1436,13 +1487,17 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             if answer != "y":
                 print("handoff-supervisor: stopping at the agent's request")
                 state["consumed_counter"] = counter_from(handoff_fields)
-                write_supervisor_state(settings.state_path, state)
+                record_agent_exit_in_supervisor_state(settings.state_path, state,
+                                                      process.returncode)
                 return 0
 
         successor_session_id, ignition_plan = carry_over_to_successor(
             settings, session_id, handoff_fields, generation
         )
         if successor_session_id is None:
+            # The session is stopped and no successor follows. The handoff stays
+            # unconsumed, so recovery still defers to boot-ignition over this record.
+            record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             return 0
 
         state["consumed_counter"] = counter_from(handoff_fields)
