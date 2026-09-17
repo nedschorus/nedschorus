@@ -299,6 +299,49 @@ with tempfile.TemporaryDirectory() as temporary:
     check("an oversized transcript forces a cold start",
           claude_calls[0][1] is None and answer == "read #1", (claude_calls, answer))
 
+    # --- context-share reincarnation trigger ---------------------------------
+    # 2026-09-16: ghi-info's session stood at 521,343 tokens of claude-sonnet-5's
+    # 1M window with a 3.7 MB transcript, under the size trigger, and the handoff
+    # hook's notice came back in place of the answer. That hook is silent in
+    # these sessions now, so this trigger is what bounds them.
+    def transcript_at_context_tokens(seat, session_id, tokens):
+        project_directory = ghi_ask.watcher.project_directory_for_seat(seat, projects_root)
+        project_directory.mkdir(parents=True, exist_ok=True)
+        record = {"type": "assistant", "message": {
+            "model": "claude-sonnet-5",
+            "usage": {"input_tokens": 1_000, "cache_read_input_tokens": tokens - 1_000,
+                      "cache_creation_input_tokens": 0}}}
+        (project_directory / f"{session_id}.jsonl").write_text(
+            json.dumps(record) + "\n", encoding="utf-8")
+
+    seat10b = root / "seat10b"
+    seat10b.mkdir()
+    ghi_ask.save_state(seat10b / ghi_ask.STATE_FILE_NAME,
+                       {"session_id": "sess-FULL", "closes_since_birth": 0, "recent_matches": []})
+    transcript_at_context_tokens(seat10b, "sess-FULL", 521_343)
+    fake_refresh_queue([([], {}, None), ([], {}, None)])
+    claude_calls = fake_claude_queue([
+        ({"session_id": "sess-FRESH", "result": "(ack)"}, None),
+        ({"session_id": "sess-FRESH", "result": "read #1"}, None),
+    ])
+    answer, error = ghi_ask.ask("q", False, seat10b, "x/y", projects_root=projects_root)
+    check("a session past the context threshold is reincarnated, not resumed",
+          claude_calls[0][1] is None and answer == "read #1", (claude_calls, answer))
+
+    seat10c = root / "seat10c"
+    seat10c.mkdir()
+    ghi_ask.save_state(seat10c / ghi_ask.STATE_FILE_NAME,
+                       {"session_id": "sess-ROOM", "closes_since_birth": 0, "recent_matches": []})
+    transcript_at_context_tokens(seat10c, "sess-ROOM", 390_000)
+    fake_refresh_queue([([], {}, None)])
+    claude_calls = fake_claude_queue([
+        ({"session_id": "sess-ROOM", "result": "read #1"}, None),
+    ])
+    answer, error = ghi_ask.ask("q", False, seat10c, "x/y", projects_root=projects_root)
+    check("a session under the context threshold is resumed",
+          claude_calls == [(claude_calls[0][0], "sess-ROOM")] and answer == "read #1",
+          (claude_calls, answer))
+
 
     # --- one deadline for the whole ask, not one per turn ------------------
     # PR #143 review, Codex P2: an ask can spend three turns (a cold start's
@@ -541,6 +584,23 @@ try:
         result, error = run_claude_real("q", None, seat, 5)
         check("run_claude: a clean result is returned unchanged",
               error is None and result["result"] == "read #1", (result, error))
+
+        # The handoff hook reads this variable in the claude it launches and
+        # stays silent, so a handoff notice never comes back as the answer.
+        recorded_keyword_arguments = []
+
+        def recording_run(command, **kwargs):
+            recorded_keyword_arguments.append(kwargs)
+            return FakeCompletedProcess(0, json.dumps({"session_id": "s", "result": "read #1"}))
+        ghi_ask.subprocess.run = recording_run
+        run_claude_real("q", "sess-RESUMED", seat, 5)
+        launched_environment = (recorded_keyword_arguments[0].get("env") or {}
+                                if recorded_keyword_arguments else {})
+        check("run_claude: claude's environment tells the handoff hook this script "
+              "reincarnates the session",
+              launched_environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
+              and launched_environment.get("PATH") == os.environ.get("PATH"),
+              recorded_keyword_arguments)
 finally:
     ghi_ask.subprocess.run = subprocess_run_orig
 

@@ -41,7 +41,9 @@ Session lifecycle (design § The ghi-info session): no process outlives one
 ask. Every call is a fresh `claude -p`, resumed by session id read from
 `.ghi-info-state.json` in the seat directory, cold-started when no session
 is stored or a reincarnation trigger fires (closes-since-birth, the stale-match
-rate, or transcript size — the named constants below). Reincarnation means: one
+rate, transcript size, or the share of context in use — the named constants
+below). Reincarnating is this script's job alone: the project's handoff hook
+stays silent in the sessions it runs (run_claude). Reincarnation means: one
 FULL mirror rebuild (not the routine per-ask delta), then the cold-start
 prompt as its own turn, then the actual question as a second turn on that
 same fresh session — both prompts are verbatim from the design's § Prompts,
@@ -102,6 +104,11 @@ _watcher_spec = importlib.util.spec_from_file_location(
 watcher = importlib.util.module_from_spec(_watcher_spec)
 _watcher_spec.loader.exec_module(watcher)
 
+_threshold_hook_spec = importlib.util.spec_from_file_location(
+    "handoff_context_threshold_hook", SCRIPT_DIRECTORY / "handoff-context-threshold-hook.py")
+threshold_hook = importlib.util.module_from_spec(_threshold_hook_spec)
+_threshold_hook_spec.loader.exec_module(threshold_hook)
+
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
 DEFAULT_SEAT_DIR = DEFAULT_AGENTS_ROOT / "ghi-info"
@@ -151,6 +158,13 @@ STALE_MATCH_THRESHOLD = 2
 # transcript-size constant to inherit — only timeouts. Starting value only,
 # tuned in live use per the design's own Constants clause.
 TRANSCRIPT_SIZE_THRESHOLD_BYTES = 5_000_000
+# The share of the model's context window in use, read by the handoff hook's
+# own reader. On 2026-09-16 the session stood at 52% with a 3.7 MB transcript,
+# under the size trigger, and the handoff hook fired mid-answer instead. That
+# hook is silent in these sessions now, so this is what bounds them. Below the
+# hook's 50 because it is checked before an ask and the ask then adds to it,
+# and the design's reincarnation errs eager.
+CONTEXT_USED_PERCENTAGE_THRESHOLD = 40.0
 
 POINTER_PATTERN = re.compile(r"#(\d+)")
 
@@ -299,11 +313,17 @@ def state_lock(lock_path: Path):
         handle.close()
 
 
-def transcript_size_bytes(seat_dir: Path, session_id: str, projects_root: Path):
+def transcript_path_for(seat_dir: Path, session_id: str, projects_root: Path):
     if not session_id:
         return None
     project_directory = watcher.project_directory_for_seat(seat_dir, projects_root)
-    transcript_path = project_directory / f"{session_id}.jsonl"
+    return project_directory / f"{session_id}.jsonl"
+
+
+def transcript_size_bytes(seat_dir: Path, session_id: str, projects_root: Path):
+    transcript_path = transcript_path_for(seat_dir, session_id, projects_root)
+    if transcript_path is None:
+        return None
     try:
         return transcript_path.stat().st_size
     except OSError:
@@ -311,7 +331,7 @@ def transcript_size_bytes(seat_dir: Path, session_id: str, projects_root: Path):
 
 
 def should_recycle(state: dict, seat_dir: Path, projects_root: Path):
-    """(bool, reason) — the three numeric reincarnation triggers. Whether there is
+    """(bool, reason) — the four numeric reincarnation triggers. Whether there is
     a session AT ALL is the caller's separate, prior check."""
     closes = state.get("closes_since_birth", 0)
     if closes >= CLOSES_SINCE_BIRTH_THRESHOLD:
@@ -324,6 +344,12 @@ def should_recycle(state: dict, seat_dir: Path, projects_root: Path):
     size = transcript_size_bytes(seat_dir, state.get("session_id"), projects_root)
     if size is not None and size >= TRANSCRIPT_SIZE_THRESHOLD_BYTES:
         return True, f"transcript {size} bytes (threshold {TRANSCRIPT_SIZE_THRESHOLD_BYTES})"
+    transcript_path = transcript_path_for(seat_dir, state.get("session_id"), projects_root)
+    used = (threshold_hook.context_used_percentage_from_transcript(str(transcript_path))
+            if transcript_path is not None else None)
+    if used is not None and used >= CONTEXT_USED_PERCENTAGE_THRESHOLD:
+        return True, (f"context {used:.0f}% used "
+                      f"(threshold {CONTEXT_USED_PERCENTAGE_THRESHOLD:g}%)")
     return False, None
 
 
@@ -336,9 +362,15 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
               "--permission-mode", "bypassPermissions", "--model", GHI_INFO_MODEL]
     if resume_session_id:
         command += ["--resume", resume_session_id]
+    # Without this the handoff hook tells the session to hand off at its
+    # threshold, and the handoff notice comes back as the answer (2026-09-16).
+    # This script reincarnates the session itself: should_recycle.
+    environment = {**os.environ,
+                   threshold_hook.REINCARNATION_OWNED_BY_CALLER_VARIABLE: "scripts/ghi-info-ask.py"}
     try:
         completed = subprocess.run(command, cwd=str(seat_dir), capture_output=True,
-                                   text=True, timeout=timeout_seconds, check=False)
+                                   text=True, timeout=timeout_seconds, check=False,
+                                   env=environment)
     except subprocess.TimeoutExpired:
         return None, f"claude was silent for {timeout_seconds}s and was killed"
     except OSError as error:
