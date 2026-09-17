@@ -75,6 +75,32 @@ already a full draft of that capability, in the form his 2026-09-06 rule prescri
 design-to-main node's agent-instructions rather than a skill. What is genuinely open is narrower:
 whether a design written outside design-to-main reuses those instructions or needs its own route.
 
+**Design exploration is separate from design-to-main, and the handover between them is undefined.**
+The user ruled on 2026-09-17 that the decision to commit to building something stays manual and
+outside the state machine: invoking design-to-main is the act of committing, and before that a
+design is ordinary prose work — written by hand, cold-read, walked with the user, then merged or
+dropped. Two things make that the right line, both in
+`docs/design-to-main/design-to-main-state-machine-design.md`. Its unit of work is a component, "one
+design, one component, one run", and early design is often asking whether there is a component at
+all, or one rather than three. And its design-writing state writes the component-contract in the
+same breath as the design: the queued agent-instructions at
+`docs/agents/queue/design-to-main-design-writing-agent-instructions.md` tell that agent to settle
+intent and, with it, "the component-contract's details — exit statuses, refusals, what a
+component-consumer gets back — because those details are decisions and this is where they are
+made". A contract is a commitment artifact, so the machine's first writing state already presumes
+the commitment. This is not because the machine cannot abandon a design: transition row 70 takes
+`stop` from `investigate-workflow` to `ended` with outcome `stopped-by-user`, a first-class outcome
+beside `passed` and `failed`, and that argues against the conclusion.
+
+The gap is the handover. When exploration concludes that the thing should be built,
+design-to-main's `design-writing` agent writes the design from scratch in its own conversation, so
+a hand-written, cold-read, user-walked design is either adopted by hand or written again, and
+writing it again throws the exploration away. Those instructions already come close to allowing
+adoption, in the redesign case: the agent receives "the investigation report with the design and
+the component-contract as they stand". Making the invocation able to carry an existing design is
+one sentence, not a new state. Nobody has written that sentence, and it is the sharper form of the
+question the entry above leaves open.
+
 ## Also recorded here
 
 The user said on 2026-09-17 that `docs/cross-project/` is a one-off used to bootstrap this
