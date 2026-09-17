@@ -1135,6 +1135,60 @@ with tempfile.TemporaryDirectory() as workspace_name:
               payload.get("error") == "malformed-field", payload)
         check(f"{cli_label} exits 1, not the defect code", code == 1, code)
 
+    # The internal `worker` re-entry is hidden (ruled 2026-08-12). It was once
+    # registered with add_parser(help=argparse.SUPPRESS), which argparse does
+    # not honor there: --help printed `worker  ==SUPPRESS==` and the refusal
+    # for an unknown subcommand listed `worker` among the choices. Each check
+    # also asserts the public commands are present, so an empty reply cannot
+    # pass as a hidden one.
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--help"],
+        capture_output=True, text=True, check=False,
+        env={**os.environ, "XDG_STATE_HOME": str(state_home)},
+    )
+    check("--help exits 0 and lists the caller-facing subcommands",
+          completed.returncode == 0 and "check-in" in completed.stdout
+          and "audit" in completed.stdout, completed)
+    check("--help never prints the literal ==SUPPRESS==",
+          "==SUPPRESS==" not in completed.stdout, completed.stdout)
+    check("--help does not name the internal worker subcommand",
+          "worker" not in completed.stdout, completed.stdout)
+
+    code, payload = run_gatekeeper(["no-such-subcommand"], state_home)
+    check("an unknown subcommand refuses as malformed-field, naming the public choices",
+          payload.get("error") == "malformed-field" and code == 1
+          and "'check-in'" in payload.get("facts", ""), payload)
+    check("an unknown subcommand's refusal does not name the internal worker subcommand",
+          "worker" not in json.dumps(payload), payload)
+
+    # Hidden is not removed: the --no-wait spawn re-invokes the program as
+    # `worker <digest>`, and that must still reach run_worker with the digest.
+    original_run_worker = gatekeeper.run_worker
+    original_sweep_stale_workspaces = gatekeeper.sweep_stale_workspaces
+    dispatched = []
+    gatekeeper.run_worker = lambda arguments: dispatched.append(vars(arguments)) or 0
+    gatekeeper.sweep_stale_workspaces = lambda: None
+    try:
+        worker_exit = gatekeeper.main(["worker", "d" * 64])
+    finally:
+        gatekeeper.run_worker = original_run_worker
+        gatekeeper.sweep_stale_workspaces = original_sweep_stale_workspaces
+    check("the internal worker subcommand still parses and dispatches its digest",
+          worker_exit == 0
+          and dispatched == [{"command": "worker", "digest": "d" * 64}], dispatched)
+
+    # The same, from a real command line: a worker for a digest with no
+    # workspace reaches run_worker, which prints nothing and exits with the
+    # defect code — never a parser refusal, which would print JSON and exit 1.
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "worker", "e" * 64],
+        capture_output=True, text=True, check=False,
+        env={**os.environ, "XDG_STATE_HOME": str(state_home)},
+    )
+    check("a worker command line reaches run_worker, not a parser refusal",
+          completed.returncode == gatekeeper.EXIT_DEFECT and completed.stdout == "",
+          completed)
+
     # --- deletions and additions, since the happy path only modified -------
     remote, work, base = make_fixture(workspace, "addremove")
     (work / "added.txt").write_text("new content\n", encoding="utf-8")
