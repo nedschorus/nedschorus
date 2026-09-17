@@ -42,6 +42,16 @@ The user's words: "the tricky part is how to make the walk efficient. I think i'
 - **Kept** as it is.
 - **Deleted**, with its index line.
 
+## Walking a ned-box drain from the Mac
+
+The user sits at the Mac; the seats run on ned-box. Two things follow.
+
+**A drain is only complete when it runs from the Mac.** The Mac reaches ned-box over `ssh nedlern@ned-box`, so a Mac-side session lists and changes both stores. Nothing gives ned-box a way back to the Mac, so a drain run in a ned-box session covers ned-box's store alone and says so.
+
+**He does not have to be on the machine that wrote an entry.** Every entry is listed with its origin session, so ned-box's entries come up in whatever session he is already talking to, and a deletion or an edit he approves there is carried out over that same SSH connection.
+
+**When the drain he wants is inside a ned-box seat's own session**, he reaches it from the Mac the ordinary way, with `scripts/launch-claude-ubuntu <seat>`: it attaches to that seat's existing tmux session on the box rather than starting a second one, and the drain list appears in the pane he is then in. `ssh nedlern@ned-box -t 'claude agents'` lists the box's sessions when he wants to see what is running first.
+
 ## Why the console echo goes
 
 The issue's original plan was two hooks printing a line whenever memory was read or written. That is worth little now:
