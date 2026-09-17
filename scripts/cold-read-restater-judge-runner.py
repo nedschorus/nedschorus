@@ -5,7 +5,7 @@ One invocation = one restater class judged. It takes that restater's
 restatements beside the rough drafts they came from, the perfect versions and
 the scrubbed defect lists, launches the two ruled judge runs in parallel
 through scripts/cold-read-restater-judge-cell.py, and writes their two reports
-and one combined result into a record directory of this restater's own --
+and one combined result into a cold-read-record of this restater's own --
 its own, and no earlier judging's: the default directory name takes a -2, -3
 suffix when the day's name is taken, the way scripts/cold-read-grid.py's
 `make_record_dir` does, because the shared module clears a report path before
@@ -18,25 +18,26 @@ Usage:
       --case ... --case ...
 
 --prompt-file is required, and is handed to both runs unchanged. Neither this
-program nor the judge cell carries the judge's instructions: that text is
-operative prose, and this project reads operative prose before a pull request,
-by cold read and by the user, so it travels through the user's walk rather
-than inside a program. The cell's docstring says where it lands.
+program nor the judge cold-read-cell carries the judge's instructions:
+that text is operative prose, and this project reads operative prose before
+a pull request, by cold read and by the user, so it travels through the
+user's walk rather than inside a program. The cold-read-cell's docstring
+says where it lands.
 
 THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"), from item 5 of the walk
 docs/walk/fast-cold-read-perfect-test-cases.md at the cold-read-research seat,
 uncommitted there, which is why the ruling is written out here and in the
-cell. One fresh Fable 5.1 instance at xhigh per restater class, given the
-three rough drafts, the three perfect versions, the three defect lists and
+cold-read-cell. One fresh Fable 5.1 instance at xhigh per restater class, given
+the three rough drafts, the three perfect versions, the three defect lists and
 that restater's three restatements; it counts the problems the restatements
 caught, BY DEFECT NUMBER, and the places the restatement was stupid -- a
 sentence the perfect version keeps unchanged that the restatement misread --
 and reports one score weighted 80 percent caught and 20 percent stupid, with
-the raw counts beside the composite. TWO judge runs per restater, the two
-shown separately when they disagree. Opus 5 at max judges when Fable is
-unavailable, marked as such in the record. Problems a restatement caught that
-are not on the defect list go back to the scrub rather than being scored.
+the raw counts beside the composite. TWO judge runs per restater, the two shown
+separately when they disagree. Opus 5 at max judges when Fable is unavailable,
+marked as such in the record. Problems a restatement caught that are not on the
+defect list go back to the scrub rather than being scored.
 
 WHAT THE MODEL DOES AND WHAT THIS PROGRAM DOES. The judge reports items: one
 line per defect it says the restatement caught, naming the defect's number;
@@ -83,19 +84,19 @@ which case the items below belong to, and each sends them to that section with
 the heading they sat under. Nothing is dropped and nothing is guessed at; the
 rule and its one cost are written out over `parse_judge_report`.
 
-NO RETRY, deliberately. The fast read retries its cell once because a walk is
-waiting on it. A judge run has already tried both models in the ruled chain
-by the time it fails, so the retry that would help has happened; what is left
-is an outage, and the record should say so rather than spend another xhigh
-run on it.
+NO RETRY, deliberately. The cold-read-fast-read retries its cold-read-cell
+once because a walk is waiting on it. A judge run has already tried both models
+in the ruled chain by the time it fails, so the retry that would help has
+happened; what is left is an outage, and the record should say so rather than
+spend another xhigh run on it.
 
 Exit codes: 0 both runs were judged and scored; 1 one or both runs failed (the
 combined result is still written when one landed); 64 this program refused the
 invocation and never launched a run, naming its own fix.
 
 Output: exactly one line on stdout -- the combined result's path on success,
-or a line opening `FAILED` -- and every cell's own progress on stderr, the
-launcher's lines and the runtime's alike.
+or a line opening `FAILED` -- and every cold-read-cell's own progress on
+stderr, the launcher's lines and the runtime's alike.
 """
 
 from __future__ import annotations
@@ -113,21 +114,23 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIR = REPO_ROOT / "cold-read-records"
 JUDGE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-restater-judge-cell.py")
 
-# The judge cell itself, loaded the way the grid loads the shared module: for
-# its label rule, its pass tokens and the refusals it raises, so the two
-# programs cannot drift on any of them.
+# The judge cold-read-cell itself, loaded the way the cold-read-grid loads
+# the shared module: for its label rule, its pass tokens and the refusals it
+# raises, so the two programs cannot drift on any of them.
 _judge_cell_spec = importlib.util.spec_from_file_location(
     "cold_read_restater_judge_cell", JUDGE_CELL_LAUNCHER
 )
 judge_cell = importlib.util.module_from_spec(_judge_cell_spec)
 _judge_cell_spec.loader.exec_module(judge_cell)
 
-# The shared module, taken from the judge cell rather than loaded again, for
-# the status phrases it pins as contracts with whoever reads a cell's log.
+# The shared module, taken from the judge cold-read-cell rather than loaded
+# again, for the status phrases it pins as contracts with whoever reads a
+# cold-read-cell's log.
 # THE COPY MATTERS: a second `spec_from_file_location` load of the same file
 # builds a second module object with its own classes, so a `CellRefusal`
-# raised by the judge cell's copy is not caught by an `except` naming this
-# program's -- measured here, as a traceback where a refusal exit 64 belonged.
+# raised by the judge cold-read-cell's copy is not caught by an `except`
+# naming this program's -- measured here, as a traceback where a refusal
+# exit 64 belonged.
 cell_common = judge_cell.common
 
 PROGRAM = "cold-read-restater-judge-runner"
@@ -178,14 +181,14 @@ PARTIAL_RESULT_MARKER_PREFIX = "<!-- PARTIAL RESULT:"
 
 
 def build_runner_argument_parser():
-    """This program's argument surface: the judge cell's, minus the report.
+    """This program's argument surface: the judge cold-read-cell's, minus the report.
 
-    The cases are the cell's own --case, four paths in one flag, so an
-    operator who has run the cell by hand types the same line here, and
-    --prompt-file is the cell's own too, passed through unchanged so both runs
-    judge under one set of instructions. Where the reports go is this
-    program's business, not the caller's: two runs of one restater belong in
-    one record directory, named for the restater.
+    The cases are the cold-read-cell's own --case, four paths in one flag, so an
+    operator who has run the cold-read-cell by hand types the same line here,
+    and --prompt-file is the cold-read-cell's own too, passed through unchanged
+    so both runs judge under one set of instructions. Where the reports go is
+    this program's business, not the caller's: two runs of one restater belong
+    in one cold-read-record, named for the restater.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -218,7 +221,7 @@ def build_runner_argument_parser():
 
 
 def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
-    """This restater's record directory: dated, named for the class, created here.
+    """This restater's cold-read-record: dated, named for the class, created here.
 
     The date and the class together, because a restater is judged again
     whenever a defect list grows -- the scrub accepting one off-list problem
@@ -254,11 +257,12 @@ def judge_report_path(record_dir: pathlib.Path, run_number: int) -> pathlib.Path
 
     `<record dir name>--<runtime>-<pass token>-run<N>.md`, following the
     record convention that every file carries its run's own name (user-ruled
-    2026-08-25). The last token is a tier on the other cells; the judge has
-    one tier, so the run number takes that slot -- and it MUST take some
-    slot, because the shared module's near-miss recovery searches the records
-    tree for a file of the report's exact name. Two runs of one restater
-    sharing a name is exactly the collision that ruling was written about.
+    2026-08-25). The last token is a cold-read-tier on the other
+    cold-read-cells; the judge has one cold-read-tier, so the run number
+    takes that slot -- and it MUST take some slot, because the shared module's
+    near-miss recovery searches the records tree for a file of the report's
+    exact name. Two runs of one restater sharing a name is exactly the
+    collision that ruling was written about.
     """
     return record_dir / (
         f"{record_dir.name}--{judge_cell.JUDGE_RUNTIME}-{judge_cell.JUDGE_CELL}"
@@ -272,16 +276,17 @@ def combined_result_path(record_dir: pathlib.Path) -> pathlib.Path:
 
 
 def judge_cell_status_line(line: str, phrase: str) -> bool:
-    """True when `line` is the judge cell's own status line carrying `phrase`.
+    """True when `line` is the judge cold-read-cell's own status line carrying `phrase`.
 
-    The grid's rule, applied to this program's one cell: the cell writes every
-    line of its own as `<program>: <sentence>`, and the phrases lifted here
-    each open that sentence. A bare substring test cannot tell the cell's
-    sentence from the model's -- on 2026-09-02 a reviewed document quoting a
-    code comment with "fell back to" in it made two cells read as fallen back
-    when both had run on the models asked for (nedschorus#244) -- and the
-    judge's own materials are documents about cold-read cells, so the phrases
-    it is handed to read are exactly the phrases this test must not confuse.
+    The cold-read-grid's rule, applied to this program's one cold-read-cell:
+    the cold-read-cell writes every line of its own as `<program>: <sentence>`,
+    and the phrases lifted here each open that sentence. A bare substring test
+    cannot tell the cold-read-cell's sentence from the model's -- on 2026-09-02
+    a cold-read-target quoting a code comment with "fell back to" in it made
+    two cold-read-cells read as fallen back when both had run on the models
+    asked for (nedschorus#244) -- and the judge's own materials are documents
+    about cold-read-cells, so the phrases it is handed to read are exactly the
+    phrases this test must not confuse.
     """
     stripped = line.strip()
     return stripped.startswith(f"{judge_cell.PROGRAM}: {phrase}")
@@ -294,10 +299,11 @@ def launch_judge_runs(
     """Start both judge runs in parallel. Returns {run number: (process,
     report path, stderr log path)}.
 
-    In parallel, as the grid launches its cells: the two runs are independent
-    readings of the same materials, and one waiting on the other buys
-    nothing. The parent's file handle is closed right after each spawn; the
-    child keeps its own copy, so a with-block is the wrong shape here.
+    In parallel, as the cold-read-grid launches its cold-read-cells:
+    the two runs are independent readings of the same materials, and one
+    waiting on the other buys nothing. The parent's file handle is closed
+    right after each spawn; the child keeps its own copy, so a with-block
+    is the wrong shape here.
     """
     running = {}
     for run_number in range(1, JUDGE_RUNS + 1):
@@ -325,10 +331,10 @@ def wait_for_judge_runs(running: dict) -> dict:
     """Poll until both runs finish. Returns {run number: exit code}.
 
     Every run's log is re-emitted whole on this program's stderr as it
-    finishes, so a caller reading stderr gets the cell's account and the
-    runtime's; the lines the cell pins as contracts are lifted out of it
-    first and printed again on their own, because a fallback, a stray write
-    or a write check that never ran should not have to be found in a log.
+    finishes, so a caller reading stderr gets the cold-read-cell's account and
+    the runtime's; the lines the cold-read-cell pins as contracts are lifted
+    out of it first and printed again on their own, because a fallback, a stray
+    write or a write check that never ran should not have to be found in a log.
     """
     exit_codes = {}
     while running:
@@ -540,10 +546,10 @@ def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict
     reported, and whether it can be scored at all.
 
     THREE OUTCOMES, kept apart. A run that produced no report is a run that
-    did not happen -- the cell enforces that and this reads it back from the
-    file, not from the exit code alone. A run whose report holds no `## CASE`
-    heading naming one of THIS run's own cases produced text this program
-    cannot place: it is unusable, and saying "0 caught" of it would be
+    did not happen -- the cold-read-cell enforces that and this reads it back
+    from the file, not from the exit code alone. A run whose report holds no
+    `## CASE` heading naming one of THIS run's own cases produced text this
+    program cannot place: it is unusable, and saying "0 caught" of it would be
     inventing a judgment. Only a run with at least one such heading is scored
     -- a report whose every heading is a `## CASE 4` in a three-case run is as
     unplaceable as one with no heading at all.
@@ -591,7 +597,7 @@ def format_defect_numbers(numbers) -> str:
 def render_combined_result(
     restater_class: str, cases, runs: dict, case_arguments,
 ) -> str:
-    """The reading of the two runs, as the file the record keeps.
+    """The reading of the two runs, as the file the cold-read-record keeps.
 
     Both runs are shown separately throughout -- one row each, per case and
     pooled -- because the ruling asks for that whenever they disagree, and a
@@ -809,13 +815,14 @@ def main() -> int:
     parser = build_runner_argument_parser()
     args = parser.parse_args()
 
-    # Refused here as well as in the cell, and before anything is launched:
-    # the cell would refuse each of these the same way, but only after two
-    # processes had started, and an operator who mistyped one of twelve paths
-    # -- or pointed --prompt-file at a file that is not there yet -- should be
-    # told once rather than twice from inside a record directory that had
-    # already been created. The cell's own resolvers are called, not copies of
-    # them, which is part of why this program imports the cell.
+    # Refused here as well as in the cold-read-cell, and before anything is
+    # launched: the cold-read-cell would refuse each of these the same way, but
+    # only after two processes had started, and an operator who mistyped one of
+    # twelve paths -- or pointed --prompt-file at a file that is not there yet
+    # -- should be told once rather than twice from inside a cold-read-record
+    # that had already been created. The cold-read-cell's own resolvers
+    # are called, not copies of them, which is part of why this program
+    # imports the cold-read-cell.
     try:
         judge_cell.validate_restater_class(args.restater)
         judge_cell.resolve_judge_prompt_file(args.prompt_file)

@@ -1,74 +1,78 @@
 #!/usr/bin/env python3
-"""Give one document the fast cold read: one fast-clarify cell on the fast tier.
+"""Give one document the cold-read-fast-read: one fast-clarify cold-read-cell
+on the fast cold-read-tier.
 
 Usage:
   scripts/cold-read-fast-read.py --target docs/walk/foo-draft.md
 
-WHAT IT DOES. Picks the report path from the target, runs ONE fast-clarify
-cell on the fast tier through scripts/cold-read-agy-cell.py (user-ruled
-2026-09-07 after measurements, superseding the earlier ruling for low: Gemini
-3.8 Flash at medium, about 100-110 s per document in single runs on a
-658-word skill and a 1,967-word walk draft, recall 42% against 19% at low on
-the ghi-write candidate defect list, replacing gpt-5.6-terra at low), retries
-once if that cell fails, and then prints exactly one line on stdout: the
-report's absolute path on success, or a line opening `FAILED` on failure. Exit
-0 on success, 1 on failure, 64 when the invocation itself was wrong (a --target
-that is not a file) and nothing was launched. Every cell's own progress -- the launcher's stderr, the runtime's
-stderr, the stray-write and recovery lines -- is re-emitted on this program's
-stderr, so a caller watching stdout gets the one line and a caller reading
-stderr gets the whole account.
+WHAT IT DOES. Picks the report path from the cold-read-target, runs
+ONE fast-clarify cold-read-cell on the fast cold-read-tier through
+scripts/cold-read-agy-cell.py (user-ruled 2026-09-07 after measurements,
+superseding the earlier ruling for low: Gemini 3.8 Flash at medium, about
+100-110 s per document in single runs on a 658-word skill and a 1,967-word walk
+draft, recall 42% against 19% at low on the ghi-write candidate defect list,
+replacing gpt-5.6-terra at low), retries once if that cold-read-cell fails, and
+then prints exactly one line on stdout: the report's absolute path on success,
+or a line opening `FAILED` on failure. Exit 0 on success, 1 on failure, 64 when
+the invocation itself was wrong (a --target that is not a file) and nothing
+was launched. Every cold-read-cell's own progress -- the launcher's stderr, the
+runtime's stderr, the stray-write and recovery lines -- is re-emitted on this
+program's stderr, so a caller watching stdout gets the one line and a caller
+reading stderr gets the whole account.
 
-WHAT THE REVIEWER ACTUALLY READS is not the document but a copy of it with an
-id on every sentence, `<name>-with-sentence-ids.md`, written by this program
-before the cell launches (nedschorus#284 step 2). Question 1 asks for a
-restatement under each id, so the author's check stops being an eyeball match
-between a restatement and a four-word anchor. When the report lands, this
-program puts each original sentence under the restatement claiming its id and
-appends a coverage section naming the sentences no restatement claimed and any
-id the reviewer cited that the document does not have. A sentence never
-restated is a sentence the reviewer may never have read, which is the failure
-the four-word anchor could not surface.
+WHAT THE REVIEWER ACTUALLY READS is not the cold-read-target but a copy of it
+with an id on every sentence, `<name>-with-sentence-ids.md`, written by this
+program before the cold-read-cell launches (nedschorus#284 step 2). Question
+1 asks for a restatement under each id, so the author's check stops being an
+eyeball match between a restatement and a four-word anchor. When the report
+lands, this program puts each original sentence under the restatement claiming
+its id and appends a coverage section naming the sentences no restatement
+claimed and any id the reviewer cited that the cold-read-target does not have.
+A sentence never restated is a sentence the reviewer may never have read, which
+is the failure the four-word anchor could not surface.
 
-The markup never alters the document. sentence_id_markup inserts exactly two
-shapes and strip_sentence_ids removes exactly those two, so the marked copy
-returns the original bytes; the test asserts that round trip. On the records
-route the marked copy is kept beside the report and ships with the record, as
-the evidence of what was put in front of the reviewer, and `target/` still
-holds the document's own bytes. On the walk route it is scratch.
+The markup never alters the cold-read-target. sentence_id_markup inserts
+exactly two shapes and strip_sentence_ids removes exactly those two, so the
+marked copy returns the original bytes; the test asserts that round trip.
+On the records route the marked copy is kept beside the report and ships
+with the cold-read-record, as the evidence of what was put in front of the
+reviewer, and `target/` still holds the cold-read-target's own bytes. On the
+walk route it is scratch.
 
 WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md`, gets its
 suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
 the walk reads next. Anything else -- a design, a skill, a record copy, a
-file outside this checkout -- gets a record directory of its own under the
+file outside this checkout -- gets a cold-read-record of its own under the
 gitignored records tree: `cold-read-records/<YYYY-MM-DD>-<name>/<name>-fast-read.md`,
-where <name> is the target's file name without its extension, and the
-directory takes a -2, -3 suffix when the day's name is taken, the grid's
-rule. That directory also gets `target/<repository path>`, the exact bytes
-the reviewer read, frozen before the cell launches, and once the report has
-landed the directory is shipped to the log-store on ned-box by
-scripts/cold-read-record-ship.py, whose one line is printed on stderr as
+where <name> is the cold-read-target's file name without its extension, and the
+directory takes a -2, -3 suffix when the day's name is taken, the
+cold-read-grid's rule. That directory also gets `target/<repository path>`, the
+exact bytes the reviewer read, frozen before the cold-read-cell launches, and
+once the report has landed the directory is shipped to the log-store on ned-box
+by scripts/cold-read-record-ship.py, whose one line is printed on stderr as
 `record:` (user-ruled 2026-09-07; a shipping failure never fails the read).
-The cell launcher pre-clears the report path, so a suggestions file left by
-an earlier read is replaced, never appended to.
+The cold-read-cell launcher pre-clears the report path, so a suggestions file
+left by an earlier read is replaced, never appended to.
 
 THE REVIEWER'S INSTRUCTIONS LIVE IN THIS FILE (user ruling): the text the
 model receives is FAST_CLARIFY_PROMPT_TEMPLATE below, fed to the launcher
 through --prompt-file from a temporary file, with --cell fast-clarify naming
-the pass. The cell's provenance stamp therefore carries a `prompt_file=`
-field naming that temporary file; its basename says where the text came
-from. The template is the user's own text:
-.claude/skills/cold-read/prompts/fast-clarify.md as he walked and ruled it,
-landed by PR #274 on 2026-09-07, copied here verbatim. A change to the
+the pass. The cold-read-cell's provenance stamp therefore carries
+a `prompt_file=` field naming that temporary file; its basename
+says where the text came from. The template is the user's own text:
+.claude/skills/cold-read/prompts/fast-clarify.md as he walked and ruled
+it, landed by PR #274 on 2026-09-07, copied here verbatim. A change to the
 instructions is a one-hunk change to that one constant; nothing else in this
 file knows what the text says. The prompt file under the skill is not read by
 this program, so the two are kept in step by hand.
 
-ONE RETRY, AND WHY NOT MORE. The fast read is a walk's instrument, and the
-walk is waiting on it: a cell that fails once -- a transient CLI error, a
-model that neither wrote the file nor answered in chat -- is worth one more
-try, and a cell that fails twice is worth reporting so the walk can go on
-without it. A refusal from the launcher (exit 64, a bad invocation) is not
-retried, because the same invocation would be refused the same way.
+ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
+and the walk is waiting on it: a cold-read-cell that fails once -- a transient
+CLI error, a model that neither wrote the file nor answered in chat -- is
+worth one more try, and a cold-read-cell that fails twice is worth reporting
+so the walk can go on without it. A refusal from the launcher (exit 64,
+a bad invocation) is not retried, because the same invocation would be
+refused the same way.
 """
 
 from __future__ import annotations
@@ -83,14 +87,15 @@ import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
-# The program that copies a record directory to the log-store on ned-box
-# (user-ruled 2026-09-07: records are logs, not system). Run after a read
-# on the records route lands its report; its one line goes to stderr, since
-# this program's stdout is the report path and nothing else, and a shipping
-# failure never fails the read.
+# The program that copies a cold-read-record to the log-store on ned-box
+# (user-ruled 2026-09-07: cold-read-records are logs, not system). Run after
+# a read on the records route lands its report; its one line goes to stderr,
+# since this program's stdout is the report path and nothing else, and a
+# shipping failure never fails the read.
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
-# Where the target's bytes are frozen inside the record directory: under this
-# name at the target's own repository path, as scripts/cold-read-grid.py does.
+# Where the cold-read-target's bytes are frozen inside the cold-read-record:
+# under this name at the cold-read-target's own repository path, as
+# scripts/cold-read-grid.py does.
 FROZEN_TARGET_DIRECTORY_NAME = "target"
 WALK_DIRECTORY_RELATIVE = pathlib.Path("docs") / "walk"
 RECORDS_DIR = REPO_ROOT / "cold-read-records"
@@ -110,7 +115,7 @@ EMBEDDED_PROMPT_FILE_NAME = "cold-read-fast-read-embedded-fast-clarify-prompt.md
 
 # The user's text (see the docstring): .claude/skills/cold-read/prompts/fast-clarify.md
 # as landed by PR #274 on 2026-09-07, verbatim. {TARGET_PATH} and
-# {REPORT_PATH} are substituted by the cell launcher.
+# {REPORT_PATH} are substituted by the cold-read-cell launcher.
 FAST_CLARIFY_PROMPT_TEMPLATE = """\
 Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Your context is deliberately minimal — what your runtime already loaded, the document or documents under review, and whatever they reference by an explicit path. Nothing else: do not go looking. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this info. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report. If {TARGET_PATH} contains multiple documents, treat them like chapters of one book: any one of them can define or explain what the others rely on, and they should be consistent amongst themselves; repetition is fine, gaps or inconsistencies are not. Read all of them, then answer the 3 questions for each document in the report.
 
@@ -169,20 +174,20 @@ def fast_read_report_path_for_target(target: pathlib.Path, today: str) -> pathli
 # Document stems that name a KIND of file rather than the document: every
 # skill in this project is `.claude/skills/<name>/SKILL.md`, so its stem is
 # "SKILL" and says nothing about which skill. Measured 2026-09-15: two skills
-# fast-read on one day both wanted the record name 2026-09-15-SKILL; the
-# shipper refused the second (correctly, on provenance) and it went to the
-# store as 2026-09-15-SKILL-2, which says neither which skill nor what the
-# -2 distinguishes. For these stems the record is named after the parent
-# directory instead, which is the name that means something. Compared
+# fast-read on one day both wanted the cold-read-record name 2026-09-15-SKILL;
+# the shipper refused the second (correctly, on provenance) and it went to
+# the store as 2026-09-15-SKILL-2, which says neither which skill nor what the
+# -2 distinguishes. For these stems the cold-read-record is named after the
+# parent directory instead, which is the name that means something. Compared
 # case-insensitively; every other stem is used as it is, so no existing
-# record shape changes. Restated in scripts/cold-read-grid.py, which is a
-# program rather than a module.
+# cold-read-record shape changes. Restated in scripts/cold-read-grid.py, which
+# is a program rather than a module.
 GENERIC_DOCUMENT_STEMS = ("skill", "readme", "index")
 
 
 def record_name_for_target(target: pathlib.Path) -> str:
-    """The document's part of a record name: its stem, or its parent
-    directory's name when the stem is one of GENERIC_DOCUMENT_STEMS."""
+    """The cold-read-target's part of a cold-read-record name: its stem, or its
+    parent directory's name when the stem is one of GENERIC_DOCUMENT_STEMS."""
     if target.stem.lower() in GENERIC_DOCUMENT_STEMS and target.parent.name:
         return target.parent.name
     return target.stem
@@ -192,10 +197,11 @@ def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
     """The day's name, or the first of -2, -3, ... that is not taken.
 
     The rule scripts/cold-read-grid.py's make_record_dir applies, restated
-    here rather than imported because the grid is a program, not a module
-    (user-ruled 2026-09-07 with the frozen target: two frozen targets never
-    share a directory, so a fast read after a grid run on the same document
-    and day, or after an earlier fast read of a revised draft, takes its own).
+    here rather than imported because the cold-read-grid is a program, not a
+    module (user-ruled 2026-09-07 with the frozen cold-read-target: two frozen
+    cold-read-targets never share a directory, so a cold-read-fast-read after
+    a cold-read-full-run on the same cold-read-target and day, or after an
+    earlier cold-read-fast-read of a revised draft, takes its own).
     Nothing is created here; the launcher creates the report's directory.
     """
     record_dir = base
@@ -208,9 +214,9 @@ def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
 
 # --- Sentence ids -------------------------------------------------------
 #
-# nedschorus#284 step 2. The reader is handed a copy of the document with an
-# id on every sentence, and Question 1 asks it to restate each sentence under
-# its id. That replaces the four-word anchor, which the 2026-09-07
+# nedschorus#284 step 2. The reader is handed a copy of the cold-read-target
+# with an id on every sentence, and Question 1 asks it to restate each sentence
+# under its id. That replaces the four-word anchor, which the 2026-09-07
 # measurement found suppresses paraphrase but still leaves the author matching
 # restatements to sentences by eye. With ids the match is mechanical, so this
 # program can attach each original sentence to the restatement that claims it
@@ -278,8 +284,8 @@ def strip_sentence_ids(text: str) -> str:
     sentence, and ` [sN]` at the end of a code block's opening fence line --
     so removing exactly those two returns the original bytes. That invariant
     is what lets the marked copy be thrown away and the ids be trusted: a
-    marked copy that does not strip back has altered the document under
-    review.
+    marked copy that does not strip back has altered the
+    cold-read-target.
     """
     text = re.sub(r"\[s\d+\] ", "", text)
     return re.sub(r" \[s\d+\]$", "", text, flags=re.MULTILINE)
@@ -413,9 +419,9 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 
     The reviewer sees only the marked copy, so its report cites ids and not
     the prose. Attaching the original here is what makes the report readable
-    beside the document without a second window, and the coverage list is the
-    check the four-word anchor could not give: a sentence the reviewer never
-    restated is a sentence it may never have read.
+    beside the cold-read-target without a second window, and the coverage list
+    is the check the four-word anchor could not give: a sentence the reviewer
+    never restated is a sentence it may never have read.
 
     Only an id STANDING ALONE on its line is treated as a restatement, which
     is the shape Question 1 asks for. An id cited inside a sentence of
@@ -454,12 +460,12 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
         if missing else "- Every sentence was restated.")
     if document is not None:
         # The provenance stamp at the top of the report names the marked copy
-        # the reviewer read, not the document, so this line says which
-        # document that was (reviewer of PR #303). Whether the copy is still
-        # there depends on the route, and saying it is gone when it is not was
-        # the defect the reviewer of PR #307 caught: the records route keeps it
-        # beside the report as evidence, and only the walk route's copy is
-        # temporary.
+        # the reviewer read, not the cold-read-target, so this line says which
+        # cold-read-target that was (reviewer of PR #303). Whether the copy
+        # is still there depends on the route, and saying it is gone when it
+        # is not was the defect the reviewer of PR #307 caught: the records
+        # route keeps it beside the report as evidence, and only the walk
+        # route's copy is temporary.
         coverage.append(
             f"- The reviewer read `{marked_copy_kept}`, the marked copy of "
             f"`{document}`, kept beside this report."
@@ -475,7 +481,8 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 
 def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
     """record_dir/target/<repository path>, or the absolute path minus its
-    leading slash for a target outside the repository -- the grid's rule."""
+    leading slash for a cold-read-target outside the repository -- the
+    cold-read-grid's rule."""
     try:
         relative = target.relative_to(REPO_ROOT)
     except ValueError:
@@ -484,8 +491,9 @@ def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathli
 
 
 def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
-    """Copy the target's bytes into the record before the cell reads it, so
-    the record says exactly what was reviewed (user-ruled 2026-09-07)."""
+    """Copy the cold-read-target's bytes into the cold-read-record before the
+    cold-read-cell reads it, so the cold-read-record says exactly what was
+    reviewed (user-ruled 2026-09-07)."""
     frozen = frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_bytes(target.read_bytes())
@@ -551,8 +559,8 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     report = fast_read_report_path_for_target(target, time.strftime("%Y-%m-%d"))
-    # A walk draft's report lands in docs/walk/ and is not a record; only the
-    # records route freezes the target and ships.
+    # A walk draft's report lands in docs/walk/ and is not a cold-read-record;
+    # only the records route freezes the cold-read-target and ships.
     on_records_route = RECORDS_DIR in report.parents
     if on_records_route:
         freeze_target(target, report.parent)
@@ -561,11 +569,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
         prompt_file = pathlib.Path(scratch) / EMBEDDED_PROMPT_FILE_NAME
         prompt_file.write_text(FAST_CLARIFY_PROMPT_TEMPLATE, encoding="utf-8")
-        # What the reviewer actually reads: the document with an id on every
-        # sentence. On the records route it is kept beside the report, as the
-        # evidence of what was put in front of the reviewer; on the walk route
-        # it is scratch and goes with the temporary directory. Either way the
-        # document itself is untouched, and target/ holds its original bytes.
+        # What the reviewer actually reads: the cold-read-target with an id on
+        # every sentence. On the records route it is kept beside the report,
+        # as the evidence of what was put in front of the reviewer; on the
+        # walk route it is scratch and goes with the temporary directory.
+        # Either way the cold-read-target itself is untouched, and target/
+        # holds its original bytes.
         marked_text, sentences = sentence_id_markup(
             target.read_text(encoding="utf-8"))
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (

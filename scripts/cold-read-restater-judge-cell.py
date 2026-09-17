@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Run one judge cell over one restater's restatements.
+"""Run one judge cold-read-cell over one restater's restatements.
 
 One invocation = one judge run. A restater is a model that read a rough
 draft and said, in its own words, what each sentence of it means; the judge
 reads that restatement beside the draft it came from, the perfect version of
 that document and the scrubbed defect list between them, and reports which
 listed defects the restatement caught and where the restatement was stupid.
-Two runs of this cell make one restater's score; the program that launches
-both and scores them is scripts/cold-read-restater-judge-runner.py.
+Two runs of this cold-read-cell make one restater's score; the program that
+launches both and scores them is scripts/cold-read-restater-judge-runner.py.
 
 THE RULED DESIGN THIS IMPLEMENTS (user-ruled 2026-09-05, "Opus max is the
 backup to Fable. y"). One fresh Claude Fable 5.1 instance at effort xhigh per
@@ -40,20 +40,20 @@ produce one; 64 this program refused the invocation and never launched a
 model, naming its own fix -- a --prompt-file naming no file, or naming an
 empty one, is refused that way like any other bad invocation. 64 rather than the conventional 2 for the reason
 written beside EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which
-every cell shares.
+every cold-read-cell shares.
 
-WHAT THIS LEG SHARES WITH THE OTHER CELLS, AND WHERE IT PARTS FROM THEM.
+WHAT THIS LEG SHARES WITH THE OTHER COLD-READ-CELLS, AND WHERE IT PARTS FROM THEM.
 Everything after the prompt is composed is the shared module's: the model
 chain and its fallback, the report-exists-iff-the-run-succeeded invariant, the
 near-miss recovery, the stray-write detection, the provenance stamp, the exit
 codes. The invocation is the Claude launcher's own -- this file imports
 scripts/cold-read-claude-cell.py and calls its `invocation_builder`, so the
-argv the judge runs under cannot drift from the argv every other Claude cell
-runs under. Two things do part from the other cells, both because the ruled
-design asks for something their shape cannot express:
+argv the judge runs under cannot drift from the argv every other Claude
+cold-read-cell runs under. Two things do part from the other cold-read-cells,
+both because the ruled design asks for something their shape cannot express:
 
-  - FOUR PATHS PER CASE, NOT ONE TARGET. `common.run_cell` and its
-    `--target` name one document; a judge run reads twelve files in four
+  - FOUR PATHS PER CASE, NOT ONE COLD-READ-TARGET. `common.run_cell` and its
+    `--target` name one cold-read-target; a judge run reads twelve files in four
     roles. So this program parses its own arguments (through the shared
     argparse subclass, so a mistyped flag still leaves by exit 64) and
     composes its own prompt, then hands the composed prompt to the shared
@@ -64,39 +64,41 @@ design asks for something their shape cannot express:
     shared runner took one. The ruling pins Fable at xhigh and Opus at max,
     which is one chain at two efforts, and a stamp reading `model=claude-opus-5
     effort=xhigh` would name a run that never happened. The shared runner
-    therefore takes an optional `model_to_effort` map (added with this cell)
-    and stamps the effort of the model that actually produced the report.
+    therefore takes an optional `model_to_effort` map (added with this
+    cold-read-cell) and stamps the effort of the model that actually
+    produced the report.
 
 WHERE THE JUDGE'S INSTRUCTIONS COME FROM: --prompt-file, and nowhere else.
 This program holds no prompt of its own, and the flag is REQUIRED rather than
-an override, which is the one thing about this cell that is not like the
-others. The judge's instructions are operative prose, and this project reads
-operative prose BEFORE a pull request, by cold read and by the user, because
-the pull-request process is the wrong instrument for prose. Carrying the text
-inside this program would have landed it through that wrong door. So the text
-travels separately, through the user's walk, and this cell refuses to run
-until a file holds it -- which is the correct refusal: nothing should judge
-anything until the user has read what the judge is told to do. The file's home
-once he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
-beside every other cell's prompt, and .claude/ changes only through that walk
-(.claude/hooks/instruction-file-guard.py, user-walked 2026-08-07,
-nedschorus#45). This is not the fast read's ruling
+an override, which is the one thing about this cold-read-cell that is
+not like the others. The judge's instructions are operative prose, and
+this project reads operative prose BEFORE a pull request, by cold read
+and by the user, because the pull-request process is the wrong instrument
+for prose. Carrying the text inside this program would have landed it
+through that wrong door. So the text travels separately, through the
+user's walk, and this cold-read-cell refuses to run until a file holds
+it -- which is the correct refusal: nothing should judge anything until
+the user has read what the judge is told to do. The file's home once
+he has walked it is .claude/skills/cold-read/prompts/restater-judge.md,
+beside every other cold-read-cell's prompt, and .claude/ changes only
+through that walk (.claude/hooks/instruction-file-guard.py, user-walked
+2026-08-07, nedschorus#45). This is not the cold-read-fast-read's ruling
 (scripts/cold-read-fast-read.py holds its prompt in the file because the user
-ruled that for the fast cell).
+ruled that for the fast cold-read-cell).
 
-WHY THIS CELL HAS NO --tier. The other launchers take one because they pin
-several measured tiers and the flag chooses among them. The judge has one
-configuration, the ruled one, so there is nothing to choose: `tier=judge` is
-stamped as a constant. --model and --effort still override, the way they do on
-every leg, for a caller who must name a model; a --model this file pins no
-effort for is refused unless --effort names one, rather than run at a level
-nobody chose.
+WHY THIS COLD-READ-CELL HAS NO --tier. The other launchers take one because
+they pin several measured cold-read-tiers and the flag chooses among them.
+The judge has one configuration, the ruled one, so there is nothing to choose:
+`tier=judge` is stamped as a constant. --model and --effort still override,
+the way they do on every leg, for a caller who must name a model; a --model
+this file pins no effort for is refused unless --effort names one, rather than
+run at a level nobody chose.
 
-WHY THIS CELL'S STAMP CARRIES NO `tokens=` FIELD: the same reason the Claude
-leg's does not -- the Claude CLI prints no "tokens used" line, so the field is
-omitted rather than filled with a zero. If the CLI starts printing one, the
-shared parser in scripts/cold-read-cell-common.py picks it up with no change
-here.
+WHY THIS COLD-READ-CELL'S STAMP CARRIES NO `tokens=` FIELD: the same reason
+the Claude leg's does not -- the Claude CLI prints no "tokens used" line,
+so the field is omitted rather than filled with a zero. If the CLI starts
+printing one, the shared parser in scripts/cold-read-cell-common.py picks
+it up with no change here.
 """
 
 from __future__ import annotations
@@ -115,9 +117,10 @@ common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
 
 # The Claude leg itself, imported for its invocation: the judge is a Claude
-# cell, and the one thing a cell owns is how it invokes its model. Importing
-# rather than repeating means a change to the Claude invocation -- a flag the
-# CLI renames, a tool the cells stop allowing -- reaches the judge with it.
+# cold-read-cell, and the one thing a cold-read-cell owns is how it invokes
+# its model. Importing rather than repeating means a change to the Claude
+# invocation -- a flag the CLI renames, a tool the cold-read-cells stop
+# allowing -- reaches the judge with it.
 _claude_cell_spec = importlib.util.spec_from_file_location(
     "cold_read_claude_cell", pathlib.Path(__file__).with_name("cold-read-claude-cell.py")
 )
@@ -139,11 +142,11 @@ JUDGE_TIER = "judge"
 # exit, and an exit 0 with no report). The fallback is that chain and no
 # separate mechanism: it clears the report path between attempts, records
 # every failed attempt in `fallback_from=` on the stamp, and prints the
-# shared FELL_BACK_PHRASE line the runner and the grid lift out of the log.
-# This is the one chain in the fleet with a second entry; every tier the other
-# legs pin has a single model (user-ruled 2026-09-04, Opus falling back to
-# Fable is not valid for a REVIEW). A judgment is not a review, and the user
-# ruled its backup explicitly, in those words.
+# shared FELL_BACK_PHRASE line the runner and the cold-read-grid lift out of
+# the log. This is the one chain in the fleet with a second entry; every
+# cold-read-tier the other legs pin has a single model (user-ruled 2026-09-04,
+# Opus falling back to Fable is not valid for a REVIEW). A judgment is not a
+# review, and the user ruled its backup explicitly, in those words.
 JUDGE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
 
 # Model -> the effort it judges at (user-ruled 2026-09-05: "fable at xhigh",
@@ -158,8 +161,9 @@ JUDGE_MODEL_TO_REASONING_EFFORT = {
 # What --restater may be: the restater class under judgment, named as the
 # roster names its models (claude-opus-5, gpt-5.6-sol, gemini-3.8-flash-low).
 # Lowercase letters and digits joined by single hyphens or dots, so the label
-# is safe as a path segment -- the runner builds this restater's record
-# directory name out of it -- and reads in a report as the model it names.
+# is safe as a path segment -- the runner builds this restater's
+# cold-read-record name out of it -- and reads in a report as the
+# model it names.
 RESTATER_CLASS_LABEL_PATTERN = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*$")
 
 # The four files one case is made of, in the order --case takes them, each
@@ -180,9 +184,10 @@ JUDGED_ROLE_INDEX = 3
 # file that holds them, and it is required: see "WHERE THE JUDGE'S
 # INSTRUCTIONS COME FROM" in the docstring. The three substitutions
 # `compose_judge_prompt` makes in whatever that file holds are
-# {RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} -- the other cells'
-# templates take {TARGET_PATH} and {REPORT_PATH}, and this one takes a block of
-# cases instead of one target because a judge run reads twelve files.
+# {RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} -- the other
+# cold-read-cells' templates take {TARGET_PATH} and {REPORT_PATH}, and this
+# one takes a block of cases instead of one cold-read-target because a judge
+# run reads twelve files.
 #
 # THE JUDGE COUNTS NOTHING, whatever the prompt file says about anything else.
 # The ruling's score is arithmetic over the items the judge reports, and the
@@ -194,13 +199,13 @@ JUDGED_ROLE_INDEX = 3
 
 
 def build_judge_argument_parser():
-    """This cell's own argument surface, on the shared argparse subclass.
+    """This cold-read-cell's own argument surface, on the shared argparse subclass.
 
     The subclass is what keeps a mistyped flag leaving by exit 64 rather than
-    argparse's default 2, which is the collision every cell avoids. The flags
-    themselves cannot be the shared `build_argument_parser`'s: that one names
-    one --target and one --tier, and a judge run takes four paths per case and
-    has one tier.
+    argparse's default 2, which is the collision every cold-read-cell avoids.
+    The flags themselves cannot be the shared `build_argument_parser`'s: that
+    one names one --target and one --tier, and a judge run takes four paths per
+    case and has one cold-read-tier.
     """
     parser = common.BadInvocationArgumentParser(
         description=__doc__,
@@ -263,12 +268,12 @@ def resolve_judge_prompt_file(path_argument: str) -> pathlib.Path:
     """The file holding the judge's instructions: present, and not empty.
 
     The shared `resolve_prompt_file` already refuses a path that names no
-    file. The empty check is this cell's own, and lives here rather than in
-    the shared module because no other leg needs it: on every other leg the
-    prompt file is an override of a template the program carries, so an empty
-    one is a caller's mistake with a working default behind it. Here there is
-    no default -- an empty file would send the judge twelve paths and no
-    instructions, and that run would burn an xhigh judgment to produce
+    file. The empty check is this cold-read-cell's own, and lives here rather
+    than in the shared module because no other leg needs it: on every other
+    leg the prompt file is an override of a template the program carries, so
+    an empty one is a caller's mistake with a working default behind it. Here
+    there is no default -- an empty file would send the judge twelve paths
+    and no instructions, and that run would burn an xhigh judgment to produce
     whatever a model does with a bare list of files.
     """
     prompt_file = common.resolve_prompt_file(path_argument)
@@ -357,10 +362,11 @@ def judge_invocation_builder(model_to_effort: dict, uniform_effort: str):
 
 
 def main() -> int:
-    # The cell's clock starts before anything else, so `duration_s=` in the
-    # stamp is the cost of the whole cell -- a failed Fable attempt included --
-    # rather than of the attempt that happened to succeed. The other legs take
-    # it in the shared `run_cell`, which this leg's argument surface cannot use.
+    # The cold-read-cell's clock starts before anything else, so `duration_s=`
+    # in the stamp is the cost of the whole cold-read-cell -- a failed Fable
+    # attempt included -- rather than of the attempt that happened to succeed.
+    # The other legs take it in the shared `run_cell`, which this leg's
+    # argument surface cannot use.
     cell_started_at = time.time()
     parser = build_judge_argument_parser()
     args = parser.parse_args()

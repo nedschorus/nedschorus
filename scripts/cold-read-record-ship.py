@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ship one cold-read record directory to the log-store on ned-box.
+"""Ship one cold-read-record to the log-store on ned-box.
 
 Usage:
   scripts/cold-read-record-ship.py <record directory>
@@ -7,14 +7,16 @@ Usage:
 
 WHAT THE LOG-STORE IS (user-ruled 2026-09-07, walk
 docs/walk/cold-read-records-branch-and-agent-instructions-queue.md): the
-repository is the system and a reviewer report is a log, so cold-read records
+repository is the system and a reviewer report is a log, so cold-read-records
 never enter git. They go to the log-store, `/home/nedlern/nedschorus-logs/` on
-ned-box, one subdirectory per kind of byproduct; records are the kind
-`cold-read-records/`, keeping their directory names. A record there is cited
-with its host in scp form, so an agent on either machine knows the command:
+ned-box, one subdirectory per kind of byproduct; cold-read-records are the kind
+`cold-read-records/`, keeping their directory names. A cold-read-record
+there is cited with its host in scp form, so an agent on either machine
+knows the command:
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-05-SKILL/dispositions.md`.
-The record directory in the checkout stays what it was: a gitignored
-directory under cold-read-records/, written by the grid and by the agent.
+The cold-read-record in the checkout stays what it was: a
+gitignored directory under cold-read-records/, written by the cold-read-grid
+and by the agent.
 
 WHAT ONE RUN DOES. The directory is copied whole to the store under its own
 name by rsync -- over ssh from the Mac, as a local copy on ned-box, the store
@@ -32,14 +34,14 @@ itself being the only difference -- under three rules ruled with the design:
      directory with a -2 suffix and ships again. Two machines reviewing one document on one day
      produce exactly this, and rsync alone would overwrite the first silently.
   3. FAIL LOUDLY. When ned-box cannot be reached the run prints a line
-     opening FAILED and exits non-zero; the record stays on disk, unshipped,
-     for a later run. ssh runs in batch mode with a connect timeout, so an
-     automated caller never waits on a prompt.
+     opening FAILED and exits non-zero; the cold-read-record stays on disk,
+     unshipped, for a later run. ssh runs in batch mode with a connect timeout,
+     so an automated caller never waits on a prompt.
 
 The store's directories are created on first use, and a README.md at the
 store's root is written when absent -- it says what the store is and that
-records dated before 2026-09-08 predate the frozen target -- from the text in
-this file.
+cold-read-records dated before 2026-09-08 predate the frozen cold-read-target
+-- from the text in this file.
 
 WHO CALLS IT. scripts/cold-read-grid.py at the end of every run, whatever the
 outcome; the agent after writing dispositions.md (the cold-read skill's step
@@ -49,12 +51,12 @@ program's one line and goes on. `--all` ships every directory under
 cold-read-records/ in this checkout, continuing past a refused or failed one
 and listing them at the end; being add-only it is safe over directories
 already in the store, which is how a seat catches up after the box was down,
-and how the records that predate the store were shipped once.
+and how the cold-read-records that predate the store were shipped once.
 
-OUTPUT. Exactly one line on stdout per record directory -- `shipped:`,
+OUTPUT. Exactly one line on stdout per cold-read-record -- `shipped:`,
 `REFUSED:` or `FAILED:`, or under --all `skipped:` for an empty directory,
-which is not a record -- and, under --all, one summary line after them.
-Everything else is on stderr. Exit 0 when every directory shipped, 2 when
+which is not a cold-read-record -- and, under --all, one summary line after
+them. Everything else is on stderr. Exit 0 when every directory shipped, 2 when
 any was refused and none failed, 1 when any failed, 64 for a bad invocation.
 
 THE DESTINATION IS ONE CONSTANT, LOG_STORE_RECORDS_DESTINATION, so a move to
@@ -208,7 +210,7 @@ def ensure_store(host, records_path: pathlib.PurePosixPath) -> subprocess.Comple
 
 
 def local_inventory(record_dir: pathlib.Path) -> dict:
-    """{relative path: sha256} of every file under the record directory."""
+    """{relative path: sha256} of every file under the cold-read-record."""
     inventory = {}
     for path in sorted(p for p in record_dir.rglob("*") if p.is_file()):
         inventory[path.relative_to(record_dir).as_posix()] = hashlib.sha256(
@@ -217,13 +219,15 @@ def local_inventory(record_dir: pathlib.Path) -> dict:
 
 
 def store_inventory(host, store_dir: pathlib.PurePosixPath):
-    """{relative path: sha256} of the store's copy of this record, and the
-    process that produced it. An absent directory is an empty inventory with
-    exit 0; an unreachable host is ssh's exit 255 and an inventory of None.
+    """{relative path: sha256} of the store's copy of this cold-read-record,
+    and the process that produced it. An absent directory is an empty
+    inventory with exit 0; an unreachable host is ssh's exit 255 and an
+    inventory of None.
 
     sha256 on both sides -- Python's hashlib here, sha256sum on ned-box -- is
-    the digest the grid already records for the target, so a reader can
-    compare a record's frozen target with the grid's fingerprint by eye.
+    the digest the cold-read-grid already records for the cold-read-target, so
+    a reader can compare a cold-read-record's frozen cold-read-target with the
+    cold-read-grid's fingerprint by eye.
     rsync's own --itemize-changes was tried first and dropped: the Mac ships
     openrsync and ned-box ships rsync 3.4, and their itemize formats differ.
     """
@@ -275,8 +279,9 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
                        if relative in in_store and in_store[relative] != digest)
     new_files = sorted(relative for relative in local if relative not in in_store)
     if differing:
-        # The loop only gathers; the one print comes after it, so a record
-        # with several differing files still gets exactly one stdout line.
+        # The loop only gathers; the one print comes after it, so a
+        # cold-read-record with several differing files still gets
+        # exactly one stdout line.
         described = []
         for relative in differing:
             local_line = provenance_comment_of(local_first_line(record_dir / relative))
@@ -345,8 +350,8 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
         if records_dir.is_dir() else []
     shipped, refused, failed, skipped = [], [], [], []
     for record_dir in directories:
-        # An empty directory is not a record and not a failure: a run that
-        # made no reports left it, and counting it failed made every --all
+        # An empty directory is not a cold-read-record and not a failure: a run
+        # that made no reports left it, and counting it failed made every --all
         # exit 1 until somebody deleted it (found by PR #285's reviewer). A
         # single empty directory named on the command line is still exit 64.
         if not any(record_dir.iterdir()):

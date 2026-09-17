@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Everything a cold-read cell does except invoke its model.
+"""Everything a cold-read-cell does except invoke its model.
 
-WHY THIS FILE EXISTS (user-ruled 2026-08-23). The Claude and Codex cells
-are meant to differ in one thing only: the invocation of the model. Every
-other step -- how arguments are parsed, how the target is resolved, how
-the prompt is composed, where the report is written, how a run that
-produced no report is refused, and how provenance is stamped -- is the
-same work, and until now it was the same work written twice. Two copies
-drift; an import cannot. The cells load this module rather than repeat it.
+WHY THIS FILE EXISTS (user-ruled 2026-08-23). The Claude and Codex
+cold-read-cells are meant to differ in one thing only: the invocation of the
+model. Every other step -- how arguments are parsed, how the cold-read-target
+is resolved, how the prompt is composed, where the report is written, how a
+run that produced no report is refused, and how provenance is stamped -- is the
+same work, and until now it was the same work written twice. Two copies drift;
+an import cannot. The cold-read-cells load this module rather than repeat it.
 
 WHAT CHANGED AND WHY, in one paragraph, because it is the reason this
-module exists at all. Both cells used to capture the model's *last
+module exists at all. Both cold-read-cells used to capture the model's *last
 message* -- Claude through `-p --output-format text`, Codex through
 `--output-last-message`. Measured 2026-08-23: text a model writes before
 a tool call is discarded by that capture. Given a prompt that says "say
 ALPHA, read a file, say OMEGA", with the Read tool allowed exactly as the
-review cells allow it, stdout held OMEGA alone. The cells hand their
-reviewers Read, Grep and Glob, so a reviewer that writes findings, checks
-something, then writes its closing line ships only the closing line --
-which is what a real Sonnet cell did that day, emitting the trailing
+cold-read-cells allow it, stdout held OMEGA alone. The cold-read-cells hand
+their reviewers Read, Grep and Glob, so a reviewer that writes findings,
+checks something, then writes its closing line ships only the closing line --
+which is what a real Sonnet cold-read-cell did that day, emitting the trailing
 "clean sections:" summary and none of the findings it asserted existed.
 The fix removes the dependency instead of narrowing it: the reviewer
 writes its findings to a path, and nothing depends on message-capture
@@ -36,13 +36,13 @@ needs write access to produce its report, so the read-only tool set that
 used to force findings through chat text is gone. What replaces it is
 cheap and exact: the report goes in `cold-read-records/`, which is
 gitignored and therefore invisible to `git status`. Before the model runs
-and again afterwards the cell records what every path `git status` names
-holds, and reports the DIFFERENCE -- so a dirty tree the run did not cause
-is not blamed on the reviewer, while a path the reviewer created, or edited
-though it was already dirty, is named. It reports on
-every exit path, including failures, because a reviewer that edited the
-document instead of reviewing it leaves an edit worth naming whether or not
-it also produced a report. This follows the project's rule that a guard names the behavior
+and again afterwards the cold-read-cell records what every path `git status`
+names holds, and reports the DIFFERENCE -- so a dirty tree the run did not
+cause is not blamed on the reviewer, while a path the reviewer created, or
+edited though it was already dirty, is named. It reports on every exit path,
+including failures, because a reviewer that edited the cold-read-target instead
+of reviewing it leaves an edit worth naming whether or not it also produced
+a report. This follows the project's rule that a guard names the behavior
 it defends against: the behavior here is an ordinary agent writing to the
 wrong path by accident, not an attacker. The check is ungated by runtime,
 deliberately -- see `report_stray_writes` for the incident that ruling comes
@@ -51,36 +51,38 @@ from (nedschorus#161).
 A RUN REPORTS WHAT IT ACTUALLY DID (user-ruled 2026-08-25). Three of this
 module's habits used to hide the run's own facts from the record it produced.
 It declared "the model exited without writing" while a complete review sat one
-character away in a directory the model had created itself -- so a cell now
-searches the whole `cold-read-records/` tree for a file of its report's own
-name before it declares failure (`recover_near_miss_report`). That search is
-safe to widen because every file the grid writes into a record directory is
-named for the run: `<record directory name>--<runtime>-<pass>-<tier>.md`, so
-one file name belongs to one run and cannot be another run's report.
+character away in a directory the model had created itself -- so
+a cold-read-cell now searches the whole `cold-read-records/` tree
+for a file of its report's own name before it declares failure
+(`recover_near_miss_report`). That search is safe to widen because every
+file the cold-read-grid writes into a cold-read-record is named for the run:
+`<record directory name>--<runtime>-<pass>-<tier>.md`, so one file name belongs
+to one run and cannot be another run's report.
 It threw away the runtime's stderr on every successful run, which is the only
 channel carrying the Codex CLI's token total -- so stderr is captured and
 re-emitted, and the total is parsed out of it (`parse_tokens_used`). And its
-provenance stamp recorded what the cell was asked to do but nothing about what
-the doing cost -- so `duration_s=`, and `tokens=` where the runtime reports
-one, are now stamped alongside the model and the tier.
+provenance stamp recorded what the cold-read-cell was asked to do but nothing
+about what the doing cost -- so `duration_s=`, and `tokens=` where the runtime
+reports one, are now stamped alongside the model and the cold-read-tier.
 
 A THIRD LEG, 2026-09-07: scripts/cold-read-agy-cell.py runs the Antigravity
-CLI (`agy`) and pins the fast tier (user-ruled that day, after measurements:
-gemini-3.8-flash at medium). It is built on this module exactly as the other
-two are, and it adds one seam the others leave unused -- a launcher-supplied
-rule for taking the runtime's stdout as the report when the model answered in
-chat instead of writing the file (`recover_report_from_runtime_stdout`). The
-rule is the launcher's because the quirk is the runtime's; the writing,
-stamping and announcing stay here so the leg cannot drift.
+CLI (`agy`) and pins the fast cold-read-tier (user-ruled that day, after
+measurements: gemini-3.8-flash at medium). It is built on this module
+exactly as the other two are, and it adds one seam the others leave
+unused -- a launcher-supplied rule for taking the runtime's stdout as
+the report when the model answered in chat instead of writing the file
+(`recover_report_from_runtime_stdout`). The rule is the launcher's because
+the quirk is the runtime's; the writing, stamping and announcing stay here
+so the leg cannot drift.
 
-A CALLER THAT IS NOT A CELL LAUNCHER, 2026-09-07:
+A CALLER THAT IS NOT A COLD-READ-CELL LAUNCHER, 2026-09-07:
 scripts/cold-read-restater-judge-cell.py, the restater judge the user ruled
-2026-09-05. It reads four files per case rather than one target, so it cannot
-use `run_cell`'s argument surface or `compose_prompt`; what it does use is
-everything from the composed prompt onwards -- `run_model_chain` and its
-chain, invariant, recovery, stray-write check, stamp and exit codes -- and
-the Claude launcher's own `invocation_builder`. It brought one thing with it:
-`model_to_effort`, because its chain is the first to run two models at two
+2026-09-05. It reads four files per case rather than one cold-read-target, so
+it cannot use `run_cell`'s argument surface or `compose_prompt`; what it does
+use is everything from the composed prompt onwards -- `run_model_chain` and
+its chain, invariant, recovery, stray-write check, stamp and exit codes --
+and the Claude launcher's own `invocation_builder`. It brought one thing with
+it: `model_to_effort`, because its chain is the first to run two models at two
 efforts (Fable at xhigh, Opus at max).
 """
 
@@ -114,28 +116,31 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 # The passes a cell can be asked to run; each reads its prompt from
 # .claude/skills/cold-read/prompts/<cell>.md. `fast-clarify` is the fast
-# tier's one-reviewer ask (user-ruled 2026-08-30, provisional per the same
-# day's qualifier): a concise sentence-level restatement, then concise
-# criterion-tagged stumble and coverage findings. It is run singly -- one
-# cell against one walk item -- never by the grid, whose roster is
-# scripts/cold-read-grid.py's own. `terminology` (user-ruled 2026-09-05) is
-# the grid's second pass: the document's key-terms against five criteria.
+# cold-read-tier's one-reviewer ask (user-ruled 2026-08-30, provisional
+# per the same day's qualifier): a concise sentence-level restatement, then
+# concise criterion-tagged stumble and coverage findings. It is run singly
+# -- one cold-read-cell against one walk item -- never by the cold-read-grid,
+# whose roster is scripts/cold-read-grid.py's own. `terminology` (user-ruled
+# 2026-09-05) is the cold-read-grid's second pass: the cold-read-target's
+# key-terms against five criteria.
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # The restater judge is deliberately absent from that list. Its pass token,
 # `restater-judge`, is a constant in scripts/cold-read-restater-judge-cell.py,
 # which parses its own arguments and composes its own prompt because a judge
-# run reads four files per case rather than one target: a cell asked for that
-# pass through a --target launcher would compose a prompt with the case block
-# unfilled, so the launchers refuse the name instead.
-# Every tier any launcher pins. A launcher serves the subset its own tier map
-# names, and its --tier accepts only that subset (see `build_argument_parser`):
-# `fast` (user-ruled 2026-09-07: gemini-3.8-flash at medium, replacing
-# gpt-5.6-terra at low) is pinned by scripts/cold-read-agy-cell.py alone, and
-# `good` and `floor` by the Claude and Codex launchers alone, so no launcher
-# can be asked for a tier it has no model for.
+# run reads four files per case rather than one cold-read-target: a
+# cold-read-cell asked for that pass through a --target launcher would
+# compose a prompt with the case block unfilled, so the launchers refuse
+# the name instead.
+# Every cold-read-tier any launcher pins. A launcher serves the
+# subset its own tier map names, and its --tier accepts only that
+# subset (see `build_argument_parser`): `fast` (user-ruled 2026-09-07:
+# gemini-3.8-flash at medium, replacing gpt-5.6-terra at low) is pinned by
+# scripts/cold-read-agy-cell.py alone, and `good` and `floor` by the Claude
+# and Codex launchers alone, so no launcher can be asked for a cold-read-tier
+# it has no model for.
 # `judge` is absent for the same reason `restater-judge` is absent from
-# CELL_CHOICES: the judge has one ruled configuration, so its cell stamps
-# tier=judge as a constant and takes no --tier at all.
+# CELL_CHOICES: the judge has one ruled configuration, so its cold-read-cell
+# stamps tier=judge as a constant and takes no --tier at all.
 TIER_CHOICES = ["good", "floor", "fast"]
 
 # What --cell may be when --prompt-file is given (user-ruled 2026-09-05): a
@@ -150,22 +155,23 @@ TIER_CHOICES = ["good", "floor", "fast"]
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-# A cell's own refusals, kept off every code its runtime produces so that a
-# code coming out of a cell stays readable as whose it is. sysexits.h's
-# EX_USAGE. The collision it avoids was measured on the Codex leg
-# (nedschorus#162): `codex exec` itself exits 2 when it rejects a command
-# line, and 2 was what a cell returned for a caller's typo, so one number
-# meant both "the caller invoked this cell wrongly" and "this cell invoked its
-# runtime wrongly". The measurements behind the choice of 64 are written once,
-# in scripts/code-review-codex-cell.py's docstring under the heading
+# A cold-read-cell's own refusals, kept off every code its runtime produces
+# so that a code coming out of a cold-read-cell stays readable as whose it
+# is. sysexits.h's EX_USAGE. The collision it avoids was measured on the Codex
+# leg (nedschorus#162): `codex exec` itself exits 2 when it rejects a command
+# line, and 2 was what a cold-read-cell returned for a caller's typo, so one
+# number meant both "the caller invoked this cold-read-cell wrongly" and "this
+# cold-read-cell invoked its runtime wrongly". The measurements behind the
+# choice of 64 are written once, in scripts/code-review-codex-cell.py's
+# docstring under the heading
 # EXIT CODES
 #
-# Both cells use it, though only the Codex leg had the collision -- the
-# `claude` CLI was probed the same day and exits 1, not 2, on an unrecognized
-# option. One contract for both legs is worth more than a code that differs
-# per runtime for a reason nobody reading a cold-read run's output can see, and this
-# module exists precisely so the two legs cannot differ in anything but the
-# invocation.
+# Both cold-read-cells use it, though only the Codex leg had the collision
+# -- the `claude` CLI was probed the same day and exits 1, not 2, on an
+# unrecognized option. One contract for both legs is worth more than a code
+# that differs per runtime for a reason nobody reading a cold-read run's
+# output can see, and this module exists precisely so the two legs cannot
+# differ in anything but the invocation.
 EXIT_BAD_INVOCATION = 64
 
 
@@ -195,15 +201,16 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
 def build_argument_parser(
     description: str, model_help: str, tier_choices=tuple(TIER_CHOICES),
 ) -> argparse.ArgumentParser:
-    """The argument surface every cell presents. Identical by construction.
+    """The argument surface every cold-read-cell presents. Identical by construction.
 
     The parser is the subclass above, so a mistyped flag leaves through the
-    same door as the cell's own refusals rather than through argparse's
-    default 2.
+    same door as the cold-read-cell's own refusals rather than through
+    argparse's default 2.
 
     `tier_choices` is the launcher's own tier map's keys: a launcher asked
-    for a tier it pins no model for would otherwise reach its map and
-    traceback, and the fast tier (2026-09-07) is pinned by one launcher only.
+    for a cold-read-tier it pins no model for would otherwise reach its map and
+    traceback, and the fast cold-read-tier (2026-09-07) is pinned by
+    one launcher only.
     """
     parser = BadInvocationArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -306,7 +313,8 @@ def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
 
     Refused, not tracebacked, when it names no file: a trial that mistypes
     the draft's path should read the same as any other bad invocation --
-    exit 64 with the path it looked for -- rather than as a crashed cell.
+    exit 64 with the path it looked for -- rather than as a crashed
+    cold-read-cell.
     """
     prompt_file = pathlib.Path(prompt_file_argument)
     if not prompt_file.is_absolute():
@@ -367,19 +375,20 @@ class WriteDetectorUnavailable(Exception):
     """
 
 
-# THE PHRASES THE GRID LIFTS OUT OF A CELL'S LOG. scripts/cold-read-grid.py
-# deletes a cell's stderr log on the success path, so a status line it does
-# not lift there is a line nobody ever reads. The grid imports these constants
-# rather than copying them, and it matches each one only at the head of a
-# line this program itself began -- `<program>: <phrase>` -- because the log
-# also carries the runtime's own stderr, re-emitted unconditionally below, and
-# the Codex CLI writes the model's text there. On 2026-09-02 a reviewed
-# document quoted a code comment containing "fell back to", and the grid
-# reported two cells as fallen back that had run on the models asked for
+# THE PHRASES THE COLD-READ-GRID LIFTS OUT OF A COLD-READ-CELL'S LOG.
+# scripts/cold-read-grid.py deletes a cold-read-cell's stderr log on the
+# success path, so a status line it does not lift there is a line nobody
+# ever reads. The cold-read-grid imports these constants rather than copying
+# them, and it matches each one only at the head of a line this program
+# itself began -- `<program>: <phrase>` -- because the log also carries the
+# runtime's own stderr, re-emitted unconditionally below, and the Codex CLI
+# writes the model's text there. On 2026-09-02 a cold-read-target quoted a
+# code comment containing "fell back to", and the cold-read-grid reported
+# two cold-read-cells as fallen back that had run on the models asked for
 # (nedschorus#244). So every status line below puts its phrase immediately
 # after `{program}: `, and nothing else may. Pinned as constants because each
-# is a contract with the grid, not a sentence to reword in passing;
-# scripts/cold-read-grid-test.py drives each one through a real cell.
+# is a contract with the cold-read-grid, not a sentence to reword in passing;
+# scripts/cold-read-grid-test.py drives each one through a real cold-read-cell.
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
 STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
 FELL_BACK_PHRASE = "fell back to"
@@ -420,7 +429,7 @@ def working_tree_state() -> set:
     snapshot of names alone cannot see an edit to a path that was already
     dirty when it was taken: the name is in both snapshots and cancels out of
     the comparison. A cold read's ordinary subject is a draft that has not
-    landed, so the document under review -- the very file a reviewer is most
+    landed, so the cold-read-target -- the very file a reviewer is most
     likely to edit by accident -- is normally already dirty, and the detector
     was blind in exactly the case it exists for (measured on nedschorus#167:
     a reviewer edit inside an already-dirty file yielded an empty delta,
@@ -434,8 +443,8 @@ def working_tree_state() -> set:
     collapses an untracked directory to the directory's name, so a file
     created inside a directory that was already untracked would be invisible
     here too. Naming each file also lets a caller subtract one exact path --
-    which is how a cell keeps its own report out of the result when the
-    report was written somewhere git can see. The gitignored records tree,
+    which is how a cold-read-cell keeps its own report out of the result when
+    the report was written somewhere git can see. The gitignored records tree,
     where reports ordinarily go, stays invisible either way.
     """
     completed = subprocess.run(
@@ -454,9 +463,9 @@ def working_tree_state() -> set:
 def repo_relative_name(path) -> str:
     """git's name for a path inside this repository; "" for anything else.
 
-    Anything else is: no path at all (a cell that failed before it resolved
-    one), and a path outside the repository, which git never names and so
-    never needs subtracting.
+    Anything else is: no path at all (a cold-read-cell that failed before it
+    resolved one), and a path outside the repository, which git never names and
+    so never needs subtracting.
     """
     if path is None:
         return ""
@@ -471,36 +480,39 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
 
     Without a baseline this reported every already-dirty path as the
     reviewer's doing. A cold read's ordinary subject is a draft that has not
-    landed, so the ordinary run starts dirty and every cell of a cold-read run would
-    accuse the reviewer of changes it never made. A detector that cries wolf
-    on the common case is one its readers learn to skip.
+    landed, so the ordinary run starts dirty and every cold-read-cell
+    of a cold-read run would accuse the reviewer of changes it
+    never made. A detector that cries wolf on the common case is one its
+    readers learn to skip.
 
-    The cell's own report is subtracted, because writing it is the one write
-    the reviewer was asked for. It ordinarily needs no subtracting -- reports
-    go under the gitignored records tree, which git never names -- but the
-    grid's failure note tells the operator to rerun a failed cell singly with
-    the cell launchers, and an operator who then points --report somewhere
-    git can see was told to revert the review he had just asked for
-    (nedschorus#167).
+    The cold-read-cell's own report is subtracted, because writing it is the
+    one write the reviewer was asked for. It ordinarily needs no subtracting
+    -- reports go under the gitignored records tree, which git never names --
+    but the cold-read-grid's failure note tells the operator to rerun a failed
+    cold-read-cell singly with the cold-read-cell launchers, and an operator
+    who then points --report somewhere git can see was told to revert the
+    review he had just asked for (nedschorus#167).
     """
     changed = {name for name, _fingerprint in working_tree_state() - baseline}
     changed.discard(repo_relative_name(own_report_path))
     return sorted(changed)
 
 
-# The phrase the grid greps this cell's stderr log for, so a recovery is
-# visible on the grid's own output rather than only in a log the grid deletes
-# on success. Kept as a constant because it is a contract with
-# scripts/cold-read-grid.py, not a sentence anyone should reword in passing.
+# The phrase the cold-read-grid greps this cold-read-cell's stderr log for,
+# so a recovery is visible on the cold-read-grid's own output rather than only
+# in a log the cold-read-grid deletes on success. Kept as a constant because
+# it is a contract with scripts/cold-read-grid.py, not a sentence anyone
+# should reword in passing.
 NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
 
-# The phrase a cell prints when its runtime's stdout was taken as the report
-# body. A launcher opts into this by passing `recover_report_from_stdout` to
-# `run_cell`; today only the Antigravity leg (scripts/cold-read-agy-cell.py)
-# does, for a quirk measured on 2026-09-04: gemini-3.8-flash sometimes answers
-# the whole review in chat instead of writing the file it was told to. The
-# Claude and Codex legs pass nothing and keep failing on that path, because
-# their stdout on a no-report exit has only ever been a remark, not a review.
+# The phrase a cold-read-cell prints when its runtime's stdout was
+# taken as the report body. A launcher opts into this by passing
+# `recover_report_from_stdout` to `run_cell`; today only the Antigravity leg
+# (scripts/cold-read-agy-cell.py) does, for a quirk measured on 2026-09-04:
+# gemini-3.8-flash sometimes answers the whole review in chat instead of
+# writing the file it was told to. The Claude and Codex legs pass nothing and
+# keep failing on that path, because their stdout on a no-report exit has only
+# ever been a remark, not a review.
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 
 
@@ -514,8 +526,8 @@ def recover_report_from_runtime_stdout(
     returns the report body to keep, or "" when the stdout is not a review.
     The rule lives in the launcher because it is a fact about one runtime;
     the writing and the announcement live here because the stamp, the
-    verification and the grid's log-lifting are shared, and a leg that wrote
-    its own recovered file would be a leg that could drift.
+    verification and the cold-read-grid's log-lifting are shared, and a leg
+    that wrote its own recovered file would be a leg that could drift.
     """
     body = decide_body(runtime_stdout or "")
     if not body:
@@ -536,44 +548,47 @@ def recover_near_miss_report(
 ) -> bool:
     """Look through the records tree for this attempt's report before failing it.
 
-    WHAT HAPPENED (2026-08-25). A Codex cell was given a report path inside
-    `cold-read-records/2026-08-25-ghi-write-SKILL-prewalk-c6fb95f/` and wrote a
-    complete 33-finding review into `...-c6fb95c/` -- one character different, a
-    directory it created itself. The cell reported "the model exited without
-    writing", which was true of the path it watched and false of the work: a
-    finished review existed and the run threw it away. Losing a review to a
-    typo in a directory name is not a review that did not happen.
+    WHAT HAPPENED (2026-08-25). A Codex cold-read-cell was given a report path
+    inside `cold-read-records/2026-08-25-ghi-write-SKILL-prewalk-c6fb95f/`
+    and wrote a complete 33-finding review into `...-c6fb95c/` -- one
+    character different, a directory it created itself. The cold-read-cell
+    reported "the model exited without writing", which was true of the path
+    it watched and false of the work: a finished review existed and the run
+    threw it away. Losing a review to a typo in a directory name is not a
+    review that did not happen.
 
     WHY AN EXACT NAME IS ENOUGH TO SEARCH ON, and why this looks through the
     whole tree rather than at neighbouring directories only. Every file the
-    grid writes into a record directory carries the run's own name:
+    cold-read-grid writes into a cold-read-record carries the run's own name:
     `2026-08-25-ghi-write-SKILL--codex-hunt-floor.md` is written by one run and
-    by no other. Before that prefix existed, every run's Codex defect-hunt cell
-    on the floor tier wrote `codex-hunt-floor.md`, so two cold-read runs going at once
-    in one checkout each had a file of that name -- and a cell of the first run
-    that wrote nothing could pick up the second run's correctly placed report,
-    move it under the first run's stamp, and leave the second run without the
-    review it had produced (user-ruled 2026-08-25). With the run in the name,
-    a file of the report's exact name is this run's report wherever it sits.
+    by no other. Before that prefix existed, every run's Codex defect-hunt
+    cold-read-cell on the floor cold-read-tier wrote `codex-hunt-floor.md`, so
+    two cold-read-full-runs going at once in one checkout each had a file of
+    that name -- and a cold-read-cell of the first run that wrote nothing could
+    pick up the second run's correctly placed report, move it under the first
+    run's stamp, and leave the second run without the review it had produced
+    (user-ruled 2026-08-25). With the run in the name, a file of the report's
+    exact name is this run's report wherever it sits.
 
     WHAT IS AND IS NOT ACCEPTED. Exactly one candidate is recovered: a
     non-empty file whose name is exactly the report's own, anywhere under the
-    record directory's parent -- the `cold-read-records/` tree, which includes
+    cold-read-record's parent -- the `cold-read-records/` tree, which includes
     a file left loose in the root of it and one inside a directory a model
     invented -- whose mtime is at or after this ATTEMPT's start, and which is
     not the expected path itself. Zero candidates is the ordinary failure and
     stays one. Two or more is refused rather than guessed at, because picking
     one would put a review under a stamp that may not describe it.
 
-    WHY THE ATTEMPT'S START AND NOT THE CELL'S. The ruling says "since the run
-    started". Per-attempt is a strict subset of that and is what keeps the
-    provenance stamp honest: a chain runs several models against one report
-    path, and a stray left by a model that failed would otherwise be recovered
-    during a later model's attempt and stamped with the later model's name.
+    WHY THE ATTEMPT'S START AND NOT THE COLD-READ-CELL'S. The ruling says
+    "since the run started". Per-attempt is a strict subset of that and
+    is what keeps the provenance stamp honest: a chain runs several models
+    against one report path, and a stray left by a model that failed would
+    otherwise be recovered during a later model's attempt and stamped with
+    the later model's name.
     The stamp must name whoever wrote the text under it.
 
-    Either way this prints what it looked for, so a cell that fails here says
-    where it searched rather than only that it found nothing.
+    Either way this prints what it looked for, so a cold-read-cell that fails
+    here says where it searched rather than only that it found nothing.
     """
     record_dir = report.parent
     records_root = record_dir.parent
@@ -651,13 +666,13 @@ def verify_report(program: str, report: pathlib.Path) -> None:
 # The Codex CLI ends a run with a line of the form "tokens used: 12,345", on
 # stderr, which is the only stream this is ever read from -- stdout is the
 # model's own words and a reviewer may write that phrase in its findings.
-# The Claude CLI prints no equivalent, so a claude cell simply has no token
-# figure and the stamp omits the field rather than guessing at one. The
-# pattern lives here rather than in the Codex launcher because that launcher's
-# one job is building an invocation -- giving it a second responsibility is
-# how the two legs start to drift, which is the defect this module exists to
-# prevent. A runtime that starts printing the same line gets the field for
-# free.
+# The Claude CLI prints no equivalent, so a claude cold-read-cell simply
+# has no token figure and the stamp omits the field rather than guessing
+# at one. The pattern lives here rather than in the Codex launcher because
+# that launcher's one job is building an invocation -- giving it a second
+# responsibility is how the two legs start to drift, which is the defect
+# this module exists to prevent. A runtime that starts printing the same line
+# gets the field for free.
 TOKENS_USED_PATTERN = re.compile(r"tokens used[:\s]+([\d,]+)", re.IGNORECASE)
 
 
@@ -748,10 +763,10 @@ def run_model_chain(
     unaffected. The map is not consulted for the invocation: that stays the
     launcher's `build_invocation`, which consults the same map it passed here.
 
-    This loop is shared deliberately. It is the whole of what a cell does
-    around its model, and the two runtimes' only real difference is
-    `build_invocation`, which returns the argv to run and the text to feed
-    on stdin (None when the runtime takes the prompt as an argument).
+    This loop is shared deliberately. It is the whole of what a cold-read-cell
+    does around its model, and the two runtimes' only real difference is
+    `build_invocation`, which returns the argv to run and the text to feed on
+    stdin (None when the runtime takes the prompt as an argument).
 
     THE MACHINE, stated once so the code below can be checked against it.
     The report path is the only state variable. Every attempt begins with it
@@ -794,37 +809,40 @@ def run_model_chain(
         # THE ATTEMPT'S OWN CLOCK. `recover_near_miss_report` credits a stray
         # file to this attempt only if it was written after this moment, so
         # the clock is read here -- inside the loop, after the state reset --
-        # and not once for the cell. A per-cell clock would let a stray from
-        # a failed model be recovered during a later model's attempt and
-        # stamped with the later model's name.
+        # and not once for the cold-read-cell. A per-cell clock would let a
+        # stray from a failed model be recovered during a later model's attempt
+        # and stamped with the later model's name.
         attempt_started_at = time.time()
         command, stdin_text = build_invocation(model, prompt)
         # stdin MUST be closed explicitly when a runtime takes the prompt as an
         # argument. `codex exec` treats a piped-open stdin as content to append
         # and reads it to EOF before starting the turn, so an inherited
-        # never-closing descriptor deadlocks the cell (measured 2026-08-03:
-        # four cells frozen 24 minutes in background execution). Passing
-        # input=None would leave this process's stdin inherited, so the None
-        # case is spelled out rather than left to subprocess's default.
+        # never-closing descriptor deadlocks the cold-read-cell (measured
+        # 2026-08-03: four cold-read-cells frozen 24 minutes in background
+        # execution). Passing input=None would leave this process's stdin
+        # inherited, so the None case is spelled out rather than left to
+        # subprocess's default.
         stdin_arguments = (
             {"input": stdin_text} if stdin_text is not None
             else {"stdin": subprocess.DEVNULL}
         )
         # BOTH STREAMS ARE CAPTURED, and stderr is re-emitted unconditionally.
         # stdout has been captured since 2026-08-23, when Fable ran out of
-        # credits and the whole cell log came to 54 bytes -- "claude-fable-5
-        # failed (exit 1)" -- with the runtime's own explanation nowhere in it;
-        # the grid decides whether to tell the user his CLI is logged out by
-        # searching this cell's log for the runtime's words, so a discarded
-        # stream leaves that guard reading a channel that cannot carry what it
-        # tests for. stderr joined it 2026-08-25: it had been passed straight
-        # through to the log, which the grid DELETES on success, and it is the
+        # credits and the whole cold-read-cell log came to 54 bytes --
+        # "claude-fable-5 failed (exit 1)" -- with the runtime's own
+        # explanation nowhere in it; the cold-read-grid decides whether to tell
+        # the user his CLI is logged out by searching this cold-read-cell's
+        # log for the runtime's words, so a discarded stream leaves that
+        # guard reading a channel that cannot carry what it tests for. stderr
+        # joined it 2026-08-25: it had been passed straight through to the
+        # log, which the cold-read-grid DELETES on success, and it is the
         # only channel carrying the Codex CLI's token total -- so across six
-        # cold-read runs that day the one recoverable token figure came from the one
-        # cell that failed. Capturing costs the live stream, which nothing
-        # watches: the grid redirects this into a file it reads only after the
-        # process exits. Re-emitting happens before any branch below, so every
-        # exit path still leaves the runtime's own words in the log.
+        # cold-read-full-runs that day the one recoverable token figure came
+        # from the one cold-read-cell that failed. Capturing costs the live
+        # stream, which nothing watches: the cold-read-grid redirects this
+        # into a file it reads only after the process exits. Re-emitting
+        # happens before any branch below, so every exit path still leaves the
+        # runtime's own words in the log.
         try:
             completed = subprocess.run(
                 command,
@@ -873,12 +891,12 @@ def run_model_chain(
             # and this branch used to keep nothing: the non-zero path above
             # printed stdout, this one discarded it, and the log came away with
             # only our three refusal lines. Measured on claude-hunt-floor,
-            # which produced no report on two consecutive cold-read runs, 2026-08-31 and
-            # 2026-09-01, and left no trace of the model on either. The same
-            # argv rerun by hand 2026-09-01 succeeded and put 512 bytes on
-            # stdout, so there is an account being thrown away. Printed only --
-            # stdout is the model talking, and the stderr-only rule at
-            # `parse_tokens_used` below stands.
+            # which produced no report on two consecutive cold-read-full-runs,
+            # 2026-08-31 and 2026-09-01, and left no trace of the model on
+            # either. The same argv rerun by hand 2026-09-01 succeeded and put
+            # 512 bytes on stdout, so there is an account being thrown away.
+            # Printed only -- stdout is the model talking, and the stderr-only
+            # rule at `parse_tokens_used` below stands.
             failed_attempts.append(f"{model}(no-report)")
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
@@ -886,7 +904,8 @@ def run_model_chain(
             continue
         produced_by = model
         # THIS ATTEMPT'S STDERR, and nothing else. Two narrowings, each
-        # closing a way the stamp could name a cost that was not this cell's.
+        # closing a way the stamp could name a cost that was not this
+        # cold-read-cell's.
         # Per-attempt, because a concatenation across attempts would stamp a
         # failed model's total onto the model that succeeded. stderr only,
         # because stdout is the model's own chat text: a reviewer of a document
@@ -906,13 +925,13 @@ def run_model_chain(
         # 2026-08-23, a rate limit surfacing after the tool call, an operator
         # Ctrl-C -- therefore leaves its file behind when it is the last model
         # in the chain. This program then says no report was produced while an
-        # unstamped one sits in the record directory, the grid tells the
-        # reviewing agent that failed reviews are absent from the record, and
-        # the skill sends that agent to read every report there. The orphan is
-        # read as a review, and it is the one file in the directory carrying no
-        # stamp naming the model that wrote it (nedschorus#167). A report
-        # exists if and only if the run succeeded: this line is where that
-        # invariant is kept on the failing path.
+        # unstamped one sits in the cold-read-record, the cold-read-grid
+        # tells the reviewing agent that failed reviews are absent from the
+        # cold-read-record, and the skill sends that agent to read every
+        # report there. The orphan is read as a review, and it is the one file
+        # in the directory carrying no stamp naming the model that wrote it
+        # (nedschorus#167). A report exists if and only if the run succeeded:
+        # this line is where that invariant is kept on the failing path.
         report.unlink(missing_ok=True)
         print(
             f"{program}: every model for this cell failed — "
@@ -954,7 +973,7 @@ def run_cell(
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None,
 ) -> int:
-    """A whole cell, start to finish. Each launcher is this call plus its pins.
+    """A whole cold-read-cell, start to finish. Each launcher is this call plus its pins.
 
     Everything here is identical for every runtime, which is the point: a
     launcher supplies its model chain, its effort mapping, a factory that
@@ -962,11 +981,12 @@ def run_cell(
     a rule for reading a review out of stdout; nothing else. Anything that
     grows here grows for every leg at once and cannot drift between them.
     """
-    # The cell's clock starts here, before anything else this program does,
-    # so `duration_s=` in the stamp is the cost of the whole cell -- every
-    # failed attempt in the chain included -- rather than of the attempt that
-    # happened to succeed. A reader budgeting a cold-read run wants what the cell cost
-    # him, not what its last model cost.
+    # The cold-read-cell's clock starts here, before anything else this
+    # program does, so `duration_s=` in the stamp is the cost of the
+    # whole cold-read-cell -- every failed attempt in the chain included
+    # -- rather than of the attempt that happened to succeed. A reader
+    # budgeting a cold-read run wants what the cold-read-cell cost him, not
+    # what its last model cost.
     cell_started_at = time.time()
     parser = build_argument_parser(
         description, model_help, tier_choices=tuple(tier_to_model_chain))
@@ -1025,14 +1045,16 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     """Print what the run changed outside its report. Never raises.
 
     Called on every exit path, not only the successful one: a reviewer that
-    edits the document under review instead of writing findings about it
-    fails its cell, and the edit is then the one thing that needs cleaning
-    up. Detection, never blocking, per the ruling in this module's docstring.
+    edits the cold-read-target instead of writing findings about it
+    fails its cold-read-cell, and the edit is then the one thing that
+    needs cleaning up. Detection, never blocking, per the ruling in this
+    module's docstring.
 
     `baseline` is None when the pre-run snapshot itself failed, which is
     reported as what it is rather than passed off as a clean result. Both
     ways the check can fail to run carry STRAY_WRITE_CHECK_SKIPPED_PHRASE,
-    because the grid lifts those lines out of this log before deleting it.
+    because the cold-read-grid lifts those lines out of this log
+    before deleting it.
 
     RUNTIME-AGNOSTIC ON PURPOSE, and this is the one thing not to "optimize"
     here (nedschorus#161). The fleet's other review instrument,
@@ -1061,13 +1083,14 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
               "result.", file=sys.stderr)
         return
     if stray:
-        # WHAT THIS CELL CAN KNOW, and no more. The comparison is a snapshot
-        # before the model ran against one after; it sees that a file's content
-        # is different and cannot see who wrote it. The commissioning seat
-        # keeps working while a cold-read run is in progress, and on 2026-09-02 two cells named
-        # the walk minutes that seat was itself appending to as the reviewer's
-        # write (nedschorus#244). The message therefore says the files changed
-        # and leaves the attribution to the reader, who can tell.
+        # WHAT THIS COLD-READ-CELL CAN KNOW, and no more. The comparison
+        # is a snapshot before the model ran against one after; it sees
+        # that a file's content is different and cannot see who wrote it.
+        # The commissioning seat keeps working while a cold-read run is in
+        # progress, and on 2026-09-02 two cold-read-cells named the walk
+        # minutes that seat was itself appending to as the reviewer's write
+        # (nedschorus#244). The message therefore says the files changed and
+        # leaves the attribution to the reader, who can tell.
         print(
             f"{program}: {STRAY_WRITE_PHRASE} — {', '.join(stray)}. This cell "
             "cannot tell whether the reviewer wrote them or someone else working "

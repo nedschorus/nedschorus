@@ -25,11 +25,11 @@ rows already get.
 PRECISION IS COUNT-BASED and unweighted, because a false finding lands on no
 row and so has no weight.
 
-WHERE THIS CAME FROM. It was two programs living inside a shipped cold-read
-record, which is add-only: the first could not be edited once shipped, so the
-second was written beside it rather than changing it. Code cannot be
-maintained in a log-store. Consolidated here 2026-09-10, on the user's
-ruling, with a test that pins its numbers to the ones already published.
+WHERE THIS CAME FROM. It was two programs living inside a shipped
+cold-read-record, which is add-only: the first could not be edited once
+shipped, so the second was written beside it rather than changing it. Code
+cannot be maintained in a log-store. Consolidated here 2026-09-10, on the
+user's ruling, with a test that pins its numbers to the ones already published.
 
 INPUTS. `--placements` is a directory of placement tables, one markdown file
 per reviewer, named `<reviewer>--*.md`, each holding one five-column table
