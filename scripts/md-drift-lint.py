@@ -159,9 +159,12 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
             # A name with no directory is not a claim about where the file
             # sits: prose writes `notes.md` or `state-exit.json` for a file
             # inside some directory it is discussing, or one a run creates.
-            # Measured on main 2026-09-17: 126 of the 200 missing-path
-            # findings were such names, and the noise is what would teach a
-            # reviewer to skim past this lint. User-ruled 2026-09-17, the
+            # Measured on main 2026-09-17, in a clean checkout: 138 of the 212
+            # missing-path findings were such names, and the noise is what
+            # would teach a reviewer to skim past this lint. Measure this in a
+            # clean worktree: a first figure of 126 of 200 came from a seat's
+            # own checkout, where gitignored files let bare names resolve that
+            # a clean one cannot. User-ruled 2026-09-17, the
             # first of the three choices nedschorus#336 named: not checked at
             # all. A path carrying a directory is checked as before, and that
             # is where real drift shows. This is the existence check only —
