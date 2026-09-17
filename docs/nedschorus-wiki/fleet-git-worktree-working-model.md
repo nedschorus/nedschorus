@@ -80,9 +80,9 @@ Rules about git, worktrees, sessions, seats, and machines, plus the
 enforcement programs that implement them. Deliberately excluded: workflow
 governance content (the cold read's cells, ghi-write's routing, walk conduct),
 prose-quality rules, and communication conventions. Coverage is bounded by
-the sweep that built the inventory — the per-agent-seat briefs
+the sweep that built the inventory — the agent-seats' briefs
 (`docs/agents/*-instructions.md`), `docs/cross-project/fast-handoff-design.md`,
-and seat `CLAUDE.local.md` files were not swept.
+and agent-seat `CLAUDE.local.md` files were not swept.
 
 Reach, so nothing below is assumed to protect more than it does: every
 enforcement program in this document is a Claude Code feature, registered
