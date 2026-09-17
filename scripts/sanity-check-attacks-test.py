@@ -52,6 +52,7 @@ import contextlib
 import importlib.util
 import inspect
 import io
+import os
 import pathlib
 import shutil
 import subprocess
@@ -60,6 +61,32 @@ import tempfile
 import threading
 
 RUNNER_SCRIPT = pathlib.Path(__file__).with_name("sanity-check-attacks.py")
+SANITY_CHECK_RECORD_SHIPPER_SCRIPT = pathlib.Path(__file__).with_name(
+    "sanity-check-record-ship.py")
+
+# CONTAINMENT: no run of this suite reaches ned-box. Case 24 drives the
+# runner's main() to completion with cells that wrote reports, so the run ends
+# in print_run_completion -> ship_record -> the real
+# scripts/sanity-check-record-ship.py, which with no destination override
+# resolves to the production log-store. On 2026-09-17 a run of this suite
+# copied its own fixture reports -- `model=a-test-model ... cli=1.1.1-test ...
+# commit=test` -- into
+# nedlern@ned-box:/home/nedlern/nedschorus-logs/sanity-check-records/, where
+# they read as a real sanity check of a real document; found in review of
+# nedschorus#453, the change that gave the runner its shipper. Every run now
+# ships into a temporary directory of its own instead, the way
+# scripts/cold-read-grid-test.py contains its own runs: the store is real and
+# the copy is the real rsync, only the destination is scratch. The override
+# names the cold-read kind because the shipper picks its own kind beside it,
+# so records land in <scratch>/sanity-check-records/. It is set here, at
+# import, so that it also covers a case that runs the runner as a subprocess,
+# and the checks at the head of main() pin it before the first case runs.
+RECORD_SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+SUITE_SCRATCH_LOG_STORE = tempfile.TemporaryDirectory(
+    prefix="sanity-check-attacks-test-log-store-")
+SUITE_SCRATCH_LOG_STORE_PATH = pathlib.Path(SUITE_SCRATCH_LOG_STORE.name)
+os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(
+    SUITE_SCRATCH_LOG_STORE_PATH / "cold-read-records")
 
 failures = []
 
@@ -100,6 +127,33 @@ def new_repo(root):
 
 
 def main():
+    # Containment, checked before any case runs. The guard is the destination
+    # override set at the top of this file; these two checks are what keeps it
+    # from being quietly removed, and the early return is what keeps a suite
+    # that lost it from shipping fixture reports to the log-store a second
+    # time -- a failing check alone would still let case 24 drive the runner
+    # to completion and ship.
+    destination_override = os.environ.get(RECORD_SHIP_DESTINATION_VARIABLE, "")
+    check("the record-ship destination override points into this suite's own scratch store",
+          bool(destination_override)
+          and pathlib.Path(destination_override).is_relative_to(SUITE_SCRATCH_LOG_STORE_PATH),
+          f"{RECORD_SHIP_DESTINATION_VARIABLE}={destination_override!r}, "
+          f"scratch store is {SUITE_SCRATCH_LOG_STORE_PATH}")
+    shipper_spec = importlib.util.spec_from_file_location(
+        "sanity_check_record_ship", SANITY_CHECK_RECORD_SHIPPER_SCRIPT)
+    record_shipper = importlib.util.module_from_spec(shipper_spec)
+    shipper_spec.loader.exec_module(record_shipper)
+    shipper_host, shipper_path = record_shipper.destination_for_this_machine()
+    check("and the shipper a run would call resolves there, to no host at all",
+          shipper_host is None
+          and pathlib.Path(shipper_path).is_relative_to(SUITE_SCRATCH_LOG_STORE_PATH),
+          f"the shipper would ship to {shipper_host}:{shipper_path}")
+    if failures:
+        print("containment failed: no case runs, because a case that drove the "
+              "runner to completion would ship this suite's fixture reports to "
+              "the log-store on ned-box.")
+        return 1
+
     runner = load_runner()
     snapshot = runner.worktree_snapshot
     strays = getattr(runner, "stray_paths", None)
@@ -1336,4 +1390,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        SUITE_SCRATCH_LOG_STORE.cleanup()
