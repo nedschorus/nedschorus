@@ -786,6 +786,121 @@ def main():
               exit_code == expected_exit and saved == expected_saved,
               f"exit {exit_code}, saved {saved}, output {buffer.getvalue()!r}")
 
+    # Case 25: a cell that times out prints what its runtime wrote before it
+    # was cut off. subprocess.TimeoutExpired carries both piped streams, and
+    # run_cell's handler printed only its FAILED line — the one ending that
+    # dropped a failed runtime's words. The streams arrive in three forms:
+    # text; bytes, which CPython hands back on a timeout even to a call that
+    # asked for text, here ending partway through a character so the decoding
+    # must replace rather than raise; and None, which is what a codex cell's
+    # DEVNULL streams give. Neither text stream ends its line, as a stream cut
+    # off mid-write rarely does, so the FAILED line must still start its own.
+    # The cell fails in every form: whether a timeout should fall back to the
+    # next model is not this case's subject.
+    runner_timeout = load_runner()
+    stdout_words = "partial review, cut off mid-sente"
+    stderr_words = "still reading section 2"
+    streams_by_form = (
+        ("str", stdout_words, stderr_words),
+        ("bytes", stdout_words.encode("utf-8") + b" \xe2\x80",
+         stderr_words.encode("utf-8")),
+        ("None", None, None),
+    )
+    for runtime in runner_timeout.RUNTIMES:
+        for form, captured_stdout, captured_stderr in streams_by_form:
+            def timing_out(prompt, out=captured_stdout, err=captured_stderr):
+                raise subprocess.TimeoutExpired(
+                    ["a-runtime"], runner_timeout.CELL_TIMEOUT_SECONDS,
+                    output=out, stderr=err)
+
+            runner_timeout.run_claude = timing_out
+            runner_timeout.run_codex = timing_out
+            timeout_line = (f"FAILED: cut-{runtime} (timeout after "
+                            f"{runner_timeout.CELL_TIMEOUT_SECONDS}s)\n")
+            buffer = io.StringIO()
+            cell_ok, raised = None, None
+            with tempfile.TemporaryDirectory() as scratch:
+                try:
+                    with contextlib.redirect_stdout(buffer):
+                        _, cell_ok = runner_timeout.run_cell(
+                            "cut", runtime, "docs/x.md", [],
+                            pathlib.Path("unused-problem-statement.md"),
+                            pathlib.Path(scratch), {}, (), StubLedger([]))
+                except Exception as error:
+                    raised = error
+            output = buffer.getvalue()
+            if form == "None":
+                check(f"a {runtime} cell timing out with no captured streams prints "
+                      f"only the FAILED timeout line and fails the cell",
+                      raised is None and cell_ok is False and output == timeout_line,
+                      f"raised={raised!r}, cell_ok={cell_ok}, output was {output!r}")
+                continue
+            check(f"a {runtime} cell timing out with {form} streams prints both "
+                  f"before the FAILED timeout line, which starts its own line",
+                  raised is None
+                  and stdout_words in output and stderr_words in output
+                  and "\n" + timeout_line in output
+                  and output.index(stdout_words) < output.index(timeout_line)
+                  and output.index(stderr_words) < output.index(timeout_line),
+                  f"raised={raised!r}, output was {output!r}")
+            check(f"a {runtime} cell timing out with {form} streams still fails",
+                  raised is None and cell_ok is False and "saved:" not in output,
+                  f"raised={raised!r}, cell_ok={cell_ok}, output was {output!r}")
+            if form == "bytes":
+                check(f"a {runtime} cell's undecodable timeout bytes are replaced, "
+                      f"not raised on", raised is None and "�" in output,
+                      f"raised={raised!r}, output was {output!r}")
+
+    # Case 26: a timeout partway through the claude chain. The first model
+    # fails and run_claude prints its words as that attempt ends; the next
+    # model times out. The words the timeout prints must be the timed-out
+    # attempt's own, and the failed attempt's must appear exactly once — not
+    # lost with the exception, not printed a second time. No model is called:
+    # subprocess.run is replaced for this one cell and put back in a finally,
+    # as the chain cases below do.
+    runner_chain_timeout = load_runner()
+    first_model = runner_chain_timeout.CLAUDE_MODEL_CHAIN[0]
+
+    def first_fails_then_next_times_out(command, *arguments, **keywords):
+        if command[command.index("--model") + 1] == first_model:
+            return subprocess.CompletedProcess(
+                list(command), 1, "first model: not available\n",
+                "first model: overloaded\n")
+        raise subprocess.TimeoutExpired(
+            list(command), keywords.get("timeout"),
+            output=b"next model: partial review", stderr=b"next model: still reading")
+
+    real_chain_timeout_run = runner_chain_timeout.subprocess.run
+    buffer = io.StringIO()
+    cell_ok = None
+    try:
+        runner_chain_timeout.subprocess.run = first_fails_then_next_times_out
+        with tempfile.TemporaryDirectory() as scratch:
+            with contextlib.redirect_stdout(buffer):
+                _, cell_ok = runner_chain_timeout.run_cell(
+                    "cut", "claude", "docs/x.md", [],
+                    pathlib.Path("unused-problem-statement.md"),
+                    pathlib.Path(scratch), {}, (), StubLedger([]))
+    finally:
+        runner_chain_timeout.subprocess.run = real_chain_timeout_run
+    output = buffer.getvalue()
+    timeout_line = (f"FAILED: cut-claude (timeout after "
+                    f"{runner_chain_timeout.CELL_TIMEOUT_SECONDS}s)\n")
+    check("a claude cell timing out after a failed attempt prints the timed-out "
+          "attempt's words once, after the failed attempt's and before the FAILED line",
+          all(output.count(words) == 1 for words in
+              ("next model: partial review", "next model: still reading"))
+          and timeout_line in output
+          and output.index("first model: not available")
+          < output.index("next model: partial review")
+          < output.index(timeout_line),
+          f"output was {output!r}")
+    check("and the failed attempt's words print exactly once",
+          output.count("first model: not available") == 1
+          and output.count("first model: overloaded") == 1,
+          f"output was {output!r}")
+    check("and the cell still fails", cell_ok is False, f"cell_ok={cell_ok}")
+
     # The prompt-body boundary. The marker replaced a bare `---` rule, which is
     # ordinary markdown: a horizontal rule anywhere above the intended split
     # silently truncated the prompt, and nothing failed.

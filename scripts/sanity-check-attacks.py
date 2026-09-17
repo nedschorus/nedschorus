@@ -502,6 +502,23 @@ def run_codex(prompt: str) -> tuple:
         last_message_path.unlink(missing_ok=True)
 
 
+def captured_stream_as_text(captured) -> str:
+    """A stream a runtime wrote, as text, in whichever form it was handed back.
+
+    subprocess.TimeoutExpired carries what the child had written before it was
+    cut off, and CPython raises it before the decoding step, so a call that
+    asked for text still gets bytes (measured on 3.13, 2026-09-17); a stream
+    that was never piped, and a piped one the child wrote nothing to, arrive
+    as None. Undecodable bytes are replaced, never raised on: a runtime cut off
+    partway through a character must not turn a timeout into a crash.
+    """
+    if captured is None:
+        return ""
+    if isinstance(captured, bytes):
+        return captured.decode("utf-8", errors="replace")
+    return captured
+
+
 def blob_fingerprint(data: bytes) -> str:
     """git's blob hash for a byte string: sha1 over git's header for a blob of
     that size, its NUL terminator, and the bytes.
@@ -948,7 +965,22 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     runner = run_claude if runtime == "claude" else run_codex
     try:
         code, output, model, fallback_from = runner(prompt)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as timeout:
+        # What the runtime wrote before it was cut off, printed before the
+        # FAILED line, both streams in run_claude's order: every other ending
+        # keeps a failed runtime's words, and this one dropped them. The
+        # exception holds the streams of the attempt that timed out and no
+        # other — run_claude prints each earlier failed attempt's words as that
+        # attempt ends, so they are already out and are not repeated here. A
+        # codex cell's streams go to DEVNULL and arrive as None. Each piece
+        # ends its own line, because a stream cut off mid-write rarely does,
+        # and the FAILED line must still start one. The cell still fails:
+        # whether a timeout should fall back to the chain's next model is not
+        # decided here.
+        for stream in (timeout.stderr, timeout.stdout):
+            words = captured_stream_as_text(stream)
+            if words:
+                print(words, end="" if words.endswith("\n") else "\n", flush=True)
         print(f"FAILED: {cell} (timeout after {CELL_TIMEOUT_SECONDS}s)", flush=True)
         return cell, False
     except OSError as exc:
