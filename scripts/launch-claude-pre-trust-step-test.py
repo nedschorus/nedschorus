@@ -277,7 +277,13 @@ class PreTrustSandbox:
             capture_output=True, text=True, check=False,
             env={"PATH": f"{self.stubs}:/usr/bin:/bin",
                  "HOME": str(self.home),
-                 "TMPDIR": str(self.decoy_tmpdir)},
+                 "TMPDIR": str(self.decoy_tmpdir),
+                 # Apple's Command Line Tools Python writes its bytecode
+                 # cache under $HOME while starting. With this fresh HOME and
+                 # `ulimit -f 0`, that write raises SIGXFSZ and kills the
+                 # interpreter before the program runs, so the sabotaged
+                 # cases would pass without running anything.
+                 "PYTHONDONTWRITEBYTECODE": "1"},
             cwd=str(self.workdir))
 
 
@@ -412,15 +418,15 @@ def main() -> int:
         sandbox = PreTrustSandbox(root / "control-truncating")
         before_content = sandbox.seed_state_file("/an/earlier/seat")
         before = sandbox.facts()
-        sandbox.run_trust_program(PRE_FIX_TRUNCATING_WRITE, "/some/seat/home",
-                                  sabotage=True)
+        control = sandbox.run_trust_program(PRE_FIX_TRUNCATING_WRITE,
+                                            "/some/seat/home", sabotage=True)
         facts = sandbox.facts()
         check("control: the pre-fix truncate-in-place shape EMPTIES the state "
               "file under the same failure (the sabotage discriminates)",
               facts["exists"] and facts["content"] == ""
               and facts["inode"] == before["inode"],
-              (repr(facts.get("content", ""))[:120], facts.get("inode"),
-               before["inode"]))
+              (control.returncode, repr(facts.get("content", ""))[:120],
+               facts.get("inode"), before["inode"]))
 
         sandbox = PreTrustSandbox(root / "control-swallowed-flush")
         before_content = sandbox.seed_state_file("/an/earlier/seat")
