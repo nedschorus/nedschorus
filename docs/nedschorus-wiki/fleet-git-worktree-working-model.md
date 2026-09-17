@@ -36,13 +36,14 @@ passing review.
   user `nedlern`), each with its own clone. Path map:
   `docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md` (flagged stale
   2026-08-17; verify before relying on specifics).
-- **Seat** — a named, long-lived agent identity: home directory, own
-  branch, brief. **Session** — one running conversation occupying a seat;
-  sessions end and are replaced, the seat persists. **Reincarnate** — the
-  supervisor replacing a session with a fresh one, carrying the handoff
-  forward. Definitions of record: `docs/nedschorus-wiki/agent-seat-model.md`.
-- **The reference checkout** — the machine's checkout that supervisors and
-  launchers run from and other agents read expecting main. A standalone
+- **Agent-seat** — a named, long-lived agent identity: home directory, own
+  branch, brief. **Session** — one running conversation occupying an
+  agent-seat; sessions end and are replaced, the agent-seat persists.
+  **Reincarnate-seat** — the handoff-supervisor replacing a session with a
+  fresh one, carrying the handoff forward. Definitions of record:
+  `docs/nedschorus-wiki/agent-seat-model.md`.
+- **The reference checkout** — the machine's checkout that handoff-supervisors
+  and launchers run from and other agents read expecting main. A standalone
   clone is its own workspace, never "the reference" — where any mechanical
   test disagrees with that definition, the definition governs (pinned
   2026-08-17). The test the guards use lives in the guard scripts.
@@ -58,7 +59,7 @@ passing review.
   until its credential work lands.
 - **The PR process** — until the gate activates: a topic starts on a
   branch cut from current main and is PR'd as soon as its tests pass, and
-  the merge-lane seat reviews and merges every PR (deputization, recorded
+  the merge-lane agent-seat reviews and merges every PR (deputization, recorded
   at R13, is the ruled exception). Recorded in CLAUDE.md's PR-process paragraph.
   The earlier form — commits accumulating on a seat branch, cherry-picked
   onto a fresh branch later — was retired 2026-08-28 after a three-commit
@@ -79,7 +80,7 @@ Rules about git, worktrees, sessions, seats, and machines, plus the
 enforcement programs that implement them. Deliberately excluded: workflow
 governance content (the cold read's cells, ghi-write's routing, walk conduct),
 prose-quality rules, and communication conventions. Coverage is bounded by
-the sweep that built the inventory — the per-seat briefs
+the sweep that built the inventory — the per-agent-seat briefs
 (`docs/agents/*-instructions.md`), `docs/cross-project/fast-handoff-design.md`,
 and seat `CLAUDE.local.md` files were not swept.
 
