@@ -5,6 +5,7 @@ Run: python3 scripts/md-drift-lint-test.py
 """
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -239,6 +240,57 @@ with tempfile.TemporaryDirectory() as workspace:
     malformed_json.write_text('{"a": ', encoding="utf-8")
     check("malformed json is still reported",
           len(list(lint.lint_json(malformed_json))) == 1)
+
+# A path this repository deliberately does not track is not drift (user-ruled
+# 2026-09-17). These cases need a REAL git repository: the fixtures above are
+# plain temporary directories, where nothing is ignored and the rule would
+# never be exercised, so a suite without this block would prove nothing.
+with tempfile.TemporaryDirectory() as git_workspace:
+    git_root = Path(git_workspace)
+    subprocess.run(["git", "init", "-q"], cwd=git_root, check=True,
+                   capture_output=True)
+    (git_root / ".gitignore").write_text(
+        "cold-read-records/\ndocs/walk/\n", encoding="utf-8")
+    (git_root / "docs").mkdir()
+    (git_root / "scripts").mkdir()
+
+    check("an ignored path that is absent is not reported",
+          problems_for("A record at `cold-read-records/2026-09-14-run/dispositions.md` says so.\n",
+                       git_root) == [],
+          str(problems_for("A record at `cold-read-records/2026-09-14-run/dispositions.md` says so.\n",
+                           git_root)))
+
+    # The same citation in a seat's own checkout, where the file IS present.
+    # Both answers must match, because measuring in the wrong checkout is what
+    # put a wrong pair of numbers into a merged comment on 2026-09-17.
+    present = git_root / "cold-read-records" / "2026-09-14-run"
+    present.mkdir(parents=True)
+    (present / "dispositions.md").write_text("# real record\n", encoding="utf-8")
+    check("an ignored path that is present reads the same as when absent",
+          problems_for("A record at `cold-read-records/2026-09-14-run/dispositions.md` says so.\n",
+                       git_root) == [])
+
+    # The rule must not swallow real drift: an untracked-by-accident path is
+    # still a missing path, and that is the whole point of the check.
+    findings = problems_for("The script `scripts/not-built-yet.py` runs it.\n", git_root)
+    check("a path git does not ignore is still reported",
+          findings == ["path does not exist: scripts/not-built-yet.py"], str(findings))
+
+    # A markdown link is folded against the citing document's directory before
+    # git is asked, so a relative link out of docs/ resolves to docs/walk/.
+    check("a relative link into an ignored directory is not reported",
+          problems_for("See [the minutes](walk/seat-rulings-minutes.md).\n",
+                       git_root, name="docs/doc.md") == [],
+          str(problems_for("See [the minutes](walk/seat-rulings-minutes.md).\n",
+                           git_root, name="docs/doc.md")))
+
+    # A link that leaves the repository entirely cannot be ignored BY this
+    # repository, and must not be silently swallowed by the relpath guard.
+    findings = problems_for("See [outside](../elsewhere/gone.md).\n",
+                            git_root, name="docs/doc.md")
+    check("a link pointing outside the repository is still reported",
+          findings == ["link target does not exist: ../elsewhere/gone.md"], str(findings))
+
 
 print()
 if failures:
