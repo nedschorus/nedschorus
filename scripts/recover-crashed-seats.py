@@ -26,7 +26,10 @@ What it does, per seat:
   2. Defer when an unconsumed handoff IS waiting: relaunching plain is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
-     rather than duplicating that logic.
+     rather than duplicating that logic. Unless that handoff asks to be
+     consulted before a relaunch (dont-restart): then nothing is launched,
+     and the seat is reported NOT RELAUNCHED, AT ITS OWN REQUEST, which
+     counts as not recovered.
   3. Find the seat's most recent real transcript under the harness project
      directory: newest *.jsonl by mtime, skipping failed successors — small
      sessions whose first turn this machinery itself composed and which
@@ -604,7 +607,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     """Decide what recovery this seat needs.
 
     Returns (verdict, detail): seat-already-running / refuse /
-    defer-to-boot-ignition / resume (detail is (session_id,
+    defer-to-boot-ignition / seat-asked-to-be-consulted / resume (detail is (session_id,
     transcript_path)) / ignite (detail is the reason no resume is possible).
 
     seat-already-running is not a refusal (user-ruled 2026-09-16, on the
@@ -715,6 +718,21 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
                 "plain; if it is scrap, delete it and rerun this recovery"
             )
         if consumed is None or counter > consumed:
+            dont_restart = fields.get("dont-restart")
+            if dont_restart:
+                # The seat asked to be consulted before a relaunch and died before
+                # a supervisor could ask. Launching it only let the supervisor stop
+                # at once, after which this tool waited out
+                # SEAT_COMES_UP_DEADLINE_SECONDS and offered the forced restart the
+                # seat had declined (nedschorus#350; user-ruled 2026-09-17: launch
+                # nothing). The handoff stays unconsumed, so a by-hand launch still
+                # reaches the supervisor's restart question.
+                return "seat-asked-to-be-consulted", (
+                    f"an unconsumed handoff (counter {counter}) asks to be consulted "
+                    f"before a relaunch: {dont_restart}. Nothing was launched. To bring "
+                    f"it back, launch it by hand (launch-claude-mac {name} or "
+                    f"launch-claude-ubuntu {name}) and answer its supervisor's restart question"
+                )
             return "defer-to-boot-ignition", (
                 f"an unconsumed handoff waits (counter {counter}, consumed "
                 f"{consumed}) — plain relaunch is correct; the supervisor's "
@@ -831,10 +849,14 @@ def came_up_or_failure_report(name: str, handoff_directory: Path,
 # printed, logged, and then exited zero — a login restart still reporting the
 # fleet is back to an absent operator, by way of the status code this time
 # (PR #329 review, finding 1).
+# A seat that asked to be consulted is left down on purpose, but it is down: were
+# it not counted, the login restart would list it with the seats that came up.
+SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER = "NOT RELAUNCHED, AT ITS OWN REQUEST"
 SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     "REFUSED",
     "LAUNCH FAILED",
     "LAUNCHED BUT DID NOT COME UP",
+    SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER,
 )
 # The report class for assess_seat's seat-already-running verdict. Named so the
 # suites can pin that it contains none of the markers above.
@@ -868,6 +890,10 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
 
     if verdict == "refuse":
         return f"{name}: REFUSED — {detail}"
+
+    # Also before the dry-run branch: nothing is launched either way.
+    if verdict == "seat-asked-to-be-consulted":
+        return f"{name}: {SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — {detail}"
 
     if verdict == "defer-to-boot-ignition":
         if dry_run:
