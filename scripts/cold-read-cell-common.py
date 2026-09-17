@@ -101,7 +101,7 @@ import time
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
-# The passes a cold-read-cell can be asked to run; each reads its prompt from
+# The passes a cell can be asked to run; each reads its prompt from
 # .claude/skills/cold-read/prompts/<cell>.md. `fast-clarify` is the fast
 # cold-read-tier's one-reviewer ask (user-ruled 2026-08-30, provisional
 # per the same day's qualifier): a concise sentence-level restatement, then
@@ -670,25 +670,23 @@ def stamp_provenance(
 
     `model=` always names the model that actually produced the text below
     it. `fallback_from=` appears only when an earlier model in a chain
-    failed, so a degraded cold-read-cell is visible in the record rather
-    than only in a log.
+    failed, so a degraded cell is visible in the record rather than only
+    in a log.
 
-    WHAT A COLD-READ-CELL COST IS PART OF WHAT IT DID (user-ruled 2026-08-25).
-    Until that ruling the stamp recorded every input to the run -- runtime,
-    model, effort, cell, tier, target -- and nothing about the run itself,
-    so a record set answered "what was asked for" and could not answer
-    "what did this cost". Measured that day: across six cold-read-full-runs
-    the only recoverable token figure came from the single cold-read-cell that
-    FAILED, because failure is the one path that kept the runtime's output.
-    `duration_s=` is wall seconds for the whole cold-read-cell including
-    any failed attempts ahead of the one that worked -- the cold-read-cell's
-    cost, not the winning model's. `tokens=` is present only when the runtime
-    reported a total; see `parse_tokens_used`.
+    WHAT A CELL COST IS PART OF WHAT IT DID (user-ruled 2026-08-25). Until
+    that ruling the stamp recorded every input to the run -- runtime, model,
+    effort, cell, tier, target -- and nothing about the run itself, so a
+    record set answered "what was asked for" and could not answer "what did
+    this cost". Measured that day: across six cold-read runs the only recoverable token
+    figure came from the single cell that FAILED, because failure is the one
+    path that kept the runtime's output. `duration_s=` is wall seconds for the
+    whole cell including any failed attempts ahead of the one that worked --
+    the cell's cost, not the winning model's. `tokens=` is present only when
+    the runtime reported a total; see `parse_tokens_used`.
 
-    `prompt_file=` is present only when the cold-read-cell ran under
-    --prompt-file, and names the template it read as it was given, so a trial's
-    report says which draft produced it rather than passing as a run of the
-    cold-read-cell's own prompt.
+    `prompt_file=` is present only when the cell ran under --prompt-file, and
+    names the template it read as it was given, so a trial's report says which
+    draft produced it rather than passing as a run of the cell's own prompt.
 
     FIELD ORDER IS DELIBERATE: `target=` stays last because its value is a
     path, and a path with a space in it would swallow whatever followed for
