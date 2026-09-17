@@ -61,10 +61,13 @@ Operating rules:
   with a stated reason.
 - Reports land in `sanity-check-records/<date>-<target-stem>/` (suffixed -2,
   -3, ... claimed by creation, so a same-day second pass never overwrites
-  earlier reports) — working material on this machine only, gitignored; the
-  requesting agent deletes the directory when the work it served lands, or
-  when nothing further will use it. What survives is what landed — the
-  reports themselves are archived nowhere.
+  earlier reports) — gitignored, and shipped to the log-store on ned-box by
+  `scripts/sanity-check-record-ship.py`, which this runner calls when the run
+  ends. They are logs, kept and citable, not deleted when the work they served
+  lands (user-ruled 2026-08-25, and 2026-09-15 for this kind). Ship again
+  after writing `finding-dispositions.md` and the add-only copy sends only
+  that file; a file already in the store whose content differs is refused, so
+  finish the triage before shipping it rather than editing it afterwards.
 - Each review agent is given a scratch directory of its own at
   `sanity-check-records/<date>-<target-stem>/scratch/<audit>-<runtime>/`, made
   by the runner and named to that agent in its prompt: working notes, drafts,
@@ -73,7 +76,7 @@ Operating rules:
   place for it is worth more than a prohibition the tooling cannot enforce. An
   agent's report is still its reply, never a file: nothing in scratch is read
   as findings, so scratch is archived as-is with the run record, never
-  triaged, and deleted when that record directory is deleted.
+  triaged, and shipped to the log-store beside the reports.
 
 Usage:
 
@@ -176,6 +179,9 @@ import threading
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIRECTORY_NAME = "sanity-check-records"
 RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
+# The record reaches the log-store by program, not by an agent remembering to
+# run one (nedschorus#392), the way scripts/cold-read-grid.py ships its own.
+RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
 
 # The sanctioned working space, one directory per cell, inside the run's own
 # record directory: <record dir>/scratch/<audit>-<runtime>/. See
@@ -1025,6 +1031,29 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     return cell, True
 
 
+def ship_record(record_dir: pathlib.Path) -> str:
+    """Run the shipper on this run's record and return its one line, or a
+    FAILED line of this program's own when the shipper could not run.
+
+    Never raises, and never changes the run's exit code: the shipper's outcome
+    is reported, not enforced (nedschorus#392; the same shape as
+    scripts/cold-read-grid.py's ship_record). A sanity check that found
+    something and could not reach ned-box has still found it, and the record
+    stays on disk for a later run.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(RECORD_SHIPPER), str(record_dir)],
+            capture_output=True, text=True, check=False)
+    except OSError as error:
+        return f"FAILED: the shipper could not be run ({error}); the record stays on disk."
+    sys.stderr.write(completed.stderr)
+    line = completed.stdout.strip().splitlines()
+    return line[0] if line else (
+        f"FAILED: the shipper printed nothing (exit {completed.returncode}); "
+        f"the record stays on disk.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1148,20 +1177,39 @@ def main() -> int:
             saved_count += 1 if cell_ok else 0
 
     if saved_count:
-        print(
+        print_run_completion(out_dir)
+    else:
+        print("sanity-check wrote no reports: every agent above failed or was "
+              "skipped; there is nothing to triage.", flush=True)
+    return 0 if ok else 1
+
+
+def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
+    """Ship this run's record and say what the requesting agent does next.
+
+    The shipping is the program's, not the agent's (nedschorus#392): the record
+    is a log, and a log that reaches the store only when someone remembers to
+    push it is a log that is sometimes lost. `ship` is the shipper to call, for
+    the test; the default is this module's ship_record.
+    """
+    ship = ship or ship_record
+    print(f"record: {ship(out_dir)}", flush=True)
+    print(
             f"sanity-check complete: reports in {out_dir}. Triage each report "
             "(follow up the warnings above, settle hedged claims about code by "
             "reading the code, merge the "
             "runtimes), then present the surviving findings to the user one at a "
             "time for his ruling (the walk-me-through skill). "
-            "Delete the record directory when the work it served lands, "
-            "or when nothing further will use it.",
-            flush=True,
-        )
-    else:
-        print("sanity-check wrote no reports: every agent above failed or was "
-              "skipped; there is nothing to triage.", flush=True)
-    return 0 if ok else 1
+            "The record was shipped to the log-store when this run ended (the "
+            "`record:` line above says whether it arrived); once "
+            "finding-dispositions.md is written, run "
+            f"`scripts/sanity-check-record-ship.py {out_dir}` so it joins the "
+            "reports there. Leave the record directory in place: these are logs, "
+            "kept, not deleted when the work they served lands. A file already in "
+            "the store whose content differs is refused rather than replaced, so "
+            "ship a dispositions file once it is finished.",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
