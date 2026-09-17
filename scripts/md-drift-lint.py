@@ -156,6 +156,20 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
         # A command line: first word may be a script, later words flags.
         words = token.split()
         for word in words:
+            # A name with no directory is not a claim about where the file
+            # sits: prose writes `notes.md` or `state-exit.json` for a file
+            # inside some directory it is discussing, or one a run creates.
+            # Measured on main 2026-09-17: 126 of the 200 missing-path
+            # findings were such names, and the noise is what would teach a
+            # reviewer to skim past this lint. User-ruled 2026-09-17, the
+            # first of the three choices nedschorus#336 named: not checked at
+            # all. A path carrying a directory is checked as before, and that
+            # is where real drift shows. This is the existence check only —
+            # looks_like_repo_path still admits a bare name for
+            # referenced_files, whose job is finding the source a quote is
+            # attributed to.
+            if "/" not in word:
+                continue
             if looks_like_repo_path(word) and resolve(word, md_path, repo_root) is None:
                 yield f"path does not exist: {word}"
         # Flag check: a command whose FIRST word is a project script must name

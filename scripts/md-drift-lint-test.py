@@ -115,6 +115,28 @@ with tempfile.TemporaryDirectory() as workspace:
     # --- Bare basenames, history lines, placeholders ----------------------
     check("a bare basename existing elsewhere in the repo resolves",
           problems_for("run `real-script.py --threshold 1`", root) == [])
+    # A name with no directory is not checked at all (user-ruled 2026-09-17,
+    # nedschorus#336): it names a file inside some directory the prose is
+    # discussing, or one a run creates. 126 of main's 200 missing-path
+    # findings were of this shape that day.
+    check("a name with no directory is not demanded to exist",
+          problems_for("the run writes `state-exit.json` beside its trace", root) == [],
+          str(problems_for("the run writes `state-exit.json` beside its trace", root)))
+    check("and neither is one inside a command",
+          problems_for("run `python3 real-script.py notes.md`", root) == [],
+          str(problems_for("run `python3 real-script.py notes.md`", root)))
+    # The half that must keep firing: a path carrying a directory is where
+    # real drift shows, and the ruling does not touch it.
+    check("a path with a directory that is absent is still reported",
+          any("docs/ghost.md" in p
+              for p in problems_for("see `docs/ghost.md`", root)),
+          str(problems_for("see `docs/ghost.md`", root)))
+    # The flag check reads the script a bare name points at, and still does:
+    # skipping the existence check is not skipping the word.
+    check("a bare script name still carries its flags to the real script",
+          any("--ghost" in p
+              for p in problems_for("run `real-script.py --ghost`", root)),
+          str(problems_for("run `real-script.py --ghost`", root)))
     check("a git-history line's paths are not checked",
           problems_for("deleted, in git history at `docs/gone-forever.md`", root) == [])
     check("an ellipsis placeholder is skipped",
