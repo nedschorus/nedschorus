@@ -1732,14 +1732,6 @@ def build_parser() -> argparse.ArgumentParser:
         later.add_argument("--repo", default=None,
                            help="the repository whose history answers")
 
-    # Hidden from --help (ruled 2026-08-12): `worker` is an internal re-entry
-    # the program makes into itself, not a caller-facing subcommand, and it
-    # prints nothing — its reply channel is the workspace. The caller-facing
-    # surface must match the caller-facing one-JSON-object contract, and the
-    # specification now names this and --help as its two exemptions.
-    worker = commands.add_parser("worker", help=argparse.SUPPRESS)
-    worker.add_argument("digest")
-
     audit = commands.add_parser(
         "audit", help="check main's live branch protection against the design (B3c)")
     audit.add_argument("--repo", default=None,
@@ -1751,10 +1743,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Hidden from --help (ruled 2026-08-12): `worker` is an internal re-entry the
+# program makes into itself, not a caller-facing subcommand, and it prints
+# nothing — its reply channel is the workspace. The caller-facing surface must
+# match the caller-facing one-JSON-object contract, and the specification names
+# this and --help as its two exemptions.
+#
+# So `worker` is parsed by its own parser, never registered on the public one.
+# It used to be registered there with `help=argparse.SUPPRESS`, which argparse
+# honors for add_argument but not for add_parser: --help printed the literal
+# line `worker  ==SUPPRESS==`, and the usage line and the unknown-subcommand
+# refusal both listed `worker` among the choices.
+def build_internal_worker_parser() -> argparse.ArgumentParser:
+    worker = TeachingArgumentParser(prog="main-gatekeeper.py worker")
+    worker.add_argument("digest")
+    return worker
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    if argv is None:
+        argv = sys.argv[1:]
     try:
-        arguments = parser.parse_args(argv)
+        if argv[:1] == ["worker"]:
+            arguments = build_internal_worker_parser().parse_args(argv[1:])
+            arguments.command = "worker"
+        else:
+            arguments = parser.parse_args(argv)
         sweep_stale_workspaces()
         if arguments.command == "check-in":
             return check_in(arguments)
