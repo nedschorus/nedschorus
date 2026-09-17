@@ -20,9 +20,19 @@ What it does, per seat:
      other doubt is REFUSED — a tmux session alive with no confirmed
      supervisor, and a supervisor only assumed because ps could not be run,
      included — and a refusal counts as a seat not recovered. Either way this
-     tool recovers crashes; it never kills live work, never launches into a
-     live tmux session, and unlike resupervise-seat.py it has no kill step at
-     all.
+     tool recovers crashes; it never kills live work and never launches into a
+     live tmux session.
+  1a. With one question, and only with an operator at a terminal to answer it
+     (user-ruled 2026-09-17). A tmux session alive with no confirmed
+     supervisor is often nothing but the shell an attached launch leaves open
+     in the seat's directory, which no operator can pass without killing it by
+     hand. When this tool can PROVE that is all it is —
+     tmux_session_is_a_leftover_idle_shell below — it asks whether to close it,
+     and on an explicit yes retires that session (the step resupervise-seat.py
+     already performs) and assesses the seat as though it were not there. Run
+     unattended — at boot, under restart-live-seats-at-login — nothing is asked
+     and the refusal stands exactly as it did. A session that cannot be proven
+     idle is refused with no question, attended or not.
   2. Defer when an unconsumed handoff IS waiting: relaunching plain is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
@@ -100,6 +110,16 @@ _watcher_spec = importlib.util.spec_from_file_location(
 )
 watcher = importlib.util.module_from_spec(_watcher_spec)
 _watcher_spec.loader.exec_module(watcher)
+
+# For its retire step alone (retire_seat_tmux_session), run when an operator
+# says to close a seat's leftover idle shell: the kill rules — every socket
+# holding the name, no survivor left behind as a decoy — are that script's,
+# and a second copy of them here would drift from it.
+_resupervise_spec = importlib.util.spec_from_file_location(
+    "resupervise_seat", Path(__file__).with_name("resupervise-seat.py")
+)
+resupervise = importlib.util.module_from_spec(_resupervise_spec)
+_resupervise_spec.loader.exec_module(resupervise)
 
 # First-turn shapes of sessions this machinery itself composes — the
 # supervisor's no-handoff prompt and this script's own ignition and resume
@@ -228,36 +248,231 @@ def tmux_session_alive_anywhere(name: str):
     return False, ""
 
 
-def seat_directory_occupied(seat_directory: Path):
-    """(occupied, detail): is any live process rooted in the seat directory?
+def processes_rooted_in_seat_directory(seat_directory: Path,
+                                       require_a_complete_listing=False):
+    """(process_ids, unusable_detail): the id of every live process whose
+    working directory is the seat directory or under it — or (None, why) when
+    lsof's answer cannot be trusted.
 
     The same lsof contract as resupervise-seat.py and clean-worktrees.py:
-    vacancy is proven, never assumed — an unusable answer counts as
-    occupied, because recovering a seat something is still working in is
-    the one harm this script must never do.
+    vacancy is proven, never assumed, so every unusable answer is None here
+    and occupied to the caller below.
+
+    It reads process ids (`-F pn`) as well as paths because a path alone
+    cannot tell a seat's own leftover shell from anything else rooted in the
+    seat — and telling those apart is the whole of the idle-shell proof below
+    (ruled 2026-09-17).
+
+    require_a_complete_listing is for the callers that read this list the
+    other way round. By default a listing that names the seat is positive
+    evidence however lsof exited, because for "is anything in there?" a
+    partial answer that says yes is still a yes. The idle-shell proof asks the
+    opposite — "is nothing in there but these panes?" — and a partial listing
+    cannot answer that at all, so those callers demand a listing lsof did not
+    flag. Measured 2026-09-17: this lsof exits zero on both machines in the
+    ordinary case, the box's unreadable-process lines included, so the demand
+    costs nothing that works today.
     """
     if shutil.which("lsof") is None:
-        return True, "lsof is not installed, so the seat cannot be proven vacant"
+        return None, "lsof is not installed, so the seat cannot be proven vacant"
     try:
         listing = subprocess.run(
-            ["lsof", "-a", "-d", "cwd", "-F", "n"],
+            ["lsof", "-a", "-d", "cwd", "-F", "pn"],
             capture_output=True, text=True, timeout=30, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return True, "the occupancy check (lsof) could not be run"
+        return None, "the occupancy check (lsof) could not be run"
     prefix = str(seat_directory.resolve())
+    rooted = []
     reported = 0
+    process_id = None
     for line in listing.stdout.splitlines():
-        if line.startswith("n"):
+        if line.startswith("p"):
+            try:
+                process_id = int(line[1:])
+            except ValueError:
+                process_id = None
+        elif line.startswith("n"):
             reported += 1
             cwd = line[1:]
             if cwd == prefix or cwd.startswith(prefix + "/"):
-                return True, f"a live process is rooted in {prefix}"
+                if process_id is None:
+                    return None, (f"the occupancy check (lsof) named {prefix} without a "
+                                  "usable process id; vacancy unproven")
+                rooted.append(process_id)
+    # A listing that names the seat is positive evidence however the run
+    # exited, so a match is answered before the exit code is judged — the rule
+    # this check has kept since PR #131's review, and the one
+    # require_a_complete_listing suspends for the callers reading the list the
+    # other way round.
+    if rooted and not require_a_complete_listing:
+        return rooted, ""
     if listing.returncode != 0:
-        return True, f"the occupancy check (lsof) exited {listing.returncode}; vacancy unproven"
+        return None, f"the occupancy check (lsof) exited {listing.returncode}; vacancy unproven"
     if reported == 0:
-        return True, "the occupancy check (lsof) reported no working directories at all"
+        return None, "the occupancy check (lsof) reported no working directories at all"
+    return rooted, ""
+
+
+def seat_directory_occupied(seat_directory: Path, apart_from_process_ids=()):
+    """(occupied, detail): is any live process rooted in the seat directory?
+
+    An unusable answer counts as occupied, because recovering a seat something
+    is still working in is the one harm this script must never do.
+
+    apart_from_process_ids are the panes of a leftover idle shell this
+    recovery has just retired at the operator's word (ruled 2026-09-17). Those
+    processes WERE the session that was closed, and they die on tmux's signal
+    rather than on this script's clock: counting them would refuse the very
+    seat the operator just cleared, whenever lsof ran before the shell had
+    finished exiting. Excusing a process turns this into a question about what
+    is NOT in the listing, which a partial listing cannot answer, so a run
+    with panes to excuse demands a complete one.
+    """
+    rooted, unusable_detail = processes_rooted_in_seat_directory(
+        seat_directory, require_a_complete_listing=bool(apart_from_process_ids))
+    if rooted is None:
+        return True, unusable_detail
+    retired = set(apart_from_process_ids)
+    if any(process_id not in retired for process_id in rooted):
+        return True, f"a live process is rooted in {seat_directory.resolve()}"
     return False, ""
+
+
+# What a pane may be running for its session to be nothing but the after-exit
+# shell. tmux names the command of the pane terminal's foreground process
+# group, so a shell here means the shell has nothing in the foreground — and
+# ONLY that. Measured on this Mac, 2026-09-17: a LIVE attached seat reports
+# `zsh` too, because the launcher's pane command is
+# `zsh -c "trap ...; <supervisor>; <after-exit>"` and the supervisor runs as
+# its child inside the same process group (seat fleet-restart-at-login, pane
+# process 27178 `zsh`, supervisor 27179 `Python`). The occupancy half of the
+# proof below is what separates the two, and neither half alone is enough.
+LEFTOVER_IDLE_SHELL_PANE_COMMANDS = (
+    "bash", "zsh", "sh", "dash", "ksh", "fish", "tcsh", "csh",
+)
+
+
+def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
+    """(proven, pane_process_ids, detail): is every tmux session holding this
+    seat's name nothing but the shell an attached launch leaves open?
+
+    The launcher's AFTER_EXIT_COMMAND ends `exec ${SHELL:-/bin/sh}` in the
+    seat's directory (scripts/launch-claude-mac, scripts/launch-claude-ubuntu),
+    so that shell REPLACES the pane's process and keeps its process id — which
+    is why a pane's own id is the id to expect from lsof below.
+
+    proven is True only when both measurements say so, and False whenever
+    either cannot be taken — the same fail-closed rule the checks above keep:
+
+      1. Every pane of every session named for this seat, on the seat's own
+         socket and the default one, runs one of
+         LEFTOVER_IDLE_SHELL_PANE_COMMANDS. This catches work in the pane's
+         foreground wherever its working directory is, and it is also what
+         stops a recovery run from inside the seat's own window from closing
+         the terminal doing the closing: that pane would report the recovery
+         tool, not a shell (the hazard resupervise-seat.py guards with $TMUX).
+      2. Every process rooted in the seat directory is one of those panes'
+         own process ids. This is the half that separates an idle shell from a
+         live attached seat, whose pane reports a shell as well.
+
+    pane_process_ids are those panes' process ids, which the caller hands back
+    to the occupancy check after retiring the session.
+    """
+    pane_process_ids = []
+    sockets_holding = []
+    for socket_name in dict.fromkeys((name, "default")):
+        held = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
+        if held is None:
+            return False, [], ("tmux cannot be run here, so the session cannot be shown "
+                               "to be an idle shell")
+        if held.returncode != 0:
+            continue
+        panes = run_tmux("list-panes", "-s", "-t", f"={name}",
+                         "-F", "#{pane_pid}\t#{pane_current_command}",
+                         socket_name=socket_name)
+        if panes is None or panes.returncode != 0:
+            return False, [], (f"tmux could not list the panes of session '{name}' on socket "
+                               f"'{socket_name}', so it cannot be shown to be an idle shell")
+        lines = [line for line in panes.stdout.splitlines() if line.strip()]
+        if not lines:
+            return False, [], (f"tmux listed no panes for session '{name}' on socket "
+                               f"'{socket_name}', so it cannot be shown to be an idle shell")
+        for line in lines:
+            reported_id, _, command = line.partition("\t")
+            command = command.strip()
+            try:
+                pane_process_ids.append(int(reported_id.strip()))
+            except ValueError:
+                return False, [], (f"tmux reported a pane of session '{name}' on socket "
+                                   f"'{socket_name}' without a usable process id ({line!r}), "
+                                   "so it cannot be shown to be an idle shell")
+            if command not in LEFTOVER_IDLE_SHELL_PANE_COMMANDS:
+                return False, [], (f"a pane of session '{name}' on socket '{socket_name}' is "
+                                   f"running {command or 'a command tmux did not name'}, not "
+                                   "an idle shell")
+        sockets_holding.append(socket_name)
+    if not sockets_holding:
+        return False, [], f"no tmux server holds a session named '{name}'"
+
+    rooted, unusable_detail = processes_rooted_in_seat_directory(
+        seat_directory, require_a_complete_listing=True)
+    if rooted is None:
+        return False, [], (f"{unusable_detail}, so the session cannot be shown to be an "
+                           "idle shell")
+    strangers = sorted(set(rooted) - set(pane_process_ids))
+    if strangers:
+        return False, [], (
+            f"process {', '.join(str(process_id) for process_id in strangers)} is rooted in "
+            f"{seat_directory.resolve()} and is not one of the session's own panes, so the "
+            "session cannot be shown to be an idle shell")
+    return True, pane_process_ids, (
+        f"the {name} tmux session (socket{'s' if len(sockets_holding) > 1 else ''} "
+        f"{', '.join(repr(socket_name) for socket_name in sockets_holding)}) is "
+        f"{len(pane_process_ids)} pane{'s' if len(pane_process_ids) != 1 else ''} at a shell "
+        f"with nothing in the foreground, and nothing but those panes is rooted in "
+        f"{seat_directory.resolve()}")
+
+
+def leftover_idle_shell_question_for_seat(name: str) -> str:
+    """The question an operator is asked, in the user's own words (ruled
+    2026-09-17). One line, because it is read in the middle of a fleet-wide
+    run: what is open, and what answering yes does."""
+    return (f"{name}'s window is open at a shell with nothing running. "
+            "Close it and bring the seat back? y/n")
+
+
+def recovery_has_an_operator_terminal() -> bool:
+    """Is there an operator at a terminal to be asked a question?
+
+    Both ends of the terminal, not stdin alone. restart-live-seats-at-login.py
+    runs this tool as `run(command, stdout=subprocess.PIPE, text=True)` (its
+    launch_seats_decided_restart), which inherits stdin: run by hand from a
+    terminal, that child would have a tty on stdin and a pipe on stdout — a
+    question nobody can see, in front of an input() that never returns.
+    Asking only when the answer can be both shown and read keeps the
+    2026-09-16 refusal in place on every path an operator is not watching.
+    """
+    try:
+        return bool(sys.stdin.isatty() and sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        # A stream closed or replaced by something that cannot answer: no
+        # terminal, so no question.
+        return False
+
+
+def ask_operator_to_close_the_leftover_idle_shell(question: str) -> bool:
+    """True only on an explicit yes. Everything else is a no (ruled
+    2026-09-17) — a bare return, a word this does not know, end of input, an
+    interrupt — because the answer a no falls back to is the refusal this
+    tool has always given, which is the safe one.
+    """
+    try:
+        answer = input(f"{question} ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer.strip().lower() in ("y", "yes")
 
 
 def first_user_turn_text(transcript_path: Path) -> str:
@@ -626,16 +841,33 @@ def seat_supervisor_confirmed_by_ps(name: str, lock_path: Path):
     return SUPERVISOR_ASSUMED_WITHOUT_PS, identity
 
 
+ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT = "ask-to-close-the-leftover-idle-shell"
+
+
 def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
-                projects_root: Path):
+                projects_root: Path, retired_pane_process_ids=()):
     """Decide what recovery this seat needs.
 
     Returns (verdict, detail): seat-already-running / refuse /
-    defer-to-boot-ignition / seat-asked-to-be-consulted /
-    offer-after-recorded-exit (detail is (exit_code, recorded_at, session_id),
-    session_id None when nothing could be resumed) / resume (detail is
-    (session_id, transcript_path)) / ignite (detail is the reason no resume is
-    possible).
+    ask-to-close-the-leftover-idle-shell (detail is (question, refusal,
+    pane_process_ids, shell_detail)) / defer-to-boot-ignition /
+    seat-asked-to-be-consulted / offer-after-recorded-exit (detail is
+    (exit_code, recorded_at, session_id), session_id None when nothing could
+    be resumed) / resume (detail is (session_id, transcript_path)) / ignite
+    (detail is the reason no resume is possible).
+
+    ask-to-close-the-leftover-idle-shell decides nothing by itself: the seat's
+    tmux session is alive with no confirmed supervisor, AND this function
+    could prove it is nothing but a leftover idle shell, so the caller may put
+    the question to an operator (user-ruled 2026-09-17). It is the caller that
+    knows whether there is anyone to ask, and the caller that carries the
+    refusal to give when there is not — which is why the refusal travels in
+    the detail rather than being composed twice.
+
+    retired_pane_process_ids are the panes of a leftover idle shell the caller
+    has just closed. They are excused from the occupancy check, so the
+    assessment runs as though that session had never been there — which is
+    what the operator asked for by answering yes.
 
     offer-after-recorded-exit launches nothing (nedschorus#242 change 2): the
     seat's supervisor recorded that its agent exited, so it is not a crash, and
@@ -684,16 +916,28 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     # session outlives the supervisor. Refused unless a live supervisor of this
     # seat is confirmed (user-ruled 2026-09-16, PR #426 review 5228560398) —
     # and either way nothing is launched into a live session.
+    #
+    # Unless that session can be PROVEN to be that leftover shell and nothing
+    # else, in which case it becomes a question for an operator rather than a
+    # refusal (user-ruled 2026-09-17). The refusal below is what an unattended
+    # caller still gets, unchanged, so it is composed here either way.
     if alive:
         if supervisor_answer == SUPERVISOR_CONFIRMED_BY_PS:
             return "seat-already-running", (
                 f"{detail}, and {identity} — this tool recovers crashes, it never "
                 "touches live seats")
-        return "refuse", (
+        refusal = (
             f"{detail}, but no live supervisor of this seat is confirmed ({identity}) — "
             "this tool never touches a live tmux session. If the seat's supervisor has "
             "exited, that session is the shell an attached launch leaves open: exit it, "
             "then rerun this recovery")
+        leftover_shell, pane_process_ids, shell_detail = (
+            tmux_session_is_a_leftover_idle_shell(name, seat_directory))
+        if not leftover_shell:
+            return "refuse", refusal
+        return ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT, (
+            leftover_idle_shell_question_for_seat(name), refusal,
+            pane_process_ids, shell_detail)
 
     if supervisor_answer == SUPERVISOR_CONFIRMED_BY_PS:
         return "seat-already-running", (
@@ -728,7 +972,8 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
             f"a supervisor may be watching this seat ({liveness_detail}), but "
             f"{why_unconfirmed} — {watching_identity}")
 
-    occupied, occupancy_detail = seat_directory_occupied(seat_directory)
+    occupied, occupancy_detail = seat_directory_occupied(
+        seat_directory, apart_from_process_ids=retired_pane_process_ids)
     if occupied:
         return "refuse", occupancy_detail
 
@@ -912,12 +1157,20 @@ SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                  projects_root: Path, dry_run: bool, ignite_fallback: bool,
-                 open_iterm_window: bool = False) -> str:
+                 open_iterm_window: bool = False,
+                 retired_pane_process_ids=None) -> str:
     """One seat's recovery. Returns a one-line report. With open_iterm_window
     the seat is launched attached in its own iTerm window instead of
     detached (--open-iterm-window-per-seat); nothing else changes — not the
-    deadness checks, the transcript choice, or the resume decision."""
-    verdict, detail = assess_seat(name, agents_root, handoff_directory, projects_root)
+    deadness checks, the transcript choice, or the resume decision.
+
+    retired_pane_process_ids is set only by this function's one re-entry,
+    after an operator has answered yes to closing a seat's leftover idle
+    shell: it carries the panes that were closed past the occupancy check,
+    and, being not-None, it is also what stops the question being asked a
+    second time in the same recovery."""
+    verdict, detail = assess_seat(name, agents_root, handoff_directory, projects_root,
+                                  retired_pane_process_ids=retired_pane_process_ids or ())
     seat_directory = agents_root / name
     launch = open_seat_in_iterm_window if open_iterm_window else launch_seat
     in_window = " in a new iTerm window" if open_iterm_window else ""
@@ -929,6 +1182,53 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         return "; would open an iTerm window running: " + iterm_window_command_text(
             name, seat_directory, handoff_directory, extra_supervisor_arguments,
             first_prompt_file)
+
+    # Before every branch below, because it decides which assessment the rest
+    # of this function acts on (user-ruled 2026-09-17). The seat's tmux
+    # session is alive with no confirmed supervisor, and assess_seat proved it
+    # is nothing but the shell an attached launch leaves open. With an
+    # operator at a terminal that is a question; with no one to ask — at boot,
+    # under restart-live-seats-at-login — it is the refusal it has always been.
+    if verdict == ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT:
+        question, refusal, pane_process_ids, shell_detail = detail
+        if dry_run:
+            # Reported whether or not anyone is at a terminal: a dry run's
+            # job is to say what a real run would do, and a run this one
+            # cannot see — an operator's, later — is the one that would ask.
+            return (f"{name}: would ask an operator at a terminal — \"{question}\" — and on a "
+                    f"yes close that session and assess the seat without it ({shell_detail}); "
+                    "with no terminal it refuses")
+        if retired_pane_process_ids is not None:
+            # A session still holding the name after the retire below. Asking
+            # again would loop; this tool cannot clear that state.
+            return (f"{name}: REFUSED — the leftover shell was closed, but a tmux session "
+                    f"named '{name}' still holds the name: clear it by hand, then rerun "
+                    "this recovery")
+        if not recovery_has_an_operator_terminal():
+            return f"{name}: REFUSED — {refusal}"
+        print(f"recover-crashed-seats: {shell_detail}")
+        if not ask_operator_to_close_the_leftover_idle_shell(question):
+            return f"{name}: REFUSED — {refusal}"
+        killed_sockets, retire_failure = resupervise.retire_seat_tmux_session(name)
+        if retire_failure is not None:
+            return f"{name}: REFUSED — {retire_failure}"
+        if killed_sockets:
+            closed = ("closed the leftover shell — retired the tmux session on socket"
+                      f"{'s' if len(killed_sockets) > 1 else ''} "
+                      f"{', '.join(killed_sockets)}")
+        else:
+            closed = "the leftover shell was already gone when it was retired"
+        print(f"recover-crashed-seats: {name}: {closed}")
+        # The assessment again, with those panes excused from the occupancy
+        # check: the seat is now read as though the session had never been
+        # there, which leaves every later ruling in place — a seat carrying a
+        # recorded exit still offers rather than resumes.
+        rest = recover_seat(name, agents_root, handoff_directory, projects_root,
+                            dry_run, ignite_fallback, open_iterm_window,
+                            retired_pane_process_ids=pane_process_ids)
+        # In the report, so the recovery log records that a session was closed
+        # and on whose word.
+        return f"{rest} (the operator said to close the leftover shell first: {closed})"
 
     # Before any dry-run or launch branch: a dry run reports the same class,
     # and nothing is launched for a seat that is already running.
