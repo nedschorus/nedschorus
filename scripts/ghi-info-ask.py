@@ -66,6 +66,16 @@ session — it cold-starts a throwaway session of its own and never writes
 its outcome back to the state file (design: "nothing waits, nothing shares
 a transcript").
 
+Two guards against a reply that is not the answer (measured 2026-09-17).
+This script returns the run's LAST message, and on that day ghi-info answered
+the question at 20:16:59Z and then answered the checkout-freshness Stop hook
+13 seconds later; the caller got "No action needed on my part ..." with exit
+0, so its fallback ladder never fired. So the run no longer loads this
+project's settings (--setting-sources user, the flag PR #417 gave the
+cold-read cells for the same leak), and a reply that names no issue and is
+neither out-of-scope nor escalate: fails the ask instead of being passed
+back.
+
 Post-check (design step 4): every pointer ghi-info returns is checked
 against the just-refreshed mirror by this script, never taken on the
 agent's word. A closed pointer that the caller did not ask for via
@@ -233,6 +243,25 @@ def is_passthrough_reply(text: str) -> bool:
     return stripped.startswith("escalate:") or stripped == "out-of-scope"
 
 
+def reply_answers_the_question(text: str) -> bool:
+    """Whether a reply is an answer at all, rather than something else the
+    session said.
+
+    A reading list names issues, and the two passthrough replies are fixed
+    strings; anything with neither is not an answer this caller can use. The
+    case that earned this check (2026-09-17): the run's last message was
+    "No action needed on my part -- this session hasn't touched any scripts
+    or tests", a reply to a Stop hook, and the ask returned it with exit 0,
+    so the caller's fallback ladder never fired.
+
+    A true answer that names no issue -- "nothing covers this" in those words
+    -- is refused by this check too, and that costs one trip down the
+    fallback ladder, which never blocks a write. Silently passing a
+    non-answer costs a write made against no knowledge at all.
+    """
+    return bool(POINTER_PATTERN.search(text)) or is_passthrough_reply(text)
+
+
 def find_unexpected_closed_pointers(reply_text: str, cache: dict, include_closed: bool):
     """Every #n pointer in the reply, checked against the mirror cache.
 
@@ -358,7 +387,17 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     to approve tool use here (same reasoning as nedsmessenger's adapter,
     the named precedent) — bypassPermissions is the only workable mode for
     an unattended agent."""
+    # --setting-sources user keeps THIS PROJECT'S hooks out of the run
+    # (measured 2026-09-17). ghi-info answered a reading-list question
+    # correctly at 20:16:59Z and then, 13 seconds later, answered the
+    # checkout-freshness Stop hook's "Rerun the test suites for what you
+    # touched"; this script returns the run's last message, so the caller got
+    # the housekeeping reply and the reading list was thrown away, with exit
+    # 0. A cold-read cell had the same leak, and PR #417 gave it the same
+    # flag. The seat's own settings.json is project settings, so nothing here
+    # needs it: permissions come from bypassPermissions above.
     command = ["claude", "-p", prompt, "--output-format", "json",
+              "--setting-sources", "user",
               "--permission-mode", "bypassPermissions", "--model", GHI_INFO_MODEL]
     if resume_session_id:
         command += ["--resume", resume_session_id]
@@ -653,6 +692,11 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         recent.append(stale)
         state["recent_matches"] = recent[-STALE_MATCH_WINDOW:]
         save_state(state_path, state)
+
+    if not reply_answers_the_question(reply_text):
+        return None, ("ghi-info's reply names no issue and is not an "
+                      "out-of-scope or escalate: reply, so it is not an "
+                      f"answer to this question: {reply_text[:200]!r}")
 
     return reply_text, None
 
