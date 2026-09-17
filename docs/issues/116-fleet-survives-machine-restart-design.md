@@ -501,6 +501,34 @@ the project's synthetic-keystroke guard hook blocks that form outright
    the job exited 0. No Automation permission prompt appeared: the
    AppleScript ran under launchd without one.
 
+   *Measured 2026-09-17, the product LaunchAgent itself:* it had never been
+   loaded. The plist was written 2026-09-14 15:53, after the current login
+   session began, and a new agent loads at the next login, so
+   `launchctl print gui/501/com.nedschorus.restart-live-seats-at-login`
+   answered "Could not find service". `launchctl bootstrap gui/501 <plist>`
+   loaded it and RunAtLoad ran it: exit 0, and the first content ever written
+   to `~/.claude/handoffs/restart-live-seats-at-login-launchd-output.txt`. It
+   launched nothing, correctly — every live Mac seat read `stamped-since-boot`,
+   `reboot-test-2` was offered with its by-hand command, and the box line read
+   "no live seats, so no windows to open". The job was left loaded. The user
+   ruled the same day against the Mac logout-and-login test ("Logging out and
+   logging into another account confuses claude"), so that launchd fires this
+   job AT LOGIN rests on the plist's `RunAtLoad` and `LimitLoadToSessionType`
+   keys, read rather than exercised. That gap stands and is not planned to close.
+
+   *ned-box, 2026-09-17:* the three supervisor state files left there — `prof`
+   (2026-08-28), `gatekeeper` (2026-08-25), `gatekeeper-walk-fork` (2026-08-14),
+   none of them running — were set aside on the user's word, each renamed with a
+   `.set-aside-2026-09-17` suffix, which the selection skips because a seat with
+   no state file is not considered. Dry runs on copies first: as they stood the
+   next boot restarted `prof`; without `prof`'s file, `gatekeeper`; without both,
+   `gatekeeper-walk-fork`. With no age bound (ruled 2026-09-15) the oldest
+   surviving state file is selected whenever nothing newer was running at the
+   stop, so setting one aside promotes the next. With all three aside the dry run
+   answers "no heartbeat before boot: no supervisor was running when the machine
+   stopped", and the next box boot restarts nothing. Renaming a file back undoes
+   it.
+
    *Built 2026-09-14, the box half:* `install-restart-live-seats-at-login-systemd-unit.py`
    writes a systemd **user** unit (`restart-live-seats-at-login.service`,
    `Type=oneshot`, `WantedBy=default.target`, PATH set, output appended
