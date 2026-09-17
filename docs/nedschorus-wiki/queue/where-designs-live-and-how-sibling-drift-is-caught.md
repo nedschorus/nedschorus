@@ -1,0 +1,83 @@
+---
+status: queued for the drain — not decided
+---
+
+# Where designs live, and how drift between a design and its siblings is caught
+
+Queued 2026-09-17 from a conversation between the user and the MD-skills agent-seat. The
+conversation started from a finding — `docs/designs/` does not exist on main, while a landed
+design names `docs/designs/queue/` as where a component's design and contract go before code —
+and widened into where each document of a piece of work lives.
+
+Queued rather than filed as an issue, because most of it is already covered and the rest is not
+yet ruled.
+
+## Already covered — do not re-file
+
+The ask to ghi-info that preceded this note returned three issues that own most of the subject.
+
+- **Placement.** [Rationalize the repository layout](https://github.com/nedschorus/nedschorus/issues/224)
+  already carries the rule the conversation was circling: a design before code lives in
+  `docs/designs/queue/` and moves into its system's directory when code starts.
+- **The lifecycle from a GHI to a design.** [ghi-write follow-ups from PR #332](https://github.com/nedschorus/nedschorus/issues/345)
+  already records the user's own words for it: "lengthy GHIs get turned into MDs which are the
+  start of the design process." A GHI reaching its word cap is the signal that its subject became
+  design work. That answers, and supersedes, the question this conversation asked as "if we start
+  refining the ghi-pair MD into a design that we want to start implementing things get strange".
+- **Drift between a design and its siblings.** [built-in-process-planned documents](https://github.com/nedschorus/nedschorus/issues/219)
+  is the live mechanism: a design converts at first landing into a three-state pointer map —
+  built, in-process, planned — with a mechanical verify step that checks whether the built items'
+  paths resolve on main. It supersedes the dated `design-as-of:` claim that came from
+  [Adversarial whole-package review](https://github.com/nedschorus/nedschorus/issues/8), and it
+  supersedes the proposal this conversation reached independently, which was to give the existing
+  `status:` frontmatter a fixed vocabulary. The pointer map is the better instrument: it is
+  checked per item rather than asserted per document.
+
+## What this conversation adds, and what is not decided
+
+**Evidence that the drift is real, not anticipated.** Issue 142 carries three documents:
+`docs/issues/142-draft-md-prompt-research-report.md`,
+`docs/issues/142-draft-md-skill-design-notes.md` and
+`docs/issues/142-draft-md-skill-design.md`. The research report opens by disowning itself — the
+three-pass design it was written against was superseded, and the report tells the reader to read
+its own table as naming cells that no longer exist. So the drift happened, was noticed, and was
+handled by adding a paragraph of apology to the stale document rather than by changing a status.
+That is the failure the pointer map of issue 219 is meant to prevent, and it is the concrete case
+to test that mechanism against.
+
+**A gap in when a skill is in the loop.** `/ghi-write` triggers on writes that touch a GitHub
+issue — filing, editing a body, commenting, promoting queue material. Editing
+`docs/issues/142-draft-md-skill-design.md` touches no issue, so no skill is invoked when a design
+is written or revised, and nothing asks what else is paired to that issue number. The cheap check
+that would have caught issue 142: when a design is written or revised, list `docs/issues/<n>-*`
+and confirm each sibling still says something true. Whether that belongs in a widened `/ghi-write`
+or elsewhere is open. This is a `/ghi-write` follow-up, so issue 345 is its likely home.
+
+**Not decided: a design that more than one GHI cites.** The conversation agreed such a design
+needs a name of its own rather than one issue's number, and agreed that collapsing several GHIs
+into one to avoid the problem is the wrong trade — issue 3 is what that produces, four documents
+under one number that cannot be closed independently. Nobody has written that rule down, and no
+design in the tree needs it yet: eight designs exist and each serves one issue.
+
+**Not decided: not every GHI needs a design.** Stated by the user, consistent with the tree, not
+written anywhere.
+
+**A contradiction to settle at the drain, not before.**
+`docs/agents/queue/design-to-main-design-writing-agent-instructions.md`, itself queued, tells its
+agent that the design and the component-contract sit in `docs/designs/queue/` before code. Eight
+of the tree's designs instead sit at `docs/issues/<n>-<name>-design.md`, including the one that
+landed on 2026-09-17. Harmless while that node is queued; a real contradiction the day
+design-to-main first runs. Whoever drains either queue should settle it rather than discover it.
+
+**A skill that does not need writing yet.** The user asked whether a make-design or write-design
+skill is wanted. `docs/agents/queue/design-to-main-design-writing-agent-instructions.md` is
+already a full draft of that capability, in the form his 2026-09-06 rule prescribes — a
+design-to-main node's agent-instructions rather than a skill. What is genuinely open is narrower:
+whether a design written outside design-to-main reuses those instructions or needs its own route.
+
+## Also recorded here
+
+The user said on 2026-09-17 that `docs/cross-project/` is a one-off used to bootstrap this
+project and should be retired soon. Two design documents live there today. This bears on the
+file naming and location standards wiki page, which currently presents that directory as a
+standing home.
