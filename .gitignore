@@ -57,9 +57,11 @@ __pycache__/
 # extracted decisions memorialized in their governing documents and a
 # `git show <sha>:<path>` recovery pointer" — and it had never been applied
 # here, so the directory grew to 69% of everything the repository tracked.
-# A review's findings belong in the document it reviewed; the transcripts
-# that produced them are working material, deleted when the work they served
-# lands. Everything deleted stays retrievable: git show db917b5:<path>
+# A review's findings belong in the document it reviewed; the reports that
+# produced them are logs, and logs live in the log-store on ned-box, not here
+# and not deleted (user-ruled 2026-08-25). scripts/cold-read-record-ship.py
+# puts them there. What was deleted before that ruling stays retrievable:
+# git show db917b5:<path>
 cold-read-records/
 # The pre-rename name stays ignored beside it: renaming source does not move a
 # machine's existing md-review-records/, whose reports are the same never-
@@ -68,8 +70,8 @@ md-review-records/
 
 # sanity-check records: the second review instrument's output
 # (scripts/sanity-check-attacks.py) — same class and disposal as
-# cold-read-records: machine-local working material, deleted when the work it
-# served lands; git history is the archive
+# cold-read-records: never committed, and kept as logs in the log-store, which
+# scripts/sanity-check-record-ship.py puts them in (user-ruled 2026-09-15)
 sanity-check-records/
 
 # ghi-info's local GHI mirror (nedschorus#46, docs/issues/46-ghi-info-agent-design.md

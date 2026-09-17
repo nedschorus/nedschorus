@@ -110,6 +110,11 @@ the system -- good data, never part of the repository (user-ruled
   `target/<repository path>` with the exact bytes the reviewers read. Records
   dated before 2026-09-08 predate that freeze and hold no `target/`; the
   grid recorded only a hash of the target then.
+- `sanity-check-records/` -- one directory per sanity-check run, named the
+  same way, holding the cells' reports, `finding-dispositions.md` when the
+  requesting agent finished its triage, and each cell's `scratch/`. Written
+  by scripts/sanity-check-record-ship.py in the nedschorus repository, under
+  the same rules as the records beside them (user-ruled 2026-09-15).
 - `walk/` -- the four files of each walk-me-through walk: draft, suggestions,
   walk, minutes.
 - `transcripts/` -- Claude Code session transcripts and handoffs, one
@@ -302,19 +307,33 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     return EXIT_SHIPPED
 
 
-def main() -> int:
+def ship_from_command_line(description: str, records_dir: pathlib.Path,
+                           destination, argv=None) -> int:
+    """The `<record directory> | --all` command line, for this program and for
+    the other kinds that ship record directories the same way.
+
+    scripts/sanity-check-record-ship.py (nedschorus#392) is the second caller:
+    same command line, same rules, same exits, its own kind directory in the
+    store and its own directory in the checkout. It calls this rather than
+    holding a second copy, so the two cannot drift on what --all skips or what
+    each exit code means.
+
+    `records_dir` is where --all looks in this checkout; `destination` is the
+    (host, path) pair the caller got from destination_for_this_machine, with
+    its kind already chosen.
+    """
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("record_directory", nargs="?",
                         help="one record directory, relative to the repo root or absolute")
     parser.add_argument("--all", action="store_true",
-                        help="every directory under cold-read-records/ in this checkout")
-    args = parser.parse_args()
+                        help=f"every directory under {records_dir.name}/ in this checkout")
+    args = parser.parse_args(argv)
     if bool(args.record_directory) == args.all:
         print("FAILED: give one record directory, or --all")
         return EXIT_BAD_INVOCATION
 
-    host, records_path = destination_for_this_machine()
+    host, records_path = destination
 
     if not args.all:
         record_dir = pathlib.Path(args.record_directory)
@@ -322,8 +341,8 @@ def main() -> int:
             record_dir = REPO_ROOT / record_dir
         return ship_one(host, records_path, record_dir.resolve())
 
-    directories = sorted(p for p in RECORDS_DIR.glob("*") if p.is_dir()) \
-        if RECORDS_DIR.is_dir() else []
+    directories = sorted(p for p in records_dir.glob("*") if p.is_dir()) \
+        if records_dir.is_dir() else []
     shipped, refused, failed, skipped = [], [], [], []
     for record_dir in directories:
         # An empty directory is not a record and not a failure: a run that
@@ -343,6 +362,10 @@ def main() -> int:
     if failed:
         return EXIT_FAILED
     return EXIT_REFUSED if refused else EXIT_SHIPPED
+
+
+def main() -> int:
+    return ship_from_command_line(__doc__, RECORDS_DIR, destination_for_this_machine())
 
 
 if __name__ == "__main__":

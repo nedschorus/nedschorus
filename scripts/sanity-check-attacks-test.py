@@ -48,7 +48,10 @@ Write tool the instruction needs.
 Run: python3 scripts/sanity-check-attacks-test.py
 """
 
+import contextlib
 import importlib.util
+import inspect
+import io
 import pathlib
 import shutil
 import subprocess
@@ -1253,6 +1256,76 @@ def main():
           and "model=some-model" in line and "attack=cut" in line
           and "target=docs/x.md" in line and "worktree=clean" in line,
           line)
+
+    # --- The record reaches the log-store by program (nedschorus#392) ---------
+    # The runner calls scripts/sanity-check-record-ship.py when a run ends and
+    # prints its one line. The shipper's own behaviour is its suite's; what is
+    # pinned here is that the runner reports the outcome and never raises on it,
+    # because a sanity check that found something has found it whether or not
+    # ned-box was reachable.
+    runner_ship = load_runner()
+    real_ship_run = runner_ship.subprocess.run
+    shipper_calls = []
+
+    class ShipperResult:
+        def __init__(self, returncode, stdout, stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+    try:
+        def fake_run(command, **kwargs):
+            shipper_calls.append(command)
+            return ShipperResult(0, "shipped: 2026-09-17-design — 3 file(s) added to "
+                                    "nedlern@ned-box:/home/nedlern/nedschorus-logs/"
+                                    "sanity-check-records/2026-09-17-design\n")
+        runner_ship.subprocess.run = fake_run
+        line = runner_ship.ship_record(pathlib.Path("sanity-check-records/2026-09-17-design"))
+        check("the runner runs the sanity-check shipper on the record it just wrote",
+              shipper_calls
+              and str(runner_ship.RECORD_SHIPPER) in [str(part) for part in shipper_calls[0]]
+              and "sanity-check-record-ship.py" in str(runner_ship.RECORD_SHIPPER),
+              shipper_calls)
+        check("and returns the shipper's own line to print",
+              line.startswith("shipped: 2026-09-17-design"), line)
+
+        def silent_run(command, **kwargs):
+            return ShipperResult(1, "", "boom\n")
+        runner_ship.subprocess.run = silent_run
+        line = runner_ship.ship_record(pathlib.Path("sanity-check-records/2026-09-17-design"))
+        check("a shipper that printed nothing is reported as FAILED, not raised",
+              line.startswith("FAILED") and "stays on disk" in line, line)
+
+        def cannot_run(command, **kwargs):
+            raise OSError("no such file")
+        runner_ship.subprocess.run = cannot_run
+        line = runner_ship.ship_record(pathlib.Path("sanity-check-records/2026-09-17-design"))
+        check("a shipper that could not be run at all is reported, not raised",
+              line.startswith("FAILED") and "could not be run" in line, line)
+    finally:
+        runner_ship.subprocess.run = real_ship_run
+
+    # The end of a run that wrote reports: the record goes to the store, and
+    # the closing line tells the requesting agent to keep it and to ship again
+    # after the dispositions file, rather than to delete it as it once did.
+    shipped_records = []
+    completion = io.StringIO()
+    record_dir = pathlib.Path("sanity-check-records/2026-09-17-design")
+    with contextlib.redirect_stdout(completion):
+        runner_ship.print_run_completion(
+            record_dir,
+            ship=lambda directory: shipped_records.append(directory) or "shipped: fine")
+    said = completion.getvalue()
+    check("the completion block ships the record it just wrote",
+          shipped_records == [record_dir], shipped_records)
+    check("and prints the shipper's line as `record:`",
+          said.splitlines()[0] == "record: shipped: fine", said.splitlines()[:1])
+    check("the closing line names the shipper for the dispositions round",
+          "scripts/sanity-check-record-ship.py" in said and "finding-dispositions.md" in said,
+          said)
+    check("and says the record is kept, not deleted",
+          "not deleted" in said and "Delete the record directory" not in said, said)
+    check("main ends a run that saved reports through that block",
+          "print_run_completion(out_dir)" in inspect.getsource(runner_ship.main),
+          "main no longer calls print_run_completion")
 
     print()
     if failures:
