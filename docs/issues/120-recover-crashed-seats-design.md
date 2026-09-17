@@ -276,6 +276,20 @@ in, or the tool breaks its own promise never to touch live work. Retiring a stal
 tmux session before launching is the remaining piece, the step
 `resupervise-seat.py` already performs for its own case.
 
+**Ruled 2026-09-17: the relaxation is a question, not a reach.** Recovery does
+not pass the leftover shell on the record's word, as the relaxation above would
+have had it. With an operator at a terminal it asks — *"prof's window is open at
+a shell with nothing running. Close it and bring the seat back? y/n"* — and on a
+yes retires that session and assesses the seat as though it had never been
+there. Run unattended, at boot and under `restart-live-seats-at-login`, it
+refuses exactly as it does today, which leaves the 2026-09-16 ruling whole on
+every path nobody is watching. And the shell is proven idle before the question
+is put at all: every pane of every session holding the seat's name at a shell,
+and nothing but those panes rooted in the seat directory. The pane's command
+alone decides nothing, because a live attached seat's pane reports a shell too —
+the launcher's pane process IS the shell, with the supervisor running under it
+(measured 2026-09-17).
+
 ## Closing a seat deliberately, and reopening it later
 
 The mechanism exists: a handoff may carry an optional `dont-restart` field, and

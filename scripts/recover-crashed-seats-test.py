@@ -126,7 +126,115 @@ def patch(monkey_target, value):
 def all_dead():
     """Monkeypatch the world to 'seat is fully dead, directory vacant'."""
     patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-    patch("seat_directory_occupied", lambda directory: (False, ""))
+    patch("seat_directory_occupied",
+          lambda directory, apart_from_process_ids=(): (False, ""))
+    no_leftover_idle_shell()
+    no_operator_terminal()
+
+
+# The leftover-idle-shell question (user-ruled 2026-09-17). The probes it rests
+# on are patched for EVERY case by default, at the bottom of this block, so no
+# case reaches a real tmux server or a real terminal through the new path; the
+# cases that measure the proof and the question itself put the real ones back.
+real_run_tmux = recovery.run_tmux
+real_seat_directory_occupied = recovery.seat_directory_occupied
+real_processes_rooted_in_seat_directory = recovery.processes_rooted_in_seat_directory
+real_tmux_session_is_a_leftover_idle_shell = recovery.tmux_session_is_a_leftover_idle_shell
+real_recovery_has_an_operator_terminal = recovery.recovery_has_an_operator_terminal
+real_retire_seat_tmux_session = recovery.resupervise.retire_seat_tmux_session
+
+
+def no_leftover_idle_shell(detail="no tmux server holds a session named 'x'"):
+    """The proof says 'not shown to be an idle shell' — the answer that leaves
+    a live tmux session the refusal it has always been."""
+    patch("tmux_session_is_a_leftover_idle_shell",
+          lambda name, seat_directory: (False, [], detail))
+
+
+def a_leftover_idle_shell(pane_process_ids=(4242,), detail="it is one pane at a shell"):
+    patch("tmux_session_is_a_leftover_idle_shell",
+          lambda name, seat_directory: (True, list(pane_process_ids), detail))
+
+
+def a_live_tmux_session():
+    patch("tmux_session_alive_anywhere",
+          lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
+
+
+def no_operator_terminal():
+    patch("recovery_has_an_operator_terminal", lambda: False)
+
+
+def an_operator_terminal():
+    patch("recovery_has_an_operator_terminal", lambda: True)
+
+
+def capture_retires(retired, killed_sockets=("seat-a",), failure=None,
+                    the_session_then_dies=True):
+    """Stand in for resupervise-seat.py's retire step, recording each call.
+    With the_session_then_dies the tmux probe flips to dead afterwards, as a
+    real kill leaves it."""
+    def fake_retire(name):
+        retired.append(name)
+        if failure is None and the_session_then_dies:
+            patch("tmux_session_alive_anywhere", lambda name: (False, ""))
+        return list(killed_sockets), failure
+    recovery.resupervise.retire_seat_tmux_session = fake_retire
+
+
+def rooted_processes_are(process_ids, unusable_detail=""):
+    """The lsof reader answers with exactly these processes rooted in the seat,
+    or with None and why it could not be trusted."""
+    patch("processes_rooted_in_seat_directory",
+          lambda seat_directory, require_a_complete_listing=False:
+          (process_ids, unusable_detail))
+
+
+def lsof_reports_rooted(process_ids):
+    """The REAL occupancy check, over an lsof listing naming these processes as
+    rooted in the seat — so the pane exemption is measured, not assumed."""
+    patch("seat_directory_occupied", real_seat_directory_occupied)
+    rooted_processes_are(list(process_ids))
+
+
+def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
+                        list_panes_exit_code=0):
+    """run_tmux for the real proof: which sockets hold the seat's session, and
+    what `list-panes` prints for each (one "<pane pid>\\t<command>" per line)."""
+    class Answer:
+        def __init__(self, returncode, stdout=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+
+    def fake_run_tmux(*arguments_after_tmux, socket_name=None):
+        if tmux_cannot_be_run:
+            return None
+        if arguments_after_tmux[0] == "has-session":
+            return Answer(0 if socket_name in panes_by_socket else 1)
+        if arguments_after_tmux[0] == "list-panes":
+            if list_panes_exit_code:
+                return Answer(list_panes_exit_code)
+            return Answer(0, panes_by_socket[socket_name])
+        return Answer(1)
+    patch("run_tmux", fake_run_tmux)
+
+
+def recover_with_an_operator_typing(workspace, typed, dry_run=False):
+    """One recovery with an operator at a terminal typing `typed` (None is end
+    of input). Returns (report, everything the operator saw)."""
+    an_operator_terminal()
+    seen = io.StringIO()
+    stdin_before = sys.stdin
+    sys.stdin = io.StringIO("" if typed is None else f"{typed}\n")
+    try:
+        with redirect_stdout(seen):
+            report = workspace.recover(dry_run=dry_run)
+    finally:
+        sys.stdin = stdin_before
+    return report, seen.getvalue()
+
+
+no_leftover_idle_shell()
+no_operator_terminal()
 
 
 # A seat is already running only when ps confirms a live supervisor of it
@@ -389,13 +497,13 @@ with tempfile.TemporaryDirectory() as temporary:
     state_path.unlink()
 
     patch("seat_directory_occupied",
-          lambda directory: (True, f"a live process is rooted in {directory}"))
+          lambda directory, apart_from_process_ids=(): (True, f"a live process is rooted in {directory}"))
     verdict, detail = workspace.assess()
     check("an occupied seat directory refuses",
           verdict == "refuse" and "live process" in detail, (verdict, detail))
 
     patch("seat_directory_occupied",
-          lambda directory: (True, "lsof is not installed, so the seat cannot be proven vacant"))
+          lambda directory, apart_from_process_ids=(): (True, "lsof is not installed, so the seat cannot be proven vacant"))
     verdict, detail = workspace.assess()
     check("an unprovable vacancy answer refuses (fail closed)",
           verdict == "refuse" and "cannot be proven" in detail, (verdict, detail))
@@ -621,7 +729,8 @@ with tempfile.TemporaryDirectory() as temporary:
     patch("tmux_session_alive_anywhere",
           lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
                               "checked — refusing rather than guessing"))
-    patch("seat_directory_occupied", lambda directory: (False, ""))
+    patch("seat_directory_occupied",
+          lambda directory, apart_from_process_ids=(): (False, ""))
     verdict, detail = workspace.assess()
     check("F1: tmux unanswerable refuses instead of reading as dead",
           verdict == "refuse" and "cannot be checked" in detail, (verdict, detail))
@@ -1992,11 +2101,11 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def refused_for_an_occupied_seat_directory(workspace):
         patch("seat_directory_occupied",
-              lambda directory: (True, f"a live process is rooted in {directory}"))
+              lambda directory, apart_from_process_ids=(): (True, f"a live process is rooted in {directory}"))
 
     def refused_for_an_unprovable_vacancy(workspace):
         patch("seat_directory_occupied",
-              lambda directory: (True, "lsof is not installed, so the seat cannot be "
+              lambda directory, apart_from_process_ids=(): (True, "lsof is not installed, so the seat cannot be "
                                        "proven vacant"))
 
     def refused_for_an_unreadable_restart_counter(workspace):
@@ -2504,6 +2613,322 @@ with tempfile.TemporaryDirectory() as temporary:
           and "+00:00 all-seat-exited: NOT RELAUNCHED AFTER A RECORDED EXIT — its supervisor "
               "recorded at " in logged_lines[1],
           (exit_code, logged, printed.getvalue()))
+
+    # --- the leftover idle shell is a question, not a refusal ---------------
+    # Ruled 2026-09-17 (the #120 overview, § Ruled 2026-09-02): with an
+    # operator at a terminal, a seat whose tmux session is alive with no
+    # confirmed supervisor and nothing but an idle shell in it is ASKED about;
+    # run unattended it is refused exactly as it was under the 2026-09-16
+    # ruling. Nothing is closed that cannot be PROVEN idle, whoever is asking.
+    question = recovery.leftover_idle_shell_question_for_seat("seat-a")
+    check("LEFTOVER SHELL: the question is the one the operator was promised",
+          question == "seat-a's window is open at a shell with nothing running. "
+                      "Close it and bring the seat back? y/n", question)
+
+    def a_seat_behind_a_leftover_shell(directory_name, pane_process_ids=(4242,)):
+        """A crashed seat with a resumable transcript, its tmux session alive
+        with no supervisor, and that session proven to be an idle shell."""
+        workspace = Workspace(root / directory_name)
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
+        a_live_tmux_session()
+        a_leftover_idle_shell(pane_process_ids=pane_process_ids)
+        # lsof still names the pane that was just closed: it dies on tmux's
+        # signal, not on this script's clock. The exemption is what keeps that
+        # from refusing the seat the operator just cleared.
+        lsof_reports_rooted(list(pane_process_ids))
+        return workspace
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-yes")
+    retired = []
+    capture_retires(retired)
+    report, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: at a terminal the operator is asked, in those words",
+          f"{question} " in seen, seen)
+    check("LEFTOVER SHELL: a yes retires the session and the assessment goes on without it",
+          retired == ["seat-a"]
+          and [launch[:2] for launch in workspace.launches] == [
+              ("seat-a", "--resume-session-id resume-me")]
+          and report.startswith("seat-a: relaunched resuming resume-me")
+          and report.endswith("(the operator said to close the leftover shell first: closed "
+                              "the leftover shell — retired the tmux session on socket seat-a)"),
+          (retired, workspace.launches, report, seen))
+
+    # A no changes nothing at all, and says what it said before the question
+    # existed. Measured against the report the SAME seat gets with nobody to
+    # ask, which is the 2026-09-16 refusal itself.
+    def the_refusal_with_nobody_to_ask(workspace):
+        no_operator_terminal()
+        unattended_seen = io.StringIO()
+        with redirect_stdout(unattended_seen):
+            return workspace.recover(), unattended_seen.getvalue()
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-no")
+    retired = []
+    capture_retires(retired)
+    report_after_no, seen = recover_with_an_operator_typing(workspace, "n")
+    report_unattended, unattended_seen = the_refusal_with_nobody_to_ask(workspace)
+    check("LEFTOVER SHELL: a no retires nothing, launches nothing, and reports as today",
+          retired == [] and workspace.launches == []
+          and report_after_no == report_unattended
+          and "REFUSED" in report_after_no
+          and "this tool never touches a live tmux session" in report_after_no
+          and "exit it, then rerun this recovery" in report_after_no,
+          (retired, workspace.launches, report_after_no, report_unattended))
+    check("LEFTOVER SHELL: with no terminal nothing is asked and the refusal is unchanged",
+          retired == [] and workspace.launches == [] and unattended_seen == "",
+          (retired, workspace.launches, unattended_seen))
+
+    # A session that cannot be shown to be idle is refused with no question at
+    # all — at a terminal exactly as without one.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-busy-pane")
+    no_leftover_idle_shell("a pane of session 'seat-a' on socket 'seat-a' is running vim, "
+                           "not an idle shell")
+    retired = []
+    capture_retires(retired)
+    report_busy, busy_seen = recover_with_an_operator_typing(workspace, "y")
+    report_busy_unattended, _ = the_refusal_with_nobody_to_ask(workspace)
+    check("LEFTOVER SHELL: a pane running real work is refused with no question, terminal or not",
+          retired == [] and workspace.launches == [] and busy_seen == ""
+          and report_busy == report_busy_unattended
+          and "this tool never touches a live tmux session" in report_busy,
+          (retired, workspace.launches, report_busy, busy_seen))
+
+    # End of input — a pipe, a closed terminal, an interrupt — is a no.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-eof")
+    retired = []
+    capture_retires(retired)
+    report_after_eof, seen = recover_with_an_operator_typing(workspace, None)
+    check("LEFTOVER SHELL: end of input answers no",
+          retired == [] and workspace.launches == []
+          and report_after_eof == the_refusal_with_nobody_to_ask(workspace)[0],
+          (retired, report_after_eof, seen))
+    for typed in ("", "yes please", "Y", "yes"):
+        answered_yes = []
+        stdin_before = sys.stdin
+        sys.stdin = io.StringIO(f"{typed}\n")
+        try:
+            with redirect_stdout(io.StringIO()):
+                answered_yes.append(
+                    recovery.ask_operator_to_close_the_leftover_idle_shell(question))
+        finally:
+            sys.stdin = stdin_before
+        check(f"LEFTOVER SHELL: the answer {typed!r} is "
+              f"{'yes' if typed in ('Y', 'yes') else 'no'}",
+              answered_yes == [typed in ("Y", "yes")], (typed, answered_yes))
+
+    # A dry run reports the question and asks nobody, whoever is at the
+    # terminal, because --dry-run promises to change nothing.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-dry-run")
+    retired = []
+    capture_retires(retired)
+    report_dry, seen = recover_with_an_operator_typing(workspace, "y", dry_run=True)
+    check("LEFTOVER SHELL: --dry-run reports the question, asks nothing, closes nothing",
+          retired == [] and workspace.launches == [] and seen == ""
+          and report_dry.startswith(f'seat-a: would ask an operator at a terminal — "{question}"'),
+          (retired, workspace.launches, report_dry, seen))
+
+    # The 2026-09-02 ordering is untouched: a seat carrying a recorded exit
+    # still offers rather than resumes, and closing its window does not make it
+    # a crash.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-exit-record")
+    record_an_agent_exit(workspace, 0)
+    retired = []
+    capture_retires(retired)
+    report_recorded, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: a seat with a recorded exit still offers, after its shell is closed",
+          retired == ["seat-a"] and workspace.launches == []
+          and recovery.SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER in report_recorded
+          and report_recorded.endswith(
+              "(the operator said to close the leftover shell first: closed the leftover "
+              "shell — retired the tmux session on socket seat-a)"),
+          (retired, workspace.launches, report_recorded))
+
+    # A retire that fails, and a session that survives one: refused, never
+    # asked twice.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-retire-fails")
+    retired = []
+    capture_retires(retired, killed_sockets=(),
+                    failure="could not kill the stale tmux session seat-a "
+                            "(server socket seat-a): server exited")
+    report_failed, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: a retire that fails refuses and launches nothing",
+          retired == ["seat-a"] and workspace.launches == []
+          and report_failed == ("seat-a: REFUSED — could not kill the stale tmux session "
+                                "seat-a (server socket seat-a): server exited"),
+          (retired, workspace.launches, report_failed))
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-survives-the-retire")
+    retired = []
+    capture_retires(retired, the_session_then_dies=False)
+    report_survived, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: a session still holding the name is refused, not asked about again",
+          retired == ["seat-a"] and workspace.launches == []
+          and seen.count(question) == 1
+          and "still holds the name" in report_survived,
+          (retired, workspace.launches, report_survived, seen))
+
+    # --- what proves "nothing but an idle shell" ----------------------------
+    # Both halves, because neither is enough on its own. Measured on the Mac,
+    # 2026-09-17: a LIVE attached seat's pane reports a shell too — the
+    # launcher's pane command is `zsh -c "...; <supervisor>; <after-exit>"`, so
+    # the supervisor runs as the pane process's child inside its process group
+    # (seat fleet-restart-at-login: pane process 27178 `zsh`, supervisor 27179
+    # `Python`). What separates it from a real leftover shell is that something
+    # OTHER than the pane is rooted in the seat directory.
+    workspace = Workspace(root / "idle-shell-proof")
+    patch("tmux_session_is_a_leftover_idle_shell", real_tmux_session_is_a_leftover_idle_shell)
+
+    tmux_server_answers({"seat-a": "27178\tzsh\n"})
+    rooted_processes_are([27178])
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: a pane at a shell with only its own process rooted in the seat",
+          proven is True and panes == [27178] and "nothing in the foreground" in detail,
+          (proven, panes, detail))
+
+    rooted_processes_are([27178, 27179])
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: a live attached seat's pane reports a shell too, and is not idle",
+          proven is False and panes == [] and "27179" in detail
+          and "cannot be shown to be an idle shell" in detail, (proven, panes, detail))
+
+    rooted_processes_are([])
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: a shell that left the seat directory is still idle",
+          proven is True and panes == [27178], (proven, panes, detail))
+
+    tmux_server_answers({"seat-a": "27178\tPython\n"})
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: a pane running real work is not an idle shell",
+          proven is False and "running Python" in detail, (proven, panes, detail))
+
+    tmux_server_answers({"seat-a": "27178\tzsh\n99\tvim\n"})
+    rooted_processes_are([27178])
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: one working pane in the session is enough to refuse",
+          proven is False and "running vim" in detail, (proven, panes, detail))
+
+    tmux_server_answers({"seat-a": "27178\tzsh\n", "default": "5\tbash\n"})
+    rooted_processes_are([27178, 5])
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: both servers holding the name are measured, and their panes named",
+          proven is True and panes == [27178, 5] and "sockets 'seat-a', 'default'" in detail,
+          (proven, panes, detail))
+
+    tmux_server_answers({"seat-a": "27178\tzsh\n"}, tmux_cannot_be_run=True)
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: tmux that cannot answer proves nothing",
+          proven is False and "tmux cannot be run here" in detail, (proven, panes, detail))
+
+    tmux_server_answers({"seat-a": "27178\tzsh\n"}, list_panes_exit_code=1)
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: panes that cannot be listed prove nothing",
+          proven is False and "could not list the panes" in detail, (proven, panes, detail))
+
+    tmux_server_answers({"seat-a": "27178\tzsh\n"})
+    rooted_processes_are(None, "lsof is not installed, so the seat cannot be proven vacant")
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: an unusable lsof answer proves nothing",
+          proven is False and "lsof is not installed" in detail, (proven, panes, detail))
+
+    tmux_server_answers({})
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", workspace.seat_directory)
+    check("IDLE SHELL PROOF: no server holding the name proves nothing",
+          proven is False and "no tmux server holds" in detail, (proven, panes, detail))
+
+    # The occupancy check reads process ids now, and excuses only the panes it
+    # was handed.
+    patch("run_tmux", real_run_tmux)
+    patch("seat_directory_occupied", real_seat_directory_occupied)
+    rooted_processes_are([4242])
+    check("IDLE SHELL PROOF: the retired pane is excused from the occupancy check",
+          recovery.seat_directory_occupied(workspace.seat_directory) == (
+              True, f"a live process is rooted in {workspace.seat_directory.resolve()}")
+          and recovery.seat_directory_occupied(
+              workspace.seat_directory, apart_from_process_ids=[4242]) == (False, ""),
+          (recovery.seat_directory_occupied(workspace.seat_directory),
+           recovery.seat_directory_occupied(workspace.seat_directory,
+                                            apart_from_process_ids=[4242])))
+    rooted_processes_are([4242, 77])
+    check("IDLE SHELL PROOF: a process that was not a retired pane still occupies the seat",
+          recovery.seat_directory_occupied(
+              workspace.seat_directory, apart_from_process_ids=[4242])[0] is True,
+          recovery.seat_directory_occupied(workspace.seat_directory,
+                                           apart_from_process_ids=[4242]))
+
+    # The lsof reader itself, over the -F pn shape both machines print
+    # (checked on the box, 2026-09-17: same p/n fields, with unreadable
+    # processes named as paths that match no seat).
+    patch("processes_rooted_in_seat_directory", real_processes_rooted_in_seat_directory)
+    seat = str(workspace.seat_directory.resolve())
+    real_subprocess_run = recovery.subprocess.run
+    real_shutil_which = recovery.shutil.which
+
+    def lsof_prints(text, returncode=0):
+        class Listing:
+            def __init__(self):
+                self.stdout, self.returncode = text, returncode
+        recovery.shutil.which = lambda binary: f"/usr/bin/{binary}"
+        recovery.subprocess.run = lambda *arguments, **keywords: Listing()
+
+    try:
+        lsof_prints(f"p11\nn/elsewhere\np12\nn{seat}\np13\nn{seat}/worktree\n")
+        check("IDLE SHELL PROOF: the lsof reader names every process rooted in the seat",
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+              == ([12, 13], ""),
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        lsof_prints("p11\nn/elsewhere\n")
+        check("IDLE SHELL PROOF: a listing naming no process in the seat is a vacant seat",
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory) == ([], ""),
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        lsof_prints("")
+        answer, why = recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+        check("IDLE SHELL PROOF: an lsof that named nothing at all proves nothing",
+              answer is None and "no working directories at all" in why, (answer, why))
+        lsof_prints("p11\nn/elsewhere\n", returncode=1)
+        answer, why = recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+        check("IDLE SHELL PROOF: an lsof that exited nonzero proves nothing",
+              answer is None and "exited 1" in why, (answer, why))
+        lsof_prints(f"p11\nn/elsewhere\np12\nn{seat}\n", returncode=1)
+        check("IDLE SHELL PROOF: a partial listing naming the seat is still positive evidence",
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+              == ([12], ""),
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        # The proof reads that same listing the other way round — is nothing
+        # but these panes in there — which a partial listing cannot answer,
+        # however innocent the part of it that arrived.
+        tmux_server_answers({"seat-a": "27178\tzsh\n"})
+        lsof_prints(f"p11\nn/elsewhere\np27178\nn{seat}\n", returncode=1)
+        proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+            "seat-a", workspace.seat_directory)
+        check("IDLE SHELL PROOF: a partial lsof listing cannot show a session to be idle",
+              proven is False and "exited 1" in detail, (proven, panes, detail))
+        check("IDLE SHELL PROOF: nor can it excuse a retired pane from the occupancy check",
+              recovery.seat_directory_occupied(
+                  workspace.seat_directory, apart_from_process_ids=[27178])
+              == (True, "the occupancy check (lsof) exited 1; vacancy unproven"),
+              recovery.seat_directory_occupied(workspace.seat_directory,
+                                               apart_from_process_ids=[27178]))
+    finally:
+        patch("run_tmux", real_run_tmux)
+        recovery.subprocess.run = real_subprocess_run
+        recovery.shutil.which = real_shutil_which
+        recovery.resupervise.retire_seat_tmux_session = real_retire_seat_tmux_session
+        patch("processes_rooted_in_seat_directory", real_processes_rooted_in_seat_directory)
+        patch("seat_directory_occupied", real_seat_directory_occupied)
+        patch("tmux_session_is_a_leftover_idle_shell",
+              real_tmux_session_is_a_leftover_idle_shell)
+        patch("recovery_has_an_operator_terminal", real_recovery_has_an_operator_terminal)
 
 
 print()

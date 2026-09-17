@@ -29,7 +29,9 @@ WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
   4. Kill the seat's stale tmux session, so the recovered seat lives in ONE
      window and no decoy is left behind. Checked on the seat's OWN tmux server
      (per-seat servers, `tmux -L <name>`, 2026-08-21) and on the default
-     server, where seats launched before that change still live.
+     server, where seats launched before that change still live. That step is
+     retire_seat_tmux_session below, which recover-crashed-seats.py runs too
+     when an operator says to close a seat's leftover idle shell.
   5. Run the seat's launcher. The supervisor boots, finds the unconsumed handoff,
      and ignites the successor from it (handoff-supervisor.py's boot-ignition
      path, live since 2026-08-14).
@@ -229,6 +231,33 @@ def tmux_sockets_holding_seat_session(name: str) -> list:
     return holding
 
 
+def retire_seat_tmux_session(name: str):
+    """(killed_sockets, failure_detail): kill every tmux session holding this
+    seat's name. failure_detail is None when nothing failed; killed_sockets
+    names the servers a session was actually killed on, and is empty when no
+    server held the name.
+
+    Killed on EVERY server that holds the name (the seat's own and, during the
+    per-seat-server transition, the default one): a survivor on either socket
+    is a decoy, which is the 2026-08-18 failure this script exists to prevent.
+
+    Step 4 of this script's procedure, and shared rather than copied:
+    recover-crashed-seats.py performs the same retire when an operator answers
+    yes to closing a seat's leftover idle shell (ruled 2026-09-17). A second
+    set of kill rules would drift from these.
+    """
+    killed_sockets = []
+    for socket_name in tmux_sockets_holding_seat_session(name):
+        killed = run_tmux("kill-session", "-t", f"={name}", socket_name=socket_name)
+        if killed is None or killed.returncode != 0:
+            detail = "tmux could not be run" if killed is None else (
+                killed.stderr.strip() or "no detail")
+            return killed_sockets, (f"could not kill the stale tmux session {name} "
+                                    f"(server socket {socket_name}): {detail}")
+        killed_sockets.append(socket_name)
+    return killed_sockets, None
+
+
 def launcher_for(machine: str) -> Path:
     return SCRIPT_DIRECTORY / f"launch-claude-{machine}"
 
@@ -425,8 +454,8 @@ def main(argv=None) -> int:
                 "window, or from outside tmux."
             )
 
-    stale_sockets = tmux_sockets_holding_seat_session(arguments.name)
     if arguments.dry_run:
+        stale_sockets = tmux_sockets_holding_seat_session(arguments.name)
         would_launch = ("stop there (--prepare-only)" if arguments.prepare_only
                         else f"run {launcher} {arguments.name}")
         print(f"resupervise-seat: DRY RUN -- would "
@@ -437,24 +466,14 @@ def main(argv=None) -> int:
     # ATTACHES to an existing name rather than starting the supervisor, so
     # leaving it would drop the operator into the dead seat's shell and seat no
     # successor at all. Killing it is also what keeps the recovered seat to one
-    # window -- the decoy of 2026-08-18 was a second window left behind. Killed
-    # on EVERY server that holds the name (the seat's own and, during the
-    # per-seat-server transition, the default one): a survivor on either
-    # socket is a decoy.
-    if stale_sockets:
-        for socket_name in stale_sockets:
-            killed = run_tmux("kill-session", "-t", f"={arguments.name}",
-                              socket_name=socket_name)
-            if killed is None or killed.returncode != 0:
-                detail = "tmux could not be run" if killed is None else (
-                    killed.stderr.strip() or "no detail")
-                return refuse(
-                    f"could not kill the stale tmux session {arguments.name} "
-                    f"(server socket {socket_name}): {detail}"
-                )
-            print(f"resupervise-seat: killed the stale tmux session {arguments.name} "
-                  f"(server socket {socket_name})")
-    else:
+    # window -- the decoy of 2026-08-18 was a second window left behind.
+    killed_sockets, retire_failure = retire_seat_tmux_session(arguments.name)
+    for socket_name in killed_sockets:
+        print(f"resupervise-seat: killed the stale tmux session {arguments.name} "
+              f"(server socket {socket_name})")
+    if retire_failure is not None:
+        return refuse(retire_failure)
+    if not killed_sockets:
         print(f"resupervise-seat: no tmux session named {arguments.name} to clear "
               "on its own server or the default one")
 
