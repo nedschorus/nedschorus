@@ -425,6 +425,23 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a consumed handoff does not defer; the transcript resume proceeds",
           verdict == "resume" and detail[0] == "real-session", (verdict, detail))
 
+    # --- a waiting handoff that asks to be consulted (nedschorus#350) --------
+    # User-ruled 2026-09-17: launch nothing. A launch let the supervisor stop at
+    # once, and this tool then waited out its deadline and offered the forced
+    # restart the seat had declined.
+    consulted_handoff_text = (
+        "# Handoff\nrestart-counter: 11\nnext-step: wait for the user\n"
+        "dont-restart: the user asked to be consulted before a relaunch\n")
+    workspace = Workspace(root / "w3-consulted", name="seat-consulted")
+    all_dead()
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        consulted_handoff_text, encoding="utf-8")
+    verdict, detail = workspace.assess()
+    check("an unconsumed handoff that asks to be consulted is not deferred to a launch",
+          verdict == "seat-asked-to-be-consulted" and "counter 11" in detail
+          and "the user asked to be consulted before a relaunch" in detail,
+          (verdict, detail))
+
     # --- transcript selection ----------------------------------------------
     workspace = Workspace(root / "w4")
     all_dead()
@@ -525,6 +542,29 @@ with tempfile.TemporaryDirectory() as temporary:
           workspace.launches and workspace.launches[0][1] == ""
           and workspace.launches[0][2] is None and "relaunched plain" in report,
           (report, workspace.launches))
+
+    workspace = Workspace(root / "w10-consulted", name="seat-consulted")
+    all_dead()
+    consulted_handoff_path = workspace.handoffs / f"{workspace.name}-handoff.md"
+    consulted_handoff_path.write_text(consulted_handoff_text, encoding="utf-8")
+    capture_launches(workspace)
+    waited = []
+    patch("wait_for_the_seat_to_come_up",
+          lambda *a, **k: (waited.append(1), (True, "x"))[1])
+    for dry_run in (False, True):
+        report = workspace.recover(dry_run=dry_run)
+        check(f"a seat that asked to be consulted is reported, and nothing is launched, "
+              f"waited for, or offered (dry run: {dry_run})",
+              report.startswith(f"{workspace.name}: "
+                                f"{recovery.SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — ")
+              and not workspace.launches and not waited
+              and "--ignite-fallback" not in report,
+              (report, workspace.launches, waited))
+    check("and its handoff is left unconsumed, for its supervisor's own restart question",
+          consulted_handoff_path.read_text(encoding="utf-8") == consulted_handoff_text
+          and not (workspace.handoffs / f"{workspace.name}-supervisor-state.json").exists(),
+          sorted(path.name for path in workspace.handoffs.iterdir()))
+    seat_comes_up()
 
     # --- the supervisor's --resume-session-id flag --------------------------
     supervisor_spec = importlib.util.spec_from_file_location(
@@ -1929,6 +1969,15 @@ with tempfile.TemporaryDirectory() as temporary:
     (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
         "# Handoff\nrestart-counter: not-a-number\nnext-step: x\n", encoding="utf-8")
     a_real_failure_path_does_not_exit_zero("a seat that was refused", workspace)
+
+    # Left down on purpose, but down: counted, or the login restart would list
+    # it with the seats that came up.
+    workspace = Workspace(root / "exit-consulted", name="exit-consulted-seat")
+    all_dead()
+    capture_launches(workspace)
+    (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
+        consulted_handoff_text, encoding="utf-8")
+    a_real_failure_path_does_not_exit_zero("a seat that asked to be consulted", workspace)
 
     # Every refusal the 2026-09-16 ruling kept as a failure, through the real
     # assess_seat and recover_seat: each is reported REFUSED, never ALREADY
