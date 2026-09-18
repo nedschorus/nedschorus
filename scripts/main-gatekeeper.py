@@ -79,6 +79,13 @@ Usage:
                     [--legacy-repo <dir>]
 """
 
+# Annotations stay strings, so the `X | Y` unions below load under Apple's
+# Python 3.9, which is `python3` on the Mac: the handoff writer runs the
+# audit with sys.executable, and under 3.9 the module raised at import and
+# every Mac handoff's audit failed silently (nedschorus#451; the user,
+# 2026-09-18: "who cares which python as long as it works").
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json

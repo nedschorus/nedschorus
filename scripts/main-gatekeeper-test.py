@@ -191,7 +191,10 @@ with tempfile.TemporaryDirectory() as workspace_name:
     state_home = workspace / "state"
 
     # --- B3d: version floors ------------------------------------------------
-    check("python floor is met", sys.version_info >= (3, 12), sys.version)
+    # 3.9 is Apple's python3 on the Mac, where the audit runs at every handoff;
+    # the floor was 3.12 until 2026-09-18 (nedschorus#451, the user: "who cares
+    # which python as long as it works").
+    check("python floor is met", sys.version_info >= (3, 9), sys.version)
     # The version is matched rather than positional: Apple's git reports
     # "git version 2.39.5 (Apple Git-154)", whose last token is "Git-154)" —
     # taking it crashed the whole suite on macOS before the floor could report
