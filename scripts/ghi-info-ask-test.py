@@ -738,6 +738,55 @@ with tempfile.TemporaryDirectory() as temporary:
           not (seat / "design.md").exists(), list(seat.iterdir()))
 
 
+    # --- the run's last message is not always the answer -----------------
+    # Measured 2026-09-17: ghi-info answered the question at 20:16:59Z and
+    # then answered the checkout-freshness Stop hook 13 seconds later, and
+    # this script returns the run's last message. The hooks are gone from the
+    # run now; this check is what catches whatever else says something last.
+    check("a reply naming an issue is an answer",
+          ghi_ask.reply_answers_the_question("read #39, #29 — start with #39"))
+    check("the two passthrough replies are answers",
+          ghi_ask.reply_answers_the_question("out-of-scope")
+          and ghi_ask.reply_answers_the_question("escalate: an old ruling may bind"))
+    check("a reply to a Stop hook is not an answer",
+          not ghi_ask.reply_answers_the_question(
+              "No action needed on my part — this session hasn't touched any "
+              "scripts or tests; I only read the GHI mirror to answer requests."))
+
+    seat_hook = root / "seat-hook-reply"
+    seat_hook.mkdir()
+    ghi_ask.save_state(seat_hook / ghi_ask.STATE_FILE_NAME,
+                       {"session_id": "sess-H", "closes_since_birth": 0, "recent_matches": []})
+    fake_refresh_queue([([], {}, None)])
+    fake_claude_queue([({"session_id": "sess-H",
+                         "result": "No action needed on my part — this session "
+                                   "hasn't touched any scripts or tests."}, None)])
+    answer, error = ghi_ask.ask("what covers memory policy?", False, seat_hook, "x/y")
+    check("such a reply fails the ask instead of being returned",
+          answer is None and error is not None and "names no issue" in error,
+          (answer, error))
+
+    # And the run itself no longer loads this project's hooks.
+    seat_flag = root / "seat-setting-sources"
+    seat_flag.mkdir()
+    recorded_command = {}
+
+    def recording_run(command, **keywords):
+        recorded_command["argv"] = command
+        raise AssertionError("stop here: the command is what this case pins")
+
+    patch_module_function(ghi_ask.subprocess, "run", recording_run)
+    try:
+        # run_claude_real: the case before this one left a fake in its place.
+        run_claude_real("a question", None, seat_flag, 5)
+    except AssertionError:
+        pass
+    argv = recorded_command.get("argv", [])
+    check("run_claude passes --setting-sources user, so no project hook runs",
+          "--setting-sources" in argv
+          and argv[argv.index("--setting-sources") + 1] == "user", argv)
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")
