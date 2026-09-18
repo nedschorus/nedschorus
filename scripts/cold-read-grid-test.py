@@ -897,6 +897,29 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the set holds the six cells plus the reference-integrity pre-pass",
           written_names == expected_names, written_names)
 
+    # --- A path under a dot directory keeps its dot --------------------------
+    # The pre-pass trimmed punctuation from both ends of every candidate, so
+    # a path under a dot directory lost its leading dot and was reported
+    # UNRESOLVED. Every instruction file in this project lives under
+    # `.claude/`, so the check was least useful exactly where it mattered
+    # most. Found by the 2026-09-11 cold read, which caught the grid calling
+    # its own terminology prompt unresolved inside that run's own record.
+    repository = build_scratch_repository(scratch, "dot-directory-reference")
+    dotted = ".claude/skills/cold-read/prompts/terminology.md"
+    (repository / TARGET_RELATIVE_PATH).write_text(
+        f"# Target\n\nThe terminology prompt is `{dotted}`, and here it ends\n"
+        f"a sentence: {dotted}.\n", encoding="utf-8")
+    run_grid(repository, stubs / "dot-directory-reference")
+    record_directory = record_directory_of(repository)
+    reference_check = (
+        record_directory / f"{record_directory.name}--reference-check.md"
+    ).read_text(encoding="utf-8")
+    check("a path under a dot directory resolves with its dot intact",
+          f"- ok: `{dotted}`" in reference_check, reference_check)
+    check("and nothing in that target is left unresolved",
+          "UNRESOLVED" not in reference_check, reference_check)
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

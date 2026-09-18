@@ -205,7 +205,11 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         r"[\w./-]+/[\w./-]+|[\w-]+\.(?:md|py|sh|json|yaml|toml)", text)))
     lines = ["# Reference-integrity pre-pass", ""]
     for candidate in candidates:
-        clean = candidate.strip(".,;:")
+        # Trailing only: a leading dot is part of the path, not
+        # punctuation. Stripping both ends turned every `.claude/...`
+        # reference into an unresolvable one, which is most of the
+        # instruction files this check exists to ground.
+        clean = candidate.rstrip(".,;:")
         resolved = (REPO_ROOT / clean).exists() or (target.parent / clean).exists()
         lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{clean}`")
     if not candidates:
