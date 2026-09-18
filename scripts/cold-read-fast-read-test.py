@@ -1030,6 +1030,35 @@ with tempfile.TemporaryDirectory() as bare_scratch:
           and bare_module.BARE_REFERENCES_HEADING not in numbered_text,
           f"exit {result.returncode}; stderr={result.stderr!r}")
 
+    # A failed read writes no suggestions file, so it must not say one lists
+    # the numbers: it lists them on stderr itself (a merge-lane review note on
+    # the pull request that added the check found the promise printed before
+    # the cell ran, and broken whenever the read then failed).
+    repository = build_scratch_repository(bare_scratch)
+    failing = repository / "docs" / "walk" / "a-failing-walk-draft.md"
+    failing.parent.mkdir(parents=True, exist_ok=True)
+    failing.write_text("# A walk\n\nPR #466 merged.\n\nSee #418/#419.\n",
+                       encoding="utf-8")
+    failing_suggestions = repository / "docs" / "walk" / "a-failing-walk-suggestions.md"
+    result = run_fast_read(
+        repository, bare_stubs,
+        {"*": {"fail_first_attempts": 99, "report": "STUB FAST READ: never\n"}},
+        failing_suggestions, "docs/walk/a-failing-walk-draft.md", bare_counter,
+    )
+    check("a failed read of a walk draft with bare numbers still fails, with no file",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and not failing_suggestions.exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    check("a failed read never says the suggestions file lists the numbers",
+          "the suggestions file lists each one" not in result.stderr,
+          repr(result.stderr))
+    check("a failed read lists each bare number by line on stderr",
+          "walk draft: 3. The read failed, so no suggestions file lists them." in result.stderr
+          and "line 3: #466" in result.stderr
+          and "line 5: #418" in result.stderr
+          and "line 5: #419" in result.stderr,
+          repr(result.stderr))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

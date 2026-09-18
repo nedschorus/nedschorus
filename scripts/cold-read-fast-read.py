@@ -745,14 +745,12 @@ def main() -> int:
     if on_records_route:
         freeze_target(target, report.parent)
 
-    # Only a walk draft is checked for bare numbers, and it is told before the
-    # cell runs, so the author hears it even when the read then fails.
+    # Only a walk draft is checked for bare numbers. The author hears them
+    # whether or not the read succeeds: a successful read lists them in the
+    # suggestions file, and a failed one, which writes no file, lists them on
+    # stderr instead. Each message is printed only once it is true.
     bare_references = (None if on_records_route
                        else bare_references_in(target.read_text(encoding="utf-8")))
-    if bare_references:
-        print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk draft: "
-              f"{len(bare_references)}; the suggestions file lists each one.",
-              file=sys.stderr)
 
     last_exit_code = 1
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
@@ -782,6 +780,10 @@ def main() -> int:
                 if bare_references is not None:
                     attached += bare_references_section(bare_references)
                 report.write_text(attached, encoding="utf-8")
+                if bare_references:
+                    print(f"{PROGRAM}: bare issue, pull request or task numbers in "
+                          f"this walk draft: {len(bare_references)}; the suggestions "
+                          "file lists each one.", file=sys.stderr)
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
                 print(report)
@@ -795,6 +797,12 @@ def main() -> int:
             if attempt < FAST_READ_ATTEMPTS:
                 print(f"{PROGRAM}: attempt {attempt} of {FAST_READ_ATTEMPTS} failed "
                       f"(exit {last_exit_code}); retrying once.", file=sys.stderr)
+    if bare_references:
+        print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
+              f"draft: {len(bare_references)}. The read failed, so no suggestions "
+              "file lists them. They are:", file=sys.stderr)
+        for line_number, reference in bare_references:
+            print(f"{PROGRAM}:   line {line_number}: {reference}", file=sys.stderr)
     print(f"FAILED (exit {last_exit_code} from the fast-clarify cell; "
           f"no report at {report})")
     return 1
