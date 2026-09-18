@@ -115,7 +115,8 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # one. See `prompt_template_path`.
 
 # The passes a cell can be asked to run; each reads its prompt from
-# .claude/skills/cold-read/prompts/<cell>.md. `fast-clarify` is the fast
+# .claude/skills/cold-read/prompts/<cell>.md, or from its runtime's own copy
+# beside it where one exists (see above). `fast-clarify` is the fast
 # cold-read-tier's one-reviewer ask (user-ruled 2026-08-30, provisional
 # per the same day's qualifier): a concise sentence-level restatement, then
 # concise criterion-tagged stumble and coverage findings. It is run singly
@@ -248,8 +249,10 @@ def build_argument_parser(
     )
     parser.add_argument(
         "--prompt-file", metavar="PATH",
-        help="read the prompt template from this file instead of "
-             ".claude/skills/cold-read/prompts/<cell>.md, with the same "
+        help="read the prompt template from this file instead of the "
+             "cell's own under .claude/skills/cold-read/prompts/ -- "
+             "<cell>.<runtime>.md where this runtime has its own copy, "
+             "<cell>.md otherwise -- with the same "
              "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
              "repository root unless absolute. --cell is still required and "
              "still names the report. This is how a draft prompt is trialled "
