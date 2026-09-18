@@ -28,6 +28,9 @@ Checks, per file type:
 Usage:
   scripts/md-drift-lint.py FILE [FILE ...]
 
+A file under a frozen-measured-data directory is skipped whole; see
+FROZEN_MEASURED_DATA_DIRECTORIES.
+
 Output: one "path:line: problem" per finding on stdout.
 Exit codes: 0 clean, 1 findings, 2 bad invocation.
 """
@@ -71,6 +74,16 @@ HISTORY_MARKERS = ("git history", "git show")
 # here would report a correct citation as drift.
 FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system",
                         "~/Projects/nedsmessenger")
+
+# Directories whose content is frozen measured data: every citation in them
+# records what a document said when it was measured, so a finding there is
+# never a defect and "fixing" one silently re-tunes every score already
+# published against those files. cold-read-reviewer-test-cases/README.md makes
+# this a requirement and names this script: "every mechanical reference or
+# drift check must exclude this directory rather than report it". It is also
+# carried as a requirement on nedschorus#42. Nine findings stood here when the
+# README was written and nine stand today (user-ruled 2026-09-17).
+FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",)
 
 _basename_index_cache = {}
 _git_ignore_cache = {}
@@ -397,7 +410,21 @@ def find_key_line(text: str, key: str, occurrence: int) -> int:
     return 1
 
 
+def in_frozen_measured_data(path: Path, repo_root: Path) -> bool:
+    """True for a file under a directory whose citations are frozen data."""
+    try:
+        parts = path.resolve().relative_to(repo_root.resolve()).parts
+    except ValueError:  # a file outside the repository is not frozen data
+        return False
+    return bool(parts) and parts[0] in FROZEN_MEASURED_DATA_DIRECTORIES
+
+
 def lint_markdown(path: Path, repo_root: Path):
+    # Skipped whole, not per check, and skipped even when the file is named
+    # explicitly on the command line: the requirement is that no drift check
+    # reports this directory, however the file was reached.
+    if in_frozen_measured_data(path, repo_root):
+        return
     in_code_fence = False
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if line.lstrip().startswith("```"):
@@ -445,6 +472,12 @@ def main(argv=None) -> int:
         if not path.is_file():
             print(f"{name}:0: file not found", file=sys.stdout)
             findings += 1
+            continue
+        # Guarded here as well as in lint_markdown, and for the same reason
+        # in both: whatever the file type. lint_json has no repo_root to test
+        # against, and the frozen directory holds only Markdown today, so this
+        # is the check that would still hold if a .json landed there.
+        if in_frozen_measured_data(path, REPO_ROOT):
             continue
         if path.suffix == ".json":
             problems = lint_json(path)
