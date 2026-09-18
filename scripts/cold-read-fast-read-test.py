@@ -5,9 +5,15 @@ WHAT IS PINNED HERE.
 
   - The report-path rule. A walk draft, docs/walk/<name>-draft.md under the
     checkout, is read into docs/walk/<name>-suggestions.md beside it, and a
-    suggestions file left by an earlier read is replaced. Anything else --
-    another directory in the checkout, a file outside it -- is read into
-    cold-read-records/<YYYY-MM-DD>-<name>/<name>-fast-read.md.
+    suggestions file left by an earlier read is replaced, whatever the clock
+    says. Anything else -- another directory in the checkout, a file outside
+    it -- is read into
+    cold-read-records/<YYYY-MM-DD>-<HHMM>-<parent>-<stem>/<parent>-<stem>-fast-read.md,
+    the parent directory's leading dots stripped, with -2 for a second read
+    started in the same minute (user-ruled 2026-09-16, for every document).
+    No case reads the wall clock: the name functions are handed a clock
+    reading, and every launched read runs with COLD_READ_RECORD_CLOCK_OVERRIDE
+    set, so no case can flake across a minute boundary.
 
   - One retry. A cell that fails once is run again and, when the second run
     produces a report, the read succeeds. A cell that fails twice is not run
@@ -64,7 +70,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
+import datetime
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -80,6 +86,12 @@ SCRIPT_NAMES = (
 # override, so no case reaches ned-box.
 RECORD_SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 SCRATCH_LOG_STORE_RELATIVE = Path("log-store") / "cold-read-records"
+# The clock every launched read is given instead of the wall clock, through
+# the script's override, and the record stamp that clock must produce. A case
+# that needs another minute passes its own.
+RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
+FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
+FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16-1042"
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
@@ -183,7 +195,8 @@ def build_scratch_repository(scratch):
 
 
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
-                  counter_path, ship_destination=None):
+                  counter_path, ship_destination=None,
+                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS):
     """The read as a subprocess, with the stub agy first on PATH.
 
     `expected_report` is where the stub writes -- the path the case expects
@@ -202,6 +215,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"] = str(counter_path)
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
         ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
+    environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = record_clock
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
@@ -223,34 +237,65 @@ with tempfile.TemporaryDirectory() as scratch:
     scratch = Path(scratch).resolve()  # macOS: /var is a link to /private/var, and the scripts resolve
     stubs = scratch / "stub-bin"
     counter = scratch / "stub-launch-counter"
-    today = time.strftime("%Y-%m-%d")
+    record_stamp = FIXED_RECORD_STAMP_FOR_TESTS
 
-    # --- The record-name rule: a skill's document is SKILL.md ---------------
-    # The record is named after the document, and every skill in this project
-    # is .claude/skills/<name>/SKILL.md -- so a stem-based name is
-    # <date>-SKILL for every skill read that day. Measured 2026-09-15:
-    # 2026-09-15-SKILL and 2026-09-15-SKILL-2 in the store, neither saying
-    # which skill. The name comes from the skill's directory instead; every
-    # other stem is unchanged, so no existing record shape moves.
+    # --- The record-name rule: date, time, parent directory, file ----------
+    # User-ruled 2026-09-16, for every document with no special cases:
+    # <YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>. The name it
+    # replaced, <date>-<stem> with a patch for SKILL, README and index, still
+    # collided on every other shared file name (a skill's prompts/terminology.md
+    # against any other terminology.md), and its date could not tell same-day
+    # re-reads apart (eight -2 and -3 records among 104 on the user's Mac).
+    # The functions are handed a clock reading, so these cases never read
+    # the wall clock.
     name_module = script_under_test_module()
     record_name = name_module.record_name_for_target
-    check("a skill's record is named after the skill's directory, not SKILL",
-          record_name(Path("/r/.claude/skills/pull-request-review-write/SKILL.md"))
-          == "pull-request-review-write")
-    check("the generic-stem match is case-insensitive",
-          record_name(Path("/r/.claude/skills/handoff/skill.md")) == "handoff")
-    check("a README is named after its directory too",
-          record_name(Path("/r/docs/nedschorus-wiki/README.md")) == "nedschorus-wiki")
-    check("an ordinary document keeps its stem, so no existing record shape changes",
-          record_name(Path("/r/docs/drafts/explain-skill-draft.md")) == "explain-skill-draft")
-    check("a stem that merely contains a generic word is not generic",
-          record_name(Path("/r/docs/skill-index-notes.md")) == "skill-index-notes")
-    skill_report = name_module.fast_read_report_path_for_target(
-        Path("/r/.claude/skills/cold-read-record-name-case/SKILL.md"), "2026-09-16")
-    check("the fast read's record directory and report carry the skill's name",
-          skill_report.parent.name.startswith("2026-09-16-cold-read-record-name-case")
-          and skill_report.name == "cold-read-record-name-case-fast-read.md",
+    record_directory_name = name_module.record_directory_name_for_target
+    clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
+    skill_target = Path("/r/.claude/skills/cold-read/SKILL.md")
+    terminology_target = Path("/r/.claude/skills/cold-read/prompts/terminology.md")
+    check("a skill's document part is its directory, a hyphen, and SKILL",
+          record_name(skill_target) == "cold-read-SKILL", record_name(skill_target))
+    check("a skill's prompt file is named with its prompts directory, so two terminology.md differ",
+          record_name(terminology_target) == "prompts-terminology",
+          record_name(terminology_target))
+    check("an ordinary document carries its directory too",
+          record_name(Path("/r/docs/drafts/explain-skill-draft.md"))
+          == "drafts-explain-skill-draft")
+    check("README gets no special case: directory, hyphen, stem",
+          record_name(Path("/r/docs/nedschorus-wiki/README.md")) == "nedschorus-wiki-README")
+    check("a parent directory's leading dot is stripped: ~/.claude/CLAUDE.md is claude-CLAUDE",
+          record_name(Path("/Users/someone/.claude/CLAUDE.md")) == "claude-CLAUDE",
+          record_name(Path("/Users/someone/.claude/CLAUDE.md")))
+    check("a file whose parent has no name is named by its stem alone",
+          record_name(Path("/CLAUDE.md")) == "CLAUDE", record_name(Path("/CLAUDE.md")))
+    check("a SKILL.md record directory is date, HHMM, then the document part",
+          record_directory_name(skill_target, clock_at_1042) == "2026-09-16-1042-cold-read-SKILL",
+          record_directory_name(skill_target, clock_at_1042))
+    check("a prompts/terminology.md record directory is date, HHMM, prompts-terminology",
+          record_directory_name(terminology_target, clock_at_1042)
+          == "2026-09-16-1042-prompts-terminology",
+          record_directory_name(terminology_target, clock_at_1042))
+    check("the hour and minute are zero-padded, 24-hour, with no separator",
+          record_directory_name(Path("/r/docs/drafts/a.md"), datetime.datetime(2026, 9, 16, 9, 5))
+          == "2026-09-16-0905-drafts-a"
+          and record_directory_name(Path("/r/docs/drafts/a.md"), datetime.datetime(2026, 9, 16, 21, 5))
+          == "2026-09-16-2105-drafts-a")
+    # RECORDS_DIR is pointed at scratch so the result cannot pick up a -2 from
+    # whatever this checkout's own cold-read-records/ happens to hold.
+    name_module.RECORDS_DIR = scratch / "in-process-records"
+    skill_report = name_module.fast_read_report_path_for_target(skill_target, clock_at_1042)
+    check("the fast read's report takes the document part, without the date or time",
+          skill_report == scratch / "in-process-records" / "2026-09-16-1042-cold-read-SKILL"
+          / "cold-read-SKILL-fast-read.md",
           str(skill_report))
+    walk_target = name_module.REPO_ROOT / "docs" / "walk" / "some-item-draft.md"
+    check("the walk-draft route is untouched: docs/walk/<name>-suggestions.md, whatever the clock",
+          name_module.fast_read_report_path_for_target(walk_target, clock_at_1042)
+          == name_module.fast_read_report_path_for_target(
+              walk_target, datetime.datetime(2027, 1, 1, 0, 0))
+          == name_module.REPO_ROOT / "docs" / "walk" / "some-item-suggestions.md",
+          str(name_module.fast_read_report_path_for_target(walk_target, clock_at_1042)))
 
     # --- The report-path rule: a walk draft ------------------------------
     repository = build_scratch_repository(scratch)
@@ -285,13 +330,13 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- The report-path rule: anything else -----------------------------
     repository = build_scratch_repository(scratch)
     other_relative = "docs/drafts/a-design.md"
-    records_report = (repository / "cold-read-records" / f"{today}-a-design"
-                      / "a-design-fast-read.md")
+    records_report = (repository / "cold-read-records" / f"{record_stamp}-drafts-a-design"
+                      / "drafts-a-design-fast-read.md")
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
         records_report, other_relative, counter,
     )
-    check("a document elsewhere in the checkout is read into cold-read-records/<date>-<name>/<name>-fast-read.md",
+    check("a document elsewhere in the checkout is read into cold-read-records/<date>-<HHMM>-<parent>-<stem>/<parent>-<stem>-fast-read.md",
           result.returncode == 0 and result.stdout.strip() == str(records_report)
           and records_report.is_file(),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
@@ -303,8 +348,8 @@ with tempfile.TemporaryDirectory() as scratch:
     outside_draft = scratch / "elsewhere" / "some-item-draft.md"
     outside_draft.parent.mkdir(parents=True, exist_ok=True)
     outside_draft.write_text("# Outside\n", encoding="utf-8")
-    outside_report = (repository / "cold-read-records" / f"{today}-some-item-draft"
-                      / "some-item-draft-fast-read.md")
+    outside_report = (repository / "cold-read-records" / f"{record_stamp}-elsewhere-some-item-draft"
+                      / "elsewhere-some-item-draft-fast-read.md")
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the outside file\n"}},
         outside_report, outside_draft, counter,
@@ -470,8 +515,8 @@ with tempfile.TemporaryDirectory() as scratch:
     # landed. The walk route does neither: a suggestions file is not a record.
     repository = build_scratch_repository(scratch)
     other_relative = "docs/drafts/a-design.md"
-    records_report = (repository / "cold-read-records" / f"{today}-a-design"
-                      / "a-design-fast-read.md")
+    records_report = (repository / "cold-read-records" / f"{record_stamp}-drafts-a-design"
+                      / "drafts-a-design-fast-read.md")
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
         records_report, other_relative, counter,
@@ -489,12 +534,17 @@ with tempfile.TemporaryDirectory() as scratch:
               marked_copy.read_text(encoding="utf-8"))
           == (repository / other_relative).read_text(encoding="utf-8"),
           f"marked copy present={marked_copy.exists()}")
+    # Every read below survives an absent file: a record path this suite or
+    # the script got wrong should fail these cases by name, not end the run in
+    # a traceback that takes every later case with it (found by mutating the
+    # record name while building the 2026-09-16 rule).
     check("the document itself is not touched by the markup",
-          (repository / other_relative).read_bytes() == frozen.read_bytes())
+          frozen.is_file() and (repository / other_relative).read_bytes() == frozen.read_bytes())
+    records_report_text = (records_report.read_text(encoding="utf-8")
+                           if records_report.is_file() else "")
     check("the report comes back carrying the coverage section",
-          script_under_test_module().SENTENCE_COVERAGE_HEADING
-          in records_report.read_text(encoding="utf-8"),
-          records_report.read_text(encoding="utf-8")[-300:])
+          script_under_test_module().SENTENCE_COVERAGE_HEADING in records_report_text,
+          records_report_text[-300:])
     record_lines = [line for line in result.stderr.splitlines() if "record: " in line]
     check("the read reports the shipping on stderr, and it shipped",
           len(record_lines) == 1 and "record: shipped:" in record_lines[0],
@@ -508,22 +558,48 @@ with tempfile.TemporaryDirectory() as scratch:
           and (store_copy / "target" / other_relative).is_file(),
           sorted(str(p.relative_to(store_copy)) for p in store_copy.rglob("*")) if store_copy.exists() else "no store copy")
 
-    # A second read of the same document on the same day takes a fresh -2
-    # directory, so two frozen targets never share one (the grid's rule).
-    second_report = (repository / "cold-read-records" / f"{today}-a-design-2"
-                     / "a-design-fast-read.md")
+    # A second read of the same document started in the same minute takes a
+    # fresh -2 directory, so two frozen targets never share one (the grid's
+    # rule). The clock is the same override as the first read's, so the two
+    # really are in one minute whatever the wall clock did.
+    second_report = (repository / "cold-read-records" / f"{record_stamp}-drafts-a-design-2"
+                     / "drafts-a-design-fast-read.md")
     (repository / other_relative).write_text("# A design\n\nRevised line.\n", encoding="utf-8")
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the revised design\n"}},
         second_report, other_relative, counter,
     )
-    check("a second read on the same day takes the -2 directory",
+    check("a second read in the same minute takes the -2 directory",
           result.returncode == 0 and result.stdout.strip() == str(second_report)
           and second_report.is_file(),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-300:]!r}")
+    second_frozen = second_report.parent / "target" / other_relative
     check("each directory holds its own frozen target: the first the original, the second the revision",
-          b"Revised" not in frozen.read_bytes()
-          and b"Revised" in (second_report.parent / "target" / other_relative).read_bytes())
+          frozen.is_file() and second_frozen.is_file()
+          and b"Revised" not in frozen.read_bytes()
+          and b"Revised" in second_frozen.read_bytes())
+
+    # A third read a minute later is told apart by its time alone: its own
+    # name, no suffix. This is the case the date-only name could not make --
+    # a same-day re-read became -2 or -3, which says nothing about which
+    # draft it read.
+    later_minute_report = (repository / "cold-read-records" / "2026-09-16-1043-drafts-a-design"
+                           / "drafts-a-design-fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: a minute later\n"}},
+        later_minute_report, other_relative, counter, record_clock="2026-09-16T10:43",
+    )
+    records_after_three_reads = sorted(
+        path.name for path in (repository / "cold-read-records").iterdir()
+    ) if (repository / "cold-read-records").is_dir() else []
+    check("a read in a different minute takes a distinct name with no suffix",
+          result.returncode == 0 and result.stdout.strip() == str(later_minute_report)
+          and later_minute_report.is_file()
+          and records_after_three_reads == [
+              "2026-09-16-1042-drafts-a-design", "2026-09-16-1042-drafts-a-design-2",
+              "2026-09-16-1043-drafts-a-design"],
+          f"exit {result.returncode}; records={records_after_three_reads}; "
+          f"stderr={result.stderr[-300:]!r}")
 
     # The walk route: no record, no freeze, no ship.
     repository = build_scratch_repository(scratch)
@@ -540,8 +616,8 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # A store that cannot be reached: the read still succeeds, and says so.
     repository = build_scratch_repository(scratch)
-    records_report = (repository / "cold-read-records" / f"{today}-a-design"
-                      / "a-design-fast-read.md")
+    records_report = (repository / "cold-read-records" / f"{record_stamp}-drafts-a-design"
+                      / "drafts-a-design-fast-read.md")
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
         records_report, other_relative, counter,
@@ -770,15 +846,17 @@ with tempfile.TemporaryDirectory() as warning_scratch:
     warning_scratch = Path(warning_scratch).resolve()
     warning_stubs = warning_scratch / "stub-bin"
     warning_counter = warning_scratch / "stub-launch-counter"
-    warning_today = time.strftime("%Y-%m-%d")
+    # run_fast_read reads the record clock from FIXED_RECORD_CLOCK_FOR_TESTS.
+    warning_stamp = FIXED_RECORD_STAMP_FOR_TESTS
 
     repository = build_scratch_repository(warning_scratch)
     brief_relative = "docs/agents/a-seat-instructions.md"
     brief = repository / brief_relative
     brief.parent.mkdir(parents=True, exist_ok=True)
     brief.write_text("# A seat\n\nOne sentence.\n", encoding="utf-8")
-    brief_report = (repository / "cold-read-records" / f"{warning_today}-a-seat-instructions"
-                    / "a-seat-instructions-fast-read.md")
+    brief_report = (repository / "cold-read-records"
+                    / f"{warning_stamp}-agents-a-seat-instructions"
+                    / "agents-a-seat-instructions-fast-read.md")
     result = run_fast_read(
         repository, warning_stubs, {"*": {"report": "STUB FAST READ: of the brief\n"}},
         brief_report, brief_relative, warning_counter,
@@ -803,8 +881,9 @@ with tempfile.TemporaryDirectory() as warning_scratch:
     plain = repository / plain_relative
     plain.parent.mkdir(parents=True, exist_ok=True)
     plain.write_text("# A plain document\n\nOne sentence.\n", encoding="utf-8")
-    plain_report = (repository / "cold-read-records" / f"{warning_today}-a-plain-document"
-                    / "a-plain-document-fast-read.md")
+    plain_report = (repository / "cold-read-records"
+                    / f"{warning_stamp}-issues-a-plain-document"
+                    / "issues-a-plain-document-fast-read.md")
     result = run_fast_read(
         repository, warning_stubs, {"*": {"report": "STUB FAST READ: of a plain document\n"}},
         plain_report, plain_relative, warning_counter,

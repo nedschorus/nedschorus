@@ -28,15 +28,15 @@ program's stderr, so a caller watching stdout gets the one line and a caller
 reading stderr gets the whole account.
 
 WHAT THE REVIEWER ACTUALLY READS is not the cold-read-target but a copy of it
-with an id on every sentence, `<name>-with-sentence-ids.md`, written by this
-program before the cold-read-cell launches (nedschorus#284 step 2). Question
-1 asks for a restatement under each id, so the author's check stops being an
-eyeball match between a restatement and a four-word anchor. When the report
-lands, this program puts each original sentence under the restatement claiming
-its id and appends a coverage section naming the sentences no restatement
-claimed and any id the reviewer cited that the cold-read-target does not have.
-A sentence never restated is a sentence the reviewer may never have read, which
-is the failure the four-word anchor could not surface.
+with an id on every sentence, `<file stem>-with-sentence-ids.md`, written by
+this program before the cold-read-cell launches (nedschorus#284 step 2).
+Question 1 asks for a restatement under each id, so the author's check stops
+being an eyeball match between a restatement and a four-word anchor. When the
+report lands, this program puts each original sentence under the restatement
+claiming its id and appends a coverage section naming the sentences no
+restatement claimed and any id the reviewer cited that the cold-read-target
+does not have. A sentence never restated is a sentence the reviewer may never
+have read, which is the failure the four-word anchor could not surface.
 
 The markup never alters the cold-read-target. sentence_id_markup inserts
 exactly two shapes and strip_sentence_ids removes exactly those two, so the
@@ -50,13 +50,17 @@ WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md`, gets its
 suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
 the walk reads next. Anything else -- a design, a skill, a record copy, a
 file outside this checkout -- gets a cold-read-record of its own under the
-gitignored records tree: `cold-read-records/<YYYY-MM-DD>-<name>/<name>-fast-read.md`,
-where <name> is the cold-read-target's file name without its extension, and the
-directory takes a -2, -3 suffix when the day's name is taken, the
-cold-read-grid's rule. That directory also gets `target/<repository path>`, the
-exact bytes the reviewer read, frozen before the cold-read-cell launches, and
-once the report has landed the directory is shipped to the log-store on ned-box
-by scripts/cold-read-record-ship.py, whose one line is printed on stderr as
+gitignored records tree:
+`cold-read-records/<YYYY-MM-DD>-<HHMM>-<name>/<name>-fast-read.md`, where the
+date and the 24-hour time are local and come from one clock read, <name> is
+the cold-read-target's parent directory name without leading dots, a hyphen,
+and the cold-read-target's file name without its extension (the file name
+alone when the parent name is empty), and the directory takes a -2, -3 suffix
+when the minute's name is taken, the cold-read-grid's rule. That directory
+also gets `target/<repository path>`, the exact bytes the reviewer read,
+frozen before the cold-read-cell launches, and once the report has landed the
+directory is shipped to the log-store on ned-box by
+scripts/cold-read-record-ship.py, whose one line is printed on stderr as
 `record:` (user-ruled 2026-09-07; a shipping failure never fails the read).
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
@@ -85,12 +89,13 @@ refused the same way.
 from __future__ import annotations
 
 import argparse
+import datetime
+import os
 import pathlib
 import re
 import subprocess
 import sys
 import tempfile
-import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
@@ -216,13 +221,17 @@ def full_run_required_line(class_name: str) -> str:
             f"review. Run scripts/cold-read-grid.py --target on it.")
 
 
-def fast_read_report_path_for_target(target: pathlib.Path, today: str) -> pathlib.Path:
+def fast_read_report_path_for_target(
+    target: pathlib.Path, now: datetime.datetime,
+) -> pathlib.Path:
     """The path rule in the docstring, and nothing else.
 
-    `target` is absolute and resolved. A walk draft is recognised by where it
-    sits and how it is named -- `docs/walk/<name>-draft.md` under this
-    checkout -- and a draft of that name in any other directory, or a walk
-    file not named `-draft.md`, takes the records route like everything else.
+    `target` is absolute and resolved; `now` is the one clock reading the
+    record's name is taken from, and the walk route does not use it. A walk
+    draft is recognised by where it sits and how it is named --
+    `docs/walk/<name>-draft.md` under this checkout -- and a draft of that
+    name in any other directory, or a walk file not named `-draft.md`, takes
+    the records route like everything else.
     """
     try:
         relative = target.relative_to(REPO_ROOT)
@@ -235,40 +244,71 @@ def fast_read_report_path_for_target(target: pathlib.Path, today: str) -> pathli
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
         return REPO_ROOT / WALK_DIRECTORY_RELATIVE / f"{name}-suggestions.md"
     name = record_name_for_target(target)
-    return fresh_record_dir(RECORDS_DIR / f"{today}-{name}") / f"{name}-fast-read.md"
+    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
+            / f"{name}-fast-read.md")
 
 
-# Document stems that name a KIND of file rather than the document: every
-# skill in this project is `.claude/skills/<name>/SKILL.md`, so its stem is
-# "SKILL" and says nothing about which skill. Measured 2026-09-15: two skills
-# fast-read on one day both wanted the cold-read-record name 2026-09-15-SKILL;
-# the shipper refused the second (correctly, on provenance) and it went to
-# the store as 2026-09-15-SKILL-2, which says neither which skill nor what the
-# -2 distinguishes. For these stems the cold-read-record is named after the
-# parent directory instead, which is the name that means something. Compared
-# case-insensitively; every other stem is used as it is, so no existing
-# cold-read-record shape changes. Restated in scripts/cold-read-grid.py, which
-# is a program rather than a module.
-GENERIC_DOCUMENT_STEMS = ("skill", "readme", "index")
+# THE RECORD-NAME RULE, for every document, with no special cases (user-ruled
+# 2026-09-16): `<YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>`.
+# It replaced `<YYYY-MM-DD>-<file stem>` and its patch for SKILL, README and
+# index, for two measured reasons. The patch named a skill after its directory
+# but left every other shared file name colliding:
+# `.claude/skills/cold-read/prompts/terminology.md` still took the name of any
+# other `terminology.md`. And the date did not separate re-reads of one
+# document on one day: of 104 records on the user's Mac, eight carried a -2
+# or -3 from a same-day re-read (2026-09-15-handoff-system-overview-3 among
+# them), and the suffix says nothing about which draft each read. The parent
+# directory's leading dots are stripped, so a file in `~/.claude/` gives
+# `claude-CLAUDE`; a parent with no name left gives the stem alone. Restated,
+# not imported, in scripts/cold-read-grid.py, because the cold-read-grid is a
+# program rather than a module; the two must stay identical.
+RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
+RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
+
+
+def record_clock_reading() -> datetime.datetime:
+    """The ONE local clock reading a cold-read-record's date and time are both
+    taken from, so the two cannot disagree across midnight.
+
+    COLD_READ_RECORD_CLOCK_OVERRIDE, when set as `YYYY-MM-DDTHH:MM`, is read
+    instead of the clock: it is how the test suites name a cold-read-record
+    exactly without depending on the wall clock or flaking across a minute
+    boundary.
+    The override is a clock value, not a finished name, so the tests still go
+    through the formatting below.
+    """
+    override = os.environ.get(RECORD_CLOCK_OVERRIDE_VARIABLE)
+    if override:
+        return datetime.datetime.strptime(override, RECORD_CLOCK_OVERRIDE_FORMAT)
+    return datetime.datetime.now()
 
 
 def record_name_for_target(target: pathlib.Path) -> str:
-    """The cold-read-target's part of a cold-read-record name: its stem, or its
-    parent directory's name when the stem is one of GENERIC_DOCUMENT_STEMS."""
-    if target.stem.lower() in GENERIC_DOCUMENT_STEMS and target.parent.name:
-        return target.parent.name
-    return target.stem
+    """The cold-read-target's part of a cold-read-record name: the parent
+    directory's name without leading dots, a hyphen, and the file stem; the
+    stem alone when the parent's name is empty."""
+    parent_name = target.parent.name.lstrip(".")
+    return f"{parent_name}-{target.stem}" if parent_name else target.stem
+
+
+def record_directory_name_for_target(
+    target: pathlib.Path, now: datetime.datetime,
+) -> str:
+    """`<YYYY-MM-DD>-<HHMM>-<document part>`, before any -2, -3 suffix."""
+    return (f"{now.strftime('%Y-%m-%d')}-{now.strftime('%H%M')}-"
+            f"{record_name_for_target(target)}")
 
 
 def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
-    """The day's name, or the first of -2, -3, ... that is not taken.
+    """The minute's name, or the first of -2, -3, ... that is not taken.
 
     The rule scripts/cold-read-grid.py's make_record_dir applies, restated
     here rather than imported because the cold-read-grid is a program, not a
     module (user-ruled 2026-09-07 with the frozen cold-read-target: two frozen
     cold-read-targets never share a directory, so a cold-read-fast-read after
-    a cold-read-full-run on the same cold-read-target and day, or after an
-    earlier cold-read-fast-read of a revised draft, takes its own).
+    a cold-read-full-run on the same cold-read-target in the same minute, or
+    after an earlier cold-read-fast-read of a revised draft in that minute,
+    takes its own).
     Nothing is created here; the launcher creates the report's directory.
     """
     record_dir = base
@@ -636,7 +676,7 @@ def main() -> int:
         print(f"{PROGRAM}: {full_run_required_line(full_run_class_name)}",
               file=sys.stderr)
 
-    report = fast_read_report_path_for_target(target, time.strftime("%Y-%m-%d"))
+    report = fast_read_report_path_for_target(target, record_clock_reading())
     # A walk draft's report lands in docs/walk/ and is not a cold-read-record;
     # only the records route freezes the cold-read-target and ships.
     on_records_route = RECORDS_DIR in report.parents
