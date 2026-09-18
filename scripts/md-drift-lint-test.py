@@ -292,6 +292,43 @@ with tempfile.TemporaryDirectory() as git_workspace:
           findings == ["link target does not exist: ../elsewhere/gone.md"], str(findings))
 
 
+# A directory of frozen measured data is skipped whole: its citations record
+# what a document said when it was measured, and a triager who "fixes" one
+# silently re-tunes every score published against those files
+# (cold-read-reviewer-test-cases/README.md; user-ruled 2026-09-17).
+with tempfile.TemporaryDirectory() as frozen_workspace:
+    frozen_root = Path(frozen_workspace)
+    frozen_text = "It cites `scripts/long-gone.py`, and quotes nothing.\n"
+
+    (frozen_root / "cold-read-reviewer-test-cases").mkdir()
+    findings = problems_for(frozen_text, frozen_root,
+                            name="cold-read-reviewer-test-cases/trio.md")
+    check("a file in a frozen-data directory reports nothing", findings == [],
+          str(findings))
+
+    # The same text outside it must still report, or the case above would pass
+    # for the wrong reason -- a lint that found nothing anywhere.
+    findings = problems_for(frozen_text, frozen_root, name="ordinary.md")
+    check("the same text outside that directory is still reported",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+
+    # Exact directory name, not a prefix: a neighbour that merely starts with
+    # the same characters is ordinary content and must still be checked.
+    (frozen_root / "cold-read-reviewer-test-cases-archive").mkdir()
+    findings = problems_for(frozen_text, frozen_root,
+                            name="cold-read-reviewer-test-cases-archive/old.md")
+    check("a directory that merely shares the prefix is still checked",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+
+    # Nested deeper than the top level, which is how the real trio files sit.
+    nested = frozen_root / "cold-read-reviewer-test-cases" / "ghi-write-trio"
+    nested.mkdir()
+    findings = problems_for(frozen_text, frozen_root,
+                            name="cold-read-reviewer-test-cases/ghi-write-trio/deep.md")
+    check("a file nested inside a frozen-data directory reports nothing",
+          findings == [], str(findings))
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
