@@ -67,6 +67,14 @@ for an oversight:
 - It does not recurse into `sh -c`, `eval`, or a shell-fed heredoc body. No
   agent here force-pushes through those, and this fleet's failures are
   accidents between cooperative agents, not evasion.
+- A push behind `timeout`, `command`, `nohup`, or a shell keyword such as
+  `then`, `do` or `{` is not recognised: across 628 push commands on this Mac
+  in the 14 days to 2026-09-18, no agent pushed that way (the only hits were a
+  reviewer's probes). `env` is recognised, because an agent did push behind it.
+- A refspec written after a `2>&1`-style redirection
+  (`git push --force origin 2>&1 the-pr-branch`) is lost: the shared tokenizer
+  ends the command at the `&`, so the push is judged as bare. No agent writes
+  a push that way.
 - It ignores which remote the push names: `gh` answers for the GitHub
   repository it resolves from the checkout. Every push here goes to this
   project's one repository; no agent pushes to a fork.
@@ -147,6 +155,17 @@ PUSH_VALUE_OPTIONS = {"--repo", "--receive-pack", "--exec", "--push-option",
 SHORT_VALUE_LETTERS = "o"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# `env` options that take a separate value, so the word after them is that
+# value and not the program `env` runs.
+ENV_COMMAND_VALUE_OPTIONS = {"-u", "--unset"}
+
+# A redirection as the shared tokenizer leaves it: an optional file-descriptor
+# number and the operator, with its target either in the same word
+# (`>/tmp/x`, `2>/dev/null`) or as the next word (`> /tmp/x`, `2> err.log`).
+# `2>&1` arrives as `2>` ending its command, because the `&` cuts it there;
+# `>|` and `&>` are cut the same way before they reach this guard.
+REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>|<<<|<>|<)")
 
 # A word the shell would expand or glob, which this guard cannot resolve.
 UNEXPANDED_PATTERN = re.compile(r"[$`*?]|\{\}")
@@ -250,13 +269,34 @@ def find_git_push_invocation(words):
 
     Only an actually-invoked `git push` matches. Quoted prose naming it is a
     single data word by the time it arrives here, which is what the shared
-    tokenizer buys."""
+    tokenizer buys.
+
+    An `env` in front, with its options and assignments, is read through: an
+    assignment after it counts exactly like a leading one, the escape hatch
+    included. Other prefixes are not; see the module docstring's limits."""
     index = 0
     sanctioned = False
     while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
         if words[index] == ESCAPE_HATCH_ASSIGNMENT:
             sanctioned = True
         index += 1
+    if index < len(words) and is_program(words[index], "env"):
+        index += 1
+        while index < len(words):
+            word = words[index]
+            if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
+                if word == ESCAPE_HATCH_ASSIGNMENT:
+                    sanctioned = True
+                index += 1
+                continue
+            if word in ENV_COMMAND_VALUE_OPTIONS:
+                index += 2
+                continue
+            # `-i`, `-`, `--ignore-environment`, `--unset=NAME`: one word each.
+            if word.startswith("-"):
+                index += 1
+                continue
+            break
     if index >= len(words) or not is_program(words[index], "git"):
         return None
     index += 1
@@ -285,13 +325,35 @@ def find_git_push_invocation(words):
             "directory_override": directory_override}
 
 
+def words_without_redirections(words):
+    """The words git itself receives: every redirection dropped, with its
+    target when that is the next word. The shell removes redirections wherever
+    they stand, after a `--` included, so none of them is ever a refspec."""
+    kept = []
+    index = 0
+    while index < len(words):
+        match = REDIRECTION_WORD_PATTERN.match(words[index])
+        if match is None:
+            kept.append(words[index])
+            index += 1
+            continue
+        target_is_next_word = match.end() == len(words[index])
+        index += 2 if target_is_next_word else 1
+    return kept
+
+
 def parse_push_arguments(push_words):
     """Return (forced, refspecs) for the words after `git push`.
 
     A `+` prefix on a refspec forces with no flag at all, so refspecs are read
     for it too. A delete (`--delete`, `-d`) is reported as not forced even
     with `--force` beside it: it is a different act from rewriting a head, and
-    this guard's refusal, which teaches a commit on top, would be wrong for it."""
+    this guard's refusal, which teaches a commit on top, would be wrong for it.
+
+    Redirections are dropped first. Read as a refspec, the `2>` a trailing
+    `2>&1` leaves would skip the current-branch lookup and ask `gh` about a
+    branch named `2>`, so a bare force push would pass unchecked."""
+    push_words = words_without_redirections(push_words)
     forced = False
     deletes = False
     positionals = []

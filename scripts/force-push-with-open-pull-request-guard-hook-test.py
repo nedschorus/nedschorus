@@ -471,6 +471,82 @@ for command in NOT_FORCING:
     check(f"and probes nothing: {command}", not runner.calls, str(runner.calls))
 
 # ---------------------------------------------------------------------------
+# A redirection is not a refspec. The shared tokenizer keeps redirections as
+# plain words, and read as a refspec one skipped the current-branch lookup, so
+# a bare force push with a trailing `2>&1` passed with no refusal and no note.
+# Most pushes carry one: 35 of the forced pushes in this Mac's transcripts
+# over 14 days did. The first three commands are the reviewer's reproductions,
+# verbatim.
+# ---------------------------------------------------------------------------
+
+for command in [
+    "git push --force origin 2>&1",
+    "git push --force-with-lease origin 2>&1 | tail -5",
+    "git push -f origin > /tmp/x.log",
+    "git push --force origin >/tmp/x 2>/dev/null",
+]:
+    runner = ProbeRunner(branch="the-pr-branch",
+                         open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(f"a redirection is not a refspec: {command}",
+          decision == "deny", f"{decision}: {reason}")
+    check(f"and the current branch was resolved: {command}",
+          ["git", "-C", SESSION_WORKTREE, "rev-parse", "--abbrev-ref", "HEAD"]
+          in runner.calls, str(runner.calls))
+
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    "git push --force origin 2> err.log the-pr-branch", runner)
+check("a refspec after a redirection's target is still the refspec",
+      decision == "deny", f"{decision}: {reason}")
+check("gh was asked about the refspec, never the redirection or its target",
+      runner.branches_asked_about() == ["the-pr-branch"],
+      str(runner.branches_asked_about()))
+
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide("git push origin 2>&1", runner)
+check("a redirection does not make a push forced",
+      decision is None, f"{decision}: {reason}")
+check("and a push that is not forced with a redirection probes nothing",
+      not runner.calls, str(runner.calls))
+
+# ---------------------------------------------------------------------------
+# `env` is a prefix the guard reads through, because an agent pushed as
+# `env -u GH_TOKEN git push origin HEAD:...`. Other prefixes are not, and the
+# module docstring says why; the last case pins that limit, so changing it is
+# a decision rather than an accident.
+# ---------------------------------------------------------------------------
+
+for command in [
+    "env -u GH_TOKEN git push --force origin the-pr-branch",
+    "env GIT_TRACE=1 git push -f origin the-pr-branch",
+]:
+    runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, reason = decide(command, runner)
+    check(f"a push behind env is recognised: {command}",
+          decision == "deny", f"{decision}: {reason}")
+
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide(
+    f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin the-pr-branch",
+    runner)
+check("the escape hatch after env sanctions the push like a leading one",
+      decision is None and not runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide("env -u GH_TOKEN git status", runner)
+check("env in front of another git command is not a push",
+      decision is None and not runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide("timeout 60 git push --force origin the-pr-branch", runner)
+check("the stated limit: a push behind timeout is not recognised",
+      decision is None and not runner.calls,
+      f"{decision}: {reason} {runner.calls}")
+
+# ---------------------------------------------------------------------------
 # Prose is data. The guard's own commit message and pull request body say
 # `git push --force`; the keystroke guard blocked its own commit message once,
 # which is why these cases exist at all.
