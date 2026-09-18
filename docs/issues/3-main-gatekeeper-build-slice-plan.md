@@ -981,6 +981,14 @@ here; slice 9's owner is unruled, and this table proposes no answer to it.
 Cross-machine callers (C8, specification § Open) stay open and are not a
 slice.
 
+One edit outside the program is due at activation, and it is not a slice
+either. CLAUDE.md's "How a change reaches main" line says merges consolidate
+at the merge-lane seat "until the gatekeeper activates". Under shape 1 the
+merge lane keeps reviewing, approving and merging the gate's pull requests
+after activation, so that clause becomes false the day the gate goes live.
+The new wording is CLAUDE.md text, so it needs the user's walked approval.
+Found in the walk of the five seat-brief cold reads, 2026-09-16.
+
 ### The per-file staleness report — slice 8's requirement
 
 Moved here from issue #3's body by the ghi-write split: that body stood at
