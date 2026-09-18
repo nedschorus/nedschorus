@@ -825,6 +825,11 @@ remains in git history at `4cadb46`.
   available if something needed main sooner. Enacted as ruled: the seven
   fix commits landed on choirmaster first, and PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) merged to
   main afterwards as `9bd1335`.
+  **Superseded 2026-09-18** (nedschorus#451; the user: "who cares which
+  python as long as it works"): the Mac's production `python3` is Apple's
+  3.9 at every seat, supervisor and handoff, so the audit failed silently
+  at every Mac handoff. The program now loads under 3.9 (`from __future__
+  import annotations`) and the suite's Python floor is 3.9.
 
 ## Design points this plan settles
 
