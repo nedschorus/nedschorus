@@ -901,6 +901,20 @@ with tempfile.TemporaryDirectory() as scratch:
           == "Read,Grep,Glob,Write",
           repr(claude_argv))
 
+    # Every hook off, for the reviewer's session only (user-ruled
+    # 2026-09-18): the project's write guard refused a reviewer's report and
+    # its Stop hook rebased the author's branch mid-run, both on 2026-09-16.
+    # Hooks only: CLAUDE.md must still load, so --setting-sources, which
+    # would drop it along with the hooks, must not be passed.
+    passed_settings = (claude_argv[claude_argv.index("--settings") + 1]
+                       if "--settings" in claude_argv else "")
+    check("the Claude cell switches every hook off by --settings",
+          passed_settings.startswith("{")
+          and json.loads(passed_settings).get("disableAllHooks") is True,
+          repr(claude_argv))
+    check("the Claude cell keeps CLAUDE.md: no --setting-sources",
+          "--setting-sources" not in claude_argv, repr(claude_argv))
+
     # The Codex good tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
     # and three points of worst-target recall. This is the slowest of the
