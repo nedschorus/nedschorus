@@ -652,8 +652,13 @@ def cause_of_failed_attempt(attempt: CellAttempt, exit_code, log_lines: list) ->
                    if cell_status_line(line, cell_common.CAUSE_PHRASE)]
     if cause_lines:
         text = cause_lines[-1].split(f": {cell_common.CAUSE_PHRASE} ", 1)[1]
-        cause_class, _, detail = text.partition(cell_common.CAUSE_SEPARATOR)
-        return cause_class, detail
+        # The separator without its trailing space: a cause line with an
+        # empty detail (`cause: account-limit — `, the agent-cli having
+        # printed its limit text with nothing after it) lost that space to
+        # strip() above, and partitioning on the full separator then left the
+        # class as "account-limit —", which matched no class the grid knows.
+        cause_class, _, detail = text.partition(cell_common.CAUSE_SEPARATOR.rstrip())
+        return cause_class, detail.strip()
     if exit_code == 0:
         return "no-report", "no report written"
     non_empty = [line.strip() for line in log_lines if line.strip()]
@@ -850,19 +855,23 @@ def main() -> int:
             record_dir, target, target_before, target_after)
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
 
+    launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)
+    if outcome.absent:
+        # After the target-changed marker when both apply, so that one stays
+        # first; the reports are kept, and a reader who opens one in the
+        # log-store months later sees which reports its set lacked. BEFORE
+        # THE SHIP, because the shipper is add-only and refuses a record
+        # whose stored file differs from the local one: what ships must be
+        # the record's final bytes, or the post-triage ship of triage.md is
+        # refused over reports that gained this marker after they shipped.
+        mark_every_report(record_dir, incomplete_set_marker(outcome.absent, launched))
+
     # The cold-read-record goes to the log-store now, whatever landed: a set
     # marked TARGET CHANGED is evidence too, and a failed cold-read-cell's
     # log is part of the cold-read-record. triage.md is not written
     # yet; the agent ships again after writing it, and the shipper adds
     # it beside the reports.
     print(f"record: {ship_record(record_dir)}", flush=True)
-
-    launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)
-    if outcome.absent:
-        # After the target-changed marker when both apply, so that one stays
-        # first; the reports are kept, and a reader who opens one in the
-        # log-store months later sees which reports its set lacked.
-        mark_every_report(record_dir, incomplete_set_marker(outcome.absent, launched))
 
     print()
     # ONE CLOSING TEXT, IN FOUR VARIANTS, FROM WHAT LANDED. A changed

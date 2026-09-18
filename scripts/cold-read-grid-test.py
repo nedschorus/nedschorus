@@ -659,6 +659,27 @@ with tempfile.TemporaryDirectory() as scratch:
           and "3 of 6 reports landed in" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
+    # --- The account limit printed bare: an empty detail still names the class
+    # The agent-cli printed "You've hit your session limit" with nothing after
+    # it, so the cell's cause line ends `account-limit — ` and the grid's
+    # strip() took the separator's trailing space with it; partitioning on
+    # the full separator then found none, and the class "account-limit —"
+    # matched no class the grid knows, losing the AGENT-CLI DOWN line and
+    # the Tell-the-user sentence. Found by the same review as the marker
+    # case above:
+    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    repository = build_scratch_repository(scratch, "checkout-claude-down-bare-limit")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your session limit"}])})
+    down_lines = lines_opening(result, "AGENT-CLI DOWN:")
+    check("a bare limit text is still one AGENT-CLI DOWN line naming account-limit",
+          len(down_lines) == 1 and result.stdout.count("AGENT-CLI DOWN:") == 1
+          and down_lines[0].startswith("AGENT-CLI DOWN: claude — account-limit — ")
+          and down_lines[0].endswith("; 3 reports absent"),
+          f"down lines were {down_lines!r}; stdout={result.stdout!r}")
+    check("the user is still told the bare cause",
+          "Tell the user: claude account-limit — " in result.stdout, repr(result.stdout))
+
     # --- Two Claude cells hit the account limit after the third landed -------
     # The rule as the user revised it at item 3 of the design's walk
     # (2026-09-16): the down line prints when a cell becomes absent with an
@@ -1073,6 +1094,59 @@ with tempfile.TemporaryDirectory() as scratch:
           result.stdout[-900:])
     check("a settled run that shipped still exits 0",
           result.returncode == 0, f"exit {result.returncode}")
+
+    # --- An incomplete set ships with its marker, so triage.md can follow ----
+    # The shipper is add-only and refuses a record whose stored file differs
+    # from the local one, so the INCOMPLETE SET marker must be in the reports
+    # BEFORE the run ships them: a marker written after the ship left the
+    # store's reports without it, and the post-triage ship the closing text
+    # asks for was refused, triage.md never reaching the store. Found by
+    # the reviewer's review on PR "cold-read-grid: a failed cell is retried
+    # once and reported with its cause, and every run closes with one
+    # closing text":
+    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    repository = build_scratch_repository(scratch, "checkout-incomplete-set-ships-marked")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-terminology-good.md", "attempts": 2}])})
+    record_directory = record_directory_of(repository)
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("an incomplete set's run still says record: shipped:",
+          len(record_lines) == 1 and record_lines[0].startswith("record: shipped:"),
+          f"{record_lines!r}; stderr={result.stderr[-400:]!r}")
+    store_copy = repository / SCRATCH_LOG_STORE_RELATIVE / record_directory.name
+
+    def files_under(root):
+        return {path.relative_to(root): path.read_bytes()
+                for path in sorted(root.rglob("*")) if path.is_file()}
+
+    def ship_again():
+        environment = dict(os.environ)
+        environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
+        return subprocess.run(
+            [sys.executable, str(repository / "scripts" / "cold-read-record-ship.py"),
+             str(record_directory)],
+            capture_output=True, text=True, check=False, env=environment)
+
+    second_ship = ship_again()
+    check("shipping the marked record again is accepted, not REFUSED",
+          second_ship.returncode == 0 and second_ship.stdout.startswith("shipped:"),
+          f"exit {second_ship.returncode}; stdout={second_ship.stdout!r}; "
+          f"stderr={second_ship.stderr[-400:]!r}")
+    check("the store's copy equals the record byte for byte, the marker included",
+          store_copy.is_dir() and files_under(store_copy) == files_under(record_directory),
+          f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
+    stored_report = store_copy / "claude-hunt-good.md"
+    check("the store's copy of a report carries the INCOMPLETE SET marker",
+          stored_report.is_file()
+          and "<!-- INCOMPLETE SET:" in stored_report.read_text(encoding="utf-8"),
+          stored_report.read_text(encoding="utf-8")[:300] if stored_report.is_file() else "absent")
+    (record_directory / "triage.md").write_text("# Triage\n\nOne absent report.\n", encoding="utf-8")
+    third_ship = ship_again()
+    check("triage.md written after the run lands in the store on the next ship",
+          third_ship.returncode == 0 and third_ship.stdout.startswith("shipped:")
+          and "1 file(s) added" in third_ship.stdout
+          and (store_copy / "triage.md").is_file(),
+          f"exit {third_ship.returncode}; stdout={third_ship.stdout!r}")
 
     # --- A store that cannot be reached does not fail the read ----------------
     repository = build_scratch_repository(scratch, "checkout-store-unreachable")
