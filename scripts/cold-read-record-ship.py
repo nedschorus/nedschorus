@@ -117,8 +117,11 @@ the system -- good data, never part of the repository (user-ruled
   requesting agent finished its triage, and each cell's `scratch/`. Written
   by scripts/sanity-check-record-ship.py in the nedschorus repository, under
   the same rules as the records beside them (user-ruled 2026-09-15).
-- `walk/` -- the four files of each walk-me-through walk: draft, suggestions,
-  walk, minutes.
+- `walk/` -- the files of each walk-me-through walk, flat: draft, suggestions,
+  walk text, minutes, and a cold-read walk's dispositions. Written by
+  scripts/walk-files-ship.py in the nedschorus repository at the walk's close:
+  draft, suggestions, walk text and dispositions add-only, the minutes the one
+  file it replaces (user-ruled 2026-09-18).
 - `transcripts/` -- Claude Code session transcripts and handoffs, one
   subdirectory per machine (nedschorus#7).
 - `seats/` -- the one kind organized by PRODUCER rather than by kind: one

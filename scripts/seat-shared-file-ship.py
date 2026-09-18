@@ -18,7 +18,7 @@ that are organized by kind:
 `seats/` is the one kind organized by PRODUCER rather than by kind, because
 what it holds has nothing else in common: it is whatever one seat needed to
 share. A file that belongs to an existing kind -- a cold-read record, a
-walk's four files, a transcript -- goes to that kind through its own program,
+walk's five files, a transcript -- goes to that kind through its own program,
 not here.
 
 THERE IS NO NETWORK DRIVE, and this is not one. The store is a directory on
