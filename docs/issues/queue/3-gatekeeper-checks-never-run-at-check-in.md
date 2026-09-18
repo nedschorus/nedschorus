@@ -1,6 +1,6 @@
 # The gatekeeper runs no checks at check-in, though seven test suites now exist
 
-Queued for [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3) (main-gatekeeper — the single check-in gate). Owned by the `gatekeeper` seat (`docs/agents/gatekeeper-instructions.md`).
+Queued for issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) (main-gatekeeper — the single check-in gate). Owned by the `gatekeeper` seat (`docs/agents/gatekeeper-instructions.md`).
 
 Surfaced by the attack-split validation experiment of 2026-08-12 (`md-review-records/2026-08-12-attack-split-experiment/scorecard.md`, § Novel findings, "Checks-never-wired"), which scored a split sanity-checker prompt against two archived documents. The finding fell outside what that experiment was scored against, so it was never triaged. Verified against the repository as it stands on 2026-08-13 by the `sanity-checker` seat and written here because a triage nobody records evaporates — these sat unpresented for two days.
 

@@ -1,15 +1,15 @@
 ---
-status: rulings record and working material for nedschorus#386
+status: rulings record and working material for issue [Sweep the project's bare generic words to project terms, under the 2026-09-15 three-form rule](https://github.com/nedschorus/nedschorus/issues/386)
 as-of: 2026-09-17
 ---
 
 # The project-term sweep: what the user ruled, and the work it leaves
 
-The pair document of [nedschorus#386](https://github.com/nedschorus/nedschorus/issues/386). The issue body carries the summary and the next action; this file carries the substance: the five rulings from the MD-skills seat's walk of 2026-09-15 with the user's own words, the rename list ruled at the cold-read-research seat the same day, the terms the MD-skills seat proposes, and the cold-read skill change that makes the sweep self-sustaining. The walk file and its minutes are Mac-local files at the MD-skills seat's checkout, under `docs/walk/`, a gitignored directory that does not exist on main, so this is the durable copy.
+The pair document of issue [Sweep the project's bare generic words to project terms, under the 2026-09-15 three-form rule](https://github.com/nedschorus/nedschorus/issues/386). The issue body carries the summary and the next action; this file carries the substance: the five rulings from the MD-skills seat's walk of 2026-09-15 with the user's own words, the rename list ruled at the cold-read-research seat the same day, the terms the MD-skills seat proposes, and the cold-read skill change that makes the sweep self-sustaining. The walk file and its minutes are Mac-local files at the MD-skills seat's checkout, under `docs/walk/`, a gitignored directory that does not exist on main, so this is the durable copy.
 
 ## The rule
 
-Landed in [PR #384](https://github.com/nedschorus/nedschorus/pull/384), merged 2026-09-15 17:25Z, as the last three sentences of `CLAUDE.md`'s naming bullet:
+Landed in PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384), merged 2026-09-15 17:25Z, as the last three sentences of `CLAUDE.md`'s naming bullet:
 
 > A word used in a project-specific sense is a project term, and a project term takes one of three forms: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat, never a bare generic word. Every project term is in the glossary; a term the glossary does not list is not a project term. If you need a new one, propose it to the user.
 
@@ -21,9 +21,9 @@ Earlier the same day he ruled the renames themselves ("rename.") and how they ha
 
 The rule above is no longer in `CLAUDE.md`, and the rulings below were made under it. Read them against the rule as it now stands:
 
-- **The three sentences are gone.** [PR #422](https://github.com/nedschorus/nedschorus/pull/422), merged 2026-09-16 20:12Z, removed them. His words: "it's not true because we have not auditted the project and the project keeps changing", and "remove 3 trms". What `CLAUDE.md` keeps is one sentence in its glossary bullet: "If you need to coin a new term, a word with a meaning specific to this project, propose it to the user."
-- **A bare word no longer needs a hyphen.** The three term forms now live only in the glossary's preamble. [PR #428](https://github.com/nedschorus/nedschorus/pull/428), merged 21:06Z, dropped "never a bare generic word such as seat" there and added his test: "A word needs a defined term only where this project does something unexpected with it or gives it a meaning that would be hard to guess; otherwise it stays ordinary prose." His words behind it: "Just because a term means something to this project, doesn't mean it needs a defined term. It needs a defined term if this project is doing something unexpected or imputing a specific mean to a term that would be hard to guess."
-- **"runtime" becomes `agent-cli`.** At item 10 of the MD-skills seat's walk of the #413 design's cold read, he asked "how about agent-cli - is that better" and answered "y" to the scope put to him. The glossary gets the entry, the files that say "runtime" move to `agent-cli` through this sweep, and the provenance stamp field `runtime=` stays. That replaces "runtime stays a bare word" under "Terms the MD-skills seat proposes" below.
+- **The three sentences are gone.** PR [CLAUDE.md: the glossary line says to propose a coined term; the project-term sentences go](https://github.com/nedschorus/nedschorus/pull/422), merged 2026-09-16 20:12Z, removed them. His words: "it's not true because we have not auditted the project and the project keeps changing", and "remove 3 trms". What `CLAUDE.md` keeps is one sentence in its glossary bullet: "If you need to coin a new term, a word with a meaning specific to this project, propose it to the user."
+- **A bare word no longer needs a hyphen.** The three term forms now live only in the glossary's preamble. PR [Glossary preamble: a word needs a defined term only when its project meaning is unexpected or hard to guess](https://github.com/nedschorus/nedschorus/pull/428), merged 21:06Z, dropped "never a bare generic word such as seat" there and added his test: "A word needs a defined term only where this project does something unexpected with it or gives it a meaning that would be hard to guess; otherwise it stays ordinary prose." His words behind it: "Just because a term means something to this project, doesn't mean it needs a defined term. It needs a defined term if this project is doing something unexpected or imputing a specific mean to a term that would be hard to guess."
+- **"runtime" becomes `agent-cli`.** At item 10 of the MD-skills seat's walk of the issue [cold-read grid: retry a failed cold-read-cell once, report its cause, and name a runtime that is down](https://github.com/nedschorus/nedschorus/issues/413) design's cold read, he asked "how about agent-cli - is that better" and answered "y" to the scope put to him. The glossary gets the entry, the files that say "runtime" move to `agent-cli` through this sweep, and the provenance stamp field `runtime=` stays. That replaces "runtime stays a bare word" under "Terms the MD-skills seat proposes" below.
 
 ## The five rulings of the 2026-09-15 walk
 
@@ -47,7 +47,7 @@ Commitment: add to `docs/nedschorus-wiki/nedschorus-glossary.md` the headword `a
 
 ### 3. "fresh reader or fresh agent"
 
-The glossary's entry `fresh reader or fresh agent` was the one headword PR #384 left non-conforming. The rename to `fresh-agent` he had approved earlier in the day would have deleted "fresh reader" from five sentences of live instruction text: twice in `.claude/skills/cold-read/SKILL.md`, twice in `.claude/skills/cold-read/prompts/fast-clarify.md`, once in `.claude/skills/ghi-write/SKILL.md`.
+The glossary's entry `fresh reader or fresh agent` was the one headword PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384) left non-conforming. The rename to `fresh-agent` he had approved earlier in the day would have deleted "fresh reader" from five sentences of live instruction text: twice in `.claude/skills/cold-read/SKILL.md`, twice in `.claude/skills/cold-read/prompts/fast-clarify.md`, once in `.claude/skills/ghi-write/SKILL.md`.
 
 His words: "My guess is that fresh-reader is more specific than fresh-agent, so we probably should keep both, but if so, make sure we use the right one in the right places"
 

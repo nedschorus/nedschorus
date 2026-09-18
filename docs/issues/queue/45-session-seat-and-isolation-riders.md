@@ -1,6 +1,6 @@
 # Session seat and isolation riders
 
-Queued for [nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45) (named agents, launch and reattach). Raised in conversation 2026-08-13 while untangling why several sessions on the box were hard to tell apart and one had forked into another's checkout. Each item below was discussed and left undone deliberately — none is in flight.
+Queued for issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45) (named agents, launch and reattach). Raised in conversation 2026-08-13 while untangling why several sessions on the box were hard to tell apart and one had forked into another's checkout. Each item below was discussed and left undone deliberately — none is in flight.
 
 ## 1. A guard that enforces one live session per directory
 

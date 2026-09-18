@@ -1,6 +1,6 @@
 # checkout-freshness catch-up reports instead of merging
 
-Pair document for [nedschorus#324](https://github.com/nedschorus/nedschorus/issues/324).
+Pair document for issue [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324).
 The issue carries the summary and the next action; this document carries the
 design, the decisions, and the occurrence log.
 
@@ -66,7 +66,7 @@ The stamp gains `own`, `head_state`, `last_reported` and a `last_action` of
    failed conflict abort. With no merge there are none, so the channel, its
    emitter and its latch are removed. The hook now never costs the agent a
    turn. A consequence: the half of
-   [nedschorus#334](https://github.com/nedschorus/nedschorus/issues/334) in
+   issue [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334) in
    which the block overwrote a `claude -p` answer cannot happen any more.
 2. **Report on change only.** With no merge, "behind" stays nonzero for the
    life of a review; a line repeating it at every turn end is the "does
@@ -104,7 +104,7 @@ tree is clean. A rebase git refuses before starting — an untracked file at a
 path main just added, or the `--no-autostash` refusal — leaves no rebase
 state and is "refused": told to the agent once, never a user line;
 "abort-failed" means rebase state remained after an abort, decided from the
-disk, not from the abort's exit code (PR #388 review).
+disk, not from the abort's exit code (PR [The hook rebases a never-pushed branch onto main and tells the agent what moved](https://github.com/nedschorus/nedschorus/pull/388) review).
 
 This is not the merge the 2026-09-14 ruling removed. That merge landed
 MERGE COMMITS on FROZEN heads — pushed, with a review running — nine times in
@@ -134,7 +134,7 @@ not doing the right thing, that's when I probably need to be told." The
 routine display line is gone. The hook's `systemMessage` carries three things
 and nothing else, each once per distinct finding:
 
-- a merge commit from main on a working branch (the thing #324 removed),
+- a merge commit from main on a working branch (the thing issue [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324) removed),
   detected by testing each merge's second parent for being on `origin/main`,
   so a merge of another topic branch is not flagged;
 - a pushed head whose history was rewritten — `origin/<branch>` no longer an
@@ -223,7 +223,7 @@ which the instruction-file guard protects.
 
 The ghi-info checkout on ned-box sits on a branch named `ghi-info` with zero
 commits of its own, and this hook's merge was the only thing keeping it
-current (#334: it sat 225 commits behind before 2026-09-11). Under the ruling
+current (issue [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334): it sat 225 commits behind before 2026-09-11). Under the ruling
 as built it is reported and left where it is. Two candidates were put to the
 user:
 
@@ -262,7 +262,7 @@ of the ask, before the mirror refresh or any `claude` turn:
   matters, so this is a second, narrower one.
 
 This closes the remaining half of
-[nedschorus#334](https://github.com/nedschorus/nedschorus/issues/334).
+issue [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334).
 
 ## Occurrence log
 
@@ -271,14 +271,14 @@ The merges the old behaviour made onto frozen or finished heads, from the
 
 | when | branch | state of the head |
 |---|---|---|
-| 2026-09-11 | `restart-live-seats-at-login-run-log` | #320 open, awaiting its reviewer |
-| 2026-09-11 | the same | after #320 merged |
-| 2026-09-11 | `restart-live-seats-at-login-report-matches-the-run-log` | #323 open at `d70e3d7`, minutes after the push |
-| 2026-09-11 | `supervisor-liveness-by-process-identity` | #328 open at `a82b49e`, reviewer running |
+| 2026-09-11 | `restart-live-seats-at-login-run-log` | PR [restart-live-seats-at-login: a run log, so a later run in the same boot knows where the stop was](https://github.com/nedschorus/nedschorus/pull/320) open, awaiting its reviewer |
+| 2026-09-11 | the same | after PR [restart-live-seats-at-login: a run log, so a later run in the same boot knows where the stop was](https://github.com/nedschorus/nedschorus/pull/320) merged |
+| 2026-09-11 | `restart-live-seats-at-login-report-matches-the-run-log` | PR [restart-live-seats-at-login: the report says what actually happened to the run log](https://github.com/nedschorus/nedschorus/pull/323) open at `d70e3d7`, minutes after the push |
+| 2026-09-11 | `supervisor-liveness-by-process-identity` | PR [handoff-supervisor: judge a supervisor by its process, not by how fresh its heartbeat is](https://github.com/nedschorus/nedschorus/pull/328) open at `a82b49e`, reviewer running |
 | 2026-09-11 | the same | on top of an unpushed fix commit the lane had asked for as one commit |
-| 2026-09-14 | `restart-live-seats-at-login-launch-step-and-mac-launchagent` | #354 open at `a3d85a0`, reviewer commissioned |
-| 2026-09-14 | `launch-agent-installer-resolves-paths-and-offer-hint-names-handoff-dir` | after #355 merged, remote branch deleted |
-| 2026-09-15 | `restart-live-seats-at-login-restarts-whatever-was-live-at-the-stop` | #370 open at `4b5ce50`, reviewer running |
-| 2026-09-15 | the same | after #370 merged |
+| 2026-09-14 | `restart-live-seats-at-login-launch-step-and-mac-launchagent` | PR [restart-live-seats-at-login launches the seats it decides on, and a Mac LaunchAgent runs it at login (#116 step 4)](https://github.com/nedschorus/nedschorus/pull/354) open at `a3d85a0`, reviewer commissioned |
+| 2026-09-14 | `launch-agent-installer-resolves-paths-and-offer-hint-names-handoff-dir` | after PR [LaunchAgent installer writes absolute paths; the offer hint names the run's handoff directory (#354 follow-ups)](https://github.com/nedschorus/nedschorus/pull/355) merged, remote branch deleted |
+| 2026-09-15 | `restart-live-seats-at-login-restarts-whatever-was-live-at-the-stop` | PR [restart-live-seats-at-login restarts whatever was live at the stop, however long the machine sat off (user-ruled 2026-09-15)](https://github.com/nedschorus/nedschorus/pull/370) open at `4b5ce50`, reviewer running |
+| 2026-09-15 | the same | after PR [restart-live-seats-at-login restarts whatever was live at the stop, however long the machine sat off (user-ruled 2026-09-15)](https://github.com/nedschorus/nedschorus/pull/370) merged |
 
 None was pushed. Nine in five days on one seat is the rate.

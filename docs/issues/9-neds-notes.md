@@ -2,7 +2,7 @@ Issue: https://github.com/nedschorus/nedschorus/issues/9
 
 ## Admission note (new-vp, 2026-07-21)
 
-Authored by cops during the user's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair #4, the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line.
+Authored by cops during the user's skills-and-methods walkthrough, admitted verbatim below (the draft's not-yet-admitted banner replaced by this note; the tail pointer to cops's local publishing file redirected to pair issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4), the admitted home of publishing decisions). Deltas from the continuing walkthrough ride this pair as REVISE dispositions. Not a legacy import — fresh authorship, no entry-manifest line.
 
 # Ned's Notes: NedsChorus Engineering Methods and Sources
 
@@ -104,7 +104,7 @@ opens. The six scenario tests above are deferred to the NC step-1 walk-me
 build, judged per the agent-facing test doctrine in
 `nc-queue/archived/2026-07-22-skill-creation-and-improvement-deep-dive.md` § 3.
 Recorded by edit per the same-day revision convention (revise the artifact,
-never stack additive records); nedschorus#12 was opened for this deferral and
+never stack additive records); issue [Step-1 walk-me-through build: run pair #9's six walk-behavior scenario tests (deferred from the 2026-07-22 quarry walk-skill update)](https://github.com/nedschorus/nedschorus/issues/12) was opened for this deferral and
 closed as consolidated here.
 
 ## Working skill shortlist
@@ -237,7 +237,7 @@ Sources worth adapting or investigating:
 - Boot set — RESOLVED 2026-07-24 (walk item 12, founding-plan open question 8,
   commit fa54e52): the five founding skills only; candidates join one at a
   time when a real task exposes the missing decision (first expected pull:
-  write-test-plan, nedschorus#18).
+  write-test-plan, issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)).
 - Rewrite policy — RESOLVED 2026-07-24 (walk item 13; founding-plan open
   question 9; policy of record: founding plan § Standing decisions):
   per-cherry-pick four-class feature classification (preserve-feature /
@@ -249,7 +249,7 @@ Sources worth adapting or investigating:
   reliability only (public-links policy, founding plan § Standing decisions);
   the leaked-source archives stay, treated like every other source.
 
-## Combined walk minutes (pairs #9 + #10) — the walk-state of record
+## Combined walk minutes (pairs issue [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9) + issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10)) — the walk-state of record
 
 Per the walked-document-as-minutes rule (user-approved 2026-07-22; legacy PR
 [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162)). The
@@ -264,10 +264,10 @@ PR [nedlern/nedlern#2162](https://github.com/nedlern/nedlern/pull/2162);
 scenario tests deferred to NC step-1 (see the processed mark above). Inner
 item 3 (criteria-page home) — processed 2026-07-23 → ruled: NO separate page;
 this pair's walk-behavior section IS the rulebook's home (substance here,
-state on open GHI #9), graduating only at pair close; ruled together with the
+state on open GHI [Ned's notes: engineering methods and sources — boot-set, rewrite policy, and skill shortlist (doc: docs/issues/9-neds-notes.md)](https://github.com/nedschorus/nedschorus/issues/9)), graduating only at pair close; ruled together with the
 three-state artifact rule (queue-MD needs no GHI / pending state gets a GHI /
 bare MD only for landed reference), folded to founding plan § Project
-organization and [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13).
+organization and issue [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13).
 THE ANCHOR is now OUTER ITEM 2 (`define-work`); walk inputs: the two candidate-skill
 queue notes plus cops's delta packet when it lands.
 
@@ -285,22 +285,22 @@ Outer walk, 17 items:
    rapid-fire summary dispositions — GHI-or-cut per item off the summaries MD
    (session ad0a3708, `/tmp/nc-candidate-skills-walk-summaries-2026-07-24.md`;
    durable evidence stays in the two nc-queue files). Approved GHIs file in
-   nedschorus in one batch, each pointing at the nc-queue evidence. Filed as nedschorus#15.
-3. `plan-rewrite-slice` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#16.
-4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#17.
-5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#18 — flagged likely FIRST build (cops: leading main-gatekeeper-task dogfood).
-6. `attack-artifact` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#19, framed as the d-review comparison question.
-7. `implement-with-evidence` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#20.
-8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#21.
-9. `review-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#22.
-10. `eval-agent-change` — processed 2026-07-24 → GHI-not-build (batch approval); nedschorus#23.
+   nedschorus in one batch, each pointing at the nc-queue evidence. Filed as issue [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15).
+3. `plan-rewrite-slice` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification](https://github.com/nedschorus/nedschorus/issues/16).
+4. `design-change` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedschorus/nedschorus/issues/17).
+5. `write-test-plan` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) — flagged likely FIRST build (cops: leading main-gatekeeper-task dogfood).
+6. `attack-artifact` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19), framed as the d-review comparison question.
+7. `implement-with-evidence` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: implement-with-evidence — red/green evidence kernel without delete-and-start-over mandates](https://github.com/nedschorus/nedschorus/issues/20).
+8. `diagnose-failure` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: diagnose-failure — bounded causal debugging with a three-fix escalation stop](https://github.com/nedschorus/nedschorus/issues/21).
+9. `review-change` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: review-change — exact-revision defect-first code review with a five-part finding gate](https://github.com/nedschorus/nedschorus/issues/22).
+10. `eval-agent-change` — processed 2026-07-24 → GHI-not-build (batch approval); issue [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23).
 11. Skill-creator review — processed 2026-07-24 → the user approved
     read-for-ideas-only with two landing amendments he drove: the creation
     doctrine lands NOT in the founding plan but as NC's first landed-reference
     MD, `docs/reference/skill-authoring-checklist.md` (five nuggets + cops's
     four description refinements + agent-facing test rules + the excluded
     eval-machinery's reopening trigger); the founding plan step 1 carries one
-    pointer; and every candidate-skill GHI (#15-#23) carries the same pointer
+    pointer; and all nine candidate-skill GHIs (from issue [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15) through issue [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23)) carry the same pointer
     ("put the reference exactly where it's needed"). Sub-questions resolved:
     (a) explain-why default, NOT/DO reserved for training overrides;
     (b) standalone reference MD, per above; (c) description-tuning machinery
@@ -309,7 +309,7 @@ Outer walk, 17 items:
     (session 23789ca5; re-presented verbatim per the handoff, the user's word:
     "approved"). (a) Boot-set rule recorded: boot set = the five founding
     skills only; candidates join one at a time when a real task exposes the
-    missing decision; first expected pull = write-test-plan (nedschorus#18)
+    missing decision; first expected pull = write-test-plan (issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18))
     at the step-7 main-gatekeeper task. Founding-plan open question 8 RESOLVED
     (commit fa54e52); pair-#9 tracking question 1 marked resolved.
     (b) Artifact-lifecycle ruling APPROVED and executed (commit 4b20892):
@@ -319,12 +319,12 @@ Outer walk, 17 items:
     plan's ruled homes — the verbatim proposal's bare `wiki/queue/` spelling
     reconciled to `docs/nedschorus-wiki/queue/`); skill-authoring checklist git mv'd
     there and docs/reference/ removed; step-1 pointer + candidate GHIs
-    #15–#23 re-pointed; `boss-review` renamed `draft` doctrine-wide and the
+    issue [Candidate skill: define-work — bounded work-definition spec before ambiguous or substantial work](https://github.com/nedschorus/nedschorus/issues/15) through issue [Candidate skill: eval-agent-change — baseline-vs-candidate A/B with trigger cases and raw-count reporting](https://github.com/nedschorus/nedschorus/issues/23) re-pointed; `boss-review` renamed `draft` doctrine-wide and the
     label created on GitHub; three-state rule superseded by the
-    artifact-lifecycle rule (founding plan § Project organization + #13);
+    artifact-lifecycle rule (founding plan § Project organization + issue [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13));
     founding-plan open question 5 (gated classes) substantially resolved —
     landing-class residual stays in main-gatekeeper-design § Open. Drain
-    procedure stays tracked on nedschorus#24 (scrub reporting runs as
+    procedure stays tracked on issue [Queue drain procedure — the review process that empties wiki/queue, the pair queue, and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) (scrub reporting runs as
     discipline until the NC handoff skill builds it). ANCHOR = item 13.
 13. Rewrite policy (ruling) — processed 2026-07-24 → POLICY APPROVED
     (session 23789ca5); text of record: founding plan § Standing decisions;
@@ -342,7 +342,7 @@ Outer walk, 17 items:
     are for things WANTED; queues hold the not-yet-decided) — one file per
     feature, date-in-filename, standard four-outcome drain where deciding IS
     the drain, no TTL; (e) default: unexamined is never preserved.
-    nedschorus#16 re-worded to the new vocabulary; shortlist §2 and
+    issue [Candidate skill: plan-rewrite-slice — one bounded legacy slice with four-way behavior classification](https://github.com/nedschorus/nedschorus/issues/16) re-worded to the new vocabulary; shortlist §2 and
     Still-under-review updated in this doc. ANCHOR = item 14.
 14. Public-links ruling — processed 2026-07-24 → the user REVERSED my quarantine
     recommendation (session 23789ca5): links in this public repository are
@@ -421,7 +421,7 @@ Outer walk, 17 items:
     superseded in fast-handoff-design.md; (q) check-in timing:
     infrequently-updated files check in immediately after update;
     append-type log files at a logical breakpoint (session end / next
-    session start) — re-homed to nedschorus#25 same day (user: Standing
+    session start) — re-homed to issue [Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints](https://github.com/nedschorus/nedschorus/issues/25) same day (user: Standing
     decisions cover the boot-up phase ONLY; post-boot needs are GHIs —
     short ones issue-only, long ones GHI-MDs; possible NEXT WALK
     topic flagged by the user: applying that scope rule across the
@@ -435,7 +435,7 @@ Outer walk, 17 items:
 16. Agent organization / lifecycle roles — processed 2026-07-25 → the user
     REPLACED the captured org-chart possibility with the dynamic
     agent-team model, designed live in-walk; captured as the GHI-MD
-    nedschorus#26 (docs/issues/26-dynamic-agent-team-model.md); pair-#10
+    issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) (docs/issues/26-dynamic-agent-team-model.md); pair-#10
     § org structure superseded to a pointer. Core: context engineering as
     the goal; every agent overseen all the time by differently-contexted
     observers; three tiers (task-scoped workers / on-tap domain experts
@@ -445,7 +445,7 @@ Outer walk, 17 items:
     with phase-boundary reconciliation on hard tasks; spy-triaged
     filtered-intent-stream oversight with spot-check. Two research legs
     commissioned (cvp 1696104:39 + independent Claude deep-research);
-    pair #26 amends on their arrival. CIRCLE-BACK COMPLETE 2026-07-25:
+    pair issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) amends on their arrival. CIRCLE-BACK COMPLETE 2026-07-25:
     both legs landed (nc-queue notes), independently converging on the
     skeptical core; three reconciliation amendments user-approved (pilot
     discipline with mandatory baselines/stop rules; intent stream =
@@ -462,35 +462,35 @@ Outer walk, 17 items:
     processed 2026-07-25 → five entries recognized as already-landed
     doctrine; the communications-fix-plan entry CUT as superseded
     (stateless-pile class); the user ruled the four open decisions ALL capture
-    to GHIs: notification mechanism → sentence on nedschorus#26;
-    API-vs-MCP + addressing levels → sentence on nedschorus#1 + bridge
+    to GHIs: notification mechanism → sentence on issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26);
+    API-vs-MCP + addressing levels → sentence on issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1) + bridge
     spec § Open; console-insertion + stuck/waiting detection → NEW
-    nedschorus#27. Pair-#10 § Communications rewritten as the dispersal
+    issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27). Pair-#10 § Communications rewritten as the dispersal
     record. Cluster 2 (status and monitoring) processed
     2026-07-25 → user META-RULING captured to the artifact-lifecycle rule:
     a committed doc is NOT an attention surface; task-shaped items get
     GHIs even when small (lean bundles fine); agent task lists are
     user-invisible until a review method exists. Dispositions: spy design
-    inputs + idle-catch-up direction → #26 sentence; second-wake
-    investigation + session-state verification → #27 sentence; research
+    inputs + idle-catch-up direction → issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) sentence; second-wake
+    investigation + session-state verification → issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27) sentence; research
     bundle (recaps, introspection tools, denoised artifacts, test-project
-    method, task-list visibility) → NEW nedschorus#28. Pair-#10 § monitoring
+    method, task-list visibility) → NEW issue [Agent-introspection research bundle: recaps, introspection tools, denoised artifacts, monitoring test method, task-list visibility](https://github.com/nedschorus/nedschorus/issues/28). Pair-#10 § monitoring
     rewritten as dispersal record. Cluster 3 (runtime research) processed
     2026-07-26 → nine research entries to the new runtime-behavior bundle
-    [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
+    issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
     (instruction compression + deliberate scrub, instruction precedence,
     output styles, context clearing / backward resumption + message-loss
     recovery, conflicting-names reviewer, memory maintenance,
     memory-entries-point-at-wiki-pages); the bad-words entry's two unknowns
-    appended to [nedschorus#14](https://github.com/nedschorus/nedschorus/issues/14);
+    appended to issue [Review the legacy system's bad-phrase list (command-vocabulary.md): add the status-inflation fail-indicator class ('standing doctrine') and pick NC's enforcement mechanism](https://github.com/nedschorus/nedschorus/issues/14);
     grep-before-naming rides the bundle to the step-2 CLAUDE.md rewrite;
     the "Claude demotion / why 10" entry CUT (user: undefinable — "no idea
     what this is about"). SAME-TURN user scrub of pair #10 beyond the
     cluster structure, executed (commit 7e5d9f8): candidate→draft relabel
     (a candidate is not a draft; draft is the ruled status word) across
     legend and headings; publishing marketing removed (strategy stays in
-    pair #4); publishing-modules section removed (useless); agent-org
-    section removed (obsolete, superseded by pair #26); walkthrough section
+    pair issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4)); publishing-modules section removed (useless); agent-org
+    section removed (obsolete, superseded by pair issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)); walkthrough section
     retired (the skill's frontmatter and code ARE its documentation);
     "minimize unnecessary console communication" RETIRED — the standard is
     consistent clear-and-complete, never minimize; "Ways to run prompts in
@@ -501,11 +501,11 @@ Outer walk, 17 items:
     Cluster 4 (git/GitHub/review) processed 2026-07-27, walked per-entry
     at the user's direction (ten entries, each ruled individually): two
     sentences captured (one-coherent-change-set-per-check-in →
-    [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3);
+    issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
     reply-incapable-sender terminal-state requirement →
-    [nedschorus#1](https://github.com/nedschorus/nedschorus/issues/1));
+    issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1));
     check-in composition ANSWERED by user ruling (lifecycle bundling is
-    unrealistic — artifacts land when produced per nedschorus#25, a
+    unrealistic — artifacts land when produced per issue [Check-in timing: infrequently-updated files immediately after update; append-type logs at logical breakpoints](https://github.com/nedschorus/nedschorus/issues/25), a
     coherent change set carries its tests); three entries recognized as
     already ruled or landed (review phases = item-15 cut; trailer
     invisibility; real-review-status mechanism); four CUT (GitHub-Actions
@@ -513,32 +513,32 @@ Outer walk, 17 items:
     GitHub-issue-tool guard — admitting-agent model retired; mutual-review
     routing — legacy defect already captured; the supported-API preference
     — user: a truism). MID-CLUSTER, user-directed: nedlern#1972 moved to
-    [nedschorus#30](https://github.com/nedschorus/nedschorus/issues/30)
+    issue [Trigger-first instruction delivery (moved from nedlern#1972): delivery timing as a property of every instruction — step-2 CLAUDE.md design input + carried design and scan](https://github.com/nedschorus/nedschorus/issues/30)
     (close-onto-pointer; design + scan carried; scan later marked PENDING
     user review under his nothing-enters-NC-without-my-review ruling —
     it crossed on agent judgment beyond his named scope, escalated by
     wiki, provenance header corrected). Cluster 5 (wiki and memory) processed 2026-07-27, walked per-entry
     (ten entries as seven items): the user's two-concern frame ruled and
-    written into pair #10 § Draft document and directory structure —
+    written into pair issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10) § Draft document and directory structure —
     placement rules + the many-parts overview rule, his sentence
     verbatim: "A system with many parts needs one current overview that
     links them together — its code, its MDs (design, test plan), its
     GHIs, and its tests" — with four duplicate overview bullets folded
-    there; steward ideal → [nedschorus#26](https://github.com/nedschorus/nedschorus/issues/26)
+    there; steward ideal → issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)
     (candidate domain-expert duty: overview currency, never exclusive
-    control); scrub-duty enumeration → [nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2)
+    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2)
     (the build enumerates task/memory disposal, queue-depth reporting,
     nc-queue expiry, trailer-absence audit — surfaced by the user's
     question whether any one artifact collects maintenance duties; none
     did); two landed (artifact-lifecycle promote path; no-junk-drawer
-    machinery); one already dispersed ([nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)
+    machinery); one already dispersed (issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
     item 9); two cut (wiki-to-skill linking → step-3 wiki walk;
     org-vs-artifact distinction → structural). Cluster 6 (execution models) processed 2026-07-27 → both source
     sections ("Ways to run prompts in code"; "Turn and hook order to
     verify") were already removed by the user's 2026-07-26 scrub as bad
     summaries; closure confirmed with nothing left to walk. **ITEM 17
     CLOSED. THE OUTER WALK IS COMPLETE — all 17 items carry processed
-    marks.** What pair #10 retains after the walk, deliberately: the four
+    marks.** What pair issue [Working ideas and research backlog — capture pair (Decided / Candidate / Research / Reference)](https://github.com/nedschorus/nedschorus/issues/10) retains after the walk, deliberately: the four
     draft sections plus the reusable-specification pattern (draft status,
     awaiting review under the user's nothing-enters-NC-without-my-review
     ruling) and the graded research/source notes; every backlog section
@@ -547,5 +547,5 @@ Outer walk, 17 items:
 ## Related working note
 
 Publishing and community decisions are currently recorded separately in
-the admitted publishing pair, [nedschorus#4](https://github.com/nedschorus/nedschorus/issues/4) (`docs/issues/4-open-source-publishing-community-strategy.md`).
+the admitted publishing pair, issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4) (`docs/issues/4-open-source-publishing-community-strategy.md`).
 They should not dilute this engineering-method shortlist.

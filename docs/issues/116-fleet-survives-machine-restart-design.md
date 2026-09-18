@@ -1,5 +1,5 @@
 ---
-status: design of record; build tracked in nedschorus#116
+status: design of record; build tracked in issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116)
 design-as-of: 2026-09-11
 ---
 
@@ -11,7 +11,7 @@ session of the same name, into which sessions are minted one after another; the
 seat outlives any one session. This designs what brings the seats back: how a pending restart is detected, how live seats are told to hand
 off, how `restart-live-seats-at-login` decides **which** seats were running, and what
 state each returns in. GHI-MD for
-[nedschorus#116](https://github.com/nedschorus/nedschorus/issues/116); the issue
+issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116); the issue
 carries the summary and the next actions, this carries the substance.
 
 The recovery half already exists and its resume path is proven on both machines
@@ -112,7 +112,7 @@ This design previously used five names for one program — the boot-time consume
 the boot-time script, the boot-time relaunch, the restarter, and `restart-claude`
 — without ever saying they were the same thing. `restart-claude` was also
 actively misleading: it reads as restarting the Claude *runtime*, which is
-[#62](https://github.com/nedschorus/nedschorus/issues/62)'s subject, not this
+issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62)'s subject, not this
 one. The single name is `restart-live-seats-at-login`: what it does, and when.
 Checked for collisions 2026-09-02 — nothing in `scripts/`, and no occurrence in
 the repository outside this walk's own records.
@@ -156,7 +156,7 @@ should be in the claude-ubuntu script or whatever we call it."* So the window
 role is the next build, and it has two triggers, not one: a Mac login (the
 role as designed above), and a box reboot while the Mac stays up, when the ssh
 windows drop and nothing on the Mac notices. The second trigger is built into
-`launch-claude-ubuntu` (PR #365, 2026-09-14): the attach is a loop, not an
+`launch-claude-ubuntu` (PR [launch-claude-ubuntu reconnects when the box drops, waits out the box's restart, and does not re-prepare a live seat (#116 window role, part 1)](https://github.com/nedschorus/nedschorus/pull/365), 2026-09-14): the attach is a loop, not an
 exec, so the window outlives the box's reboot instead of being reopened after
 it. ssh exits 255 for a connection-level failure and nothing else; on 255 the
 launcher waits and tries again, doubling to 30 s, one line per attempt naming
@@ -169,14 +169,14 @@ the unit starts and a `new-session -A` arriving first would create a fresh
 seat that the box's restart then refuses, the transcript resume lost; and the
 prepare step (the Claude update, the trust mark, the checkout) runs only when
 the seat does not already exist, so N windows reconnecting after a boot do not
-each run `claude update` under live sessions (nedschorus#62). Measured
+each run `claude update` under live sessions (issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62)). Measured
 2026-09-15 with a canary seat: a window attached through the launcher, the
 connection's sshd process killed on the box, and a new tmux client attached
 four seconds later with the window still open; killing the seat's tmux server
 instead ended the launcher and the window, with no seat recreated. Restarting
 the box's sshd does not drop existing connections, so that is not a test.
 
-The first trigger is built into `restart-live-seats-at-login.py` (PR #367,
+The first trigger is built into `restart-live-seats-at-login.py` (PR [restart-live-seats-at-login opens a window onto each live box seat at a Mac login (#116 window role, part 2)](https://github.com/nedschorus/nedschorus/pull/367),
 2026-09-15): on the Mac, after its own seats and whatever their verdicts, a
 run asks the box over ssh which seats are alive — every session on every
 per-seat tmux server, kept only when a seat home of that name exists, the
@@ -195,7 +195,7 @@ window opened and attached, the job exited 0 within three seconds. With both
 triggers on main and the product plist installed, a Mac logout and login is
 the test of the whole role; it has not been run yet.
 
-Two questions the #365 reviews left open, both in the launcher: the
+Two questions the PR [launch-claude-ubuntu reconnects when the box drops, waits out the box's restart, and does not re-prepare a live seat (#116 window role, part 1)](https://github.com/nedschorus/nedschorus/pull/365) reviews left open, both in the launcher: the
 reconnect wait doubles to 30 s and is never reset after a successful attach,
 so every later drop in that window's life waits 30 s before its first retry
 (a slower reconnect, not a lost seat); and after a box boot a reconnecting
@@ -311,7 +311,7 @@ revived. And a seat that exited cleanly seconds before a crash would look live
 and be restarted. Deleting the state file on a clean exit was proposed as the
 cure and is withdrawn: that file also carries the session id and the consumed
 handoff counter, so deleting it discards recovery continuity. The exit record
-ruled in the #120 overview covers the case instead: the seat's fresh stamp
+ruled in the issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) overview covers the case instead: the seat's fresh stamp
 still selects it, and the recorded clean exit then routes it to the offer —
 restart, park, or finished — rather than to an automatic restart.
 
@@ -346,7 +346,7 @@ Two halves, and they come apart:
   in `launch_seat`), so recovered seats live in tmux with no window on them.
 
 **The fix belongs in the existing script, not a new one, as an opt-in flag
-rather than a change to its default.** The #120 overview specifies it:
+rather than a change to its default.** The issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) overview specifies it:
 `--open-iterm-window-per-seat`, macOS only. It opens an iTerm window per seat
 through
 [`scripts/open-iterm-window-running-command`](../../scripts/open-iterm-window-running-command)
@@ -401,13 +401,13 @@ seat `restart-live-seats-at-login` cannot bring back — a resume that fails —
 asked about, and it is handled in five steps:
 
 1. **The seat stays down.** Nothing is created. The standing rule that a failed
-   restart asks before recreating a seat the degraded way (the #120 overview)
+   restart asks before recreating a seat the degraded way (the issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) overview)
    holds with nobody at the terminal.
 2. **It is recorded as parked, with the reason and date** — "resume failed at
    login, 2026-09-02". The record is what keeps the seat findable: at the next
    reboot the heartbeat rule selects only seats stamped near that stop, and a
    seat that never came back is not among them. Parking on the user's word (the
-   #120 overview) and parking on failure share one state and differ in the
+   issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) overview) and parking on failure share one state and differ in the
    recorded reason, which every offer must show so the two read differently.
 3. **The restart asks in a window of its own on the Mac**, one line per failed
    seat, the box's included: "<seat> could not be resumed. Recreate it from a
@@ -449,7 +449,7 @@ this way dies before printing a line, and iTerm reports only *"A session ended
 very soon after starting."* Any relaunch that opens an iTerm window with a
 custom command hits this. Fixed by wrapping the command in a login shell in
 `open-iterm-window-running-command`
-([nedschorus#235](https://github.com/nedschorus/nedschorus/pull/235), merged
+(PR [open-iterm-window-running-command: run the command under a login shell](https://github.com/nedschorus/nedschorus/pull/235), merged
 2026-09-02); `restart-live-seats-at-login` must go through that script rather
 than composing its own AppleScript.
 
@@ -457,7 +457,7 @@ than composing its own AppleScript.
 a command.** Synthesising keystrokes into
 iTerm races the user's own typing and corrupted a live window on 2026-08-17;
 the project's synthetic-keystroke guard hook blocks that form outright
-(nedschorus#27).
+(issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27)).
 
 ## The build, in order
 
@@ -471,7 +471,7 @@ the project's synthetic-keystroke guard hook blocks that form outright
    what it selected in the run log ruled below, and a later run in the same
    boot takes the stop from there rather than deriving it again.
 3. **Window-opening recovery** — `--open-iterm-window-per-seat` on
-   `recover-crashed-seats.py`, specified in the #120 overview, so a recovered
+   `recover-crashed-seats.py`, specified in the issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) overview, so a recovered
    seat is born attached in its own iTerm window. Independently useful: it is
    how a seat should be recovered by hand too.
 4. **`restart-live-seats-at-login`, wired to login** — a LaunchAgent on the Mac,
@@ -487,7 +487,7 @@ the project's synthetic-keystroke guard hook blocks that form outright
    mid-launch leaves no line and the next run in the boot offers rather than
    restarts (a missed restart is preferred to a double launch); and a seat
    that does not come back is reported and left down, because parking it
-   with its reason and asking in a window is nedschorus#242 change 3, not
+   with its reason and asking in a window is issue [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242) change 3, not
    built. `install-restart-live-seats-at-login-launch-agent.py` writes the
    LaunchAgent plist (`com.nedschorus.restart-live-seats-at-login`, RunAtLoad,
    Aqua sessions only, PATH naming `~/.local/bin` and `/opt/homebrew/bin`,
@@ -687,15 +687,15 @@ the project's synthetic-keystroke guard hook blocks that form outright
 
 ## Provenance
 
-Rulings carried from [nedschorus#116](https://github.com/nedschorus/nedschorus/issues/116):
+Rulings carried from issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116):
 2026-08-20 (walk with the user, item by item), 2026-08-31 (walk item 5,
 `retired-seat-cleanup-and-reboot-open-questions`), and 2026-09-02 (this
 session, after the Mac reboot). The 2026-09-02 measurements are recorded in that
 issue's instance-outcome comment.
 
-Related: [#120](https://github.com/nedschorus/nedschorus/issues/120) owns
-`recover-crashed-seats.py`; [#45](https://github.com/nedschorus/nedschorus/issues/45)
-owns the launchers; [#27](https://github.com/nedschorus/nedschorus/issues/27)
+Related: issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120) owns
+`recover-crashed-seats.py`; issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45)
+owns the launchers; issue [Console text-insertion + stuck/waiting-state detection (operator tooling; captured from the comms backlog)](https://github.com/nedschorus/nedschorus/issues/27)
 owns the iTerm window opener and the keystroke rule;
-[#62](https://github.com/nedschorus/nedschorus/issues/62) is the Claude
+issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62) is the Claude
 *runtime* updating under a live session, which is a different problem.

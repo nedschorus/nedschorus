@@ -7,9 +7,9 @@ design-as-of: 2026-09-02
 
 What [`scripts/recover-crashed-seats.py`](../../scripts/recover-crashed-seats.py)
 does today, end to end, and the changes ruled for it. GHI-MD for
-[nedschorus#242](https://github.com/nedschorus/nedschorus/issues/242), which
+issue [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242), which
 carries the six changes as its state and next actions. It was written as the
-overview for [nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120),
+overview for issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120),
 the script's original build, which closed completed on 2026-09-02 when its
 close condition was met; the file keeps that number in its name.
 
@@ -106,7 +106,7 @@ the last check and the launch:
   rather than calling it a crash. The same prompt goes to a successor the
   supervisor started at boot from a handoff with no dialog to hand over, if it
   never replied. This is from the 2026-09-10 Mac reboot,
-  recorded on [#116](https://github.com/nedschorus/nedschorus/issues/116).
+  recorded on issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116).
   Not covered: a successor whose launch failed before the harness wrote its
   transcript, where the retired parent is still the newest transcript.
 - **No usable transcript** → ignite: launch fresh, with a first prompt pointing
@@ -157,7 +157,7 @@ transcript under a fresh supervisor, in its own directory. Verified afterwards:
 each transcript carries the script's crash-recovery opening turn and has advanced
 past the relaunch.
 
-That was [nedschorus#120](https://github.com/nedschorus/nedschorus/issues/120)'s
+That was issue [Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120)'s
 stated close condition, and it closed on it the same day.
 
 **The box's own branch was then proven by a deliberate crash the same day.** The
@@ -395,7 +395,7 @@ intact.
 `--dry-run` prints the command each window would run. **Not verified live:**
 that a real iTerm2 window delivers the quoted `NAME=value` words to
 `/usr/bin/env` intact. The opener's own measurement — a quoted `'seat a'`
-arriving as one argument — stands in until the test seat of #116's build step 4
+arriving as one argument — stands in until the test seat of issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116)'s build step 4
 runs with the user present.
 
 **The problem.** The tool leaves a recovered seat headless. The launcher is
@@ -431,7 +431,7 @@ which works because iTerm parses its command shell-style and keeps a quoted
   silently downgraded to detached. The Ubuntu box is headless and has no iTerm2.
 - The launcher must be named by absolute path; iTerm gives a custom command a
   bare PATH.
-- Rides on [nedschorus#235](https://github.com/nedschorus/nedschorus/pull/235),
+- Rides on PR [open-iterm-window-running-command: run the command under a login shell](https://github.com/nedschorus/nedschorus/pull/235),
   merged 2026-09-02: its login-shell wrapper is what stops the window dying at
   the launcher's own `command -v tmux` check with nothing printed.
 - `--dry-run` prints the command and opens no window. `--ignite-fallback`
@@ -448,10 +448,10 @@ including the non-macOS branch.
 
 ## Relations
 
-[#116](https://github.com/nedschorus/nedschorus/issues/116) is the fleet-restart
+issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116) is the fleet-restart
 design that consumes this tool at boot; the proposed change above is its build
-step 2. [#45](https://github.com/nedschorus/nedschorus/issues/45) owns seat
+step 2. issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45) owns seat
 supervision and the launchers.
-[#62](https://github.com/nedschorus/nedschorus/issues/62) owns the blast radius
+issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62) owns the blast radius
 of one tmux server per machine — this tool makes that blast recoverable rather
 than smaller.

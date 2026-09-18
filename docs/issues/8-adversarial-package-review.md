@@ -21,7 +21,7 @@ Repository `github.com/nedschorus/nedschorus` at the commit named when you were 
 - `docs/cross-project/comms-bridge-spec.md` — the two-log coordination channel.
 - `docs/issues/4-open-source-publishing-community-strategy.md` — the publishing strategy.
 - `entry-manifest.md` — the import ledger (empty is its correct current state).
-- Open issues #1, #2, #3, #4, #6, #7 for context on in-flight work.
+- Open issues [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1), issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2), issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3), issue [Open-source publishing and community strategy — Ned's Chorus (doc: docs/issues/4-open-source-publishing-community-strategy.md)](https://github.com/nedschorus/nedschorus/issues/4), issue [Low priority: handoff-quality instrumentation (deferred — ladder not earned; interim = narrated correction summary)](https://github.com/nedschorus/nedschorus/issues/6), issue [Backup strategy for state outside git (Time Machine covers today; inventory + restore drill when the boss teaches it)](https://github.com/nedschorus/nedschorus/issues/7) for context on in-flight work.
 
 ## Fixed rulings — do not relitigate
 

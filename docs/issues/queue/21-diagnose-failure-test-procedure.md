@@ -1,6 +1,6 @@
-# User-walked core for pair #21 (diagnose-failure) — the test-failure procedure
+# User-walked core for pair issue [Candidate skill: diagnose-failure — bounded causal debugging with a three-fix escalation stop](https://github.com/nedschorus/nedschorus/issues/21) (diagnose-failure) — the test-failure procedure
 
-Queued for the user's drain (promote / edit / demote / drop). User-walked 2026-07-31 (superpowers-extracts walk, item 3 discussion); sources: the user's two-scenario framing and cluster rule, the daemon incident, the superpowers `verification-before-completion` extract, and the ruled agent-loop ladder. Destination: [nedschorus#21](https://github.com/nedschorus/nedschorus/issues/21).
+Queued for the user's drain (promote / edit / demote / drop). User-walked 2026-07-31 (superpowers-extracts walk, item 3 discussion); sources: the user's two-scenario framing and cluster rule, the daemon incident, the superpowers `verification-before-completion` extract, and the ruled agent-loop ladder. Destination: issue [Candidate skill: diagnose-failure — bounded causal debugging with a three-fix escalation stop](https://github.com/nedschorus/nedschorus/issues/21).
 
 ## The cluster rule (user, 2026-07-31)
 

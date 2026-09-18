@@ -92,7 +92,7 @@ databases — live data stays live, the accepted Time-Machine residue;
 instruction files — in-repo (NC's CLAUDE.md is a step-2 repository
 file; the global file stays empty — the 2026-07-27 cross-project
 contamination incident is this rule's founding specimen, recorded on
-[nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29)); agent
+issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)); agent
 identity — recreatable from the briefing, itself a repository file.
 
 Within-repository placement (which directory, which queue, which name) is
@@ -102,15 +102,15 @@ one concept, one home.
 
 ## Part 3 — codification: the duties land in builds already planned
 
-- **The main-gatekeeper** ([nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3))
+- **The main-gatekeeper** (issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3))
   owns the git-preserved class's entrance; its commit trailers are the
   provenance record. This design adds requirements, not features.
-- **The handoff build** ([nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2))
+- **The handoff build** (issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2))
   owns the boundaries: task export, the scrub (its standing duties are
   enumerated on that issue), and — if the open questions resolve that way —
   log extracts and memory placement at the same boundary.
 - **The writing skills** (`ghi-write` / `md-write`,
-  [nedschorus#13](https://github.com/nedschorus/nedschorus/issues/13)) own
+  issue [Build ghi-write (step-1 founding skill): trigger on creating or revising a GHI; enforce edit-don't-comment-or-duplicate](https://github.com/nedschorus/nedschorus/issues/13)) own
   within-repository placement at writing time — the established pattern:
   enforcement lives in skills at the moment of writing; the gatekeeper stays
   lean.
@@ -157,7 +157,7 @@ tokens go to judgment rather than enumeration. Sensors are programs;
 judgment is agents.
 
 **The handoff scrub remains** the persistent agents' own moment (its duties
-enumerated on [nedschorus#2](https://github.com/nedschorus/nedschorus/issues/2));
+enumerated on issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2));
 the ownership discipline — a temporary worker returns its deliverable to its
 dispatcher and leaves nothing behind, with the dispatcher's own records
 making orphaned dispatches visible — reduces the sweep's load but is not the
@@ -175,7 +175,7 @@ incidents earn it, per the enforcement ladder.
      nothing is committed at write time. Real-time visibility comes from
      instrumentation, not git: every memory read and write is echoed to the
      console, remind-tier
-     ([nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39));
+     (issue [Memory: agents write freely, and each reincarnation drains the new entries in a walk with the user](https://github.com/nedschorus/nedschorus/issues/39));
      the user intervenes by prompting the acting agent.
    - **Content rule — memories are memories, not soft skills.** Two admitted
      classes: (a) durable human-context facts (the user's name, role,
@@ -198,10 +198,10 @@ incidents earn it, per the enforcement ladder.
      unbacked between drains — machine loss loses them; cheap by the
      drain's own economics (most entries are headed for deletion or
      relocation anyway); the outside-git backup question stays at
-     [nedschorus#7](https://github.com/nedschorus/nedschorus/issues/7).
+     issue [Backup strategy for state outside git (Time Machine covers today; inventory + restore drill when the boss teaches it)](https://github.com/nedschorus/nedschorus/issues/7).
      Reopening trigger: an undrained memory loss that costs real work.
    - Feeds the memory-pointing research on
-     [nedschorus#29](https://github.com/nedschorus/nedschorus/issues/29).
+     issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29).
 2. **Log extracts at boundaries — RESOLVED as placement stance (user-walked
    2026-07-31, fleet-side walk item 7):** no bridge-log extracts are
    collected until a data-driven consumer for boundary log data exists —
@@ -228,7 +228,7 @@ incidents earn it, per the enforcement ladder.
    artifact class already lands on a review surface by construction —
    repository artifacts through check-ins (producer stamped via the B6
    `Gatekeeper-agent` trailer), GHIs visible and walkable, memory writes
-   echoed ([nedschorus#39](https://github.com/nedschorus/nedschorus/issues/39))
+   echoed (issue [Memory: agents write freely, and each reincarnation drains the new entries in a walk with the user](https://github.com/nedschorus/nedschorus/issues/39))
    and drain-reviewed (Q1 above), tasks carried by handoffs and counted at
    the scrub. The unreviewed residue is uncommitted working state, which
    dies with its session or drains. Part 4's ownership discipline (a

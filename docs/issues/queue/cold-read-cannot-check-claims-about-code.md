@@ -13,26 +13,26 @@ different defect class. Nothing here is built or ruled.
 ## The evidence
 
 `docs/nedschorus-wiki/fleet-git-worktree-working-model.md` went to main
-through PR #95 after a full md-review pass (eight reviewers across two
+through PR [Fleet git and worktree working model: the rules walk's decision record](https://github.com/nedschorus/nedschorus/pull/95) after a full md-review pass (eight reviewers across two
 runtimes) plus the user's own read. Within minutes of merging, three
 findings arrived from `chatgpt-codex-connector`'s inline review on the pull
 request. All three were verified against the code and all three were real:
 
 1. **R3** claimed the detached-HEAD write block covered "writes into
    repository checkouts." The check sits inside the guard's seated branch,
-   so it reaches only the session's own checkout. (Fixed, PR #97.)
+   so it reaches only the session's own checkout. (Fixed, PR [working model R3 and R17: two rule descriptions corrected against the code](https://github.com/nedschorus/nedschorus/pull/97).)
 2. **R17** claimed `launch-claude-ubuntu` invoked the supervisor "into a
    checkout nothing pulls." That launcher had freshened the checkout at
-   launch since before the document was written. (Fixed, PR #97.)
+   launch since before the document was written. (Fixed, PR [working model R3 and R17: two rule descriptions corrected against the code](https://github.com/nedschorus/nedschorus/pull/97).)
 3. **`clean-worktrees.py`** promised in two docstrings that an untrusted
    vacancy answer keeps the worktree; the code returned "vacant" when lsof
    failed, so `--remove` could delete a worktree holding live work.
-   (Fixed with tests, PR #100.)
+   (Fixed with tests, PR [worktree reaper: prove vacancy before reaping, instead of assuming it](https://github.com/nedschorus/nedschorus/pull/100).)
 
 A fourth, of the same kind, was then found by the same route on the fix
-itself: PR #97's replacement text blamed a silent stale launch on the
+itself: PR [working model R3 and R17: two rule descriptions corrected against the code](https://github.com/nedschorus/nedschorus/pull/97)'s replacement text blamed a silent stale launch on the
 launchers' `|| true`, when the real cause is that `--reference-pull`
-returns success on every outcome. (Fixed, PR #101.)
+returns success on every outcome. (Fixed, PR [working model R17: name the silent freshening failure both launchers share](https://github.com/nedschorus/nedschorus/pull/101).)
 
 ## Why the review passes could not have caught them
 
@@ -119,7 +119,7 @@ raises this finding's priority rather than retiring it.
 **Still live, demonstrated.** On 2026-08-31 the merge-lane seat filed a
 diagnosis that `launch-claude-mac:197` hides a stale-launch failure behind
 `2>/dev/null || true`. That is the same misdiagnosis this document records at
-the fourth finding above, corrected in PR #101: the real cause is that the
+the fourth finding above, corrected in PR [working model R17: name the silent freshening failure both launchers share](https://github.com/nedschorus/nedschorus/pull/101): the real cause is that the
 catch-up script returns success on every outcome, so `|| true` is redundant
 rather than causal. The seat corrected itself after reading this document —
 which was on an unmerged branch, not on main where it would have been found

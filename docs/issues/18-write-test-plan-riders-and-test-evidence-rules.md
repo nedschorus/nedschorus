@@ -1,11 +1,11 @@
 ---
-status: working material for nedschorus#18
+status: working material for issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)
 as-of: 2026-09-16
 ---
 
 # write-test-plan: the riders, and the rules on what counts as test evidence
 
-The pair document of [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18), the candidate skill write-test-plan. The issue body keeps the summary, the disposition and the next action. This file carries the substance: the four riders drained into the issue on 2026-09-02, the worked example that triggered the build, and the user's rules on what evidence a change needs before it merges. Every section down to "Evidence of record" moved here verbatim from the issue body on 2026-09-16, when adding the newest ruling would have passed the body's 1000-word cap. The section on code that runs only against a stand-in is new.
+The pair document of issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18), the candidate skill write-test-plan. The issue body keeps the summary, the disposition and the next action. This file carries the substance: the four riders drained into the issue on 2026-09-02, the worked example that triggered the build, and the user's rules on what evidence a change needs before it merges. Every section down to "Evidence of record" moved here verbatim from the issue body on 2026-09-16, when adding the newest ruling would have passed the body's 1000-word cap. The section on code that runs only against a stand-in is new.
 
 ## Riders, drained from the queue 2026-09-02
 
