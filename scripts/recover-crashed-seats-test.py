@@ -233,12 +233,16 @@ def recover_with_an_operator_typing(workspace, typed, dry_run=False, ignite_fall
     return report, seen.getvalue()
 
 
-def recover_recording_every_prompt(workspace, dry_run=False):
+def recover_recording_every_prompt(workspace, dry_run=False, at_a_terminal=True):
     """One recovery with an operator at a terminal who answers yes to anything
-    put to him. input() itself is replaced, so a question asked by any route is
-    recorded. Returns (report, every prompt input() was called with,
-    everything else the operator saw)."""
-    an_operator_terminal()
+    put to him — or, with at_a_terminal False, with nobody at one, and input()
+    still answering yes if anything reached it. input() itself is replaced, so
+    a question asked by any route is recorded. Returns (report, every prompt
+    input() was called with, everything else the operator saw)."""
+    if at_a_terminal:
+        an_operator_terminal()
+    else:
+        no_operator_terminal()
     prompts = []
 
     def input_answering_yes(prompt=""):
@@ -2597,8 +2601,9 @@ with tempfile.TemporaryDirectory() as temporary:
           verdict == "resume" and detail[0] == "resume-me", (verdict, detail))
 
     # The report names both ways back by hand, each carrying what launch_seat
-    # would pass, and a dry run and --ignite-fallback say the same and launch
-    # nothing.
+    # would pass, and --ignite-fallback says the same and launches nothing. A
+    # dry run quotes that report whole, after the question an operator at a
+    # terminal would be asked (ruled 2026-09-18).
     workspace = Workspace(root / "exit-record-report", name="exited-seat")
     all_dead()
     capture_launches(workspace)
@@ -2626,11 +2631,18 @@ with tempfile.TemporaryDirectory() as temporary:
           report.endswith(f"; to bring it back by hand resuming session resume-me: "
                           f"{resume_command}; or as a fresh session: {fresh_command}"),
           report)
-    check("EXIT RECORD: a dry run reports the same, and --ignite-fallback offers too",
-          report_dry == report
-          and workspace.recover(ignite_fallback=True) == report
+    check("EXIT RECORD: --ignite-fallback offers the same, and neither launches anything",
+          workspace.recover(ignite_fallback=True) == report
           and workspace.launches == [],
           (report, workspace.launches))
+    check("EXIT RECORD: a dry run quotes the question, what a yes does, and that report whole",
+          report_dry == ("exited-seat: would ask an operator at a terminal — \"exited-seat "
+                         "stopped on purpose. Restart it anyway? y/n\" — and on a yes restart "
+                         "the seat resuming session resume-me; on a no, or with no terminal, "
+                         "it reports: " + report[len("exited-seat: "):])
+          and report.startswith("exited-seat: ")
+          and workspace.launches == [],
+          (report_dry, report))
     expected_launcher_word = (str(recovery.launcher_path()) if recovery.launcher_path()
                               else "launch-claude-ubuntu")
     resume_command_words = shlex.split(resume_command.replace(" (on the Mac)", ""))
@@ -2695,6 +2707,14 @@ with tempfile.TemporaryDirectory() as temporary:
                                   workspace.handoffs, ""))
           and workspace.launches == [],
           (verdict, detail, report, workspace.launches))
+    report_dry = workspace.recover(dry_run=True)
+    check("EXIT RECORD: and its dry run says a yes would restart it as a fresh session",
+          report_dry == ("exited-seat: would ask an operator at a terminal — \"exited-seat "
+                         "stopped on purpose. Restart it anyway? y/n\" — and on a yes restart "
+                         "the seat as a fresh session; on a no, or with no terminal, it "
+                         "reports: " + report[len("exited-seat: "):])
+          and workspace.launches == [],
+          (report_dry, report))
 
     # What the record does not reach: a waiting handoff still defers to
     # boot-ignition, and a live tmux session with no confirmed supervisor is
@@ -2767,24 +2787,278 @@ with tempfile.TemporaryDirectory() as temporary:
               in FIRST_PROMPT_FOR_AN_OPERATORS_RESTART_RESUMING,
           (verdict, detail))
 
-    # A recorded exit with no leftover session — after a reboot, say — is not
-    # asked about even with an operator at a terminal (ruled 2026-09-18: only
-    # the leftover-shell question gained a restart). It prints the by-hand
-    # commands and launches nothing, as it did.
-    workspace = Workspace(root / "exit-record-at-a-terminal", name="seat-a")
+    # --- a recorded exit with no leftover session is asked about too -------
+    # Ruled 2026-09-18 in a walk: a seat carrying a recorded exit whose tmux
+    # session is gone — after a reboot, say — is asked the question a seat
+    # behind a leftover shell is asked, when an operator is at a terminal and
+    # this is not a dry run. A yes restarts it exactly as the leftover-shell
+    # yes does; a no, or nobody to ask, leaves the NOT RELAUNCHED line it has
+    # always had. The question is worded by the recorded exit code (ruled the
+    # same day): a supervisor also records the exit of an agent that died
+    # with an error while it watched, and for that seat "stopped on purpose"
+    # can be false. The user's words, spelled out byte for byte and never
+    # derived from the function that composes them.
+    question_for_a_seat_stopped_on_purpose = (
+        "seat-a stopped on purpose. Restart it anyway? y/n")
+    question_for_a_seat_that_stopped_with_exit_code_1 = (
+        "seat-a stopped with exit code 1. Restart it? y/n")
+    question_for_a_seat_that_stopped_with_exit_code_137 = (
+        "seat-a stopped with exit code 137. Restart it? y/n")
+    question_for_a_recorded_exit_code = (
+        (0, question_for_a_seat_stopped_on_purpose),
+        (None, question_for_a_seat_stopped_on_purpose),
+        (1, question_for_a_seat_that_stopped_with_exit_code_1),
+        (137, question_for_a_seat_that_stopped_with_exit_code_137))
+    every_recorded_exit_question = (
+        question_for_a_seat_stopped_on_purpose, question_for_a_seat_that_stopped_with_exit_code_1,
+        question_for_a_seat_that_stopped_with_exit_code_137)
+    # With no leftover shell nothing was closed, so the line says only whose
+    # word the restart was on — never the leftover shell's suffix.
+    the_operator_said_to_restart_it_and_nothing_was_closed = (
+        " (the operator said to restart it)")
+
+    def operator_restart_prompt_path_for(workspace):
+        return workspace.handoffs / "seat-a-operator-restart-after-recorded-exit-prompt.md"
+
+    def by_hand_prompt_path_for(workspace):
+        return workspace.handoffs / "seat-a-by-hand-resume-after-recorded-exit-prompt.md"
+
+    def a_seat_with_a_recorded_exit_and_no_session(directory_name, exit_code, resumable=True):
+        """(workspace, recorded_at): seat-a, fully dead with no tmux session
+        at all, its supervisor's record of its agent's exit on disk, and a
+        transcript to resume unless resumable is False."""
+        workspace = Workspace(root / directory_name, name="seat-a")
+        all_dead()
+        capture_launches(workspace)
+        if resumable:
+            write_transcript(workspace.project_directory(), "resume-me", "real work",
+                             records=4)
+        return workspace, record_an_agent_exit(workspace, exit_code)
+
+    def the_not_relaunched_line(workspace, recorded_at, code_text):
+        """The line such a seat has always got, composed here byte for byte."""
+        resume_command = recovery.by_hand_launch_command_for_seat(
+            "seat-a", workspace.seat_directory, workspace.handoffs,
+            "--resume-session-id resume-me",
+            first_prompt_file=by_hand_prompt_path_for(workspace))
+        fresh_command = recovery.by_hand_launch_command_for_seat(
+            "seat-a", workspace.seat_directory, workspace.handoffs, "")
+        return ("seat-a: NOT RELAUNCHED AFTER A RECORDED EXIT — its supervisor recorded at "
+                f"{recorded_at} that its agent exited with {code_text} and stopped without "
+                "launching a successor, so this is not treated as a crash and nothing is "
+                "launched; to bring it back by hand resuming session resume-me: "
+                f"{resume_command}; or as a fresh session: {fresh_command}")
+
+    # The question for each recorded code, and a no to it, which launches
+    # nothing and leaves the line the seat gets with nobody to ask.
+    for exit_code, expected_question in question_for_a_recorded_exit_code:
+        workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+            f"no-leftover-exit-code-{exit_code}", exit_code)
+        report_after_no, seen = recover_with_an_operator_typing(workspace, "n")
+        check(f"NO LEFTOVER SESSION: a recorded exit code {exit_code!r} is asked "
+              f"{expected_question!r}, byte for byte, and nothing else is shown",
+              seen == f"{expected_question} ", seen)
+        no_operator_terminal()
+        check(f"NO LEFTOVER SESSION: a no to it (code {exit_code!r}) launches nothing and "
+              "reports what nobody-to-ask reports",
+              workspace.launches == [] and report_after_no == workspace.recover()
+              and recovery.SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER
+                  in report_after_no,
+              (workspace.launches, report_after_no))
+
+    # A yes with a session to resume: the recorded session is resumed, on the
+    # operator-restart first prompt, after the come-up check, and the line
+    # says whose word it was without claiming a shell was closed.
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-yes-resume", 0)
+    report_yes, prompts, seen = recover_recording_every_prompt(workspace)
+    launched_prompt = (workspace.launches[0][2].read_text(encoding="utf-8")
+                       if workspace.launches and workspace.launches[0][2] else "")
+    check("NO LEFTOVER SESSION: at a terminal the question is asked once, through input()",
+          prompts == [f"{question_for_a_seat_stopped_on_purpose} "] and seen == "",
+          (prompts, seen))
+    check("NO LEFTOVER SESSION: a yes resumes the recorded session on the operator-restart "
+          "first prompt, byte for byte",
+          workspace.launches == [("seat-a", "--resume-session-id resume-me",
+                                  operator_restart_prompt_path_for(workspace))]
+          and launched_prompt == FIRST_PROMPT_FOR_AN_OPERATORS_RESTART_RESUMING
+          and not by_hand_prompt_path_for(workspace).exists(),
+          (workspace.launches, launched_prompt))
+    check("NO LEFTOVER SESSION: and its line says the operator said to restart it, and "
+          "nothing about a leftover shell",
+          report_yes == (
+              f"seat-a: relaunched resuming resume-me after its supervisor recorded at "
+              f"{recorded_at} that its agent exited with exit code 0"
+              + the_operator_said_to_restart_it_and_nothing_was_closed)
+          and "leftover" not in report_yes and "closed" not in report_yes
+          and not any(marker in report_yes
+                      for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+          report_yes)
+
+    # A yes with nothing to resume starts it fresh, on the fresh first prompt;
+    # the nonzero code's question restarts it just the same.
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-yes-fresh", 1, resumable=False)
+    report_yes_fresh, seen = recover_with_an_operator_typing(workspace, "y")
+    launched_prompt = (workspace.launches[0][2].read_text(encoding="utf-8")
+                       if workspace.launches and workspace.launches[0][2] else "")
+    check("NO LEFTOVER SESSION: a yes with no session to resume starts the seat fresh, on "
+          "the fresh first prompt, byte for byte",
+          seen == f"{question_for_a_seat_that_stopped_with_exit_code_1} "
+          and workspace.launches == [("seat-a", "", operator_restart_prompt_path_for(workspace))]
+          and launched_prompt == FIRST_PROMPT_FOR_AN_OPERATORS_RESTART_AS_A_FRESH_SESSION,
+          (seen, workspace.launches, launched_prompt))
+    check("NO LEFTOVER SESSION: and its line says so, on the operator's word",
+          report_yes_fresh == (
+              f"seat-a: relaunched fresh after its supervisor recorded at {recorded_at} that "
+              "its agent exited with exit code 1, with no session to resume"
+              + the_operator_said_to_restart_it_and_nothing_was_closed),
+          report_yes_fresh)
+
+    # --ignite-fallback does not turn that restart into an ignite, as it does
+    # not behind a leftover shell.
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-yes-ignite-fallback", 0)
+    (workspace.handoffs / "seat-a-dialog-0007.md").write_text("the dialog", encoding="utf-8")
+    report_fallback, seen = recover_with_an_operator_typing(workspace, "y",
+                                                            ignite_fallback=True)
+    check("NO LEFTOVER SESSION: with --ignite-fallback a yes still resumes",
+          [launch[:2] for launch in workspace.launches] == [
+              ("seat-a", "--resume-session-id resume-me")]
+          and report_fallback.startswith("seat-a: relaunched resuming resume-me after ")
+          and "--ignite-fallback" not in report_fallback,
+          (workspace.launches, report_fallback))
+
+    # A restart that fails is still reported as one the operator asked for.
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-yes-launch-fails", 0)
+    patch("launch_seat", lambda name, seat_directory, handoff_directory, extra_arguments,
+          first_prompt_file=None: 7)
+    report_launch_failed, seen = recover_with_an_operator_typing(workspace, "y")
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-yes-did-not-come-up", 0)
+    seat_comes_up(False, "a supervisor started and stopped again within 6s, so the session "
+                         "did not survive")
+    report_not_up, seen = recover_with_an_operator_typing(workspace, "y")
+    check("NO LEFTOVER SESSION: a failed restart on a yes is a failure that says whose word "
+          "it was",
+          report_launch_failed == ("seat-a: LAUNCH FAILED (exit 7) — the seat is still down"
+                                   + the_operator_said_to_restart_it_and_nothing_was_closed)
+          and report_not_up == ("seat-a: LAUNCHED BUT DID NOT COME UP — a supervisor started "
+                                "and stopped again within 6s, so the session did not survive"
+                                + the_operator_said_to_restart_it_and_nothing_was_closed),
+          (report_launch_failed, report_not_up))
+
+    # A no: the NOT RELAUNCHED line exactly as it has always been, its by-hand
+    # prompt written as it always is, and nothing launched. End of input is a no.
+    for typed in ("n", None):
+        workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+            f"no-leftover-no-{typed}", 0)
+        report_no, seen = recover_with_an_operator_typing(workspace, typed)
+        by_hand_prompt = (by_hand_prompt_path_for(workspace).read_text(encoding="utf-8")
+                          if by_hand_prompt_path_for(workspace).is_file() else "")
+        check(f"NO LEFTOVER SESSION: {'a no' if typed else 'end of input'} gives the NOT "
+              "RELAUNCHED line, byte for byte, and launches nothing",
+              report_no == the_not_relaunched_line(workspace, recorded_at, "exit code 0")
+              and workspace.launches == []
+              and by_hand_prompt == FIRST_PROMPT_FOR_A_BY_HAND_RESUME_AFTER_A_RECORDED_EXIT
+              and not operator_restart_prompt_path_for(workspace).exists(),
+              (report_no, workspace.launches, by_hand_prompt))
+
+    # With nobody at a terminal — at boot, under restart-live-seats-at-login —
+    # nothing is asked (input() is never called), nothing is launched, and
+    # the line is the one it has always been.
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-unattended", 137)
+    report_unattended, prompts, seen = recover_recording_every_prompt(workspace,
+                                                                      at_a_terminal=False)
+    check("NO LEFTOVER SESSION: with nobody at a terminal nothing is asked and the line is "
+          "unchanged, byte for byte",
+          prompts == [] and seen == "" and workspace.launches == []
+          and report_unattended == the_not_relaunched_line(workspace, recorded_at,
+                                                           "exit code 137")
+          and not operator_restart_prompt_path_for(workspace).exists(),
+          (prompts, seen, workspace.launches, report_unattended))
+
+    # A dry run asks nobody, even at a terminal, and writes nothing; it
+    # quotes the question, what a yes does, and the line a no or nobody to
+    # ask gives.
+    workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
+        "no-leftover-dry-run", 137)
+    report_dry, seen = recover_with_an_operator_typing(workspace, "y", dry_run=True)
+    written_by_the_dry_run = sorted(path.name for path in workspace.handoffs.glob("*-prompt.md"))
+    no_operator_terminal()
+    check("NO LEFTOVER SESSION: --dry-run quotes the question and what a yes and a no do, "
+          "asking nothing and writing nothing",
+          seen == "" and workspace.launches == [] and written_by_the_dry_run == []
+          and report_dry == (
+              "seat-a: would ask an operator at a terminal — "
+              f"\"{question_for_a_seat_that_stopped_with_exit_code_137}\" — and on a yes "
+              "restart the seat resuming session resume-me; on a no, or with no terminal, it "
+              "reports: "
+              + the_not_relaunched_line(workspace, recorded_at, "exit code 137")[
+                  len("seat-a: "):]),
+          (seen, workspace.launches, written_by_the_dry_run, report_dry))
+
+    # Two seats carrying recorded exits in one --all run at a terminal: each is
+    # asked its own question, in name order, and a no to the first does not
+    # stop the run reaching the second, which a yes restarts (the user
+    # accepted one question per such seat).
+    workspace = Workspace(root / "no-leftover-two-seats", name="two-seats-first")
+    (workspace.agents_root / "two-seats-second").mkdir()
+    for name, exit_code in (("two-seats-first", 0), ("two-seats-second", 1)):
+        write_transcript(recovery.harness_project_directory(
+            workspace.agents_root / name, workspace.projects),
+            f"resume-{name}", "real work", records=4)
+        recovery.supervisor.record_agent_exit_in_supervisor_state(
+            workspace.handoffs / f"{name}-supervisor-state.json",
+            {"consumed_counter": None, "session_id": f"resume-{name}", "generation": 3},
+            exit_code)
     all_dead()
     capture_launches(workspace)
-    write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
-    record_an_agent_exit(workspace, 0)
-    report_at_a_terminal, prompts, seen = recover_recording_every_prompt(workspace)
-    no_operator_terminal()
-    check("EXIT RECORD: with no leftover session a terminal changes nothing: nothing asked, "
-          "nothing launched",
-          prompts == [] and workspace.launches == [] and seen == ""
-          and report_at_a_terminal.startswith(
-              f"seat-a: {recovery.SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER} — ")
-          and report_at_a_terminal == workspace.recover(),
-          (prompts, workspace.launches, report_at_a_terminal))
+    an_operator_terminal()
+    printed = io.StringIO()
+    stdin_before = sys.stdin
+    sys.stdin = io.StringIO("n\ny\n")
+    try:
+        with redirect_stdout(printed):
+            exit_code = recovery.main(["--all", "--agents-root", str(workspace.agents_root),
+                                       "--handoff-dir", str(workspace.handoffs),
+                                       "--projects-root", str(workspace.projects)])
+    finally:
+        sys.stdin = stdin_before
+        no_operator_terminal()
+    printed = printed.getvalue()
+    first_question = "two-seats-first stopped on purpose. Restart it anyway? y/n "
+    second_question = "two-seats-second stopped with exit code 1. Restart it? y/n "
+    first_line = "recover-crashed-seats: two-seats-first: NOT RELAUNCHED AFTER A RECORDED EXIT — "
+    second_line = ("recover-crashed-seats: two-seats-second: relaunched resuming "
+                   "resume-two-seats-second")
+    log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+    logged_lines = (log_path.read_text(encoding="utf-8").splitlines()
+                    if log_path.is_file() else [])
+    check("NO LEFTOVER SESSION: two recorded-exit seats in one run are each asked, and a no "
+          "to the first still reaches the second",
+          all(printed.count(text) == 1
+              for text in (first_question, first_line, second_question, second_line))
+          and (printed.index(first_question) < printed.index(first_line)
+               < printed.index(second_question) < printed.index(second_line)),
+          printed)
+    check("NO LEFTOVER SESSION: the first is left down and the second restarted on the "
+          "operator's word, and the run exits 1 for the first",
+          [launch[:2] for launch in workspace.launches] == [
+              ("two-seats-second", "--resume-session-id resume-two-seats-second")]
+          and exit_code == 1 and len(logged_lines) == 2
+          and "two-seats-first: NOT RELAUNCHED AFTER A RECORDED EXIT" in logged_lines[0]
+          and logged_lines[1].endswith(
+              "two-seats-second: relaunched resuming resume-two-seats-second after its "
+              "supervisor recorded at "
+              + recovery.supervisor.read_supervisor_state(
+                  workspace.handoffs / "two-seats-second-supervisor-state.json")[
+                  recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
+              + " that its agent exited with exit code 1"
+              + the_operator_said_to_restart_it_and_nothing_was_closed),
+          (workspace.launches, exit_code, logged_lines))
 
     # --- the leftover idle shell is a question, not a refusal ---------------
     # Ruled 2026-09-17 (the #120 overview, § Ruled 2026-09-02): with an
@@ -2801,18 +3075,17 @@ with tempfile.TemporaryDirectory() as temporary:
     # not "resume", which here means picking up the last conversation. The two
     # ruled questions are the user's approved words, so they are spelled out
     # here byte for byte and never derived from the function that composes
-    # them. A yes restarts the seat on both, a recorded exit included.
+    # them. A yes restarts the seat on both, a recorded exit included. The
+    # recorded exit's questions, worded by its code, are spelled out above.
     question_that_restarts_the_seat = "Restart seat-a? y/n"
-    question_for_a_seat_stopped_on_purpose = (
-        "seat-a stopped on purpose. Restart it anyway? y/n")
-    # PROVISIONAL, not yet ruled: the question for a seat whose waiting handoff
-    # asks to be consulted, showing its reason first. Open for the user.
-    provisional_question_for_a_seat_that_asked_to_be_consulted = (
+    # Ruled 2026-09-18: the question for a seat whose waiting handoff asks to
+    # be consulted, showing its reason first.
+    question_for_a_seat_that_asked_to_be_consulted = (
         "seat-a's handoff says: the user asked to be consulted before a relaunch. "
         "Restart it? y/n")
     every_leftover_shell_question = (
-        question_that_restarts_the_seat, question_for_a_seat_stopped_on_purpose,
-        provisional_question_for_a_seat_that_asked_to_be_consulted)
+        question_that_restarts_the_seat, *every_recorded_exit_question,
+        question_for_a_seat_that_asked_to_be_consulted)
     the_operator_said_to_restart_it = (
         "(the operator said to restart it, so the leftover shell was closed first: closed "
         "the leftover shell — retired the tmux session on socket seat-a)")
@@ -2922,11 +3195,10 @@ with tempfile.TemporaryDirectory() as temporary:
         try:
             with redirect_stdout(io.StringIO()):
                 answered_yes.append(
-                    recovery.ask_operator_to_close_the_leftover_idle_shell(
-                        question_that_restarts_the_seat))
+                    recovery.ask_operator_yes_or_no(question_that_restarts_the_seat))
         finally:
             sys.stdin = stdin_before
-        check(f"LEFTOVER SHELL: the answer {typed!r} is "
+        check(f"QUESTION: the answer {typed!r} is "
               f"{'yes' if typed in ('Y', 'yes') else 'no'}",
               answered_yes == [typed in ("Y", "yes")], (typed, answered_yes))
 
@@ -3065,6 +3337,44 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_recorded_no == the_refusal_with_nobody_to_ask(workspace)[0],
           (retired, workspace.launches, report_recorded_no))
 
+    # Behind a leftover shell too, the question is worded by the recorded
+    # exit code (ruled 2026-09-18), and a no to any of them changes nothing.
+    for exit_code, expected_question in question_for_a_recorded_exit_code:
+        workspace = a_seat_behind_a_leftover_shell(
+            f"leftover-shell-exit-record-code-{exit_code}")
+        record_an_agent_exit(workspace, exit_code)
+        retired = []
+        capture_retires(retired)
+        report_code_no, seen = recover_with_an_operator_typing(workspace, "n")
+        check(f"LEFTOVER SHELL: a recorded exit code {exit_code!r} is asked "
+              f"{expected_question!r}, byte for byte",
+              asked_only(expected_question, seen)
+              and retired == [] and workspace.launches == []
+              and report_code_no == the_refusal_with_nobody_to_ask(workspace)[0],
+              (seen, retired, workspace.launches, report_code_no))
+
+    # And a yes to the nonzero code's question restarts the seat just as a yes
+    # to the stopped-on-purpose one does.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-exit-record-code-1-yes")
+    recorded_at = record_an_agent_exit(workspace, 1)
+    retired = []
+    capture_retires(retired)
+    capture_launches_with_what_was_retired_by_then(workspace, retired)
+    report_code_1_yes, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: a yes to \"seat-a stopped with exit code 1. Restart it? y/n\" "
+          "retires the session, then resumes the seat on the operator-restart prompt",
+          asked_only(question_for_a_seat_that_stopped_with_exit_code_1, seen)
+          and retired == ["seat-a"]
+          and workspace.launches == [
+              ("seat-a", "--resume-session-id resume-me",
+               workspace.handoffs / "seat-a-operator-restart-after-recorded-exit-prompt.md",
+               ["seat-a"])]
+          and report_code_1_yes == (
+              f"seat-a: relaunched resuming resume-me after its supervisor recorded at "
+              f"{recorded_at} that its agent exited with exit code 1 "
+              + the_operator_said_to_restart_it),
+          (seen, retired, workspace.launches, report_code_1_yes))
+
     # With nobody to ask, the same seat is refused exactly as before the
     # question's words depended on anything: one assessment, nothing printed,
     # nothing closed, and the 2026-09-16 refusal byte for byte.
@@ -3097,13 +3407,13 @@ with tempfile.TemporaryDirectory() as temporary:
           and not any(workspace.handoffs.glob("*-prompt.md")),
           (report_unattended, unattended_seen, retired, workspace.launches, assessments))
 
-    # PROVISIONAL, not yet ruled (2026-09-18): a seat whose waiting handoff asks
-    # to be consulted (nedschorus#350). It is asked a question that shows its
-    # reason first, and a yes relaunches it plain — the launch its own report
-    # tells an operator to make by hand — leaving the handoff unconsumed, so
-    # its supervisor's boot-ignition asks its own "restart? y/n" in the seat's
-    # tmux session before it starts anything. Both the words and what a yes
-    # does are open for the user.
+    # Ruled 2026-09-18: a seat whose waiting handoff asks to be consulted
+    # (nedschorus#350). It is asked a question that shows its reason first,
+    # and a yes relaunches it plain — the launch its own report tells an
+    # operator to make by hand — leaving the handoff unconsumed, so its
+    # supervisor's boot-ignition asks its own "restart? y/n" in the seat's
+    # tmux session before it starts anything. The user ruled both the words
+    # and what a yes does as built.
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-consulted")
     consulted_handoff_path = workspace.handoffs / "seat-a-handoff.md"
     consulted_handoff_path.write_text(consulted_handoff_text, encoding="utf-8")
@@ -3111,10 +3421,10 @@ with tempfile.TemporaryDirectory() as temporary:
     capture_retires(retired)
     capture_launches_with_what_was_retired_by_then(workspace, retired)
     report_consulted, seen = recover_with_an_operator_typing(workspace, "y")
-    check("LEFTOVER SHELL (PROVISIONAL): a seat that asked to be consulted is shown its reason "
-          "and asked whether to restart it",
-          asked_only(provisional_question_for_a_seat_that_asked_to_be_consulted, seen), seen)
-    check("LEFTOVER SHELL (PROVISIONAL): and a yes retires its session, then relaunches it "
+    check("LEFTOVER SHELL (ruled 2026-09-18): a seat that asked to be consulted is shown its "
+          "reason and asked whether to restart it",
+          asked_only(question_for_a_seat_that_asked_to_be_consulted, seen), seen)
+    check("LEFTOVER SHELL (ruled 2026-09-18): and a yes retires its session, then relaunches it "
           "plain, its handoff unconsumed for its supervisor's own question",
           retired == ["seat-a"]
           and workspace.launches == [("seat-a", "", None, ["seat-a"])]
@@ -3132,12 +3442,12 @@ with tempfile.TemporaryDirectory() as temporary:
     retired = []
     capture_retires(retired)
     report_dry, seen = recover_with_an_operator_typing(workspace, "y", dry_run=True)
-    check("LEFTOVER SHELL (PROVISIONAL): --dry-run carries the consulted question and the "
+    check("LEFTOVER SHELL (ruled 2026-09-18): --dry-run carries the consulted question and the "
           "plain relaunch",
           retired == [] and workspace.launches == [] and seen == ""
           and report_dry == (
               "seat-a: would ask an operator at a terminal — "
-              f'"{provisional_question_for_a_seat_that_asked_to_be_consulted}" — and on a yes '
+              f'"{question_for_a_seat_that_asked_to_be_consulted}" — and on a yes '
               "close that session and relaunch the seat plain, whose supervisor then asks its "
               "own restart question before it starts a session (it is one pane at a shell); "
               "with no terminal it refuses"),
@@ -3148,7 +3458,7 @@ with tempfile.TemporaryDirectory() as temporary:
     retired = []
     capture_retires(retired)
     report_consulted_no, seen = recover_with_an_operator_typing(workspace, "n")
-    check("LEFTOVER SHELL (PROVISIONAL): a no to a seat that asked to be consulted leaves "
+    check("LEFTOVER SHELL (ruled 2026-09-18): a no to a seat that asked to be consulted leaves "
           "everything as it is",
           retired == [] and workspace.launches == []
           and report_consulted_no == the_refusal_with_nobody_to_ask(workspace)[0]
@@ -3476,9 +3786,15 @@ with tempfile.TemporaryDirectory() as temporary:
              question_for_a_seat_stopped_on_purpose),
             ("offer-after-recorded-exit", (None, "2026-09-18T00:00:00+00:00", None),
              question_for_a_seat_stopped_on_purpose),
+            ("offer-after-recorded-exit", (1, "2026-09-18T00:00:00+00:00", "resume-me"),
+             question_for_a_seat_that_stopped_with_exit_code_1),
+            ("offer-after-recorded-exit", (137, "2026-09-18T00:00:00+00:00", None),
+             question_for_a_seat_that_stopped_with_exit_code_137),
+            ("offer-after-recorded-exit", (-15, "2026-09-18T00:00:00+00:00", "resume-me"),
+             "seat-a stopped with exit code -15. Restart it? y/n"),
             ("seat-asked-to-be-consulted",
              (11, "the user asked to be consulted before a relaunch"),
-             provisional_question_for_a_seat_that_asked_to_be_consulted),
+             question_for_a_seat_that_asked_to_be_consulted),
             ("seat-asked-to-be-consulted", (3, "  ask me first.  "),
              "seat-a's handoff says: ask me first. Restart it? y/n")):
         composed_question = recovery.leftover_idle_shell_question_for_seat(

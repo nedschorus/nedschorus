@@ -293,6 +293,14 @@ about the reboot-test. perhaps resume reboot-test? Y/N."* — the question names
 the seat and asks whether to restart it, and a yes on a seat stopped on purpose
 now restarts it, resuming its session if it has one: not bringing such a seat
 back is a rule for the tool acting on its own, and here the operator decides.
+Ruled 2026-09-18 in a walk: a recorded exit whose code is neither zero nor
+unknown is asked *"reboot-test stopped with exit code 1. Restart it? y/n"*
+instead, since an agent that crashed under a watching supervisor leaves a record
+too, and a seat carrying a recorded exit with no leftover session at all, as
+after a reboot, is asked the same question at a terminal and restarted the same
+way on a yes; the question for a seat whose handoff asks to be consulted,
+*"prof's handoff says: <reason> Restart it? y/n"*, whose yes relaunches it
+plain, stands as built.
 Ruled 2026-09-18 in a walk: when that prediction already shows a yes would end
 in a refusal or a running seat, nothing is asked and nothing is closed — *"it
 refuses straight away with the reason and leaves the window open"*, since *"no

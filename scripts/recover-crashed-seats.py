@@ -42,16 +42,22 @@ What it does, per seat:
      consulted before a relaunch (dont-restart): then nothing is launched,
      and the seat is reported NOT RELAUNCHED, AT ITS OWN REQUEST, which
      counts as not recovered — unless an operator says yes to the
-     leftover-shell question in 1a, which relaunches it plain (provisional,
-     not yet ruled; see recover_seat).
-  2a. Launch nothing when the seat's supervisor recorded its agent's exit
-     (nedschorus#242 change 2, ruled 2026-09-02): a supervisor that outlived
-     its agent saw the ending, so the seat did not crash. Any recorded exit
-     counts, whatever its code. The report says so and gives the commands to
-     bring the seat back by hand, and it counts as a seat not recovered. Only a
-     seat with no record goes on to the resume below. The one exception is an
-     operator's yes to the leftover-shell question in 1a: that seat is
-     restarted, resuming its session if there is one.
+     leftover-shell question in 1a, which relaunches it plain (ruled
+     2026-09-18; see recover_seat).
+  2a. Launch nothing on this tool's own account when the seat's supervisor
+     recorded its agent's exit (nedschorus#242 change 2, ruled 2026-09-02): a
+     supervisor that outlived its agent saw the ending, so the seat did not
+     crash. Any recorded exit counts, whatever its code. Only a seat with no
+     record goes on to the resume below. An operator at a terminal is asked
+     (ruled 2026-09-18) — "<seat> stopped on purpose. Restart it anyway? y/n",
+     or "<seat> stopped with exit code <code>. Restart it? y/n" when the
+     recorded code is neither zero nor unknown — whether a leftover shell
+     holds the seat's name (the question in 1a) or no session does at all, as
+     after a reboot; a yes restarts the seat, resuming its session if there is
+     one. With no leftover session, nobody to ask or a no leaves the seat down:
+     the report says it was not relaunched and gives the commands to bring it
+     back by hand, and it counts as a seat not recovered. With a leftover
+     shell, nobody to ask or a no is the refusal in 1.
   3. Find the seat's most recent real transcript under the harness project
      directory: newest *.jsonl by mtime, skipping failed successors — small
      sessions whose first turn this machinery itself composed and which
@@ -451,12 +457,39 @@ LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH = (
     "defer-to-boot-ignition", "resume", "ignite",
 )
 # The verdicts whose recovery launches nothing on this tool's own account, and
-# launches the seat only on an operator's yes to the leftover-shell question
-# (ruled 2026-09-18): recover_seat's offer-after-recorded-exit and
-# seat-asked-to-be-consulted branches.
+# launches the seat only on an operator's yes (ruled 2026-09-18): to the
+# leftover-shell question, and for a recorded exit also to the same question
+# asked when no leftover session holds the seat's name. recover_seat's
+# offer-after-recorded-exit and seat-asked-to-be-consulted branches.
 LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_RESTARTED_ONLY_ON_THE_OPERATORS_WORD = (
     "offer-after-recorded-exit", "seat-asked-to-be-consulted",
 )
+
+
+def restart_question_for_a_seat_with_a_recorded_exit(name: str, exit_code) -> str:
+    """The question an operator at a terminal is asked about a seat whose
+    supervisor recorded its agent's exit, with a leftover shell holding the
+    seat's name or with no session at all (both ruled 2026-09-18).
+
+    Worded by the recorded exit code (ruled 2026-09-18), because a supervisor
+    also records the exit of an agent that died with an error while it
+    watched — the design record: "a seat whose agent crashed while its
+    supervisor kept watching produces a record too" — and for that seat
+    "stopped on purpose" can be false. Code zero, or a code the record does not
+    know, keeps the words ruled first; any other code is named instead.
+    """
+    if exit_code is None or exit_code == 0:
+        return f"{name} stopped on purpose. Restart it anyway? y/n"
+    return f"{name} stopped with exit code {exit_code}. Restart it? y/n"
+
+
+def restart_after_recorded_exit_described(session_id) -> str:
+    """What a yes to restart_question_for_a_seat_with_a_recorded_exit does, in
+    the words a dry run reports it with: resume the recorded session, or start
+    fresh when there is none."""
+    if session_id is None:
+        return "restart the seat as a fresh session"
+    return f"restart the seat resuming session {session_id}"
 
 
 def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str,
@@ -473,12 +506,16 @@ def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str,
     seat on every verdict worded here:
 
       - a verdict that launches: "Restart <seat>? y/n".
-      - offer-after-recorded-exit: "<seat> stopped on purpose. Restart it
-        anyway? y/n". The rule that a seat stopped on purpose is not brought
-        back is about this tool doing it on its own; here the operator decides.
-      - seat-asked-to-be-consulted: PROVISIONAL, its words not yet ruled.
-        "<seat>'s handoff says: <its dont-restart reason>. Restart it? y/n",
-        the reason read from predicted_detail, (counter, reason).
+      - offer-after-recorded-exit: restart_question_for_a_seat_with_a_recorded_exit,
+        worded by the exit code in predicted_detail, (exit_code, recorded_at,
+        session_id): "<seat> stopped on purpose. Restart it anyway? y/n" for
+        code zero or an unknown code, "<seat> stopped with exit code <code>.
+        Restart it? y/n" for any other. The rule that a seat stopped on
+        purpose is not brought back is about this tool doing it on its own;
+        here the operator decides.
+      - seat-asked-to-be-consulted, ruled 2026-09-18: "<seat>'s handoff says:
+        <its dont-restart reason>. Restart it? y/n", the reason read from
+        predicted_detail, (counter, reason).
 
     Those five verdicts are the only ones this is ever called with. A predicted
     refuse or seat-already-running is not asked about at all (ruled 2026-09-18):
@@ -494,7 +531,8 @@ def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str,
         raise ValueError(f"no leftover-shell question is worded for the verdict "
                          f"{predicted_verdict!r}")
     if predicted_verdict == "offer-after-recorded-exit":
-        return f"{name} stopped on purpose. Restart it anyway? y/n"
+        predicted_exit_code, _, _ = predicted_detail
+        return restart_question_for_a_seat_with_a_recorded_exit(name, predicted_exit_code)
     _, reason = predicted_detail  # seat-asked-to-be-consulted: (counter, reason)
     reason = reason.strip()
     if not reason.endswith((".", "!", "?")):
@@ -511,7 +549,8 @@ def recovery_has_an_operator_terminal() -> bool:
     terminal, that child would have a tty on stdin and a pipe on stdout — a
     question nobody can see, in front of an input() that never returns.
     Asking only when the answer can be both shown and read keeps the
-    2026-09-16 refusal in place on every path an operator is not watching.
+    2026-09-16 refusal, and a recorded exit's NOT RELAUNCHED line, in place on
+    every path an operator is not watching.
     """
     try:
         return bool(sys.stdin.isatty() and sys.stdout.isatty())
@@ -521,11 +560,12 @@ def recovery_has_an_operator_terminal() -> bool:
         return False
 
 
-def ask_operator_to_close_the_leftover_idle_shell(question: str) -> bool:
+def ask_operator_yes_or_no(question: str) -> bool:
     """True only on an explicit yes. Everything else is a no (ruled
     2026-09-17) — a bare return, a word this does not know, end of input, an
-    interrupt — because the answer a no falls back to is the refusal this
-    tool has always given, which is the safe one.
+    interrupt — because a no falls back to what this tool does with nobody to
+    ask (the leftover shell's refusal, a recorded exit's NOT RELAUNCHED line),
+    which is the safe one.
     """
     try:
         answer = input(f"{question} ")
@@ -998,9 +1038,10 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     offer-after-recorded-exit launches nothing on this tool's own account
     (nedschorus#242 change 2): the seat's supervisor recorded that its agent
     exited, so it is not a crash, and the seat is offered to be brought back by
-    hand — or restarted, when an operator says yes to the leftover-shell
-    question (ruled 2026-09-18). Any recorded exit counts, code zero or not,
-    known or not; only a seat with no record is resumed automatically.
+    hand — or restarted, when an operator at a terminal says yes to the
+    restart question recover_seat asks, leftover shell or none (ruled
+    2026-09-18). Any recorded exit counts, code zero or not, known or not; only
+    a seat with no record is resumed automatically.
 
     seat-already-running is not a refusal (user-ruled 2026-09-16, on the
     question PR #426's reviewer asked): a seat a live supervisor of which is
@@ -1324,26 +1365,38 @@ LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING = {
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                  projects_root: Path, dry_run: bool, ignite_fallback: bool,
                  open_iterm_window: bool = False,
-                 retired_pane_process_ids=None) -> str:
+                 retired_pane_process_ids=None,
+                 restart_at_the_operators_word: bool = False) -> str:
     """One seat's recovery. Returns a one-line report. With open_iterm_window
     the seat is launched attached in its own iTerm window instead of
     detached (--open-iterm-window-per-seat); nothing else changes — not the
     deadness checks, the transcript choice, or the resume decision.
 
-    retired_pane_process_ids is set only by this function's one re-entry,
-    after an operator has answered yes to restarting a seat behind a leftover
-    idle shell, and that shell was closed: it carries the panes that were
-    closed past the occupancy check. Being not-None, it is also what stops the
-    question being asked a second time in the same recovery, and it is the
-    operator's word to restart, which a seat carrying a recorded exit or a
-    handoff asking to be consulted needs before it is launched (ruled
-    2026-09-18)."""
+    retired_pane_process_ids and restart_at_the_operators_word are set only
+    by this function's one re-entry, after an operator has answered yes to
+    restarting a seat behind a leftover idle shell, and that shell was
+    closed. retired_pane_process_ids carries the panes that were closed past
+    the occupancy check; being not-None, it is also what stops the question
+    being asked a second time in the same recovery.
+    restart_at_the_operators_word is that yes: the operator's word to
+    restart, which a seat carrying a recorded exit or a handoff asking to be
+    consulted needs before it is launched (ruled 2026-09-18).
+
+    A seat carrying a recorded exit (2a in this module's docstring) is also
+    asked about with no leftover session at all — after a reboot, say — when
+    an operator is at a terminal and this is not a dry run (ruled
+    2026-09-18): "<seat> stopped on purpose. Restart it anyway? y/n", or
+    "<seat> stopped with exit code <code>. Restart it? y/n" when the recorded
+    code is neither zero nor unknown. A yes restarts it exactly as the
+    leftover-shell yes does, and its line says the operator said to restart
+    it; a no, or nobody to ask, leaves the NOT RELAUNCHED line it has always
+    had. Under --all that is one question per such seat, each answered on its
+    own (the user accepted that cost)."""
     verdict, detail = assess_seat(name, agents_root, handoff_directory, projects_root,
                                   retired_pane_process_ids=retired_pane_process_ids or ())
     seat_directory = agents_root / name
     launch = open_seat_in_iterm_window if open_iterm_window else launch_seat
     in_window = " in a new iTerm window" if open_iterm_window else ""
-    restart_at_the_operators_word = retired_pane_process_ids is not None
 
     def would_open(extra_supervisor_arguments: str, first_prompt_file: Path = None) -> str:
         """The dry run's view of the window: the command it would run."""
@@ -1386,10 +1439,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             """The dry run's account of a yes, after the session is closed: what
             the reassessment below is predicted to do with the operator's word."""
             if predicted_verdict == "offer-after-recorded-exit":
-                predicted_session_id = predicted_detail[2]
-                if predicted_session_id is None:
-                    return "restart the seat as a fresh session"
-                return f"restart the seat resuming session {predicted_session_id}"
+                return restart_after_recorded_exit_described(predicted_detail[2])
             if predicted_verdict == "seat-asked-to-be-consulted":
                 return ("relaunch the seat plain, whose supervisor then asks its own restart "
                         "question before it starts a session")
@@ -1430,7 +1480,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         question = leftover_idle_shell_question_for_seat(name, predicted_verdict,
                                                          predicted_detail)
         print(f"recover-crashed-seats: {shell_detail}")
-        if not ask_operator_to_close_the_leftover_idle_shell(question):
+        if not ask_operator_yes_or_no(question):
             return f"{name}: REFUSED — {refusal}"
         killed_sockets, retire_failure = resupervise.retire_seat_tmux_session(name)
         if retire_failure is not None:
@@ -1452,7 +1502,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         # the line this one prints says what actually happened.
         rest = recover_seat(name, agents_root, handoff_directory, projects_root,
                             dry_run, ignite_fallback, open_iterm_window,
-                            retired_pane_process_ids=pane_process_ids)
+                            retired_pane_process_ids=pane_process_ids,
+                            restart_at_the_operators_word=True)
         # In the report, so the recovery log records that a session was closed
         # and on whose word.
         return (f"{rest} (the operator said to restart it, so the leftover shell was closed "
@@ -1471,12 +1522,12 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     if verdict == "seat-asked-to-be-consulted":
         counter, reason = detail
         if restart_at_the_operators_word:
-            # PROVISIONAL, not yet ruled (2026-09-18): what "restart" means for a
-            # seat that asked to be consulted. Today it means the one launch
-            # this seat's own report tells an operator to make by hand: plain,
-            # leaving its handoff unconsumed, so that the supervisor's
-            # boot-ignition finds the dont-restart and asks its own "restart?
-            # y/n" on the seat's terminal before it starts a session. That is a
+            # Ruled 2026-09-18: what "restart" means for a seat that asked to
+            # be consulted. It means the one launch this seat's own report
+            # tells an operator to make by hand: plain, leaving its handoff
+            # unconsumed, so that the supervisor's boot-ignition finds the
+            # dont-restart and asks its own "restart? y/n" on the seat's
+            # terminal before it starts a session. That is a
             # second question after the operator's yes here, and in a detached
             # launch it waits in a tmux session nobody is looking at; its
             # supervisor holds its lock while it waits, so the come-up check
@@ -1505,9 +1556,23 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         code_text = "an unknown exit code" if exit_code is None else f"exit code {exit_code}"
         recorded = (f"its supervisor recorded at {recorded_at} that its agent exited with "
                     f"{code_text}")
-        if restart_at_the_operators_word:
+        question = restart_question_for_a_seat_with_a_recorded_exit(name, exit_code)
+        # With no leftover session — after a reboot, say — the operator is
+        # asked here (ruled 2026-09-18). A seat that came through the
+        # leftover-shell question was asked there, and its line gains that
+        # question's suffix, saying the shell was closed; here nothing was
+        # closed, so the line says only whose word it was. Nothing is asked in
+        # a dry run, which changes nothing, nor with nobody at a terminal to
+        # answer — at boot, under restart-live-seats-at-login — and then the
+        # line below is unchanged.
+        the_operator_said_yes_here = (not restart_at_the_operators_word and not dry_run
+                                      and recovery_has_an_operator_terminal()
+                                      and ask_operator_yes_or_no(question))
+        on_whose_word = " (the operator said to restart it)" if the_operator_said_yes_here else ""
+        if restart_at_the_operators_word or the_operator_said_yes_here:
             # Ruled 2026-09-18: the operator said yes to "<seat> stopped on
-            # purpose. Restart it anyway?", so the seat is restarted — resuming
+            # purpose. Restart it anyway?" or "<seat> stopped with exit code
+            # <code>. Restart it?", so the seat is restarted — resuming
             # its session if there is one, fresh if there is none. The rule that
             # a seat stopped on purpose is not brought back is about this tool
             # doing it on its own. --ignite-fallback does not change this: its
@@ -1531,11 +1596,11 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                 no_session = ""
             if launch_exit_code != 0:
                 return (f"{name}: LAUNCH FAILED (exit {launch_exit_code}) — the seat is "
-                        "still down")
+                        f"still down{on_whose_word}")
             did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
             if did_not_come_up is not None:
-                return did_not_come_up
-            return f"{name}: {relaunched} after {recorded}{no_session}"
+                return f"{did_not_come_up}{on_whose_word}"
+            return f"{name}: {relaunched} after {recorded}{no_session}{on_whose_word}"
         fresh = by_hand_launch_command_for_seat(name, seat_directory, handoff_directory, "")
         if session_id is None:
             by_hand = f"to bring it back by hand as a fresh session: {fresh}"
@@ -1556,9 +1621,18 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                 first_prompt_file=prompt_file)
             by_hand = (f"to bring it back by hand resuming session {session_id}: {resume}; "
                        f"or as a fresh session: {fresh}")
-        return (f"{name}: {SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER} — "
-                f"{recorded} and stopped without launching a successor, so this is not "
-                f"treated as a crash and nothing is launched; {by_hand}")
+        not_relaunched = (f"{SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER} — "
+                          f"{recorded} and stopped without launching a successor, so this is "
+                          f"not treated as a crash and nothing is launched; {by_hand}")
+        if dry_run:
+            # Reported whether or not anyone is at a terminal, as the
+            # leftover-shell question's dry run is: a run this one cannot
+            # see, an operator's, is the one that would ask. The unattended
+            # line is quoted whole, so its class still counts in main.
+            return (f"{name}: would ask an operator at a terminal — \"{question}\" — and on a "
+                    f"yes {restart_after_recorded_exit_described(session_id)}; on a no, or "
+                    f"with no terminal, it reports: {not_relaunched}")
+        return f"{name}: {not_relaunched}"
 
     if verdict == "defer-to-boot-ignition":
         if dry_run:
