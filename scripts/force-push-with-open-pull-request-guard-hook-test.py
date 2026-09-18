@@ -567,6 +567,29 @@ check("a force push later in a chain is still found",
       decision == "deny", str(decision))
 
 # ---------------------------------------------------------------------------
+# The wiring. A hook that overruns its registered timeout fails open silently,
+# so the timeout in .claude/settings.json must stay above the guard's own
+# budget: the guard then always answers first, and can say what it skipped.
+# ---------------------------------------------------------------------------
+
+SETTINGS_PATH = HOOK_SCRIPT.resolve().parent.parent / ".claude" / "settings.json"
+settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+guard_entries = [
+    hook
+    for matcher_block in settings.get("hooks", {}).get("PreToolUse", [])
+    if matcher_block.get("matcher") == "Bash"
+    for hook in matcher_block.get("hooks", [])
+    if HOOK_SCRIPT.name in hook.get("command", "")
+]
+check("the guard is wired exactly once as a PreToolUse Bash hook",
+      len(guard_entries) == 1, str(guard_entries))
+registered_timeout = guard_entries[0].get("timeout") if guard_entries else None
+check("the registered timeout exceeds the guard's probe budget",
+      isinstance(registered_timeout, (int, float))
+      and registered_timeout > guard.PROBE_BUDGET_SECONDS,
+      f"timeout {registered_timeout} vs budget {guard.PROBE_BUDGET_SECONDS}")
+
+# ---------------------------------------------------------------------------
 # The harness contract: what main() writes, and what it ignores.
 # ---------------------------------------------------------------------------
 
