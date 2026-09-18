@@ -310,10 +310,13 @@ def ship_record(record_dir: pathlib.Path) -> str:
 def target_content_fingerprint(target: pathlib.Path) -> str:
     """The cold-read-target's bytes, hashed. "" when the file cannot be read at all.
 
-    Content rather than mtime: an editor that writes and restores a file
-    leaves a changed mtime and an unchanged document, and that is not the
-    event this guard exists for. A file deleted or made unreadable mid-run
-    yields "", which differs from any real digest and so counts as a change.
+    mtime moves whenever the file is written, so an editor that saves and
+    undoes would trip an mtime guard with nothing wrong. The guard exists so
+    no report describes bytes that are not the document's. It compares only
+    the two endpoints, so an edit made and undone between them leaves no
+    trace, and a cell that read the edited version is not flagged. A file
+    deleted or made unreadable mid-run yields "", which differs from any real
+    digest and so counts as a change.
 
     `path_content_fingerprint` in scripts/cold-read-cell-common.py is the same
     idea applied to every path in the working tree, and the name here echoes
