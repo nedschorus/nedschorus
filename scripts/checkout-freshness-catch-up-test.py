@@ -312,6 +312,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "seat is 1 behind origin/main" in agent_text(result)
           and "head pushed and equal to origin/seat (frozen" in agent_text(result)
           and "scripts/advance-three.py" in agent_text(result), agent_text(result))
+    # The heading over the listing, byte for byte, with the line under it.
+    # User-ruled 2026-09-18: it read "Older here than on main", which is false
+    # of a file main ADDED — this checkout has no copy at all — and with
+    # --no-renames the list also holds the old path of a rename, which main
+    # deleted. The ruled words are true of changed, added and deleted paths
+    # alike.
+    check("the listing sits under the heading the user ruled, byte for byte",
+          "\nChanged on main since your merge base:\n"
+          "  scripts your tests run against (1): scripts/advance-three.py\n"
+          in agent_text(result), agent_text(result))
     check("and told to leave it and start the next topic from main",
           "Do not rebase, merge or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
@@ -756,6 +766,47 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           "skill" not in own_work, own_work)
     check("and what main really changed is still named",
           "scripts/only.py" in own_work, own_work)
+
+    # A FILE MAIN RENAMED AWAY from the path this branch still holds it at.
+    # Rename detection is on by default and `git diff --name-only` prints only
+    # a rename's DESTINATION, so without --no-renames the old path goes
+    # unlisted — the one file guaranteed to conflict, since main deleted it.
+    # The edit-warning hook's obsolete_path_set() had the same defect and got
+    # the same fix. Its own repositories, so no rename leaks into the counts
+    # the cases above pin.
+    #
+    # The two checks after the fixture checks FAIL against this script as it
+    # was before --no-renames. That was checked by running this file against
+    # that revision, not assumed: a test that passes on both sides of a fix
+    # pins nothing.
+    rename_origin = tmp / "rename-origin"
+    rename_origin.mkdir()
+    git(["init", "-q", "-b", "main"], rename_origin)
+    configure_identity(rename_origin)
+    commit_file(rename_origin, "scripts/main-will-rename-this.py", "held at the old path\n",
+                "a file main will later rename away from this path")
+    rename_seat = tmp / "rename-seat"
+    git(["clone", "-q", str(rename_origin), str(rename_seat)], tmp)
+    configure_identity(rename_seat)
+    git(["checkout", "-q", "-b", "seat"], rename_seat)
+    git(["mv", "scripts/main-will-rename-this.py", "scripts/main-renamed-it-to-this.py"],
+        rename_origin)
+    git(["commit", "-q", "-m", "rename a file out from under the branch"], rename_origin)
+    git(["fetch", "--quiet", "origin"], rename_seat)
+    check("(fixture) the branch still holds the renamed file at the old path",
+          (rename_seat / "scripts/main-will-rename-this.py").is_file())
+    check("(fixture) and origin/main no longer has that path at all",
+          git(["cat-file", "-e", "origin/main:scripts/main-will-rename-this.py"],
+              rename_seat).returncode != 0)
+    renamed_listing = catch_up_module.format_obsolete_files(
+        catch_up_module.obsolete_files_by_category(rename_seat))
+    check("a file main renamed away is listed at the OLD path, the one this branch holds",
+          "scripts/main-will-rename-this.py" in renamed_listing, renamed_listing)
+    check("and the rename is listed as both its paths, the one main deleted and the one it added",
+          renamed_listing == ("  scripts your tests run against (2): "
+                              "scripts/main-renamed-it-to-this.py, "
+                              "scripts/main-will-rename-this.py"),
+          renamed_listing)
 
     # Uncomputable is silent, never invented: the clause is dropped whole.
     not_a_repository = tmp / "not-a-repository"
