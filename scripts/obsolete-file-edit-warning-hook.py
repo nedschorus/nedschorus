@@ -59,11 +59,9 @@ nothing.
 
 NEVER FETCHES. The Stop hook fetches on its own throttle; this one runs at
 every edit and must be fast. It reads whatever origin/main the last fetch
-left — the same REF the Stop hook's telling rests on, though no longer the
-same set: --no-renames above widens this hook's set by every rename source,
-and checkout-freshness-catch-up.py's obsolete_files_by_category() still
-detects renames. That sibling is a separate topic and a separate pull
-request, by the one-topic rule.
+left — the same REF the Stop hook's telling rests on, and the same set:
+checkout-freshness-catch-up.py's obsolete_files_by_category() passes
+--no-renames too, so both run the same diff.
 
 CACHED, because the diff is the only expensive call here and the answer
 changes rarely. The path set is cached in the checkout's own git directory,

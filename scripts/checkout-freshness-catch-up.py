@@ -34,8 +34,8 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
   5. If the branch is behind and HAS been pushed, never moves it. The agent
      is TOLD, once per update of main: how far behind, which files main has
      changed that it lacks — named, grouped by why they matter, computed from
-     `git diff --name-only HEAD...origin/main`, never assumed — and to leave
-     the branch alone and cut its next topic from origin/main.
+     `git diff --name-only --no-renames HEAD...origin/main`, never assumed —
+     and to leave the branch alone and cut its next topic from origin/main.
   6. The machine's reference checkout — the main worktree of the same
      repository, parked on main — gets a fast-forward-only pull on the same
      rhythm, under its own stamp. Never a real merge there: the reference
@@ -159,8 +159,17 @@ def obsolete_files_by_category(checkout: Path):
     the trees outright and report this branch's OWN work as though main had
     changed it — the branch that built this would have claimed its own new files
     as ones it was missing.
+
+    --no-renames, because rename detection is on by default and prints only a
+    rename's DESTINATION. Without the flag, a file main renamed away from the
+    path this branch still holds it at goes unlisted — the one file guaranteed
+    to conflict, since main has deleted that path. With it, a rename lists both
+    paths: the old one main deleted and the new one main added. The same fix,
+    for the same reason, is in obsolete-file-edit-warning-hook.py's
+    obsolete_path_set(), so both programs run the same diff.
     """
-    listed = run_git(["diff", "--name-only", "HEAD...origin/main"], checkout, timeout=30)
+    listed = run_git(["diff", "--name-only", "--no-renames", "HEAD...origin/main"],
+                     checkout, timeout=30)
     if listed.returncode != 0:
         return []
     paths = sorted(line.strip() for line in listed.stdout.splitlines() if line.strip())
@@ -588,7 +597,12 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     # Computed BEFORE any rebase: afterwards it is empty, and it is the list of
     # what moved under the agent.
     listing = format_obsolete_files(obsolete_files_by_category(checkout))
-    older = f"\nOlder here than on main:\n{listing}" if listing else ""
+    # The heading must be true of every path the diff lists: changed, added,
+    # and deleted. It once read "Older here than on main", which is false of a
+    # file main ADDED, since this checkout has no copy at all — 5 of 32 paths
+    # on a real 12-commit gap. User-ruled 2026-09-18, with --no-renames.
+    changed_on_main_clause = (f"\nChanged on main since your merge base:\n{listing}"
+                              if listing else "")
     note = fetch_failure_note(stamp)
 
     # 3a. Never pushed: this hook moves the branch. A success is ALWAYS told —
@@ -603,7 +617,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             stamp.pop("last_told", None)
             tell(f"checkout-freshness: {parts['branch']} was rebased onto origin/main "
                  f"({parts['behind']} commit(s) moved under your {parts['own_text']}; "
-                 f"never pushed, so nothing was under review).{older}\n{AFTER_REBASE_ADVICE}")
+                 f"never pushed, so nothing was under review).{changed_on_main_clause}\n"
+                 f"{AFTER_REBASE_ADVICE}")
         elif outcome == "abort-failed":
             # No repeat key needed: this fires at most once per real
             # occurrence, and NOT because merge_blockers sees the rebase
@@ -640,7 +655,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
                 else:
                     reason = (f"A rebase onto origin/main was tried and put back: it "
                               f"conflicts on {detail}.")
-                tell(f"{heading} {reason}{older}{note}\n{REBASE_ADVICE}")
+                tell(f"{heading} {reason}{changed_on_main_clause}{note}\n{REBASE_ADVICE}")
         write_stamp(stamp_path, stamp)
         return
 
@@ -650,7 +665,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         stamp["last_told"] = told
         advice = {"detached": DETACHED_ADVICE, "unknown": UNKNOWN_ADVICE}.get(
             state_key, LEAVE_IT_ADVICE)
-        tell(f"{heading}{older}{note}\n{advice}")
+        tell(f"{heading}{changed_on_main_clause}{note}\n{advice}")
     write_stamp(stamp_path, stamp)
 
 
