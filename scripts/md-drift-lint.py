@@ -9,16 +9,15 @@ edits. Zero model cost, so unlike the judgment review it may run repeatedly.
 Checks, per file type:
 
   .md   - repo paths named in backticks or markdown links exist on disk
-          (a path this repository deliberately does not track is skipped)
-        - markdown link targets resolve (external schemes skipped)
+          (a path this repository deliberately does not track is skipped;
+          a backtick citation with a line number, `file.md:120`, is checked
+          as the file it names)
+        - markdown link targets resolve (external schemes skipped; a link
+          target keeps any line-number suffix, because a link written
+          `file.md:120` is a broken link)
         - YYYY-MM-DD tokens are real calendar dates
         - a backtick command naming an existing project script also names
           only flags that appear in that script's source
-        - a double-quoted span of four or more words, on a line naming
-          exactly one existing repo file, appears in that file (whitespace
-          and markdown emphasis normalized; an ellipsis splits the quote
-          into separately-checked fragments; a quote touching a backtick
-          span is skipped)
         - a backtick span that is only a number, on a line naming exactly
           one existing project code file (.py/.sh), appears in that file's
           source, digit-group separators ignored. Prose numbers — counts,
@@ -54,12 +53,7 @@ BACKTICK_TOKEN = re.compile(r"`([^`\n]+)`")
 MARKDOWN_LINK = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)\)")
 DATE_TOKEN = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
 FLAG_TOKEN = re.compile(r"--[a-z][a-z0-9-]+")
-STRAIGHT_QUOTE_SPAN = re.compile(r'"([^"\n]+)"')
-CURLY_QUOTE_SPAN = re.compile(r"“([^”\n]+)”")
 NUMBER_ONLY = re.compile(r"\d[\d_,]*(?:\.\d+)?")
-
-# Below this size a quoted span is a label or a term, not a quotation.
-QUOTE_MINIMUM_WORDS = 4
 
 # Numbers are checked only against code sources; MD-to-MD number claims are
 # counts and cardinalities, not values quoted from an implementation.
@@ -76,7 +70,12 @@ HISTORY_MARKERS = ("git history", "git show")
 # for (added 2026-08-14). The legacy tree is read-only reference material and
 # is absent from some hosts entirely, so `git-clean-slate-plan.md` on a line
 # that also names ~/Projects/nedlern is a correct citation, not drift.
-FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system")
+# nedsmessenger joined the list on 2026-09-17, when paths cited with a line
+# number began resolving: `adapter/adapter.py:379` is that project's file,
+# named on a line that also says ~/Projects/nedsmessenger, and checking it
+# here would report a correct citation as drift.
+FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system",
+                        "~/Projects/nedsmessenger")
 
 # Directories whose content is frozen measured data: every citation in them
 # records what a document said when it was measured, so a finding there is
@@ -87,15 +86,6 @@ FOREIGN_ROOT_MARKERS = ("~/Projects/nedlern", "nedlern/docs", "legacy system")
 # carried as a requirement on nedschorus#42. Nine findings stood here when the
 # README was written and nine stand today (user-ruled 2026-09-17).
 FROZEN_MEASURED_DATA_DIRECTORIES = ("cold-read-reviewer-test-cases",)
-
-
-# A line quoting text it says was deleted or replaced describes a former
-# state; the quote's absence from today's source is the point, not drift.
-QUOTE_SKIP_MARKERS = HISTORY_MARKERS + ("deleted", "removed", "retired", "was cut")
-
-# Punctuation that closes the quoting sentence rides inside the quote marks
-# without being part of the source text.
-QUOTE_EDGE_PUNCTUATION = "?.!,;:"
 
 _basename_index_cache = {}
 _git_ignore_cache = {}
@@ -190,7 +180,28 @@ def _warn_once(repo_root: Path, detail: str):
           f"so citations of the record stores will be reported", file=sys.stderr)
 
 
+LINE_SUFFIXED_PATH = re.compile(r"^(?P<path>[^\s:]+):(?P<line>\d+)$")
+
+
+def without_line_suffix(token: str) -> str:
+    """`design.md:120` names design.md. A citation's line number is not part
+    of the path, and rejecting the whole token for its colon left every
+    line-numbered citation in this project unchecked (added 2026-09-17).
+    Only a trailing all-digit suffix is stripped, so `git show REF:path`,
+    a URL and a Windows drive letter are untouched.
+
+    For backtick citations only, never for a markdown link target: GitHub
+    serves a link to `design.md:120` as a 404, so a link carrying a line
+    number is a broken link and must still be reported as one.
+    """
+    match = LINE_SUFFIXED_PATH.match(token)
+    return match.group("path") if match else token
+
+
 def looks_like_repo_path(token: str) -> bool:
+    # Only ever called on words from a backtick span, so the line-number
+    # strip is safe here; see without_line_suffix.
+    token = without_line_suffix(token)
     if any(marker in token for marker in SKIP_MARKERS):
         return False
     if ":" in token:  # git show REF:path, URLs, drive letters
@@ -276,13 +287,20 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
             # all. A path carrying a directory is checked as before, and that
             # is where real drift shows. This is the existence check only —
             # looks_like_repo_path still admits a bare name for
-            # referenced_files, whose job is finding the source a quote is
-            # attributed to.
+            # referenced_files, whose job is finding the code file a
+            # backticked number is checked against.
             if "/" not in word:
                 continue
+            # A line-numbered citation, `docs/design.md:120`, is checked as
+            # the file it names. The stripped path goes to BOTH questions:
+            # git check-ignore does not match `CLAUDE.local.md:4` against a
+            # `CLAUDE.local.md` pattern, so asking it about the raw word
+            # reported ignored files as missing. The finding still quotes the
+            # word as written.
+            path = without_line_suffix(word)
             if (looks_like_repo_path(word)
-                    and resolve(word, md_path, repo_root) is None
-                    and not ignored_by_git(word, md_path, repo_root)):
+                    and resolve(path, md_path, repo_root) is None
+                    and not ignored_by_git(path, md_path, repo_root)):
                 yield f"path does not exist: {word}"
         # Flag check: a command whose FIRST word is a project script must name
         # only flags that script's source contains.
@@ -311,12 +329,6 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
                     yield f"flag {flag} not found in {script.name}"
 
 
-def normalized_for_quote_match(text: str) -> str:
-    """Whitespace and markdown emphasis vary freely between a quote and its
-    source; both sides are compared with them normalized away."""
-    return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text)).strip()
-
-
 def canonical_number(token: str) -> str:
     return token.replace("_", "").replace(",", "")
 
@@ -324,8 +336,11 @@ def canonical_number(token: str) -> str:
 def referenced_files(line: str, md_path: Path, repo_root: Path):
     """The distinct existing files a line names in backticks or links."""
     tokens = []
+    # A backticked `scripts/x.py:40` names scripts/x.py. A link target keeps
+    # its suffix, as it does in check_markdown_links: see without_line_suffix.
     for match in BACKTICK_TOKEN.finditer(line):
-        tokens.extend(word for word in match.group(1).strip().split()
+        tokens.extend(without_line_suffix(word)
+                      for word in match.group(1).strip().split()
                       if looks_like_repo_path(word))
     for match in MARKDOWN_LINK.finditer(line):
         target = match.group(1)
@@ -340,45 +355,6 @@ def referenced_files(line: str, md_path: Path, repo_root: Path):
         if found is not None and found.is_file():
             distinct[found.resolve()] = found
     return list(distinct.values())
-
-
-def check_quoted_text(line: str, md_path: Path, repo_root: Path):
-    """A quotation on a line naming exactly one file must appear in that file.
-
-    Attribution is the line itself: one named file plus a quoted span of
-    QUOTE_MINIMUM_WORDS or more reads as "this file says this". A line naming
-    two files attributes nothing checkable and is skipped, as is a quote that
-    touches a backtick span (code, not quotation, and not normalizable).
-    """
-    lowered = line.lower()
-    if any(marker in lowered for marker in QUOTE_SKIP_MARKERS):
-        return
-    code_spans = [match.span() for match in BACKTICK_TOKEN.finditer(line)]
-    quotes = []
-    for match in list(STRAIGHT_QUOTE_SPAN.finditer(line)) + list(CURLY_QUOTE_SPAN.finditer(line)):
-        start, end = match.span()
-        if any(span_start < end and start < span_end
-               for span_start, span_end in code_spans):
-            continue
-        if len(match.group(1).split()) >= QUOTE_MINIMUM_WORDS:
-            quotes.append(match.group(1))
-    if not quotes:
-        return
-    sources = referenced_files(line, md_path, repo_root)
-    if len(sources) != 1:
-        return
-    try:
-        source_text = normalized_for_quote_match(sources[0].read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError):
-        return
-    for quote in quotes:
-        for fragment in re.split(r"\.\.\.|…", quote):
-            fragment = fragment.strip().rstrip(QUOTE_EDGE_PUNCTUATION)
-            if len(fragment.split()) < 2:
-                continue  # an ellipsis stub too short to identify
-            if normalized_for_quote_match(fragment) not in source_text:
-                yield (f"quoted text not found in {sources[0].name}: "
-                       f'"{fragment.strip()[:60]}"')
 
 
 def check_code_numbers(line: str, md_path: Path, repo_root: Path):
@@ -481,7 +457,6 @@ def lint_markdown(path: Path, repo_root: Path):
                 check_dates(line),
                 check_backtick_paths(line, path, repo_root),
                 check_markdown_links(line, path, repo_root),
-                check_quoted_text(line, path, repo_root),
                 check_code_numbers(line, path, repo_root),
             )
         for check in checks:
