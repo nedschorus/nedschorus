@@ -142,6 +142,8 @@ real_processes_rooted_in_seat_directory = recovery.processes_rooted_in_seat_dire
 real_tmux_session_is_a_leftover_idle_shell = recovery.tmux_session_is_a_leftover_idle_shell
 real_recovery_has_an_operator_terminal = recovery.recovery_has_an_operator_terminal
 real_retire_seat_tmux_session = recovery.resupervise.retire_seat_tmux_session
+real_resupervise_run_tmux = recovery.resupervise.run_tmux
+real_tmux_session_alive_anywhere = recovery.tmux_session_alive_anywhere
 
 
 def no_leftover_idle_shell(detail="no tmux server holds a session named 'x'"):
@@ -3764,6 +3766,122 @@ with tempfile.TemporaryDirectory() as temporary:
               "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
               + the_operator_said_to_restart_it]
           and exit_code == 0,
+          (events, workspace.launches, printed, exit_code))
+
+    # What the second proof failing means depends on whether the session is
+    # still there, which tmux is asked; the proof's words are never read. Only
+    # a session still there can hold work, so only it is refused with the
+    # ruled line. One that is gone — the operator exited the shell himself
+    # while the question waited — is recovered exactly as before the recheck.
+    # With no answer from tmux, the seat is refused in the liveness check's
+    # own words, and nothing is closed. These run the real proof, the real
+    # liveness check and resupervise-seat.py's real retire over a faked tmux.
+    def main_at_a_terminal_answering_yes_over_a_tmux_server(workspace, events,
+                                                            after_the_question):
+        """recovery.main on seat-a with an operator at a terminal who answers
+        yes, with only tmux's answers faked. Until the question is put, the
+        seat's socket holds one pane at zsh, process 4242. After it, that pane
+        runs vim ("work started"), no server holds the name ("gone"), or tmux
+        answers nothing at all ("unanswerable"). Every proof, question and
+        retire is appended to events. Returns (exit code, every printed line,
+        every logged line)."""
+        class Answer:
+            def __init__(self, returncode, stdout=""):
+                self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+
+        def fake_run_tmux(*arguments_after_tmux, socket_name=None):
+            asked = "question" in events
+            if asked and after_the_question == "unanswerable":
+                return None
+            held = socket_name == "seat-a" and not (asked and after_the_question == "gone")
+            if arguments_after_tmux[0] == "has-session":
+                return Answer(0 if held else 1)
+            if arguments_after_tmux[0] == "list-panes" and held:
+                return Answer(0, "4242\tvim\n" if asked else "4242\tzsh\n")
+            return Answer(1)
+
+        def the_real_proof_recorded(name, seat_directory):
+            events.append("proof")
+            return real_tmux_session_is_a_leftover_idle_shell(name, seat_directory)
+
+        def input_answering_yes(prompt=""):
+            events.append("question")
+            return "y"
+
+        def the_real_retire_recorded(name):
+            events.append("retire")
+            return real_retire_seat_tmux_session(name)
+
+        patch("run_tmux", fake_run_tmux)
+        recovery.resupervise.run_tmux = fake_run_tmux
+        patch("tmux_session_alive_anywhere", real_tmux_session_alive_anywhere)
+        patch("tmux_session_is_a_leftover_idle_shell", the_real_proof_recorded)
+        recovery.resupervise.retire_seat_tmux_session = the_real_retire_recorded
+        recovery.input = input_answering_yes
+        an_operator_terminal()
+        printed = io.StringIO()
+        try:
+            with redirect_stdout(printed):
+                exit_code = recovery.main(["seat-a",
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(workspace.handoffs),
+                                           "--projects-root", str(workspace.projects)])
+        finally:
+            del recovery.input
+            no_operator_terminal()
+            patch("run_tmux", real_run_tmux)
+            recovery.resupervise.run_tmux = real_resupervise_run_tmux
+            recovery.resupervise.retire_seat_tmux_session = real_retire_seat_tmux_session
+        log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+        logged = log_path.read_text(encoding="utf-8").splitlines() if log_path.is_file() else []
+        return exit_code, printed.getvalue().splitlines(), logged
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-gone-while-asked")
+    events = []
+    exit_code, printed, logged = main_at_a_terminal_answering_yes_over_a_tmux_server(
+        workspace, events, "gone")
+    relaunched_after_the_session_was_gone = (
+        "seat-a: relaunched resuming resume-me (0KB transcript) (the operator said to restart "
+        "it, so the leftover shell was closed first: the leftover shell was already gone when "
+        "it was retired)")
+    check("LEFTOVER SHELL: a session gone while the question waited is not refused: the retire "
+          "finds nothing, and the seat is relaunched, its line byte for byte",
+          events == ["proof", "question", "proof", "retire"]
+          and [launch[:2] for launch in workspace.launches] == [
+              ("seat-a", "--resume-session-id resume-me")]
+          and printed[-2:] == [
+              "recover-crashed-seats: seat-a: the leftover shell was already gone when it was "
+              "retired",
+              "recover-crashed-seats: " + relaunched_after_the_session_was_gone]
+          and len(logged) == 1
+          and logged[0].endswith(" " + relaunched_after_the_session_was_gone)
+          and exit_code == 0,
+          (events, workspace.launches, printed, logged, exit_code))
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-tmux-unanswerable-when-asked-again")
+    events = []
+    exit_code, printed, logged = main_at_a_terminal_answering_yes_over_a_tmux_server(
+        workspace, events, "unanswerable")
+    refused_as_tmux_cannot_be_run = (
+        "seat-a: REFUSED — tmux cannot be run here, so seat liveness cannot be checked — "
+        "refusing rather than guessing")
+    check("LEFTOVER SHELL: when tmux cannot answer at the recheck, nothing is closed and the "
+          "seat is REFUSED in the liveness check's words, byte for byte",
+          events == ["proof", "question", "proof"] and workspace.launches == []
+          and printed[-1:] == ["recover-crashed-seats: " + refused_as_tmux_cannot_be_run]
+          and len(logged) == 1 and logged[0].endswith(" " + refused_as_tmux_cannot_be_run)
+          and exit_code == 1,
+          (events, workspace.launches, printed, logged, exit_code))
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-vim-started-while-asked")
+    events = []
+    exit_code, printed, logged = main_at_a_terminal_answering_yes_over_a_tmux_server(
+        workspace, events, "work started")
+    check("LEFTOVER SHELL (ruled 2026-09-18): over the real proof, vim started in the shell "
+          "while the question waited is not closed, and the ruled line is given",
+          events == ["proof", "question", "proof"] and workspace.launches == []
+          and printed[-1:] == ["recover-crashed-seats: " + no_longer_only_an_empty_shell]
+          and exit_code == 1,
           (events, workspace.launches, printed, exit_code))
 
     # --- a practice run counts a seat it would ask about --------------------
