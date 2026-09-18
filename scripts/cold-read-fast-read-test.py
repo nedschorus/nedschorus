@@ -48,9 +48,9 @@ WHAT IS PINNED HERE.
     CLAUDE.md) and everything else are read with nothing said. The warning
     never refuses and never touches stdout's one line.
 
-  - The bare-number check. A walk draft is read with every bare issue or pull
-    request number in it -- `#426`, `nedschorus#418`, a link whose text is
-    the number -- counted on stderr and listed by line at the end of its
+  - The bare-number check. A walk draft is read with every bare issue, pull
+    request or task number in it -- `#426`, `nedschorus#418`, a link whose
+    text is the number -- counted on stderr and listed by line at the end of its
     suggestions file, or the section says there are none. A document on the
     records route gets no such section, whatever it contains. Headings, HTML
     entities, URLs and their fragments are not bare numbers.
@@ -916,7 +916,17 @@ check("a repository prefix is kept with the number it cites",
 check("a link whose text is the number is still a bare number",
       found("[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46)")
       == [(1, "nedschorus#46")])
+check("a quoted reference keeps its repository prefix",
+      found('`[s106] "nedschorus#385"`') == [(1, "nedschorus#385")])
+check("a number in parentheses is found", found("merged (#12) today") == [(1, "#12")])
 check("a range is two numbers", found("PRs #264–#268") == [(1, "#264"), (1, "#268")])
+check("a range with an ASCII hyphen is two numbers",
+      found("PRs #264-#268") == [(1, "#264"), (1, "#268")]
+      and found("#15-#23") == [(1, "#15"), (1, "#23")])
+check("numbers joined by slashes are each found, in order",
+      found("#214/#169/#170") == [(1, "#214"), (1, "#169"), (1, "#170")])
+check("a task number is found, since the citation rule covers tasks",
+      found("task #37") == [(1, "#37")])
 check("`#3` at the start of a line is text, not a heading, and is found",
       found("#3 is the one") == [(1, "#3")])
 check("a markdown heading is not a number", found("## 3 things") == [])
@@ -932,9 +942,14 @@ check("a number without `#` is not checked", found("issue 418 and task 37") == [
 
 section = bare_module.bare_references_section
 listed = section([(2, "#466"), (5, "nedschorus#418")])
+check("the section's heading names issues, pull requests and tasks",
+      bare_module.BARE_REFERENCES_HEADING
+      == "## Bare issue, pull request and task numbers (added by cold-read-fast-read)",
+      bare_module.BARE_REFERENCES_HEADING)
 check("the section gives one instruction and a line per number",
       bare_module.BARE_REFERENCES_HEADING in listed
-      and "Replace each with its type word and its title, as a link" in listed
+      and "Replace each with its type word and its title, as a link when it can "
+          "be opened: write PR [its title](its URL), not PR #426." in listed
       and "- Line 2: #466" in listed and "- Line 5: nedschorus#418" in listed,
       listed)
 check("a clean draft's section says so",
@@ -963,7 +978,8 @@ with tempfile.TemporaryDirectory() as bare_scratch:
           result.returncode == 0 and draft_suggestions.is_file(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
     check("the count is on stderr",
-          "bare issue or pull request numbers in this walk draft: 2" in result.stderr,
+          "cold-read-fast-read: bare issue, pull request or task numbers in this "
+          "walk draft: 2; the suggestions file lists each one." in result.stderr,
           repr(result.stderr))
     check("stdout is still exactly the report path",
           result.stdout.strip() == str(draft_suggestions)
@@ -994,7 +1010,7 @@ with tempfile.TemporaryDirectory() as bare_scratch:
                   if clean_suggestions.is_file() else "")
     check("a clean walk draft is told nothing on stderr, and its section says none",
           result.returncode == 0
-          and "bare issue or pull request numbers" not in result.stderr
+          and "bare issue, pull request or task numbers" not in result.stderr
           and clean_text.rstrip().endswith("- None."),
           f"exit {result.returncode}; tail={clean_text[-200:]!r}")
 
@@ -1014,7 +1030,7 @@ with tempfile.TemporaryDirectory() as bare_scratch:
                      if numbered_report.is_file() else "")
     check("a document on the records route is not checked, whatever it carries",
           result.returncode == 0
-          and "bare issue or pull request numbers" not in result.stderr
+          and "bare issue, pull request or task numbers" not in result.stderr
           and bare_module.BARE_REFERENCES_HEADING not in numbered_text,
           f"exit {result.returncode}; stderr={result.stderr!r}")
 

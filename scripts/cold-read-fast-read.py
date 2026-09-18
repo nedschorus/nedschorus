@@ -24,15 +24,16 @@ item 4 of nedschorus#418, after a skill change merged on a fast read alone).
 It warns and never refuses, because the fast read is the cold-read-full-run's
 first step. When the cold-read-target is a walk draft, the read also lists every
 bare issue or pull request number in it -- `#426`, `nedschorus#418`, a link
-whose text is the number -- with one line on stderr giving the count and a
-section at the end of the suggestions file naming each by line (user-ruled
-2026-09-17, item 5 of nedschorus#418: the walk-me-through skill forbids bare
-numbers, and walk files had carried 33 and 35 of them unchecked). Bare file
-names and the walk's 300-word item cap are deliberately not checked, by the
-same rulings. Every cold-read-cell's own progress -- the launcher's stderr, the
-runtime's stderr, the stray-write and recovery lines -- is re-emitted on this
-program's stderr, so a caller watching stdout gets the one line and a caller
-reading stderr gets the whole account.
+whose text is the number, and a task number written `#N` too, because
+CLAUDE.md's citation rule covers tasks -- with one line on stderr giving the
+count and a section at the end of the suggestions file naming each by line
+(user-ruled 2026-09-17, item 5 of nedschorus#418: the walk-me-through skill
+forbids bare numbers, and walk files had carried 33 and 35 of them
+unchecked). Bare file names and the walk's 300-word item cap are deliberately
+not checked, by the same rulings. Every cold-read-cell's own progress -- the
+launcher's stderr, the runtime's stderr, the stray-write and recovery lines --
+is re-emitted on this program's stderr, so a caller watching stdout gets the
+one line and a caller reading stderr gets the whole account.
 
 WHAT THE REVIEWER ACTUALLY READS is not the cold-read-target but a copy of it
 with an id on every sentence, `<file stem>-with-sentence-ids.md`, written by
@@ -599,25 +600,31 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
     return "\n".join(lines).rstrip("\n") + "\n" + "\n".join(coverage) + "\n"
 
 
-# A bare issue or pull request number: `#` and digits, with whatever repository
-# name is glued to its front (`nedschorus#418`, `nedschorus/nedschorus#418`),
-# because each is a number where CLAUDE.md wants a type word and a title. What
-# precedes the match may not be a word character or any of `& / . : -`, which
-# keeps an HTML entity (`&#123;`) and a URL's fragment (`x.com/page#12`) out; a
-# markdown heading needs a space after its `#`, so `## 3` never matches. Measured on the 53 walk files
-# on the user's Mac, 2026-09-18: 268 bare `#N`, 53 with a repository prefix, 18
-# links whose text is the number, and none inside code.
+# A bare issue, pull request or task number: `#` and digits, with whatever
+# repository name is glued to its front (`nedschorus#418`,
+# `nedschorus/nedschorus#418`), because each is a number where CLAUDE.md wants
+# a type word and a title. A repository name may not start after a word
+# character or any of `& / . : -`, so no piece of a URL's path becomes one. A
+# bare `#` may not follow `&` or a word character, which keeps an HTML entity
+# (`&#123;`) and a URL's fragment (`https://x.com/page#12`) out and still finds
+# every number in `#214/#169` and `#264-#268`. A URL without a scheme is not
+# kept out, nor one with `/` right before its `#` (`x.com/page#12` reads as an
+# owner/repo reference), and no walk file has either. A markdown heading needs
+# a space after its `#`, so `## 3` never matches. Measured on the 53 walk files
+# in this checkout, 2026-09-18: 340, of which 269 bare `#N`, 53 with a
+# repository prefix and 18 links whose text is the number; 32 follow the word
+# task, and 10 sit in inline code quoting a draft.
 BARE_REFERENCE_PATTERN = re.compile(
-    r"(?<![&\w/.:-])(?:[A-Za-z0-9][\w.-]*(?:/[\w.-]+)?)?#\d+(?!\w)")
+    r"(?:(?<![&\w/.:-])[A-Za-z0-9][\w.-]*(?:/[\w.-]+)?|(?<![&\w]))#\d+(?!\w)")
 
 # The heading of the section this program appends to a walk draft's
 # suggestions file, in the coverage heading's style.
 BARE_REFERENCES_HEADING = (
-    "## Bare issue and pull request numbers (added by cold-read-fast-read)")
+    "## Bare issue, pull request and task numbers (added by cold-read-fast-read)")
 
 
 def bare_references_in(text: str) -> list:
-    """Every bare issue or pull request number in `text`, as (line number,
+    """Every bare issue, pull request or task number in `text`, as (line number,
     reference) pairs in reading order, numbering lines from 1 the way an
     editor does."""
     return [(line_number, found.group(0))
@@ -633,8 +640,9 @@ def bare_references_section(references: list) -> str:
     if not references:
         lines.append("- None.")
     else:
-        lines.append("Replace each with its type word and its title, as a link: "
-                     "write PR [its title](its URL), not PR #426.")
+        lines.append("Replace each with its type word and its title, as a link "
+                     "when it can be opened: write PR [its title](its URL), "
+                     "not PR #426.")
         lines.append("")
         lines.extend(f"- Line {line_number}: {reference}"
                      for line_number, reference in references)
@@ -737,7 +745,7 @@ def main() -> int:
     bare_references = (None if on_records_route
                        else bare_references_in(target.read_text(encoding="utf-8")))
     if bare_references:
-        print(f"{PROGRAM}: bare issue or pull request numbers in this walk draft: "
+        print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk draft: "
               f"{len(bare_references)}; the suggestions file lists each one.",
               file=sys.stderr)
 
