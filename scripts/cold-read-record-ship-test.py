@@ -9,11 +9,20 @@ REMOTE: the override is the ruled scp-form destination and stub `ssh` and
 `rsync` binaries on PATH record what they were asked, so the case reads the
 invocation without a network. Nothing here touches ned-box.
 
+IN-PROCESS: the program is loaded with importlib and `socket.gethostname` is
+patched, the only way to reach the ned-box branch -- a subprocess's hostname
+cannot be faked -- where the copy is local but the printed citation must
+still name the host (nedschorus#299). Nothing here touches ned-box.
+
 Run: python3 scripts/cold-read-record-ship-test.py   (exit 0 = all passed)
 """
 
+import contextlib
+import importlib.util
+import io
 import json
 import os
+import socket
 import pathlib
 import shutil
 import subprocess
@@ -253,6 +262,37 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the destination constant in the script is the ruled one",
           f'LOG_STORE_RECORDS_DESTINATION = "{RULED_DESTINATION}"'
           in SHIP.read_text(encoding="utf-8"))
+
+    # --- IN-PROCESS: on ned-box the copy is local, the citation is not ------
+    # Loaded in this process so socket.gethostname can be patched; the
+    # override is removed so the constant decides, as it does in production.
+    saved_gethostname = socket.gethostname
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    try:
+        socket.gethostname = lambda: "ned-box"
+        spec = importlib.util.spec_from_file_location("cold_read_record_ship_on_ned_box", SHIP)
+        on_ned_box = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(on_ned_box)
+        copy_host, _ = on_ned_box.destination_for_this_machine()
+        box_store = scratch / "box-store" / "cold-read-records"
+        box_record = make_record(scratch / "box-records", "2026-09-09-on-the-box",
+                                 {"a.md": REPORT_A})
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            code = on_ned_box.ship_one(copy_host, pathlib.PurePosixPath(box_store), box_record)
+    finally:
+        socket.gethostname = saved_gethostname
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+
+    check("on ned-box the COPY needs no host, the store being a directory on that "
+          "machine's own disk", copy_host is None, repr(copy_host))
+    check("on ned-box the copy is local and the printed citation still names the "
+          "host, so the line pasted into a document resolves from the Mac as well",
+          code == 0 and printed.getvalue().startswith("shipped:")
+          and f"nedlern@ned-box:{box_store}/{box_record.name}" in printed.getvalue()
+          and (box_store / box_record.name / "a.md").read_text(encoding="utf-8") == REPORT_A,
+          printed.getvalue())
 
 print()
 if failures:

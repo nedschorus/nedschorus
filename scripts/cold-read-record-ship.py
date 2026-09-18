@@ -59,6 +59,13 @@ which is not a cold-read-record -- and, under --all, one summary line after
 them. Everything else is on stderr. Exit 0 when every directory shipped, 2 when
 any was refused and none failed, 1 when any failed, 64 for a bad invocation.
 
+THE CITATION NAMES THE HOST ON BOTH MACHINES. On ned-box the copy is local
+and the ssh/rsync host is None, but the printed line is pasted into
+documents read from either machine, so it carries the store's host from
+the constant whatever machine ran the copy (nedschorus#299; the seats run
+on ned-box, so that is where most citations are written). Only a test's
+override, a bare local path, prints without one.
+
 THE DESTINATION IS ONE CONSTANT, LOG_STORE_RECORDS_DESTINATION, so a move to
 cloud storage, which the user named as the fallback if ned-box proves
 unreliable, is one edit here plus one rsync of the store's contents. The
@@ -169,6 +176,20 @@ def destination_for_this_machine() -> tuple:
     return host, path
 
 
+def citation_host_for_this_machine():
+    """The host the printed citation names: the constant's, on every machine,
+    because the line is read from either. Only the test override's own host
+    replaces it, and a bare local override has none.
+
+    Kept apart from the COPY host destination_for_this_machine returns, which
+    is None on ned-box on purpose -- the copy there is a local directory copy
+    and must not run ssh (the seat shipper's namedtuple keeps the same two
+    hosts apart, for the same reason)."""
+    override = os.environ.get(DESTINATION_ENVIRONMENT_VARIABLE)
+    host, _ = split_destination(override or LOG_STORE_RECORDS_DESTINATION)
+    return host
+
+
 def provenance_comment_of(first_line: str) -> str:
     line = first_line.strip()
     return line if line.startswith(PROVENANCE_COMMENT_PREFIX) else "(no provenance comment)"
@@ -259,7 +280,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     """One directory, one stdout line, one exit code."""
     name = record_dir.name
     store_dir = records_path / name
-    citation = f"{host}:{store_dir}" if host else str(store_dir)
+    citation_host = citation_host_for_this_machine()
+    citation = f"{citation_host}:{store_dir}" if citation_host else str(store_dir)
 
     if not record_dir.is_dir() or not any(record_dir.iterdir()):
         print(f"FAILED: {name} — not a record directory with files: {record_dir}")
