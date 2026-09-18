@@ -27,27 +27,33 @@ WHAT IS PINNED HERE.
     GIT_DIR at a directory that does not exist: eight `saved:` lines, and not
     one word saying nothing had been checked.
 
-  - Which Claude cell failed decides what the closing text tells the reader
-    (user-ruled 2026-09-04: "opus falling back to fable is not valid. If
-    opus fails we stop working and wait for it to come back. If fable is not
-    available, just note that and continue"). An absent Opus review replaces
-    the triage text with a stop-and-wait text and forbids rerunning the cell
-    on another model; an absent Fable review keeps the triage text and the
-    note says to continue with the three reports that landed. Until that
-    ruling the good tier was a chain, Opus then Fable, and the case here was
-    the fallback case: the grid's FELL BACK line (added 2026-08-25, "I just
-    don't want it to fail silently") was verified by a hand-run probe kept
-    as a test. No pinned chain has a second model now, so that line has no
-    positive control through the grid; the lift machinery stays.
+  - A failed cell is retried once, with the same model, and no cell is
+    special (user-ruled 2026-09-11; the design is
+    docs/issues/413-cold-read-grid-cell-failure-handling-design.md, whose
+    section 8 lists the cases below). The first failure prints RETRYING:
+    with the attempt's cause and keeps the attempt-1 log; a retry that
+    lands prints saved: and its log is deleted; a retry that fails prints
+    FAILED (exit N): with the second attempt's cause, keeps both logs, and
+    the report is absent. Every run closes with ONE closing text in four
+    variants built from what landed -- all landed, some landed (the set is
+    valid and incomplete, and is triaged), none landed, or the target
+    changed -- replacing the Opus-absent and Fable-only branches of
+    2026-09-04 ("why is opus special? I don't think it should be"). Absent
+    reports are listed with their causes, every .md file in the record is
+    marked INCOMPLETE SET, an agent-cli whose every cell is absent for one
+    agent-cli-wide cause gets one AGENT-CLI DOWN: line, and a cause the user
+    can clear ends the text with "Tell the user:". A cause changes what is
+    reported, never what is decided: the cases below drive the stub through
+    the real limit texts and check that the retry, the closing text and the
+    exit code are the same whatever the cause said. The grid's FELL BACK
+    line (2026-08-25, "I just don't want it to fail silently") has no
+    positive control through the grid since no pinned chain has a second
+    model; the lift machinery stays.
 
   - The read is six cells: the defect-hunt pass on both tiers of both
     runtimes, and the terminology pass (user-ruled 2026-09-05) on the good
-    tier of both. The Opus-absent case is the good Claude cell of EITHER
-    pass: the cases below fail the terminology Opus cell alone and get the
-    stop-and-wait text, and fail the terminology Codex cell alone and get
-    the triage text, so the second pass is neither exempt from the ruling
-    nor able to trip it from the wrong runtime. The terminology cells run at
-    the effort the grid pins, which the stub reads off its own command line.
+    tier of both. The terminology cells run at the effort the grid pins,
+    which the stub reads off its own command line.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
     runtime's stderr into the log the grid lifts from, and the Codex CLI
@@ -118,11 +124,13 @@ Run: python3 scripts/cold-read-grid-test.py
 
 import datetime
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -176,8 +184,22 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # to its stderr before doing anything else — the Codex CLI's habit of copying
 # the model's own words onto stderr, which the cell re-emits into the log the
 # grid reads (nedschorus#244).
+# COLD_READ_GRID_TEST_STUB_ATTEMPT_COUNTER_DIRECTORY is a directory outside
+# the scratch repository (inside it, the counter file would be a stray write)
+# where the stub counts its launches per report name, which is how it knows
+# whether it is a cell's first attempt or its retry: the grid launches the
+# same command twice and the stub keeps no other state.
+# COLD_READ_GRID_TEST_STUB_FAILURE_PLAN, when set, is a JSON list of entries
+# {"fragment", "attempts", "stdout", "stdout_by_attempt", "edit"}: a cell
+# whose report name contains "fragment" (the first matching entry wins)
+# writes nothing and exits 1 on its first "attempts" launches, printing
+# "stdout" on stdout first -- the real limit texts of the cases below, with
+# `{family}` standing for the model's family name (Opus, Fable), as the
+# `claude` agent-cli's model-limit message names it -- or the attempt's own
+# text from "stdout_by_attempt" ({"2": ...}), and appending to the file
+# "edit" before failing, for a stray write by a failed first attempt.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
-import os, pathlib, re, sys
+import json, os, pathlib, re, sys
 
 echoed_text = os.environ.get("COLD_READ_GRID_TEST_STUB_ECHO_STDERR_TEXT")
 if echoed_text:
@@ -201,6 +223,32 @@ failing_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_
 if failing_fragment and failing_fragment in given.name:
     sys.stderr.write("stub runtime: this cell is refused by report name\n")
     sys.exit(1)
+attempt = 1
+counter_directory = os.environ.get("COLD_READ_GRID_TEST_STUB_ATTEMPT_COUNTER_DIRECTORY")
+if counter_directory:
+    counter = pathlib.Path(counter_directory) / given.name
+    counter.parent.mkdir(parents=True, exist_ok=True)
+    attempt = len(counter.read_text().splitlines()) + 1 if counter.is_file() else 1
+    with open(counter, "a", encoding="utf-8") as handle:
+        handle.write(f"attempt {attempt}\n")
+model = ""
+for flag in ("--model", "-m"):
+    if flag in sys.argv:
+        model = sys.argv[sys.argv.index(flag) + 1]
+family = model.split("-")[1].capitalize() if model.count("-") else model
+for entry in json.loads(os.environ.get("COLD_READ_GRID_TEST_STUB_FAILURE_PLAN") or "[]"):
+    if entry["fragment"] not in given.name:
+        continue
+    if attempt <= entry.get("attempts", 1):
+        text = entry.get("stdout_by_attempt", {}).get(str(attempt), entry.get("stdout", ""))
+        if text:
+            sys.stdout.write(text.replace("{family}", family) + "\n")
+        if entry.get("edit"):
+            with open(entry["edit"], "a", encoding="utf-8") as handle:
+                handle.write("The reviewer's own edit on a failed attempt.\n")
+        sys.stderr.write(f"stub runtime: attempt {attempt} of this cell fails by plan\n")
+        sys.exit(1)
+    break
 effort_log = os.environ.get("COLD_READ_GRID_TEST_STUB_EFFORT_LOG")
 if effort_log:
     effort = ""
@@ -289,6 +337,8 @@ def run_grid(repository, stub_directory, environment_overrides=None,
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = FIXED_RECORD_CLOCK_FOR_TESTS
+    environment["COLD_READ_GRID_TEST_STUB_ATTEMPT_COUNTER_DIRECTORY"] = str(
+        repository.parent / "stub-attempt-counts" / repository.name / str(time.time_ns()))
     environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / "cold-read-grid.py"),
@@ -386,7 +436,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # A moved target and a settled one call for opposite next actions, so the
     # exit-3 path must not close with the instructions to triage the set.
     check("a moved target does not get the closing instructions to triage",
-          "All six reviews are complete" not in result.stdout, repr(result.stdout))
+          "All six reports landed" not in result.stdout, repr(result.stdout))
     check("a moved target is told to stop editing and start a new cold-read run",
           "Stop editing the document" in result.stdout
           and "Do not triage this set" in result.stdout
@@ -460,7 +510,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a target nobody edited is not reported as changed",
           "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
     check("a settled target still gets the closing instructions to triage",
-          "All six reviews are complete" in result.stdout
+          "All six reports landed" in result.stdout
           and "Stop editing the document" not in result.stdout, repr(result.stdout))
     # Line breaks collapsed first: the closing text is wrapped, and a check
     # that missed the sentence because of where its line ended would fail for
@@ -472,146 +522,321 @@ with tempfile.TemporaryDirectory() as scratch:
           "line; triage them the same way as the defect-hunt reports." in closing_text,
           repr(result.stdout))
 
-    # --- A target that moved while a cell also failed -----------------------
+    # --- Every failure case below, in the design's terms ---------------------
+    # docs/issues/413-cold-read-grid-cell-failure-handling-design.md, section
+    # 8. The real limit texts (section 4) are the fixtures: line 2 of the two
+    # kept logs it cites, and the 2026-09-18 logged-out capture on ned-box.
+    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    MODEL_LIMIT_LINE = ("You've reached your {family} limit. Switch to another model, or "
+                        "manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
+                        "to continue.")
+
+    def lines_opening(result, prefix):
+        return [line for line in result.stdout.splitlines() if line.startswith(prefix)]
+
+    def markers_in(record_directory, prefix):
+        """The .md files of the set carrying a marker that opens `prefix`."""
+        return [path.name for path in sorted(record_directory.glob("*.md"))
+                if any(line.startswith(prefix)
+                       for line in path.read_text(encoding="utf-8").split("\n"))]
+
+    # --- A cell fails once and lands on retry --------------------------------
+    repository = build_scratch_repository(scratch, "checkout-retry-lands")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-hunt-floor.md", "attempts": 1}])})
+    saved_lines = lines_opening(result, "saved:")
+    retrying_lines = lines_opening(result, "RETRYING:")
+    check("a first failure prints RETRYING: naming the cell and its cause",
+          len(retrying_lines) == 1
+          and retrying_lines[0].startswith("RETRYING: claude-hunt-floor — exit-1 — ")
+          and "first attempt's log kept:" in retrying_lines[0],
+          f"stdout was {result.stdout!r}")
+    check("the retry lands: six saved, no FAILED line, the all-landed text, exit 0",
+          result.returncode == 0 and len(saved_lines) == 6
+          and lines_opening(result, "FAILED") == []
+          and "All six reports landed" in result.stdout,
+          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the attempt-1 log is kept and the attempt-2 log is deleted with the landed cells'",
+          sorted(path.name for path in record_directory.glob("*.stderr.log"))
+          == ["claude-hunt-floor.md.attempt-1.stderr.log"],
+          sorted(path.name for path in record_directory.glob("*.stderr.log")))
+    check("a set with no absent report carries no INCOMPLETE SET marker",
+          markers_in(record_directory, "<!-- INCOMPLETE SET:") == [])
+
+    # --- A failed first attempt's stray write is still reported ---------------
+    # The retry takes its own baseline after the first attempt's write, so
+    # the line has to be lifted from the first attempt's log before relaunch.
+    repository = build_scratch_repository(scratch, "checkout-stray-write-on-failed-attempt")
+    stray_relative_path = "docs/drafts/cold-read-grid-test-stray.md"
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "codex-hunt-good.md", "attempts": 1,
+          "edit": str(repository / stray_relative_path)}])})
+    stray_lines = lines_opening(result, "STRAY WRITE:")
+    check("a stray write by a failed first attempt reaches the grid's output",
+          stray_lines != [] and all(stray_relative_path in line for line in stray_lines),
+          f"stdout was {result.stdout!r}")
+    check("the stray line comes before the RETRYING line, from the attempt that wrote it",
+          result.stdout.index("STRAY WRITE:") < result.stdout.index("RETRYING:"),
+          repr(result.stdout))
+    check("that run still lands six and exits 0",
+          result.returncode == 0 and len(lines_opening(result, "saved:")) == 6,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    # --- A cell fails both attempts: absent, the some-landed text, the marker -
+    repository = build_scratch_repository(scratch, "checkout-one-cell-absent")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-terminology-good.md", "attempts": 2}])})
+    failed_lines = lines_opening(result, "FAILED")
+    check("RETRYING: then FAILED (exit 1) with the second attempt's cause",
+          len(lines_opening(result, "RETRYING:")) == 1 and len(failed_lines) == 1
+          and failed_lines[0].startswith("FAILED (exit 1): claude-terminology-good — exit-1 — ")
+          and "attempt-2.stderr.log" in failed_lines[0],
+          f"stdout was {result.stdout!r}")
+    check("five land and the grid exits 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 5,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    check("the some-landed text: valid and incomplete, triage what landed",
+          "5 of 6 reports landed in" in result.stdout
+          and "The set is valid and incomplete: triage the reports that landed." in result.stdout
+          and "All six reports landed" not in result.stdout
+          and "Stop here" not in result.stdout and "Wait for Opus" not in result.stdout,
+          repr(result.stdout))
+    check("the absent report is listed with its cause and its attempt-2 log",
+          any(line.startswith("- claude-terminology-good: exit-1 — ")
+              and line.endswith("claude-terminology-good.md.attempt-2.stderr.log)")
+              for line in result.stdout.splitlines()),
+          repr(result.stdout))
+    closing_text = " ".join(result.stdout.split())
+    check("the triage instructions read to every report that landed and record the absence",
+          "until you have read every report that landed" in closing_text
+          and "Record each absent report and its cause in triage.md." in closing_text
+          and "read all six" not in closing_text, repr(result.stdout))
+    check("an exit-N cause is not one the user can clear: no Tell the user sentence, no AGENT-CLI DOWN",
+          "Tell the user:" not in result.stdout and "AGENT-CLI DOWN:" not in result.stdout,
+          repr(result.stdout))
+    record_directory = record_directory_of(repository)
+    check("the INCOMPLETE SET marker is in all six .md files of the record",
+          len(markers_in(record_directory, "<!-- INCOMPLETE SET: 1 of 6 reports absent — "
+                                            "claude-terminology-good (exit-1 — ")) == 6,
+          markers_in(record_directory, "<!-- INCOMPLETE SET:"))
+    stamped = (record_directory / "claude-hunt-good.md").read_text(encoding="utf-8").split("\n")
+    check("the marker goes after the provenance stamp",
+          stamped[0].startswith("<!-- provenance:") and stamped[1].startswith("<!-- INCOMPLETE SET:"),
+          repr(stamped[:2]))
+    check("both attempts' logs of the absent cell are kept, the landed cells' deleted",
+          sorted(path.name for path in record_directory.glob("*.stderr.log"))
+          == ["claude-terminology-good.md.attempt-1.stderr.log",
+              "claude-terminology-good.md.attempt-2.stderr.log"],
+          sorted(path.name for path in record_directory.glob("*.stderr.log")))
+
+    # --- All three Claude cells fail both attempts with the account limit ----
+    # The 2026-09-10 outage, eight records of three unrelated FAILED lines.
+    repository = build_scratch_repository(scratch, "checkout-claude-down")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+    down_lines = lines_opening(result, "AGENT-CLI DOWN:")
+    check("one AGENT-CLI DOWN line, naming claude, the class and the reset text",
+          down_lines == ["AGENT-CLI DOWN: claude — account-limit — resets 8:50pm "
+                         "(America/Los_Angeles); 3 reports absent"],
+          f"down lines were {down_lines!r}; stdout={result.stdout!r}")
+    check("every RETRYING and FAILED line names account-limit with the reset text",
+          len(lines_opening(result, "RETRYING:")) == 3
+          and all("account-limit — resets 8:50pm (America/Los_Angeles)" in line
+                  for line in lines_opening(result, "RETRYING:") + lines_opening(result, "FAILED")),
+          repr(result.stdout))
+    check("the closing text restates the down line without the prefix, once",
+          result.stdout.count("- claude is down: account-limit — resets 8:50pm "
+                              "(America/Los_Angeles); 3 reports absent") == 1
+          and result.stdout.count("AGENT-CLI DOWN:") == 1, repr(result.stdout))
+    check("the closing text ends by telling the user the cause, with the log to check",
+          result.stdout.rstrip().splitlines()[-1].startswith(
+              "Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: ")
+          and result.stdout.rstrip().endswith("attempt-2.stderr.log)."),
+          repr(result.stdout.rstrip().splitlines()[-1]))
+    check("three land, the some-landed text, exit 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 3
+          and "3 of 6 reports landed in" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    # --- The account limit printed bare: an empty detail still names the class
+    # The agent-cli printed "You've hit your session limit" with nothing after
+    # it, so the cell's cause line ends `account-limit — ` and the grid's
+    # strip() took the separator's trailing space with it; partitioning on
+    # the full separator then found none, and the class "account-limit —"
+    # matched no class the grid knows, losing the AGENT-CLI DOWN line and
+    # the Tell-the-user sentence. Found by the same review as the marker
+    # case above:
+    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    repository = build_scratch_repository(scratch, "checkout-claude-down-bare-limit")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your session limit"}])})
+    down_lines = lines_opening(result, "AGENT-CLI DOWN:")
+    check("a bare limit text is still one AGENT-CLI DOWN line naming account-limit",
+          len(down_lines) == 1 and result.stdout.count("AGENT-CLI DOWN:") == 1
+          and down_lines[0].startswith("AGENT-CLI DOWN: claude — account-limit — ")
+          and down_lines[0].endswith("; 3 reports absent"),
+          f"down lines were {down_lines!r}; stdout={result.stdout!r}")
+    check("the user is still told the bare cause",
+          "Tell the user: claude account-limit — " in result.stdout, repr(result.stdout))
+
+    # --- Two Claude cells hit the account limit after the third landed -------
+    # The rule as the user revised it at item 3 of the design's walk
+    # (2026-09-16): the down line prints when a cell becomes absent with an
+    # agent-cli-wide class and every other cell of its agent-cli has either
+    # LANDED or is absent with the same class -- a report that landed before
+    # the limit hit does not stop the agent-cli from being reported down.
+    repository = build_scratch_repository(scratch, "checkout-claude-down-after-one-landed")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-hunt-floor.md", "attempts": 0},
+         {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+    check("one landed Claude cell and two absent with the account limit is still claude down",
+          lines_opening(result, "AGENT-CLI DOWN:")
+          == ["AGENT-CLI DOWN: claude — account-limit — resets 8:50pm "
+              "(America/Los_Angeles); 2 reports absent"]
+          and "- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 2 reports absent"
+          in result.stdout
+          and result.returncode == 1 and len(lines_opening(result, "saved:")) == 4,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    # --- All three Claude cells fail with a model limit: no agent-cli is down --
+    repository = build_scratch_repository(scratch, "checkout-model-limits")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-", "attempts": 2, "stdout": MODEL_LIMIT_LINE}])})
+    check("a model limit on every Claude cell is three absences, not an agent-cli down",
+          "AGENT-CLI DOWN:" not in result.stdout and "is down:" not in result.stdout
+          and len(lines_opening(result, "- claude-")) == 3, repr(result.stdout))
+    check("each absence names model-limit and the model's family",
+          any(line.startswith("- claude-hunt-good: model-limit — Opus (log:")
+              for line in result.stdout.splitlines())
+          and any(line.startswith("- claude-hunt-floor: model-limit — Fable (log:")
+                  for line in result.stdout.splitlines()), repr(result.stdout))
+    check("the user is told, one cause per agent-cli and class",
+          result.stdout.count("Tell the user: claude model-limit — ") == 1, repr(result.stdout))
+
+    # --- First attempts all account-limit; one retry fails otherwise ---------
+    repository = build_scratch_repository(scratch, "checkout-mixed-causes")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-hunt-floor.md", "attempts": 2,
+          "stdout_by_attempt": {"1": SESSION_LIMIT_LINE, "2": ""}},
+         {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+    retrying_lines = lines_opening(result, "RETRYING:")
+    check("three RETRYING lines name account-limit",
+          len(retrying_lines) == 3 and all("account-limit" in line for line in retrying_lines),
+          repr(retrying_lines))
+    check("the retry that failed otherwise is FAILED as exit-1, the others as account-limit",
+          any(line.startswith("FAILED (exit 1): claude-hunt-floor — exit-1 — ")
+              for line in lines_opening(result, "FAILED"))
+          and sum("account-limit" in line for line in lines_opening(result, "FAILED")) == 2,
+          repr(lines_opening(result, "FAILED")))
+    check("differing causes on one agent-cli are three facts, not one down line",
+          "AGENT-CLI DOWN:" not in result.stdout, repr(result.stdout))
+
+    # --- Three Codex cells fail both attempts with exit-N ----------------------
+    repository = build_scratch_repository(scratch, "checkout-codex-exits")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "codex-", "attempts": 2}])})
+    check("three exit-1 absences on codex: listed one by one, no down line, no Tell the user",
+          result.returncode == 1 and len(lines_opening(result, "- codex-")) == 3
+          and all("exit-1 — " in line for line in lines_opening(result, "- codex-"))
+          and "AGENT-CLI DOWN:" not in result.stdout and "Tell the user:" not in result.stdout,
+          repr(result.stdout))
+
+    # --- All six fail both attempts: the none-landed text ---------------------
+    repository = build_scratch_repository(scratch, "checkout-none-landed")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "-", "attempts": 2}])})
+    check("no report landed: the none-landed text, six absences, exit 1",
+          result.returncode == 1 and lines_opening(result, "saved:") == []
+          and "No report landed in" in result.stdout
+          and "so there is nothing to triage." in result.stdout
+          and len(lines_opening(result, "- ")) == 6
+          and "Start a new cold-read-full-run once the causes above that the user can "
+              "clear are cleared, or at once if none of them is." in result.stdout
+          and "Read every report in full" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    record_directory = record_directory_of(repository)
+    check("the marker still goes into the reference-check file, the set's one .md",
+          markers_in(record_directory, "<!-- INCOMPLETE SET: 6 of 6 reports absent") == ["reference-check.md"],
+          markers_in(record_directory, "<!-- INCOMPLETE SET:"))
+
+    # --- A cell program the grid cannot start (user-ruled 2026-09-16) --------
+    # The copied Claude launcher loses its execute permission, so Popen
+    # raises for all three Claude cells. Each is a failed attempt like any
+    # other: retried, then absent as program-unstartable, which is not
+    # agent-cli-wide; the run goes on rather than ending in a traceback.
+    repository = build_scratch_repository(scratch, "checkout-unstartable")
+    (repository / "scripts" / "cold-read-claude-cell.py").chmod(0o644)
+    result = run_grid(repository, stubs)
+    failed_lines = lines_opening(result, "FAILED")
+    check("an unstartable program is RETRYING then FAILED (exit none) as program-unstartable",
+          len(lines_opening(result, "RETRYING:")) == 3 and len(failed_lines) == 3
+          and all(line.startswith("FAILED (exit none): claude-")
+                  and "program-unstartable — " in line for line in failed_lines),
+          f"stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
+    check("the three Codex cells are unaffected: three land, some-landed text, exit 1",
+          result.returncode == 1 and len(lines_opening(result, "saved:")) == 3
+          and "3 of 6 reports landed in" in result.stdout, repr(result.stdout))
+    check("program-unstartable says nothing about the agent-cli: no down line",
+          "AGENT-CLI DOWN:" not in result.stdout, repr(result.stdout))
+    record_directory = record_directory_of(repository)
+    check("the unstartable attempts' logs hold the start error and are kept",
+          (record_directory / "claude-hunt-good.md.attempt-1.stderr.log").is_file()
+          and "could not start" in (record_directory / "claude-hunt-good.md.attempt-2.stderr.log")
+          .read_text(encoding="utf-8"),
+          sorted(path.name for path in record_directory.glob("*.stderr.log")))
+
+    # --- The target changes during a run that has an absent report ------------
     # The two conditions are independent and land together often enough to
-    # write down: the closing text follows the target change (do not triage,
-    # start a new cold-read run), so the note naming the failed cells must not send
-    # the reader back to a triage that is not happening. The floor-tier Claude
-    # cell fails outright here — the stub refuses claude-fable-5-1, the
-    # floor's only model, which is what the account's Fable limit does
-    # (2026-08-23; four cells on 2026-09-03) — while the good-tier Claude
-    # cells run on Opus and the Codex cells are untouched; all five save their
-    # reports and edit the document under review on the way out.
-    repository = build_scratch_repository(scratch, "checkout-changed-and-failed")
+    # write down: the Fable cell fails both attempts (what the account's Fable
+    # limit does) while the other five land and edit the document under review.
+    repository = build_scratch_repository(scratch, "checkout-changed-and-absent")
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH),
          "COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1"},
     )
-    saved_lines = [line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]
     check("a run can lose a cell and its target at once: five saved, exit 3",
-          result.returncode == 3 and len(saved_lines) == 5,
-          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
-    # Read the NOTE line itself rather than the whole output: the per-cell
-    # STRAY WRITE line also says "before triage", and it is emitted while the
-    # cells run, before the grid can know the target moved.
-    note_lines = [line for line in result.stdout.splitlines()
-                  if line.startswith("NOTE: ")]
-    check("the failed cell is still named on the moved-target path",
-          note_lines != [] and "1 review(s) failed" in note_lines[0],
-          f"note lines were {note_lines!r}")
-    check("that note does not send the reader back to triage a short set",
-          note_lines != [] and "before triage" not in note_lines[0],
-          f"note lines were {note_lines!r}")
-    check("that note says why rerunning the failed cells singly would not help",
-          note_lines != []
-          and "being replaced by a run against the settled document" in note_lines[0],
-          f"note lines were {note_lines!r}")
+          result.returncode == 3 and len(lines_opening(result, "saved:")) == 5,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    check("the target-changed text prints, then the absent report",
+          "Do not triage this set" in result.stdout
+          and result.stdout.index("Do not triage this set")
+          < result.stdout.index("- claude-hunt-floor: exit-1 — "),
+          repr(result.stdout))
+    check("the changed-target path carries no triage instructions",
+          "reports landed in" not in result.stdout and "Read every report in full" not in result.stdout,
+          repr(result.stdout))
+    record_directory = record_directory_of(repository)
+    marked = (record_directory / "claude-hunt-good.md").read_text(encoding="utf-8").split("\n")
+    check("both markers are written, the target-changed marker first, after the stamp",
+          marked[0].startswith("<!-- provenance:")
+          and marked[1].startswith("<!-- TARGET CHANGED DURING RUN:")
+          and marked[2].startswith("<!-- INCOMPLETE SET: 1 of 6 reports absent"),
+          repr(marked[:3]))
 
-    # --- An absent Opus review stops the read -------------------------------
-    # User-ruled 2026-09-04: "opus falling back to fable is not valid. If opus
-    # fails we stop working and wait for it to come back." The stub refuses
-    # to be claude-opus-5, the good tier's only model since that ruling, so
-    # both good-tier Claude cells -- defect-hunt and terminology -- fail
-    # outright and nothing falls back; the floor cell and the three Codex
-    # cells land. Before the ruling this case was the fallback case: the good
-    # tier ran on Fable and four reviews landed under a FELL BACK line.
-    repository = build_scratch_repository(scratch, "checkout-opus-absent")
-    result = run_grid(
-        repository, stubs,
-        {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-opus-5"},
-    )
-    saved_lines = [line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]
-    fell_back_lines = [line for line in result.stdout.splitlines()
-                       if line.startswith("FELL BACK:")]
-    note_lines = [line for line in result.stdout.splitlines()
-                  if line.startswith("NOTE: ")]
-    check("an Opus outage is a failed cell, not a fallback: no FELL BACK line",
-          fell_back_lines == [], f"lifted lines were {fell_back_lines!r}")
-    check("the other four reviews still land and the grid exits 1",
-          result.returncode == 1 and len(saved_lines) == 4,
-          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
-    check("the closing text says to stop and wait for Opus",
-          "Wait for Opus to come back" in result.stdout
-          and "start a new cold-read run" in result.stdout
-          and "grid again" not in result.stdout
-          and "Stop here" in result.stdout,
-          f"stdout was {result.stdout!r}")
-    check("the closing text does not also say the reviews are complete",
-          "All six reviews are complete" not in result.stdout,
-          f"stdout was {result.stdout!r}")
-    check("the note names both Opus cells and forbids rerunning them on another model",
-          note_lines != [] and "claude-hunt-good" in note_lines[0]
-          and "claude-terminology-good" in note_lines[0]
-          and "wait for Opus to come back" in note_lines[0]
-          and "Do not rerun the Opus cell on another model" in note_lines[0],
-          f"note lines were {note_lines!r}")
-    check("the note does not say to rerun the failed cells singly",
-          note_lines != [] and "Rerun them singly" not in note_lines[0],
-          f"note lines were {note_lines!r}")
-
-    # --- The terminology pass's Opus cell alone is the Opus-absent case ------
-    # The good Claude cell of EITHER pass failing is the case the ruling
-    # names. Refusing the model would fail both passes' cells at once, so the
-    # stub refuses by report name: only the terminology Opus cell fails, the
-    # defect-hunt Opus cell lands, and the closing text is still the
-    # stop-and-wait text.
-    repository = build_scratch_repository(scratch, "checkout-terminology-opus-absent")
-    result = run_grid(
-        repository, stubs,
-        {"COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT":
-         "claude-terminology-good.md"},
-    )
-    saved_lines = [line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]
-    note_lines = [line for line in result.stdout.splitlines()
-                  if line.startswith("NOTE: ")]
-    check("losing only the terminology Opus cell: five land, grid exits 1",
-          result.returncode == 1 and len(saved_lines) == 5
-          and any(line.endswith("/claude-hunt-good.md") for line in saved_lines),
-          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
-    check("the terminology Opus cell alone still gets the stop-and-wait text",
-          "Wait for Opus to come back" in result.stdout
-          and "start a new cold-read run" in result.stdout
-          and "grid again" not in result.stdout
-          and "Stop here" in result.stdout
-          and "All six reviews are complete" not in result.stdout,
-          f"stdout was {result.stdout!r}")
-    check("the note names the terminology Opus cell and forbids another model",
-          note_lines != [] and "claude-terminology-good" in note_lines[0]
-          and "Do not rerun the Opus cell on another model" in note_lines[0],
-          f"note lines were {note_lines!r}")
-
-    # --- The terminology pass's Codex cell alone is an ordinary absence ------
-    # The other runtime's good cell is not Opus: its absence keeps the triage
-    # text and gets the generic rerun-or-note text, not the Fable text either
-    # (it is not the floor cell), so the Opus-absent case is pinned to the
-    # Claude good cells and to nothing else in the second pass.
-    repository = build_scratch_repository(scratch, "checkout-terminology-codex-absent")
-    result = run_grid(
-        repository, stubs,
-        {"COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT":
-         "codex-terminology-good.md"},
-    )
-    saved_lines = [line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]
-    note_lines = [line for line in result.stdout.splitlines()
-                  if line.startswith("NOTE: ")]
-    check("losing only the terminology Codex cell: five land, grid exits 1",
-          result.returncode == 1 and len(saved_lines) == 5,
-          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
-    check("a missing terminology Codex cell keeps the triage text",
-          "All six reviews are complete" in result.stdout
-          and "Stop here" not in result.stdout,
-          f"stdout was {result.stdout!r}")
-    check("its note is the generic one: rerun singly or note the absence",
-          note_lines != [] and "codex-terminology-good" in note_lines[0]
-          and "Rerun them singly" in note_lines[0]
-          and "Opus to come back" not in note_lines[0]
-          and "Fable floor cell" not in note_lines[0],
-          f"note lines were {note_lines!r}")
+    # --- A Codex attempt's output holds the Claude limit text ----------------
+    # No Codex text is recognised, so the class is exit-1 whatever the line
+    # says, and the run is otherwise the same as that failure without the
+    # line: the cause changes what is reported, never what is decided.
+    repository = build_scratch_repository(scratch, "checkout-codex-quotes-limit")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "codex-terminology-good.md", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+    repository_plain = build_scratch_repository(scratch, "checkout-codex-plain-failure")
+    result_plain = run_grid(repository_plain, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "codex-terminology-good.md", "attempts": 2}])})
+    check("a Codex failure whose output starts with the Claude limit text is exit-1",
+          any(line.startswith("FAILED (exit 1): codex-terminology-good — exit-1 — ")
+              for line in lines_opening(result, "FAILED"))
+          and "account-limit" not in result.stdout and "AGENT-CLI DOWN:" not in result.stdout,
+          repr(result.stdout))
+    def decisions(text):
+        return (text.count("RETRYING:"), text.count("FAILED (exit"), text.count("saved:"),
+                "5 of 6 reports landed in" in text, "Tell the user:" in text)
+    check("the retry, the closing text and the exit code are the same as without the line",
+          result.returncode == result_plain.returncode == 1
+          and decisions(result.stdout) == decisions(result_plain.stdout),
+          f"{decisions(result.stdout)} vs {decisions(result_plain.stdout)}")
 
     # --- The terminology cells run at the effort the grid pins ---------------
     # max on both runtimes (user-ruled 2026-09-05, measured on the final
@@ -642,48 +867,6 @@ with tempfile.TemporaryDirectory() as scratch:
           and all("effort=max" in stamp and "cell=terminology" in stamp
                   for stamp in terminology_stamps),
           repr(terminology_stamps))
-
-    # --- An absent Fable review is noted and the read continues -------------
-    # The other half of the same ruling: "If fable is not available, just
-    # note that and continue." The stub refuses claude-fable-5-1, the floor
-    # tier's only model, which is what the account's Fable limit does
-    # (2026-08-23; four cells on 2026-09-03). The Opus and Codex reviews land,
-    # the closing text is the ordinary triage text, and the note says to
-    # continue with the five reports rather than to stop or to rerun.
-    repository = build_scratch_repository(scratch, "checkout-fable-absent")
-    result = run_grid(
-        repository, stubs,
-        {"COLD_READ_GRID_TEST_STUB_FAILING_MODEL": "claude-fable-5-1"},
-    )
-    saved_lines = [line for line in result.stdout.splitlines()
-                   if line.startswith("saved:")]
-    note_lines = [line for line in result.stdout.splitlines()
-                  if line.startswith("NOTE: ")]
-    check("a Fable outage loses one review: five land, grid exits 1",
-          result.returncode == 1 and len(saved_lines) == 5,
-          f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
-    check("the closing text is the triage text, not the stop text",
-          "All six reviews are complete" in result.stdout
-          and "Stop here" not in result.stdout,
-          f"stdout was {result.stdout!r}")
-    check("the note names the Fable cell and says to continue",
-          note_lines != [] and "claude-hunt-floor" in note_lines[0]
-          and "note its absence in triage.md and continue" in note_lines[0],
-          f"note lines were {note_lines!r}")
-    check("the note names the terminology reviews among those that landed",
-          note_lines != [] and "the Opus and Codex terminology reviews" in note_lines[0],
-          f"note lines were {note_lines!r}")
-    check("the note does not say to rerun singly or to wait for Opus",
-          note_lines != [] and "Rerun them singly" not in note_lines[0]
-          and "Opus to come back" not in note_lines[0],
-          f"note lines were {note_lines!r}")
-    record_directory = record_directory_of(repository)
-    check("the failed cell's stderr log is kept and the landed cells' logs are deleted",
-          record_directory is not None
-          and [path.name for path in record_directory.glob("*.stderr.log")]
-          == ["claude-hunt-floor.md.stderr.log"],
-          f"logs in {record_directory}: "
-          f"{sorted(path.name for path in record_directory.glob('*.stderr.log')) if record_directory else None}")
 
     # --- The model's echoed words are not the cell's status -----------------
     # The 2026-09-02 false positive (nedschorus#244): the Codex CLI copies the
@@ -911,6 +1094,59 @@ with tempfile.TemporaryDirectory() as scratch:
           result.stdout[-900:])
     check("a settled run that shipped still exits 0",
           result.returncode == 0, f"exit {result.returncode}")
+
+    # --- An incomplete set ships with its marker, so triage.md can follow ----
+    # The shipper is add-only and refuses a record whose stored file differs
+    # from the local one, so the INCOMPLETE SET marker must be in the reports
+    # BEFORE the run ships them: a marker written after the ship left the
+    # store's reports without it, and the post-triage ship the closing text
+    # asks for was refused, triage.md never reaching the store. Found by
+    # the reviewer's review on PR "cold-read-grid: a failed cell is retried
+    # once and reported with its cause, and every run closes with one
+    # closing text":
+    # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
+    repository = build_scratch_repository(scratch, "checkout-incomplete-set-ships-marked")
+    result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
+        [{"fragment": "claude-terminology-good.md", "attempts": 2}])})
+    record_directory = record_directory_of(repository)
+    record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
+    check("an incomplete set's run still says record: shipped:",
+          len(record_lines) == 1 and record_lines[0].startswith("record: shipped:"),
+          f"{record_lines!r}; stderr={result.stderr[-400:]!r}")
+    store_copy = repository / SCRATCH_LOG_STORE_RELATIVE / record_directory.name
+
+    def files_under(root):
+        return {path.relative_to(root): path.read_bytes()
+                for path in sorted(root.rglob("*")) if path.is_file()}
+
+    def ship_again():
+        environment = dict(os.environ)
+        environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
+        return subprocess.run(
+            [sys.executable, str(repository / "scripts" / "cold-read-record-ship.py"),
+             str(record_directory)],
+            capture_output=True, text=True, check=False, env=environment)
+
+    second_ship = ship_again()
+    check("shipping the marked record again is accepted, not REFUSED",
+          second_ship.returncode == 0 and second_ship.stdout.startswith("shipped:"),
+          f"exit {second_ship.returncode}; stdout={second_ship.stdout!r}; "
+          f"stderr={second_ship.stderr[-400:]!r}")
+    check("the store's copy equals the record byte for byte, the marker included",
+          store_copy.is_dir() and files_under(store_copy) == files_under(record_directory),
+          f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
+    stored_report = store_copy / "claude-hunt-good.md"
+    check("the store's copy of a report carries the INCOMPLETE SET marker",
+          stored_report.is_file()
+          and "<!-- INCOMPLETE SET:" in stored_report.read_text(encoding="utf-8"),
+          stored_report.read_text(encoding="utf-8")[:300] if stored_report.is_file() else "absent")
+    (record_directory / "triage.md").write_text("# Triage\n\nOne absent report.\n", encoding="utf-8")
+    third_ship = ship_again()
+    check("triage.md written after the run lands in the store on the next ship",
+          third_ship.returncode == 0 and third_ship.stdout.startswith("shipped:")
+          and "1 file(s) added" in third_ship.stdout
+          and (store_copy / "triage.md").is_file(),
+          f"exit {third_ship.returncode}; stdout={third_ship.stdout!r}")
 
     # --- A store that cannot be reached does not fail the read ----------------
     repository = build_scratch_repository(scratch, "checkout-store-unreachable")

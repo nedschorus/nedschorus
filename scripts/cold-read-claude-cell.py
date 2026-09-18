@@ -77,10 +77,11 @@ PROGRAM = "cold-read-claude-cell"
 #
 # When the account's Fable limit is hit (2026-08-23; four cold-read-cells
 # on 2026-09-03) the floor cold-read-cell has no further model to try: it
-# fails, the cold-read-grid prints its FAILED line, tells the reviewing
-# agent to note the absence and continue with the five reports that landed,
-# and exits 1 (user-ruled 2026-09-04: "If fable is not available, just note
-# that and continue"). A Sonnet fallback would make the cold-read-cell count
+# fails with the cause model-limit, the cold-read-grid retries it once and,
+# when the retry fails too, lists the report as absent in its closing text
+# and exits 1 with the set valid and incomplete (user-ruled 2026-09-04: "If
+# fable is not available, just note that and continue"; 2026-09-11: no
+# cell is special, nedschorus#413). A Sonnet fallback would make the cold-read-cell count
 # come out while running a retired reviewer under a floor-tier stamp, which
 # the user ruled worse than a visible failure (2026-08-25: "I just don't
 # want it to fail silently").
@@ -101,9 +102,12 @@ PROGRAM = "cold-read-claude-cell"
 # into a manual per-cell rerun. The 2026-09-04 ruling reverses that trade:
 # an Opus outage is a reason to stop the read, not to run it on a different
 # model, because a review stamped as the good cold-read-tier must be the
-# good cold-read-tier's model. The cold-read-grid's closing text says to wait
-# for Opus and run the cold-read-grid again (scripts/cold-read-grid.py, the
-# closing block of main()).
+# good cold-read-tier's model. What happens next is no longer Opus's own
+# case (user-ruled 2026-09-11, nedschorus#413: "why is opus special? I
+# don't think it should be"): the cold-read-grid retries the cell once on
+# the same model, reports the report absent like any other, and when every
+# Claude cell is absent for one agent-cli-wide cause says once that the
+# agent-cli is down (scripts/cold-read-grid.py).
 #
 # Every cold-read-tier on both runtimes is therefore a single-entry chain. The
 # tuple shape and the shared chain loop in scripts/cold-read-cell-common.py
@@ -213,6 +217,50 @@ def invocation_builder(effort: str):
     return build_invocation
 
 
+def model_family_name(model: str) -> str:
+    """`claude-fable-5-1` -> `Fable`, `claude-opus-5` -> `Opus`: the word the
+    `claude` agent-cli's model-limit message uses for the model."""
+    parts = model.split("-")
+    return parts[1].capitalize() if len(parts) > 1 and parts[1] else model
+
+
+# THE TEXTS THE `claude` AGENT-CLI PRINTS WHEN AN ATTEMPT FAILS FOR A REASON
+# IT CAN NAME (nedschorus#413, design section 4). None is guessed: each is a
+# real line, and the fixture rule (nedschorus#18, user-ruled 2026-09-02)
+# wants its source beside it. All three arrive on the agent-cli's standard
+# output, which the shared chain runner re-emits into the cold-read-cell's
+# log, and each is matched only by how a line starts.
+#
+#   account-limit  "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+#       line 2 of nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log,
+#       from scripts/cold-read-grid.py launching this program on the Mac,
+#       2026-09-10. Agent-cli-wide: the same limit fails every Claude cell.
+#       The detail is the rest of the line, "resets 8:50pm (America/Los_Angeles)".
+#   model-limit    "You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+#       line 2 of nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
+#       the same launch on the Mac, 2026-09-11. That model only: on
+#       2026-09-11 the Fable cell failed on it while both Opus cells landed.
+#       The prefix names the attempt's model family, and the detail is that
+#       family name.
+#   logged-out     "Not logged in · Please run /login"
+#       captured 2026-09-18 on ned-box (Claude Code 2.1.272) from a scratch
+#       directory outside any checkout, with an empty configuration
+#       directory so the real login was untouched:
+#       `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"`, exit 1, that
+#       line on stdout, stderr empty. Agent-cli-wide. The detail is the line.
+def recognised_failure_texts_for_model(model: str) -> list:
+    family = model_family_name(model)
+    return [
+        common.RecognisedFailureText(
+            "account-limit", "You've hit your session limit",
+            common.DETAIL_IS_REST_OF_LINE),
+        common.RecognisedFailureText(
+            "model-limit", f"You've reached your {family} limit", family),
+        common.RecognisedFailureText(
+            "logged-out", "Not logged in", common.DETAIL_IS_WHOLE_LINE),
+    ]
+
+
 def main() -> int:
     return common.run_cell(
         program=PROGRAM, runtime="claude", description=__doc__,
@@ -220,6 +268,7 @@ def main() -> int:
         tier_to_model_chain=TIER_TO_CLAUDE_MODEL_CHAIN,
         tier_to_effort=TIER_TO_REASONING_EFFORT,
         invocation_builder=invocation_builder,
+        recognised_failure_texts_for_model=recognised_failure_texts_for_model,
     )
 
 

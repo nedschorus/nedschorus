@@ -154,12 +154,15 @@ task's output file is silent whenever the command redirects its own stdout,
 as the grid's did. So the threshold is the instrument: a background task
 holds the handoff only while it is younger than
 --background-task-wait-minutes, and past that it is presumed stuck or
-open-ended and holds nothing. The default is 30, not the 15 the ruling
-offered as an example, because 15 would have killed the very run this is
-for: the 2026-09-11 grid died at 12.7 minutes needing about 20, and across
+open-ended and holds nothing. The default is 75. It was 30, not the 15 the
+ruling offered as an example, because 15 would have killed the very run this
+is for: the 2026-09-11 grid died at 12.7 minutes needing about 20, and across
 365 finished background tasks on the Mac (measured 2026-09-14) the 90th
 percentile is 20 minutes and the 95th is 31, with cold-read grid runs at
-8 to 27 minutes. The ceiling still bounds everything.
+8 to 27 minutes. It became 75 on 2026-09-18 with the cold-read-grid's retry
+(nedschorus#413, user-ruled 2026-09-16): a cold-read-cell that fails late is
+relaunched once, so a run can last most of two cells, and the slowest cell of
+that design's own review took 31 minutes. The ceiling still bounds everything.
 
 A launch is a tool result carrying `backgroundTaskId`, which a Monitor's
 result and a subagent's spawn do not; its age is read from the launch
@@ -172,7 +175,7 @@ TranscriptCouldNotBeFullyRead exactly as a half-written spawn does.
 
 Threshold: --threshold-used-percentage, default 50.
 Ceiling: --ceiling-used-percentage, default 65.
-Background task wait: --background-task-wait-minutes, default 30.
+Background task wait: --background-task-wait-minutes, default 75.
 """
 
 import argparse
@@ -237,10 +240,10 @@ HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
     "they finish, or when context reaches the ceiling."
 )
 
-# A background Bash task older than this no longer holds the handoff. Why 30
-# and not the 15 the ruling offered: the module docstring, with the
-# measurements.
-DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 30.0
+# A background Bash task older than this no longer holds the handoff. Why 75,
+# and why 30 before it rather than the 15 the ruling offered: the module
+# docstring, with the measurements.
+DEFAULT_BACKGROUND_TASK_WAIT_MINUTES = 75.0
 
 class TranscriptCouldNotBeFullyRead(Exception):
     """The in-flight scan could not read the whole transcript, so what it
