@@ -865,7 +865,7 @@ with tempfile.TemporaryDirectory() as workspace:
             check("the deferral tells the agent to start no new background tasks",
                   "start no new background tasks" in result.stderr, result.stderr[:250])
             check("the deferral names the wait as a way the handoff fires",
-                  "30 minute" in result.stderr, result.stderr[:300])
+                  "75 minute" in result.stderr, result.stderr[:300])
             check("a background-task deferral writes the deferral marker and not the fired one",
                   background_deferred_marker_file.exists() and not background_marker_file.exists(),
                   f"deferred={background_deferred_marker_file.exists()} "

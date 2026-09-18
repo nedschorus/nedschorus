@@ -132,6 +132,7 @@ WHAT IS PINNED HERE.
 Run: python3 scripts/cold-read-cell-common-test.py
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -558,6 +559,120 @@ with tempfile.TemporaryDirectory() as scratch:
           f"stderr={result.stderr!r}")
     check("the failure names the one attempt",
           "claude-opus-5(exit1)" in result.stderr, repr(result.stderr))
+
+    # --- Every failed attempt names its cause (nedschorus#413) ---------------
+    # The classifier's fixtures are real lines (the fixture rule,
+    # nedschorus#18): the session limit is line 2 of
+    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log
+    # and the Fable limit line 2 of
+    # nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
+    # both from the grid launching the Claude cell on the Mac; the logged-out
+    # line is the 2026-09-18 capture on ned-box, Claude Code 2.1.272,
+    # `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` from a scratch
+    # directory, exit 1, that line on stdout. The classes come from the
+    # launcher's texts, matched only by how a line starts and only in the
+    # agent-cli's own output; the module knows none of its own.
+    common_spec = importlib.util.spec_from_file_location(
+        "cold_read_cell_common_under_test", SCRIPTS_DIR / "cold-read-cell-common.py")
+    common_module = importlib.util.module_from_spec(common_spec)
+    common_spec.loader.exec_module(common_module)
+    claude_spec = importlib.util.spec_from_file_location(
+        "cold_read_claude_cell_under_test", SCRIPTS_DIR / "cold-read-claude-cell.py")
+    claude_module = importlib.util.module_from_spec(claude_spec)
+    claude_spec.loader.exec_module(claude_module)
+    SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
+    FABLE_LIMIT_LINE = ("You've reached your Fable limit. Switch to another model, or manage "
+                        "usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
+                        "to continue.")
+    LOGGED_OUT_LINE = "Not logged in · Please run /login"
+    PERMISSION_NOISE = ("Permission allow rule (/Users/el/.claude/settings.json): "
+                        "Glob(//Users/el/agents/**) is not matched by file permission checks\n")
+
+    def classify(stdout="", stderr="", exit_code=1, model="claude-fable-5-1", start_error=""):
+        return common_module.classify_failed_attempt(
+            stdout=stdout, stderr=stderr, exit_code=exit_code,
+            recognised_texts=claude_module.recognised_failure_texts_for_model(model),
+            start_error=start_error)
+
+    check("the session limit line is account-limit with the reset as its detail",
+          classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")
+          == ("account-limit", "resets 8:50pm (America/Los_Angeles)"),
+          repr(classify(stdout=PERMISSION_NOISE + SESSION_LIMIT_LINE + "\n")))
+    check("the Fable limit line is model-limit for a Fable attempt, the family as detail",
+          classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n") == ("model-limit", "Fable"),
+          repr(classify(stdout=PERMISSION_NOISE + FABLE_LIMIT_LINE + "\n")))
+    check("the same line on an Opus attempt is not that model's limit: exit-N",
+          classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")[0] == "exit-1",
+          repr(classify(stdout=FABLE_LIMIT_LINE + "\n", model="claude-opus-5")))
+    check("the logged-out capture is logged-out with the whole line as detail",
+          classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE),
+          repr(classify(stdout=LOGGED_OUT_LINE + "\n")))
+    check("a limit text inside a line, not at its start, is not recognised",
+          classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")[0] == "exit-1",
+          repr(classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")))
+    check("an agent-cli that could not be started is agent-cli-missing with the error",
+          classify(exit_code=None, start_error="[Errno 2] No such file or directory: 'claude'")
+          == ("agent-cli-missing", "[Errno 2] No such file or directory: 'claude'"))
+    check("exit 0 with no report is no-report",
+          classify(stdout="I read it and wrote nothing.\n", exit_code=0)
+          == ("no-report", "no report written"))
+    check("anything else is exit-N with the last non-empty stderr line, cut to 120",
+          classify(stdout="chat\n", stderr="first\n\n" + "x" * 200 + "\n\n", exit_code=2)
+          == ("exit-2", "x" * 120))
+    check("with no stderr the exit-N detail is the last stdout line; with none, no output",
+          classify(stdout="only stdout\n", exit_code=64) == ("exit-64", "only stdout")
+          and classify(stdout="only stdout\n", stderr=" \n\n", exit_code=64) == ("exit-64", "only stdout")
+          and classify(exit_code=-9) == ("exit--9", "no output"))
+    check("a Codex attempt recognises no text, so the Claude limit line is exit-1 there",
+          common_module.classify_failed_attempt(
+              stdout=SESSION_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
+          == ("exit-1", SESSION_LIMIT_LINE))
+    check("the family name is the model id's second word, capitalised",
+          claude_module.model_family_name("claude-fable-5-1") == "Fable"
+          and claude_module.model_family_name("claude-opus-5") == "Opus")
+
+    # Through the real cells: the cause line is the last line of the attempt
+    # in the log the grid reads, in the form the grid parses.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "cold-read-records" / "run-cause-a" / "claude-restate-floor.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"claude-fable-5-1": {"exit": 1, "stdout": FABLE_LIMIT_LINE + "\n"}},
+        report, "--tier", "floor",
+    )
+    check("a Claude cell that hit the Fable limit prints cause: model-limit — Fable",
+          result.returncode == 1
+          and "cold-read-claude-cell: cause: model-limit — Fable" in result.stderr,
+          repr(result.stderr))
+    cause_lines = [line for line in result.stderr.splitlines()
+                   if line.startswith("cold-read-claude-cell: cause:")]
+    check("the cause line is the last line of its own about the attempt",
+          len(cause_lines) == 1
+          and result.stderr.index("failed (exit 1)") < result.stderr.index("cause: model-limit"),
+          repr(result.stderr))
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "cold-read-records" / "run-cause-b" / "codex-restate-floor.md"
+    result = run_codex_cell(
+        repository, stubs,
+        {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
+        report,
+    )
+    check("a Codex cell printing the Claude limit text names exit-1, the line as detail",
+          f"cold-read-codex-cell: cause: exit-1 — {SESSION_LIMIT_LINE}" in result.stderr,
+          repr(result.stderr))
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = repository / "cold-read-records" / "run-cause-c" / "claude-restate-floor.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"stdout": "STUB CHAT: wrote nothing\n", "exit": 0}},
+        report, "--model", "stub-model-that-writes-nothing",
+    )
+    check("a model that exits 0 writing nothing names cause: no-report",
+          "cold-read-claude-cell: cause: no-report — no report written" in result.stderr,
+          repr(result.stderr))
 
     # --- The last model's report does not outlive its failure -------------
     # The credit exhaustion of 2026-08-23 in one case: a model writes its

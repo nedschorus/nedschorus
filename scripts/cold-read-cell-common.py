@@ -97,6 +97,7 @@ import shutil
 import subprocess
 import sys
 import time
+import typing
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
@@ -392,6 +393,96 @@ class WriteDetectorUnavailable(Exception):
 # after `{program}: `, and nothing else may. Pinned as constants because each
 # is a contract with the cold-read-grid, not a sentence to reword in passing;
 # scripts/cold-read-grid-test.py drives each one through a real cold-read-cell.
+# THE CAUSE OF A FAILED ATTEMPT (nedschorus#413; the design is
+# docs/issues/413-cold-read-grid-cell-failure-handling-design.md, section 4).
+# After every attempt that produced no report, a cold-read-cell program prints
+# one line of its own, `<program>: cause: <class> — <detail>`, as the last line
+# about that attempt. The cold-read-grid lifts the LAST such line from the
+# attempt's log with cell_status_line and carries it onto its RETRYING: and
+# FAILED lines and into its closing text, so the reviewing agent and the user
+# hear why an attempt failed and not only that it did. A cause changes what
+# the grid REPORTS, never what it DECIDES: whether a cold-read-cell is
+# retried, whether it is absent, which closing text prints and the exit code
+# turn only on whether a report landed, because a cause is read from text
+# and text can mislead (a model reviewing a document that quotes a limit
+# message could print that message).
+CAUSE_PHRASE = "cause:"
+CAUSE_SEPARATOR = " — "
+# The classes an agent-cli's own output can name. A line matches only by how
+# it STARTS, the rule nedschorus#244 applies to status lines, because text
+# found inside a line may be the model quoting a document; and each
+# agent-cli's texts are matched only in that agent-cli's own output, which is
+# why the launcher passes them and this module knows none of its own. A
+# class is AGENT-CLI-WIDE when it predicts the same failure for every
+# cold-read-cell of that agent-cli, which is what lets the grid say once that
+# the agent-cli is down.
+AGENT_CLI_WIDE_CAUSE_CLASSES = frozenset(
+    {"account-limit", "logged-out", "agent-cli-missing"})
+# The classes whose cause the user can clear -- a reset time passing, a
+# login, an install, a usage setting -- so the grid's closing text tells him.
+USER_CLEARABLE_CAUSE_CLASSES = frozenset(
+    {"logged-out", "agent-cli-missing", "account-limit", "model-limit"})
+# An exit-N cause's detail is the agent-cli's last non-empty line, cut to this.
+CAUSE_DETAIL_MAX_CHARACTERS = 120
+# What the detail of a recognised text is: the rest of the matched line, the
+# whole matched line, or the fixed text the launcher gives instead.
+DETAIL_IS_REST_OF_LINE = "rest-of-line"
+DETAIL_IS_WHOLE_LINE = "whole-line"
+
+
+class RecognisedFailureText(typing.NamedTuple):
+    """One text an agent-cli prints when an attempt fails for a nameable
+    reason: the cause class it names, the text a line must START with, and
+    what the detail is (DETAIL_IS_REST_OF_LINE, DETAIL_IS_WHOLE_LINE, or a
+    fixed string)."""
+
+    cause_class: str
+    line_prefix: str
+    detail: str
+
+
+def classify_failed_attempt(
+    *, stdout: str, stderr: str, exit_code, recognised_texts, start_error: str = "",
+) -> tuple:
+    """(class, detail) for one attempt that produced no report.
+
+    Tested in this order, the first match naming the cause: the launcher's
+    recognised texts against every line of the agent-cli's own stdout and
+    stderr; then `agent-cli-missing` when `start_error` is set, which is the
+    OSError text from the attempt that could not start the agent-cli at all;
+    then `no-report` for an exit of 0 with no verified report; then `exit-N`
+    with the agent-cli's last non-empty stderr line as the detail, or its
+    last stdout line when stderr is empty, cut to CAUSE_DETAIL_MAX_CHARACTERS.
+    That last class covers 64 for a refused invocation, a traceback, and a
+    signal, which Python reports as a negative number.
+    """
+    for line in f"{stdout}\n{stderr}".splitlines():
+        stripped = line.strip()
+        for text in recognised_texts or ():
+            if stripped.startswith(text.line_prefix):
+                if text.detail == DETAIL_IS_REST_OF_LINE:
+                    detail = stripped[len(text.line_prefix):].lstrip(" \t·")
+                elif text.detail == DETAIL_IS_WHOLE_LINE:
+                    detail = stripped
+                else:
+                    detail = text.detail
+                return text.cause_class, detail
+    if start_error:
+        return "agent-cli-missing", start_error
+    if exit_code == 0:
+        return "no-report", "no report written"
+    last_lines = [line.strip() for line in (stderr if stderr.strip() else stdout).splitlines()
+                  if line.strip()]
+    detail = last_lines[-1][:CAUSE_DETAIL_MAX_CHARACTERS] if last_lines else "no output"
+    return f"exit-{exit_code}", detail
+
+
+def cause_line(program: str, cause_class: str, detail: str) -> str:
+    """The one status line that names an attempt's cause, in the form the
+    cold-read-grid parses: `<program>: cause: <class> — <detail>`."""
+    return f"{program}: {CAUSE_PHRASE} {cause_class}{CAUSE_SEPARATOR}{detail}"
+
+
 STRAY_WRITE_CHECK_SKIPPED_PHRASE = "stray writes were not checked for this run"
 STRAY_WRITE_PHRASE = "files outside its report changed while it ran"
 FELL_BACK_PHRASE = "fell back to"
@@ -768,9 +859,19 @@ def run_model_chain(
     prompt: str, report: pathlib.Path, cell: str, tier: str, target_argument: str,
     baseline, cell_started_at: float, prompt_file_argument: str = "",
     recover_report_from_stdout=None, model_to_effort=None,
-    runtime_prompt_name: str = "",
+    runtime_prompt_name: str = "", recognised_failure_texts_for_model=None,
 ) -> int:
     """Try each model in turn until one produces a report; then stamp it.
+
+    EVERY FAILED ATTEMPT NAMES ITS CAUSE (nedschorus#413). The three ways an
+    attempt ends without a report -- the agent-cli could not be started, it
+    exited non-zero, it exited 0 having written nothing -- each end with one
+    `cause:` line from `classify_failed_attempt`, given this launcher's
+    recognised texts for the model that ran (`recognised_failure_texts_for_model`,
+    a callable of the model id; None means no text is recognised, and every
+    failure is agent-cli-missing, no-report or exit-N). It is the last line
+    this program prints about the attempt, so the grid takes the last cause
+    line in the log as the attempt's.
 
     A CHAIN WHOSE MODELS RUN AT DIFFERENT EFFORTS (2026-09-07). Until the
     restater judge (scripts/cold-read-restater-judge-cell.py) every chain ran
@@ -851,10 +952,12 @@ def run_model_chain(
         # stdout has been captured since 2026-08-23, when Fable ran out of
         # credits and the whole cold-read-cell log came to 54 bytes --
         # "claude-fable-5 failed (exit 1)" -- with the runtime's own
-        # explanation nowhere in it; the cold-read-grid decides whether to tell
-        # the user his CLI is logged out by searching this cold-read-cell's
-        # log for the runtime's words, so a discarded stream leaves that
-        # guard reading a channel that cannot carry what it tests for. stderr
+        # explanation nowhere in it; this program's own classifier
+        # (classify_failed_attempt) reads the captured streams for the
+        # agent-cli's limit and logged-out texts and names the cause the
+        # cold-read-grid carries to the user, so a discarded stream leaves
+        # that classifier reading a channel that cannot carry what it tests
+        # for. stderr
         # joined it 2026-08-25: it had been passed straight through to the
         # log, which the cold-read-grid DELETES on success, and it is the
         # only channel carrying the Codex CLI's token total -- so across six
@@ -881,7 +984,12 @@ def run_model_chain(
             # names its own cause is worth more than that collision.
             failed_attempts.append(f"{model}({type(error).__name__})")
             print(f"{program}: {model} could not be run: {error}", file=sys.stderr)
+            print(cause_line(program, *classify_failed_attempt(
+                stdout="", stderr="", exit_code=None, recognised_texts=(),
+                start_error=str(error))), file=sys.stderr)
             continue
+        recognised_texts = (recognised_failure_texts_for_model(model)
+                            if recognised_failure_texts_for_model else ())
         if completed.stderr:
             print(completed.stderr, file=sys.stderr, end="")
         if completed.returncode != 0:
@@ -889,6 +997,10 @@ def run_model_chain(
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
             print(f"{program}: {model} failed (exit {completed.returncode})", file=sys.stderr)
+            print(cause_line(program, *classify_failed_attempt(
+                stdout=completed.stdout or "", stderr=completed.stderr or "",
+                exit_code=completed.returncode, recognised_texts=recognised_texts)),
+                file=sys.stderr)
             continue
         # The near-miss check goes HERE and not on the non-zero-exit path
         # above: the 2026-08-25 incident was a model that exited 0 having
@@ -922,6 +1034,9 @@ def run_model_chain(
             if completed.stdout:
                 print(completed.stdout, file=sys.stderr)
             print(str(refusal), file=sys.stderr)
+            print(cause_line(program, *classify_failed_attempt(
+                stdout=completed.stdout or "", stderr=completed.stderr or "",
+                exit_code=0, recognised_texts=recognised_texts)), file=sys.stderr)
             continue
         produced_by = model
         # THIS ATTEMPT'S STDERR, and nothing else. Two narrowings, each
@@ -992,7 +1107,7 @@ def run_model_chain(
 def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
-    recover_report_from_stdout=None,
+    recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
 ) -> int:
     """A whole cold-read-cell, start to finish. Each launcher is this call plus its pins.
 
@@ -1059,6 +1174,7 @@ def run_cell(
         prompt_file_argument=args.prompt_file or "",
         recover_report_from_stdout=recover_report_from_stdout,
         runtime_prompt_name=runtime_prompt_name,
+        recognised_failure_texts_for_model=recognised_failure_texts_for_model,
     )
 
 

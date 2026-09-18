@@ -162,6 +162,24 @@ def invocation_builder(effort: str):
     return build_invocation
 
 
+# NO TEXT OF THE `codex` AGENT-CLI IS RECOGNISED (nedschorus#413, design
+# section 4), so every failed Codex attempt's cause is agent-cli-missing,
+# no-report or exit-N, whose detail is the agent-cli's last stderr line. No
+# quota text has been captured from a run. The logged-out capture was made
+# on 2026-09-18 on ned-box (codex-cli 0.153.4) from a scratch directory
+# outside any checkout with an empty CODEX_HOME:
+# `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only --skip-git-repo-check "say hi"`
+# exits 1 with, on stderr, lines of the form
+# `2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses`.
+# A line that starts with a timestamp cannot be recognised by how it starts,
+# which is the only match the design allows, so that failure lands as exit-1
+# with the 401 line as its detail, which the user can still read. Adding a
+# match on text inside a line is a decision for the user, not this file.
+def recognised_failure_texts_for_model(model: str) -> list:
+    del model
+    return []
+
+
 def main() -> int:
     return common.run_cell(
         program=PROGRAM, runtime="codex", description=__doc__,
@@ -169,6 +187,7 @@ def main() -> int:
         tier_to_model_chain=TIER_TO_CODEX_MODEL_CHAIN,
         tier_to_effort=TIER_TO_REASONING_EFFORT,
         invocation_builder=invocation_builder,
+        recognised_failure_texts_for_model=recognised_failure_texts_for_model,
     )
 
 
