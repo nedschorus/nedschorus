@@ -31,10 +31,18 @@ What it does, per seat:
      the seat (user-ruled 2026-09-18), and on an explicit yes retires that
      session (the step resupervise-seat.py already performs) and assesses the
      seat as though it were not there; a seat whose supervisor recorded its
-     agent's exit (2a) is then restarted on that yes. Run unattended — at boot,
-     under restart-live-seats-at-login — nothing is asked and the refusal
-     stands exactly as it did. A session that cannot be proven idle is refused
-     with no question, attended or not.
+     agent's exit (2a) is then restarted on that yes. The proof is taken again
+     after the yes, immediately before the retire, and a session still holding
+     the name that is no longer only an idle shell is left alone and the seat
+     reported NOT RESTARTED (ruled 2026-09-18), since the operator's answer can
+     come any time later. A session gone by then holds no work, and the
+     recovery goes on as before; when tmux cannot say which, the seat is
+     refused for that. Run unattended — at boot, under
+     restart-live-seats-at-login — nothing is asked and the refusal stands
+     exactly as it did. A session that cannot be proven idle is refused with
+     no question, attended or not. A dry run asks nobody; for a seat it would
+     ask about, its line quotes the REFUSED line a no or nobody to ask gives,
+     so a practice run counts that seat as not recovered (ruled 2026-09-18).
   2. Defer when an unconsumed handoff IS waiting: relaunching plain is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
@@ -394,6 +402,13 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
 
     pane_process_ids are those panes' process ids, which the caller hands back
     to the occupancy check after retiring the session.
+
+    Taken twice when an operator is asked: by assess_seat, before the
+    question, and by recover_seat again after a yes, immediately before the
+    retire (ruled 2026-09-18), since anything may have started in that shell
+    while the question waited. A False here does not say whether the session
+    is still there, so recover_seat asks tmux_session_alive_anywhere that
+    before it leaves the session alone.
     """
     pane_process_ids = []
     sockets_holding = []
@@ -1218,7 +1233,9 @@ def predicted_assessment_once_the_leftover_idle_shell_is_closed(
     restart. The two can disagree when the seat's state moves while the
     operator thinks — a supervisor starting, a handoff landing — and then the
     real outcome wins and the line it prints says what actually happened. No
-    attempt is made to close that gap.
+    attempt is made to close that gap, except for the leftover shell itself:
+    recover_seat proves it idle again immediately before the retire (ruled
+    2026-09-18), because the retire kills whatever holds the seat's name.
 
     It is assess_seat itself, reading the live session as closed and excusing
     its panes from the occupancy check as the reassessment will. Past the tmux
@@ -1340,12 +1357,17 @@ SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER = "NOT RELAUNCHED, AT ITS OWN REQUEST"
 # So is a seat whose supervisor recorded its agent's exit (nedschorus#242
 # change 2): nothing is launched for it, and it is down.
 SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER = "NOT RELAUNCHED AFTER A RECORDED EXIT"
+# So is a seat an operator said to restart whose leftover shell's session, still
+# holding the seat's name, could no longer be proven idle when it was about to
+# be closed: it was left alone, so the seat is still down (ruled 2026-09-18).
+SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER = "NOT RESTARTED"
 SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     "REFUSED",
     "LAUNCH FAILED",
     "LAUNCHED BUT DID NOT COME UP",
     SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER,
     SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER,
+    SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER,
 )
 # The report class for assess_seat's seat-already-running verdict. Named so the
 # suites can pin that it contains none of the markers above.
@@ -1360,6 +1382,15 @@ LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING = {
     "refuse": "REFUSED",
     "seat-already-running": SEAT_ALREADY_RUNNING_REPORT_MARKER,
 }
+# The report, after the seat's name, when an operator has said yes but the
+# leftover shell's tmux session, still holding the seat's name, can no longer
+# be proven an idle shell, so it is not closed. The user's words, approved
+# 2026-09-18 after he asked of the line before them "What are we refusing. I
+# don't care about tmux sessions."; kept at this one site so that a rewording
+# is one edit.
+LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT = (
+    f"{SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER} — something may have "
+    "started in it while you were answering, so it was left alone")
 
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
@@ -1457,10 +1488,14 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                         "With no terminal it refuses")
             question = leftover_idle_shell_question_for_seat(name, predicted_verdict,
                                                              predicted_detail)
+            # The line an unattended run gives, which a no gives too, is
+            # quoted whole, as the recorded exit's dry run quotes its own, so
+            # its REFUSED counts in main: a practice run exits 1 when any seat
+            # would stay down with nobody at the keyboard (ruled 2026-09-18).
             return (f"{name}: would ask an operator at a terminal — \"{question}\" — and on a "
                     f"yes close that session and "
                     f"{what_a_yes_does(predicted_verdict, predicted_detail)} ({shell_detail}); "
-                    "with no terminal it refuses")
+                    f"on a no, or with no terminal, it reports: REFUSED — {refusal}")
         if retired_pane_process_ids is not None:
             # A session still holding the name after the retire below. Asking
             # again would loop; this tool cannot clear that state.
@@ -1482,6 +1517,33 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         print(f"recover-crashed-seats: {shell_detail}")
         if not ask_operator_yes_or_no(question):
             return f"{name}: REFUSED — {refusal}"
+        # The proof again, immediately before the retire (ruled 2026-09-18, on
+        # the independent review's question): the operator may think for as
+        # long as he likes, and the retire kills whatever holds the seat's name
+        # when it runs — work he started in that very shell while the question
+        # waited included. So a yes closes the session only if it is still
+        # nothing but an idle shell. The panes this proof finds are the ones
+        # the retire closes, so they, not the first proof's, are the panes
+        # excused from the occupancy check after it.
+        still_a_leftover_shell, rechecked_pane_process_ids, _ = (
+            tmux_session_is_a_leftover_idle_shell(name, seat_directory))
+        if still_a_leftover_shell:
+            pane_process_ids = rechecked_pane_process_ids
+        else:
+            # What is left alone is a session still there, since only a session
+            # can hold work; tmux is asked whether one is, never the proof's
+            # words. Gone — the operator exited the shell himself, say — holds
+            # no work, so the recovery goes on as it did before the recheck:
+            # the retire finds nothing, and the first proof's panes are
+            # excused. With no answer from tmux, the refusal is the one
+            # assess_seat gives for it, in that call's own words. The retire
+            # would not report it: it reads an unanswered socket as holding
+            # nothing.
+            session_still_there, liveness_detail = tmux_session_alive_anywhere(name)
+            if session_still_there is None:
+                return f"{name}: REFUSED — {liveness_detail}"
+            if session_still_there:
+                return f"{name}: {LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT}"
         killed_sockets, retire_failure = resupervise.retire_seat_tmux_session(name)
         if retire_failure is not None:
             return f"{name}: REFUSED — {retire_failure}"
