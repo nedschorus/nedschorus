@@ -61,4 +61,4 @@ The minutes enables recovery after any interruption on this machine — the walk
 
 ## Closing
 
-After the last item: confirm the final item's capture landed (or that it yielded none), then one closing sentence that states the walk is complete and the clickable link to the walk's minutes. NOT: produce a recap after the walk is closed — the final step already summarized it. 
+After the last item: confirm the final item's capture landed (or that it yielded none), then one closing sentence that states the walk is complete and the clickable link to the walk's minutes. Before that sentence run `scripts/walk-files-ship.py <name>`, again whenever the walk is reopened and closed; its one line ends with the minutes' citation to link, and a line opening FAILED or REFUSED is shown to the user as it is, before the closing sentence. NOT: produce a recap after the walk is closed — the final step already summarized it. 
