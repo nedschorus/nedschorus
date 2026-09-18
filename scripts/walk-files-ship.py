@@ -155,18 +155,33 @@ def walk_destination_for_this_machine() -> WalkStoreDestination:
 
 def walk_name_and_directory(argument: str):
     """(walk name, directory) from a walk name, resolved under docs/walk/, or
-    from a path to any one of the walk's files, whose role suffix is stripped.
-    The path form is what the tests use, docs/walk/ being gitignored."""
+    from a path to any one of the walk's files. The path form is what the tests
+    use, docs/walk/ being gitignored.
+
+    In the path form the walk's name is found by PRESENCE, not by stripping a
+    role suffix alone, because a walk's own name may end in a role suffix: the
+    reviewer's case, docs/walk/cold-read-and-walk-file-names-and-dispositions.md,
+    which stripping alone resolved to a shorter walk that does not exist. The
+    candidates are the full stem and, for each role suffix the stem ends with,
+    the stem without it; the longest candidate whose required files (the walk
+    text and the minutes) are both in the directory is the walk. When none
+    qualifies, the stripped form is returned as before, so the FAILED line still
+    names a sensible walk."""
     if "/" in argument or argument.endswith(".md"):
         path = pathlib.Path(argument)
         if not path.is_absolute():
             path = REPO_ROOT / path
+        directory = path.parent.resolve()
         stem = path.name[:-3] if path.name.endswith(".md") else path.name
+        candidates = [stem]
         for suffix, _ in WALK_FILE_ROLES:
             if suffix and stem.endswith(suffix):
-                stem = stem[:-len(suffix)]
-                break
-        return stem, path.parent.resolve()
+                candidates.append(stem[:-len(suffix)])
+        for candidate in candidates:
+            if all((directory / walk_file_name(candidate, suffix)).is_file()
+                   for suffix in REQUIRED_ROLE_SUFFIXES):
+                return candidate, directory
+        return candidates[-1], directory
     return argument, WALK_DIRECTORY
 
 

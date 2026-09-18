@@ -178,6 +178,19 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     check("a bare name resolves under docs/walk/ and a walk not there is exit 64 FAILED",
           result.returncode == 64 and result.stdout.startswith("FAILED:")
           and "docs/walk" in result.stdout, result.stdout)
+    # A walk whose own name ends in a role suffix: the name is found by which
+    # candidate has its walk text and minutes present, not by stripping alone
+    # (the reviewer's case, cold-read-and-walk-file-names-and-dispositions).
+    suffixed = "walk-about-dispositions"
+    suffixed_walk_text = write_walk(walks, suffixed, FILES)
+    result = ship(local_destination, str(suffixed_walk_text))
+    check("a walk whose name ends in a role suffix is found by its walk-text path",
+          result.returncode == 0 and result.stdout.startswith(f"shipped: {suffixed} "),
+          result.stdout + result.stderr)
+    result = ship(local_destination, str(walks / f"{suffixed}-minutes.md"))
+    check("the same walk shipped by its minutes path resolves to the same name",
+          result.returncode == 0 and result.stdout.startswith(f"shipped: {suffixed} "),
+          result.stdout + result.stderr)
 
     # --- Missing files ------------------------------------------------------
     partial = "partial-walk"
