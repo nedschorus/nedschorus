@@ -648,8 +648,7 @@ QUOTE_MINIMUM_WORDS = 4
 
 def normalized_for_quote_match(text: str) -> str:
     """Whitespace and markdown emphasis vary freely between a quote and its
-    source; both sides are compared with them normalized away (the same rule
-    as scripts/md-drift-lint.py)."""
+    source; both sides are compared with them normalized away."""
     return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text)).strip()
 
 

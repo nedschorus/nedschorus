@@ -10,9 +10,11 @@ Checks, per file type:
 
   .md   - repo paths named in backticks or markdown links exist on disk
           (a path this repository deliberately does not track is skipped;
-          a path cited with a line number, `file.md:120`, is checked as
-          the file it names)
-        - markdown link targets resolve (external schemes skipped)
+          a backtick citation with a line number, `file.md:120`, is checked
+          as the file it names)
+        - markdown link targets resolve (external schemes skipped; a link
+          target keeps any line-number suffix, because a link written
+          `file.md:120` is a broken link)
         - YYYY-MM-DD tokens are real calendar dates
         - a backtick command naming an existing project script also names
           only flags that appear in that script's source
@@ -187,12 +189,18 @@ def without_line_suffix(token: str) -> str:
     line-numbered citation in this project unchecked (added 2026-09-17).
     Only a trailing all-digit suffix is stripped, so `git show REF:path`,
     a URL and a Windows drive letter are untouched.
+
+    For backtick citations only, never for a markdown link target: GitHub
+    serves a link to `design.md:120` as a 404, so a link carrying a line
+    number is a broken link and must still be reported as one.
     """
     match = LINE_SUFFIXED_PATH.match(token)
     return match.group("path") if match else token
 
 
 def looks_like_repo_path(token: str) -> bool:
+    # Only ever called on words from a backtick span, so the line-number
+    # strip is safe here; see without_line_suffix.
     token = without_line_suffix(token)
     if any(marker in token for marker in SKIP_MARKERS):
         return False
@@ -237,7 +245,7 @@ def resolve(token: str, md_path: Path, repo_root: Path):
     linter that always complains about the central design document is one
     every reader learns to skim past.
     """
-    token = without_line_suffix(token).lstrip("/") or token
+    token = token.lstrip("/") or token
     candidates = [repo_root / token, md_path.parent / token]
     for candidate in candidates:
         if candidate.exists():
@@ -283,9 +291,16 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
             # backticked number is checked against.
             if "/" not in word:
                 continue
+            # A line-numbered citation, `docs/design.md:120`, is checked as
+            # the file it names. The stripped path goes to BOTH questions:
+            # git check-ignore does not match `CLAUDE.local.md:4` against a
+            # `CLAUDE.local.md` pattern, so asking it about the raw word
+            # reported ignored files as missing. The finding still quotes the
+            # word as written.
+            path = without_line_suffix(word)
             if (looks_like_repo_path(word)
-                    and resolve(word, md_path, repo_root) is None
-                    and not ignored_by_git(word, md_path, repo_root)):
+                    and resolve(path, md_path, repo_root) is None
+                    and not ignored_by_git(path, md_path, repo_root)):
                 yield f"path does not exist: {word}"
         # Flag check: a command whose FIRST word is a project script must name
         # only flags that script's source contains.
@@ -321,8 +336,11 @@ def canonical_number(token: str) -> str:
 def referenced_files(line: str, md_path: Path, repo_root: Path):
     """The distinct existing files a line names in backticks or links."""
     tokens = []
+    # A backticked `scripts/x.py:40` names scripts/x.py. A link target keeps
+    # its suffix, as it does in check_markdown_links: see without_line_suffix.
     for match in BACKTICK_TOKEN.finditer(line):
-        tokens.extend(word for word in match.group(1).strip().split()
+        tokens.extend(without_line_suffix(word)
+                      for word in match.group(1).strip().split()
                       if looks_like_repo_path(word))
     for match in MARKDOWN_LINK.finditer(line):
         target = match.group(1)

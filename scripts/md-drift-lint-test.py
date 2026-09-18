@@ -182,8 +182,17 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("see `docs/ghost-design.md:40`", root)
     check("a line-numbered citation of a missing file is reported as written",
           findings == ["path does not exist: docs/ghost-design.md:40"], str(findings))
+    # A MISSING file, so the case fails if anything but a trailing number is
+    # ever stripped: an existing file would resolve and pass either way.
+    findings = problems_for("the `docs/ghost-design.md:section` form", root)
     check("a colon that is not a trailing line number is still not a path",
-          problems_for("the `docs/real-doc.md:section` form", root) == [])
+          findings == [], str(findings))
+    # The strip is for backtick citations only. GitHub serves a link to
+    # `real-doc.md:2` as a 404, so the link is broken even though the file
+    # it names exists.
+    findings = problems_for("[d](docs/real-doc.md:2)", root)
+    check("a link target with a line number is reported as a broken link",
+          findings == ["link target does not exist: docs/real-doc.md:2"], str(findings))
     check("a line-numbered citation into nedsmessenger is not checked",
           problems_for("verified at `adapter/adapter.py:379` in "
                        "`~/Projects/nedsmessenger`", root) == [])
@@ -238,7 +247,7 @@ with tempfile.TemporaryDirectory() as git_workspace:
     subprocess.run(["git", "init", "-q"], cwd=git_root, check=True,
                    capture_output=True)
     (git_root / ".gitignore").write_text(
-        "cold-read-records/\ndocs/walk/\n", encoding="utf-8")
+        "cold-read-records/\ndocs/walk/\nCLAUDE.local.md\n", encoding="utf-8")
     (git_root / "docs").mkdir()
     (git_root / "scripts").mkdir()
 
@@ -263,6 +272,18 @@ with tempfile.TemporaryDirectory() as git_workspace:
     findings = problems_for("The script `scripts/not-built-yet.py` runs it.\n", git_root)
     check("a path git does not ignore is still reported",
           findings == ["path does not exist: scripts/not-built-yet.py"], str(findings))
+
+    # A line-numbered citation of an ignored FILE. git check-ignore does not
+    # match `CLAUDE.local.md:4` against the `CLAUDE.local.md` pattern, so git
+    # must be asked about the path without its line number. A directory
+    # pattern like `docs/walk/` matches either way, which is why this needs
+    # a file pattern to fail.
+    findings = problems_for("The seat's `docs/CLAUDE.local.md:4` says so.\n", git_root)
+    check("a line-numbered citation of an ignored file is not reported",
+          findings == [], str(findings))
+    findings = problems_for("The script `scripts/not-built-yet.py:7` runs it.\n", git_root)
+    check("a line-numbered path git does not ignore is still reported as written",
+          findings == ["path does not exist: scripts/not-built-yet.py:7"], str(findings))
 
     # A markdown link is folded against the citing document's directory before
     # git is asked, so a relative link out of docs/ resolves to docs/walk/.
