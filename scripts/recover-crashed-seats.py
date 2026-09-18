@@ -33,16 +33,16 @@ What it does, per seat:
      seat as though it were not there; a seat whose supervisor recorded its
      agent's exit (2a) is then restarted on that yes. The proof is taken again
      after the yes, immediately before the retire, and a session still holding
-     the name that is no longer only an idle shell is not closed but REFUSED
-     (ruled 2026-09-18), since the operator's answer can come any time later.
-     A session gone by then holds no work, and the recovery goes on as before;
-     when tmux cannot say which, the seat is refused for that. Run unattended
-     — at boot, under restart-live-seats-at-login — nothing is asked and the
-     refusal stands exactly as it did. A session that cannot be proven idle is
-     refused with no question, attended or not. A dry run asks nobody; for a
-     seat it would ask about, its line quotes the REFUSED line a no or nobody
-     to ask gives, so a practice run counts that seat as not recovered (ruled
-     2026-09-18).
+     the name that is no longer only an idle shell is left alone and the seat
+     reported NOT RESTARTED (ruled 2026-09-18), since the operator's answer can
+     come any time later. A session gone by then holds no work, and the
+     recovery goes on as before; when tmux cannot say which, the seat is
+     refused for that. Run unattended — at boot, under
+     restart-live-seats-at-login — nothing is asked and the refusal stands
+     exactly as it did. A session that cannot be proven idle is refused with
+     no question, attended or not. A dry run asks nobody; for a seat it would
+     ask about, its line quotes the REFUSED line a no or nobody to ask gives,
+     so a practice run counts that seat as not recovered (ruled 2026-09-18).
   2. Defer when an unconsumed handoff IS waiting: relaunching plain is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
@@ -408,7 +408,7 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
     retire (ruled 2026-09-18), since anything may have started in that shell
     while the question waited. A False here does not say whether the session
     is still there, so recover_seat asks tmux_session_alive_anywhere that
-    before it refuses.
+    before it leaves the session alone.
     """
     pane_process_ids = []
     sockets_holding = []
@@ -1357,12 +1357,17 @@ SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER = "NOT RELAUNCHED, AT ITS OWN REQUEST"
 # So is a seat whose supervisor recorded its agent's exit (nedschorus#242
 # change 2): nothing is launched for it, and it is down.
 SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER = "NOT RELAUNCHED AFTER A RECORDED EXIT"
+# So is a seat an operator said to restart whose leftover shell's session, still
+# holding the seat's name, could no longer be proven idle when it was about to
+# be closed: it was left alone, so the seat is still down (ruled 2026-09-18).
+SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER = "NOT RESTARTED"
 SEAT_NOT_RECOVERED_REPORT_MARKERS = (
     "REFUSED",
     "LAUNCH FAILED",
     "LAUNCHED BUT DID NOT COME UP",
     SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER,
     SEAT_NOT_RELAUNCHED_AFTER_RECORDED_EXIT_REPORT_MARKER,
+    SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER,
 )
 # The report class for assess_seat's seat-already-running verdict. Named so the
 # suites can pin that it contains none of the markers above.
@@ -1379,10 +1384,13 @@ LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING = {
 }
 # The report, after the seat's name, when an operator has said yes but the
 # leftover shell's tmux session, still holding the seat's name, can no longer
-# be proven an idle shell, so it is not closed. The user's words, ruled
-# 2026-09-18; kept at this one site so that a rewording is one edit.
+# be proven an idle shell, so it is not closed. The user's words, approved
+# 2026-09-18 after he asked of the line before them "What are we refusing. I
+# don't care about tmux sessions."; kept at this one site so that a rewording
+# is one edit.
 LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT = (
-    "REFUSED — its tmux session is no longer only an empty shell, so it was not closed")
+    f"{SEAT_NOT_RESTARTED_AFTER_THE_OPERATORS_YES_REPORT_MARKER} — something may have "
+    "started in it while you were answering, so it was left alone")
 
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
@@ -1522,14 +1530,15 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         if still_a_leftover_shell:
             pane_process_ids = rechecked_pane_process_ids
         else:
-            # What refuses is a session still there, since only a session can
-            # hold work; tmux is asked whether one is, never the proof's words.
-            # Gone — the operator exited the shell himself, say — holds no work,
-            # so the recovery goes on as it did before the recheck: the retire
-            # finds nothing, and the first proof's panes are excused. With no
-            # answer from tmux, the refusal is the one assess_seat gives for
-            # it, in that call's own words. The retire would not report it: it
-            # reads an unanswered socket as holding nothing.
+            # What is left alone is a session still there, since only a session
+            # can hold work; tmux is asked whether one is, never the proof's
+            # words. Gone — the operator exited the shell himself, say — holds
+            # no work, so the recovery goes on as it did before the recheck:
+            # the retire finds nothing, and the first proof's panes are
+            # excused. With no answer from tmux, the refusal is the one
+            # assess_seat gives for it, in that call's own words. The retire
+            # would not report it: it reads an unanswered socket as holding
+            # nothing.
             session_still_there, liveness_detail = tmux_session_alive_anywhere(name)
             if session_still_there is None:
                 return f"{name}: REFUSED — {liveness_detail}"

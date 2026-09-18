@@ -3719,19 +3719,29 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, logged = main_at_a_terminal_answering_yes(
         workspace, events, the_shell_proven_idle,
         work_started_in_the_shell_while_the_question_waited)
-    no_longer_only_an_empty_shell = ("seat-a: REFUSED — its tmux session is no longer only an "
-                                     "empty shell, so it was not closed")
+    # The user's words, approved 2026-09-18 after he asked of the line before
+    # them "What are we refusing. I don't care about tmux sessions." Spelled
+    # out byte for byte, never derived from the constant that holds them.
+    left_alone_as_something_may_have_started = (
+        "seat-a: NOT RESTARTED — something may have started in it while you were answering, "
+        "so it was left alone")
     check("LEFTOVER SHELL (ruled 2026-09-18): after a yes the shell is proven again, and work "
           "started in it while the question waited is not closed",
           events == ["proof", "question", "proof"] and workspace.launches == [],
           (events, workspace.launches, printed))
-    check("LEFTOVER SHELL (ruled 2026-09-18): its line is exactly \"seat-a: REFUSED — its tmux "
-          "session is no longer only an empty shell, so it was not closed\", logged, and main "
-          "exits 1",
-          printed[-1:] == ["recover-crashed-seats: " + no_longer_only_an_empty_shell]
-          and len(logged) == 1 and logged[0].endswith(" " + no_longer_only_an_empty_shell)
+    check("LEFTOVER SHELL (ruled 2026-09-18): its line is exactly \"seat-a: NOT RESTARTED — "
+          "something may have started in it while you were answering, so it was left alone\", "
+          "logged, and main exits 1",
+          printed[-1:] == ["recover-crashed-seats: " + left_alone_as_something_may_have_started]
+          and len(logged) == 1
+          and logged[0].endswith(" " + left_alone_as_something_may_have_started)
           and exit_code == 1,
           (exit_code, printed, logged))
+    check("LEFTOVER SHELL (ruled 2026-09-18): that line counts as not recovered by its own "
+          "marker, NOT RESTARTED, and by no other",
+          [marker for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS
+           if marker in left_alone_as_something_may_have_started] == ["NOT RESTARTED"],
+          recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS)
 
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-still-idle-when-proven-again")
     events = []
@@ -3770,9 +3780,10 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # What the second proof failing means depends on whether the session is
     # still there, which tmux is asked; the proof's words are never read. Only
-    # a session still there can hold work, so only it is refused with the
-    # ruled line. One that is gone — the operator exited the shell himself
-    # while the question waited — is recovered exactly as before the recheck.
+    # a session still there can hold work, so only it is left alone and the
+    # seat reported NOT RESTARTED. One that is gone — the operator exited the
+    # shell himself while the question waited — is recovered exactly as before
+    # the recheck.
     # With no answer from tmux, the seat is refused in the liveness check's
     # own words, and nothing is closed. These run the real proof, the real
     # liveness check and resupervise-seat.py's real retire over a faked tmux.
@@ -3878,9 +3889,10 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, logged = main_at_a_terminal_answering_yes_over_a_tmux_server(
         workspace, events, "work started")
     check("LEFTOVER SHELL (ruled 2026-09-18): over the real proof, vim started in the shell "
-          "while the question waited is not closed, and the ruled line is given",
+          "while the question waited is not closed, and the seat is reported NOT RESTARTED",
           events == ["proof", "question", "proof"] and workspace.launches == []
-          and printed[-1:] == ["recover-crashed-seats: " + no_longer_only_an_empty_shell]
+          and printed[-1:] == ["recover-crashed-seats: "
+                               + left_alone_as_something_may_have_started]
           and exit_code == 1,
           (events, workspace.launches, printed, exit_code))
 

@@ -316,8 +316,11 @@ the launcher's pane process IS the shell, with the supervisor running under it
 Ruled 2026-09-18 in a walk, on questions from the independent review of the pull
 request [Ask the operator about a seat's leftover idle shell](https://github.com/nedschorus/nedschorus/pull/471):
 because the operator may take any time to answer, a yes is followed by the same
-proof again immediately before the session is closed, and a session that is no
-longer only an empty shell is not closed but REFUSED; and a dry run that would
+proof again immediately before the session is closed, and a session still there
+that is no longer only an empty shell is left alone — *"NOT RESTARTED —
+something may have started in it while you were answering, so it was left
+alone"*, the user's words for it, after *"What are we refusing. I don't care
+about tmux sessions."* — which counts as not recovered; and a dry run that would
 ask quotes the REFUSED line a no or nobody to ask gives, so a practice run exits
 1 if any seat would stay down with nobody at the keyboard.
 
