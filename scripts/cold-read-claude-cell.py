@@ -33,6 +33,7 @@ it up with no change here.
 """
 
 import importlib.util
+import json
 import pathlib
 import sys
 
@@ -164,6 +165,27 @@ ALLOWED_TOOLS = "Read,Grep,Glob,Write"
 # the Read tool instead.
 DISALLOWED_TOOLS = "Bash"
 
+# Every hook is switched off for the reviewer's session, and only for it: the
+# seat that started the cold read keeps its own. A reviewer runs inside this
+# repository, so without this it runs the project's hooks, and two misfired
+# inside reviewers on 2026-09-16. The session-location write guard refused a
+# reviewer's report because the checkout was on a detached HEAD, and the
+# checkout-freshness Stop hook rebased the author's unpushed branch while the
+# other reviewers were still reading. The same Stop hook's note displaced two
+# sanity-check reviews on 2026-09-15, in the issue "A Stop hook's report
+# inside a claude -p review cell displaces the cell's report"
+# (https://github.com/nedschorus/nedschorus/issues/397).
+#
+# Hooks only, not --setting-sources user (user-ruled 2026-09-18): CLAUDE.md
+# still loads, because the reviewer stands in for an agent of this project,
+# and those agents read it; it is also where they learn the glossary's path.
+# The write guards this drops are covered by the common module's check for
+# files changed outside the report, the same check the Codex cells rely on.
+# Measured 2026-09-18 in a detached checkout of main: without this setting
+# the write guard blocked a reviewer's Write; with it the Write went through,
+# and the reviewer still gave the glossary path CLAUDE.md names.
+SETTINGS = json.dumps({"disableAllHooks": True})
+
 
 def invocation_builder(effort: str):
     """The one thing that differs between the two cold-read-cells.
@@ -185,6 +207,7 @@ def invocation_builder(effort: str):
             "--output-format", "text",
             "--allowedTools", ALLOWED_TOOLS,
             "--disallowedTools", DISALLOWED_TOOLS,
+            "--settings", SETTINGS,
         ]
         return command, prompt
     return build_invocation
