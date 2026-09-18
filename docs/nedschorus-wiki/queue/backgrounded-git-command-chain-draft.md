@@ -12,4 +12,4 @@ The seat's own account to the user had been wrong in the meantime: it reported t
 
 **The hazard is narrower than "hooks move my branch", and naming it narrowly is the point.** A long chained command that gets backgrounded and finishes later acts on the repository as it is at that moment, not as it was when launched. Chaining is what makes that possible. The heredoc is what makes the command long enough to be backgrounded.
 
-**Related but distinct:** [nedschorus#324](https://github.com/nedschorus/nedschorus/issues/324) is the freshness hook merging main into a frozen head, which is the other half of how that head moved.
+**Related but distinct:** issue [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324) is the freshness hook merging main into a frozen head, which is the other half of how that head moved.
