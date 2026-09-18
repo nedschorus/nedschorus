@@ -22,7 +22,6 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 
 - **The user** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
 - **Agent-seats** — the named, long-lived agents that do the work, one subject area each; the merge-lane seat reviews and merges every pull request. Why the work is divided this way: `docs/nedschorus-wiki/agent-seat-model.md`.
-- **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; checks its work in through the main-gatekeeper like every agent, and never pushes. The companion's continuity is its own runtime's persistent session: Codex auto-compaction plus resume by session id — it needs no handoff system (user-ruled 2026-07-21).
 
 ## The agent model
 
