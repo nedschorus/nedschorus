@@ -2,7 +2,7 @@
 
 Queued for the user's drain. Destination when drained: the `md-write` founding skill's text (step-1 build) or wiki doctrine — wherever NC's decision-record writing lands.
 
-The one piece that survives the drop (the skill's design-evaluation half is subsumed by design-change, [nedschorus#17](https://github.com/nedschorus/nedschorus/issues/17)): the **architecture decision record form**, matching the walk-ruled decisions layer of design docs (append-only, dated, drift-immune, superseded not edited):
+The one piece that survives the drop (the skill's design-evaluation half is subsumed by design-change, issue [Candidate skill: design-change — read-only evidence-grounded design with one recommendation and honest exits](https://github.com/nedschorus/nedschorus/issues/17)): the **architecture decision record form**, matching the walk-ruled decisions layer of design docs (append-only, dated, drift-immune, superseded not edited):
 
 - **Title** — the decision as a noun phrase
 - **Status** — proposed | accepted | superseded by [[link]]
