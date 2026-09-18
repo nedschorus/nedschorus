@@ -1,10 +1,10 @@
 # Design: the topic-branch creation script
 
-Issue: [nedschorus#238](https://github.com/nedschorus/nedschorus/issues/238). State as of 2026-09-02: the script is not built, and nothing in this document has been implemented.
+Issue: issue [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238). State as of 2026-09-02: the script is not built, and nothing in this document has been implemented.
 
 **Vocabulary.** A *seat* is a named long-lived agent identity with a home directory at `~/agents/<seat>` — a git worktree of this project (`docs/nedschorus-wiki/agent-seat-model.md`). Each seat has a branch named after itself, which its home starts on and returns to only between units of work; while a topic is in progress the home stands on that topic's branch. A *topic branch* is a branch carrying one unit of work, intended to become one pull request — this script creates it, well before it is filed.
 
-**The rule this implements**, restated here so the document stands alone: an ordinary topic branch starts at current `origin/main`, rather than at whatever the working copy happens to be standing on. Stacked work is the one exception, and it is not this script's case — see "What it deliberately does not do". `CLAUDE.md` states the PR process in terms of "current main"; this document uses the remote-tracking ref `origin/main` throughout, because a seat's local `main` is stale or absent. The pull-request skill that would carry the full procedure is proposed in [nedschorus#236](https://github.com/nedschorus/nedschorus/issues/236) and does not exist. This script does not depend on that skill being written.
+**The rule this implements**, restated here so the document stands alone: an ordinary topic branch starts at current `origin/main`, rather than at whatever the working copy happens to be standing on. Stacked work is the one exception, and it is not this script's case — see "What it deliberately does not do". `CLAUDE.md` states the PR process in terms of "current main"; this document uses the remote-tracking ref `origin/main` throughout, because a seat's local `main` is stale or absent. The pull-request skill that would carry the full procedure is proposed in issue [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236) and does not exist. This script does not depend on that skill being written.
 
 ## The problem
 
@@ -14,7 +14,7 @@ Nothing detects that automatically. The extra commits are visible from the momen
 
 Naming the start point explicitly — `git checkout -b <name> origin/main` — prevents it at creation, from anywhere in the checkout. `git switch -c <name> origin/main` and `git branch <name> origin/main` express the same control, as does standing on a branch already at `origin/main` before creating. Every one of them depends on the caller remembering; nothing mechanical enforces any of them today.
 
-**Near-miss, 2026-09-01.** This seat (`reboot-test`) created four topic branches in a row, filed as pull requests #229, #230, #231, #232, naming `origin/main` explicitly on each. Each of the four depended on that argument: the first would have been based on the seat's branch, and each of the other three on its predecessor. The failure did not occur, and the margin was one argument, four times.
+**Near-miss, 2026-09-01.** This seat (`reboot-test`) created four topic branches in a row, filed as pull requests [Launchers: report only the update failure the launcher can actually see](https://github.com/nedschorus/nedschorus/pull/229), PR [launch-claude-mac: update the claude the seat will actually run](https://github.com/nedschorus/nedschorus/pull/230), PR [catch-up hook: a landed merge is an attention state, and stdout is one channel](https://github.com/nedschorus/nedschorus/pull/231), PR [Remove the Zero-Context Explanation output style](https://github.com/nedschorus/nedschorus/pull/232), naming `origin/main` explicitly on each. Each of the four depended on that argument: the first would have been based on the seat's branch, and each of the other three on its predecessor. The failure did not occur, and the margin was one argument, four times.
 
 ## What the script does
 
@@ -104,17 +104,17 @@ Refusals 6 through 8 follow the fetch, which does change repository state: remot
 
 ## What it deliberately does not do
 
-- **Stacked work.** Work that builds on an unmerged topic must start at that topic, not at main. This script always uses `origin/main`, so that case is done by hand with `git checkout -b <name> <parent-topic>`. The pull request must then say which branch it is stacked on and which pull request must merge first; a machine-readable form for that is #236's to settle. No flag here — a flag invites use when the base should have been main.
+- **Stacked work.** Work that builds on an unmerged topic must start at that topic, not at main. This script always uses `origin/main`, so that case is done by hand with `git checkout -b <name> <parent-topic>`. The pull request must then say which branch it is stacked on and which pull request must merge first; a machine-readable form for that is issue [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236)'s to settle. No flag here — a flag invites use when the base should have been main.
 - **Committing, pushing, or opening a pull request.** One script, one job.
 - **Naming conventions.** `CLAUDE.md` requires explicit multi-part names, checked with glob for path names and grep for names in files, and a more explicit 3-or-4-part name where those return collisions. Whoever chooses the topic name applies that before calling this. The script enforces only git's own ref rules, which are mechanical (rows 3 and 5).
 
 ## Where it sits in the code-prompt-code structure
 
-Code-prompt-code (CPC) is this project's design philosophy: a system is built from nodes that are either code or prose instructions to an agent, each type chosen for what it is good at — code for what must be exact and repeatable, prose for what needs judgment or must absorb the unanticipated. The philosophy has no written home yet; [nedschorus#237](https://github.com/nedschorus/nedschorus/issues/237) tracks the page that will define it, and that page governs the term over this paragraph.
+Code-prompt-code (CPC) is this project's design philosophy: a system is built from nodes that are either code or prose instructions to an agent, each type chosen for what it is good at — code for what must be exact and repeatable, prose for what needs judgment or must absorb the unanticipated. The philosophy has no written home yet; issue [code-prompt-code (CPC) design philosophy wiki page: systems as state machines whose nodes are code or prompts](https://github.com/nedschorus/nedschorus/issues/237) tracks the page that will define it, and that page governs the term over this paragraph.
 
 This script is a code node. It branches — it classifies conditions and chooses among outcomes — but every branch is decided by a fact the script can read: the arguments it was given, or what git reports. No outcome depends on judgment. The judgment stays with the caller: which topic to start, what to name it, whether the work is stacked.
 
-A second code node is proposed in issue #238 but not designed: a check at pull-request creation that refuses a branch carrying another open pull request's commits unless the pull request declares the dependency. Its mechanism is undecided and its design would be a separate document. Until it exists, this script is a convenience the caller can bypass by typing git directly — the prevention it offers is real but voluntary, and nothing makes it the only path.
+A second code node is proposed in issue [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238) but not designed: a check at pull-request creation that refuses a branch carrying another open pull request's commits unless the pull request declares the dependency. Its mechanism is undecided and its design would be a separate document. Until it exists, this script is a convenience the caller can bypass by typing git directly — the prevention it offers is real but voluntary, and nothing makes it the only path.
 
 ## Value across gatekeeper activation
 
@@ -144,6 +144,6 @@ Rows 6 and 8 also assert that git's message survives after the two contract line
 
 ## Questions the writer could not settle
 
-None blocking implementation. Two decisions are recorded as belonging elsewhere, neither of which changes what this script does: the machine-readable form of a stacked-work declaration, which is #236's to settle when the pull-request skill is written; and the mechanism of the pull-request-creation check, which is proposed in #238 and would need its own design document before anyone builds it.
+None blocking implementation. Two decisions are recorded as belonging elsewhere, neither of which changes what this script does: the machine-readable form of a stacked-work declaration, which is issue [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236)'s to settle when the pull-request skill is written; and the mechanism of the pull-request-creation check, which is proposed in issue [Topic-branch base enforcement: a branch-creation script and a gh pr create check that refuses an undeclared carry of another PR's commits](https://github.com/nedschorus/nedschorus/issues/238) and would need its own design document before anyone builds it.
 
 One behavior is accepted rather than settled, and is recorded above at the place it applies: an ignored file at a path `origin/main` tracks is silently overwritten.

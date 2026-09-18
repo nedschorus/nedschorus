@@ -1,6 +1,6 @@
 # main-gatekeeper build — slice plan
 
-Issue: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3)
+Issue: issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)
 
 Working material for the build of `scripts/main-gatekeeper.py`, the single
 program through which every change reaches `main` in nedschorus. This
@@ -23,7 +23,7 @@ Author: choirmaster, session 1caf1c51 (first build task).
 
 The gatekeeper is not an optimization; it is the project's only check-in
 lane. Until it exists, choirmaster is push-less by ruling
-([nedschorus#45](https://github.com/nedschorus/nedschorus/issues/45),
+(issue [Run named agents on the Ubuntu box, reachable from iTerm2 by name: launch-claude with tmux attach-or-create, and the migration it requires](https://github.com/nedschorus/nedschorus/issues/45),
 2026-08-07): it commits to its own branch and a Mac-side agent merges after
 review. The interim was ruled explicitly as "until the git-gatekeeper
 provides the check-in lane." So the first slice is chosen for one property
@@ -42,7 +42,7 @@ main through the program.** Everything that does not serve that goes later.
 
 Not in any of the five, and deliberately so: the review-evidence check for
 the instruction-file class
-([nedschorus#31](https://github.com/nedschorus/nedschorus/issues/31), guard
+(issue [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31), guard
 1). It needs an approval-evidence format that does not exist yet, and the
 in-session tamper guard
 ([`.claude/hooks/instruction-file-guard.py`](../../.claude/hooks/instruction-file-guard.py))
@@ -188,7 +188,7 @@ consider-feature entries, so nothing goes to `legacy-feature-queue/`.
 
 Two batches, each from a review of a different subject: the 2026-08-09
 cold read of the revised specification, and the 2026-08-12 code review of
-[nedschorus#49](https://github.com/nedschorus/nedschorus/pull/49). Program
+PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49). Program
 work in both cases, not spec text.
 
 ### From the 2026-08-09 cold read of the specification
@@ -285,12 +285,12 @@ scope by design: the expiry sweep and the liveness check.
   spec. Apply after the review walk closes; suite must stay green minus
   the retired cases.
 
-### From the PR #49 code review (2026-08-12)
+### From the PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) code review (2026-08-12)
 
 Findings from a code review of `choirmaster` at `3c418863` — the head that
 built slice 4 (the worker lifecycle: `--no-wait`, the detached worker,
 `status`, `cancel`) — taken while
-[nedschorus#49](https://github.com/nedschorus/nedschorus/pull/49) was open
+PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) was open
 and unmerged. Each finding was reproduced by running the program unless
 its entry says otherwise. The rulings were walked with the user item by
 item and recorded *before* any code changed, so the fixes had a stated
@@ -304,7 +304,7 @@ counts differ, so the entry count below is the file's own headings.
 Applied 2026-08-12 across seven commits —
 `cb582d6`, `646e82b`, `89bd749`, `3a301a8`, `71d492e`, `cacd3b9`,
 `6d356d2` — merged into choirmaster as `6655e92` and reaching main inside
-nedschorus#49's merge `9bd1335`. Suite then 202 cases, 200 green on a
+PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49)'s merge `9bd1335`. Suite then 202 cases, 200 green on a
 stock macOS host; the two failures are environment artifacts, not code
 defects (Apple's git 2.39.5 below the 2.40 floor — see the version-floors
 entry — and `user.useConfigOnly` unset in the enclosing repository, which
@@ -513,7 +513,7 @@ remains in git history at `4cadb46`.
   safe to retry" — the caller did nothing wrong, cannot fix it by
   resubmitting, and each retry repeats the out-of-repository write, so the
   honest reply names the path, states that main carries a link there, and
-  points at who can change main; and the scope sentence PR #49 added ("The
+  points at who can change main; and the scope sentence PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) added ("The
   caller's files and main are untouched. Scoped exactly (2026-08-12): …")
   is corrected, since writing bytes outside every repository appeared
   nowhere in its enumeration.
@@ -553,7 +553,7 @@ remains in git history at `4cadb46`.
   exit 2, the defect code, for what is a caller's mistake; its docstring
   stated the intent ("Never prints; the reply channel is the workspace")
   but never reconciled it with the contract. `--help` prints usage text
-  and exits 0: the parser wrapper added by PR #49 converts argparse
+  and exits 0: the parser wrapper added by PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) converts argparse
   *errors* into JSON refusals, as WALK-2 ruled, and does not touch the
   help path. Neither is made to emit JSON — help text as JSON serves no
   one, and the worker genuinely has no listener. What was missing is that
@@ -589,7 +589,7 @@ remains in git history at `4cadb46`.
   truncation rule is built until a real case appears. Worktree hygiene —
   which files should be ignored rather than reported at all — is tracked
   separately as
-  [nedschorus#50](https://github.com/nedschorus/nedschorus/issues/50).
+  issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50).
 - APPLIED 2026-08-12 (`71d492e`, portable reader) and 2026-08-13 (one
   writer) — **The worker-identity guard works on macOS and Linux alike,
   and has one writer.** The design names a
@@ -788,7 +788,7 @@ remains in git history at `4cadb46`.
   `FileExistsError` ended the run a third of the way through — visible on
   sight as a short count, invisible before.
 - APPLIED 2026-08-12 (`6d356d2`) — **Document contradictions corrected
-  with the fixes.** All introduced or left standing by PR #49, none
+  with the fixes.** All introduced or left standing by PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49), none
   needing a separate decision: the specification stated slice 4 is BUILT
   while its cancel section still read "slice 4, unbuilt today — see
   Implementation status", pointing the reader at the sentence that
@@ -807,7 +807,7 @@ remains in git history at `4cadb46`.
   was found, not a live claim.
 - APPLIED 2026-08-12 — **The fixes land before the merge.** Ruled
   reversing the reviewer's initial recommendation to merge first and fix
-  forward. The reviewer's case: merging PR #49 would not put the
+  forward. The reviewer's case: merging PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) would not put the
   gatekeeper in service — it is dormant, no host holds a main-capable
   credential, and activation waits on slice 6 — and the branch was an
   improvement on main for everything currently reachable, fixing the
@@ -823,7 +823,7 @@ remains in git history at `4cadb46`.
   staging the destructive set (path, kill-scope, cancel-truthfulness,
   atomicity and claim fixes) ahead of the full regression set remained
   available if something needed main sooner. Enacted as ruled: the seven
-  fix commits landed on choirmaster first, and nedschorus#49 merged to
+  fix commits landed on choirmaster first, and PR [git-gatekeeper review walk: spec revised through 2026-08-12, rulings applied, suite 150 green](https://github.com/nedschorus/nedschorus/pull/49) merged to
   main afterwards as `9bd1335`.
 
 ## Design points this plan settles
@@ -887,7 +887,7 @@ automatic integration (clean re-application, the usual case) and `conflict`
 **Ruled 2026-09-14 at the merge-lane seat: shape 1.** Provenance, recorded
 exactly: merge-lane presented two shapes with a recommendation for shape 1;
 the user's whole reply was "shape 1". Every other word in this section is
-merge-lane's. Issue #3's body and the specification's Implementation status
+merge-lane's. Issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body and the specification's Implementation status
 paragraph each carry the ruling in one sentence; this section is its record.
 
 **Shape 1.** At activation the merge lane keeps reviewing and approving the
@@ -931,7 +931,7 @@ exactly: merge-lane presented two shapes with a recommendation for shape A;
 the user's whole reply was "a". Every other word in this section is
 merge-lane's. The specification's Implementation status paragraph and the
 state machine's § 3.4 each carry the ruling in one sentence; this section
-is its record. The ghi-write split that makes room in issue #3's body for
+is its record. The ghi-write split that makes room in issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body for
 this ruling is § The per-file staleness report — slice 8's requirement:
 that requirement's substance lives here now, and the body keeps a summary
 and a pointer to it.
@@ -975,7 +975,7 @@ here; slice 9's owner is unruled, and this table proposes no answer to it.
 |---|---|---|---|
 | 7 | The gate opens a pull request instead of pushing to main (ruled 2026-08-29). Today `attempt_push` pushes `main-gatekeeper-candidate:main` directly. **Ruled 2026-09-15: shape A** — the pull request carries the single candidate commit and the merge lane merges it as a merge commit; § What the gate's pull request carries and how it merges — ruled 2026-09-15 | none yet | `attempt_push`'s direct push to main |
 | 8 | The per-file staleness report (user-ruled 2026-08-31; in full below, § The per-file staleness report — slice 8's requirement): for every declared path, whether main has changed it since the base commit, how many commits, the latest pull request — a report, never a refusal | none yet | the accepted interim in which nothing checks a path against `origin/main` at push or pull-request time |
-| 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR #63): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
+| 9 | The check battery, the mechanical checks that run at check-in. **Ownership unruled** since 2026-08-14 (§ Open item 3 below; PR [gatekeeper slice plan: an open question on whether this build owns the check battery](https://github.com/nedschorus/nedschorus/pull/63)): whether this build owns it or the toolchain plan's Phase 1 binding is corrected is the user's ruling | none yet | unruled |
 | 10 | The C2 move: the gate runs from the dedicated Unix user, on the deployed root-owned copy, pushing on the `ned-git-gatekeeper` token rather than on its caller's credential (specification § The credential and enforcement, the Unix-user boundary bullet) | none yet | pushing on whatever credential the caller's environment carries |
 
 Cross-machine callers (C8, specification § Open) stay open and are not a
@@ -991,7 +991,7 @@ Found in the walk of the five seat-brief cold reads, 2026-09-16.
 
 ### The per-file staleness report — slice 8's requirement
 
-Moved here from issue #3's body by the ghi-write split: that body stood at
+Moved here from issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body by the ghi-write split: that body stood at
 1135 words, over the skill's 1000-word cap, and a body over the cap splits
 rather than being shortened. The requirement and the quoted words are the
 user's; the arrangement is merge-lane's. The body keeps the summary.
@@ -1012,7 +1012,7 @@ main. The user ruled it belongs here precisely so it is not built twice:
 has to be incorporated into that. I don't want to design a system that
 we'll have to redo assuming the git gatekeeper is good." (His words predate
 the rename to main-gatekeeper — pull request
-[#257](https://github.com/nedschorus/nedschorus/pull/257), merged
+PR [Rename git-gatekeeper to main-gatekeeper: the program gates main, not git](https://github.com/nedschorus/nedschorus/pull/257), merged
 2026-09-06 — and are quoted as spoken.)
 
 **Why per-file rather than a branch-level count**, in his words and the
@@ -1028,7 +1028,7 @@ shape (the branch's older copy against main's landed version).
 **The interim, accepted deliberately.** Until the gate is live, nothing
 enforces this. The session-start half exists — the ignition prompt carries
 the branch-sync result and, per pull request
-[#220](https://github.com/nedschorus/nedschorus/pull/220), tells the
+PR [ignition: catch up with main before the first substantive action, and verify it](https://github.com/nedschorus/nedschorus/pull/220), tells the
 successor to catch up with main before its first substantive action — and
 the harness already refuses an edit to a file that changed on disk since
 the session read it. But nothing knows about `origin/main` at push or
@@ -1081,7 +1081,7 @@ not redone:
    would close the pull-request lane for everyone — and the gate's own
    source depends on that lane, since the gate refuses to check it in.
 2. **The `write-test-plan` skill.** Founding plan open question 8 names
-   [nedschorus#18](https://github.com/nedschorus/nedschorus/issues/18) as
+   issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) as
    the first expected candidate-skill pull, triggered by exactly this task.
    Building it first would produce this slice's test plan; not building it
    means the test plan above is hand-written, as it currently is.
@@ -1149,5 +1149,5 @@ rather than presented. Kept for reference.*
 7. D3 — how the program learns the `Gatekeeper-agent` value
 8. D4 — `main-moved`, the interim answer to a moved main
 9. Open 1 — the push credential and what "slice 1 done" means
-10. Open 2 — `write-test-plan` (#18): pull it now, or hand-write the plan
+10. Open 2 — `write-test-plan` (issue [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18)): pull it now, or hand-write the plan
 11. Artifacts, naming, and the commit convention for this build

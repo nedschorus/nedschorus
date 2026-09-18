@@ -1,6 +1,6 @@
 # Experiment design — what enabling `dismiss_stale_reviews` on main would do
 
-Issue: [nedschorus#3](https://github.com/nedschorus/nedschorus/issues/3) ·
+Issue: issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3) ·
 Program: `scripts/protection-experiment-dismiss-stale-reviews.py`
 
 ## The question this answers
@@ -68,7 +68,7 @@ protection.
 
 Failures are reported, never silenced: `gh` stderr is captured and printed with
 the failing command, per the defect class recorded at
-[nedschorus PR #111](https://github.com/nedschorus/nedschorus/pull/111).
+PR [Add silenced-error-lint.py: flag silenced stderr the code then trusts](https://github.com/nedschorus/nedschorus/pull/111).
 
 ## How to judge the result
 
