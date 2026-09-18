@@ -42,7 +42,7 @@ WHAT IS PINNED HERE.
 
   - The full-run warning. A target in the class the /cold-read skill's step 1
     sends to the cold-read-full-run -- a skill or its prompt, a file under
-    docs/agents/, a wiki file, a design, a test design, a design contract --
+    docs/agents/, a wiki file, a design, a test design, a component-contract --
     is read with one line on stderr and one line in the report saying the
     full run is still required; step 1's own exceptions (a walk file,
     CLAUDE.md) and everything else are read with nothing said. The warning
@@ -825,9 +825,17 @@ check("a wiki file is in the class",
 check("a design is recognised by its name, wherever it sits",
       class_of(root / "docs/cross-project/main-gatekeeper-design.md") == "a design"
       and class_of(root / "docs/issues/46-ghi-info-agent-design.md") == "a design")
-check("a test design and a design contract have their own names",
+check("a test design and a component-contract have their own names",
       class_of(root / "docs/issues/x-test-design.md") == "a test design"
-      and class_of(root / "docs/issues/x-design-contract.md") == "a design contract")
+      and class_of(root / "docs/designs/queue/x-contract.md") == "a component-contract")
+check("a component-contract is named as the state-machine design names it",
+      class_of(root / "docs/design-to-main/some-component-contract.md")
+      == "a component-contract")
+check("a design in docs/design-to-main/ is a design, by its name",
+      class_of(root / "docs/design-to-main/design-to-main-state-machine-design.md")
+      == "a design")
+check("a design's glossary is not in step 1's list, so it is not called a design",
+      class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)
 check("notes about a design are not the design",
       class_of(root / "docs/issues/142-draft-md-skill-design-notes.md") is None)
 check("step 1's own exceptions are not in the class: a walk file and CLAUDE.md",
