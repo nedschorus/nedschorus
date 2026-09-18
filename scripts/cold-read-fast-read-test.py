@@ -48,6 +48,13 @@ WHAT IS PINNED HERE.
     CLAUDE.md) and everything else are read with nothing said. The warning
     never refuses and never touches stdout's one line.
 
+  - The bare-number check. A walk draft is read with every bare issue, pull
+    request or task number in it -- `#426`, `nedschorus#418`, a link whose
+    text is the number -- counted on stderr and listed by line at the end of its
+    suggestions file, or the section says there are none. A document on the
+    records route gets no such section, whatever it contains. Headings, HTML
+    entities, URLs and their fragments are not bare numbers.
+
 Each case that launches the read builds a throwaway git repository holding a
 copy of the scripts, as scripts/cold-read-cell-common-test.py does, so the
 read's repository root -- and with it the docs/walk and cold-read-records
@@ -900,6 +907,139 @@ with tempfile.TemporaryDirectory() as warning_scratch:
           result.returncode == 0
           and "cold-read-full-run is required" not in result.stderr
           and "cold-read-full-run is required" not in plain_report.read_text(encoding="utf-8"),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
+
+# --- The bare-number check (item 5 of nedschorus#418, user-ruled 2026-09-17) --
+# The walk-me-through skill forbids citing an issue or a pull request by bare
+# number, and walk files carried 33 and 35 of them with nothing checking. A
+# walk draft's read now lists every one; these cases pin what counts.
+bare_module = script_under_test_module()
+found = bare_module.bare_references_in
+check("a bare number is found, with its line",
+      found("One.\nMerged as PR #466 today.") == [(2, "#466")])
+check("a repository prefix is kept with the number it cites",
+      found("see nedschorus#418.") == [(1, "nedschorus#418")]
+      and found("in nedschorus/nedschorus#39") == [(1, "nedschorus/nedschorus#39")])
+check("a link whose text is the number is still a bare number",
+      found("[nedschorus#46](https://github.com/nedschorus/nedschorus/issues/46)")
+      == [(1, "nedschorus#46")])
+check("a quoted reference keeps its repository prefix",
+      found('`[s106] "nedschorus#385"`') == [(1, "nedschorus#385")])
+check("a number in parentheses is found", found("merged (#12) today") == [(1, "#12")])
+check("a range is two numbers", found("PRs #264–#268") == [(1, "#264"), (1, "#268")])
+check("a range with an ASCII hyphen is two numbers",
+      found("PRs #264-#268") == [(1, "#264"), (1, "#268")]
+      and found("#15-#23") == [(1, "#15"), (1, "#23")])
+check("numbers joined by slashes are each found, in order",
+      found("#214/#169/#170") == [(1, "#214"), (1, "#169"), (1, "#170")])
+check("a task number is found, since the citation rule covers tasks",
+      found("task #37") == [(1, "#37")])
+check("`#3` at the start of a line is text, not a heading, and is found",
+      found("#3 is the one") == [(1, "#3")])
+check("a markdown heading is not a number", found("## 3 things") == [])
+check("an HTML entity is not a number", found("a &#123; b") == [])
+check("a URL's fragment is not a number",
+      found("https://x.com/page#12 and "
+            "https://github.com/o/r/issues/5#issuecomment-9") == [])
+check("a link by title, whose URL carries the number, is clean",
+      found("[Fast read: say when](https://github.com/o/r/pull/466)") == [])
+check("a number glued to letters on both sides is not a reference",
+      found("abc#12b") == [])
+check("a number without `#` is not checked", found("issue 418 and task 37") == [])
+
+section = bare_module.bare_references_section
+listed = section([(2, "#466"), (5, "nedschorus#418")])
+check("the section's heading names issues, pull requests and tasks",
+      bare_module.BARE_REFERENCES_HEADING
+      == "## Bare issue, pull request and task numbers (added by cold-read-fast-read)",
+      bare_module.BARE_REFERENCES_HEADING)
+check("the section gives one instruction and a line per number",
+      bare_module.BARE_REFERENCES_HEADING in listed
+      and "Replace each with its type word and its title, as a link when it can "
+          "be opened: write PR [its title](its URL), not PR #426." in listed
+      and "- Line 2: #466" in listed and "- Line 5: nedschorus#418" in listed,
+      listed)
+check("a clean draft's section says so",
+      section([]).rstrip().endswith("- None."), section([]))
+
+# And the read itself: a walk draft is told on stderr and in its suggestions
+# file; a clean walk draft's section says none; a document on the records
+# route gets nothing, however many numbers it carries.
+with tempfile.TemporaryDirectory() as bare_scratch:
+    bare_scratch = Path(bare_scratch).resolve()
+    bare_stubs = bare_scratch / "stub-bin"
+    bare_counter = bare_scratch / "stub-launch-counter"
+
+    repository = build_scratch_repository(bare_scratch)
+    draft = repository / "docs" / "walk" / "a-bare-walk-draft.md"
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text("# A walk\n\nPR #466 merged.\n\n"
+                     "It closes [nedschorus#418](https://example.com/418).\n",
+                     encoding="utf-8")
+    draft_suggestions = repository / "docs" / "walk" / "a-bare-walk-suggestions.md"
+    result = run_fast_read(
+        repository, bare_stubs, {"*": {"report": "STUB FAST READ: of the draft\n"}},
+        draft_suggestions, "docs/walk/a-bare-walk-draft.md", bare_counter,
+    )
+    check("a walk draft with bare numbers is still read: the check never refuses",
+          result.returncode == 0 and draft_suggestions.is_file(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("the count is on stderr",
+          "cold-read-fast-read: bare issue, pull request or task numbers in this "
+          "walk draft: 2; the suggestions file lists each one." in result.stderr,
+          repr(result.stderr))
+    check("stdout is still exactly the report path",
+          result.stdout.strip() == str(draft_suggestions)
+          and len(result.stdout.splitlines()) == 1, repr(result.stdout))
+    suggestions_text = (draft_suggestions.read_text(encoding="utf-8")
+                        if draft_suggestions.is_file() else "")
+    check("the suggestions file lists each number by line",
+          "- Line 3: #466" in suggestions_text
+          and "- Line 5: nedschorus#418" in suggestions_text,
+          repr(suggestions_text[-500:]))
+    check("the section comes after the coverage section, at the end",
+          suggestions_text.find(bare_module.BARE_REFERENCES_HEADING)
+          > suggestions_text.find("## Sentence coverage (added by cold-read-fast-read)")
+          > 0, repr(suggestions_text[-500:]))
+
+    repository = build_scratch_repository(bare_scratch)
+    clean = repository / "docs" / "walk" / "a-clean-walk-draft.md"
+    clean.parent.mkdir(parents=True, exist_ok=True)
+    clean.write_text("# A walk\n\nThe pull request "
+                     "[Fast read: say when](https://example.com/466) merged.\n",
+                     encoding="utf-8")
+    clean_suggestions = repository / "docs" / "walk" / "a-clean-walk-suggestions.md"
+    result = run_fast_read(
+        repository, bare_stubs, {"*": {"report": "STUB FAST READ: of a clean draft\n"}},
+        clean_suggestions, "docs/walk/a-clean-walk-draft.md", bare_counter,
+    )
+    clean_text = (clean_suggestions.read_text(encoding="utf-8")
+                  if clean_suggestions.is_file() else "")
+    check("a clean walk draft is told nothing on stderr, and its section says none",
+          result.returncode == 0
+          and "bare issue, pull request or task numbers" not in result.stderr
+          and clean_text.rstrip().endswith("- None."),
+          f"exit {result.returncode}; tail={clean_text[-200:]!r}")
+
+    repository = build_scratch_repository(bare_scratch)
+    record_relative = "docs/issues/a-numbered-document.md"
+    numbered = repository / record_relative
+    numbered.parent.mkdir(parents=True, exist_ok=True)
+    numbered.write_text("# A document\n\nSee #466 and #418.\n", encoding="utf-8")
+    numbered_report = (repository / "cold-read-records"
+                       / f"{FIXED_RECORD_STAMP_FOR_TESTS}-issues-a-numbered-document"
+                       / "issues-a-numbered-document-fast-read.md")
+    result = run_fast_read(
+        repository, bare_stubs, {"*": {"report": "STUB FAST READ: of a record\n"}},
+        numbered_report, record_relative, bare_counter,
+    )
+    numbered_text = (numbered_report.read_text(encoding="utf-8")
+                     if numbered_report.is_file() else "")
+    check("a document on the records route is not checked, whatever it carries",
+          result.returncode == 0
+          and "bare issue, pull request or task numbers" not in result.stderr
+          and bare_module.BARE_REFERENCES_HEADING not in numbered_text,
           f"exit {result.returncode}; stderr={result.stderr!r}")
 
 print()
