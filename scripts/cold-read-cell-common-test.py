@@ -78,13 +78,14 @@ WHAT IS PINNED HERE.
     stray is not stamped with today's model.
 
     The search covers the whole `cold-read-records/` tree — a neighbouring
-    record directory, and the root of the tree itself — because the file name
-    carries the run (user-ruled 2026-08-25): the grid writes
-    `<record directory name>--<runtime>-<pass>-<tier>.md`, so an exact-name
-    match belongs to this run and to no other. The case that proves the point
-    is the concurrent one: a second cold-read run's report for the same cell, written
-    while this attempt ran, is NOT this attempt's report, and the cell fails
-    rather than taking it.
+    directory a model invented, and the root of the tree itself — and takes
+    nothing from a directory the instrument built (one holding `target/` or
+    `reference-check.md`). That check is what makes the wide search safe now
+    that the files inside a record are bare cell names (user-ruled
+    2026-09-18): another run's real report has this report's exact name. The
+    case that proves the point is the concurrent one: a second cold-read
+    run's report for the same cell, written while this attempt ran, is NOT
+    this attempt's report, and the cell fails rather than taking it.
 
   - The stamp carries what the cell cost. `duration_s=` on every stamp, and
     `tokens=` when the runtime reported a total. Absent is absent: a claude
