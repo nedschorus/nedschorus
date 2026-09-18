@@ -278,17 +278,29 @@ tmux session before launching is the remaining piece, the step
 
 **Ruled 2026-09-17: the relaxation is a question, not a reach.** Recovery does
 not pass the leftover shell on the record's word, as the relaxation above would
-have had it. With an operator at a terminal it asks — *"prof's window is open at
-a shell with nothing running. Close it and bring the seat back? y/n"* when the
-seat's reassessment would launch it, and *"prof's window is open at a shell with
-nothing running. Close it? The seat will not be relaunched automatically — it
-will tell you how to bring it back by hand. y/n"* when it would not — and on a
+have had it. With an operator at a terminal it asks — *"Restart prof? y/n"* when
+the seat's reassessment would launch it, and *"prof stopped on purpose. Restart
+it anyway? y/n"* when its supervisor recorded the agent's exit — and on a
 yes retires that session and assesses the seat as though it had never been
-there. Those words were ruled in a walk the same day, 2026-09-17, because the
+there. The first wording was ruled in a walk the same day, 2026-09-17, because the
 one question promised a seat with a recorded exit back and the next line
 reported it NOT RELAUNCHED: the question is worded by a prediction of the reassessment, which still decides
 alone, and which seats are relaunched did not change — *"how do we know if a
 seat is purposely left down - if we do, then we shouldn't bring it back"*.
+Ruled 2026-09-18 in a walk, on that wording — *"that is a confusing y/n
+question. kind of a double negative. I don't care about 'thes session'. I care
+about the reboot-test. perhaps resume reboot-test? Y/N."* — the question names
+the seat and asks whether to restart it, and a yes on a seat stopped on purpose
+now restarts it, resuming its session if it has one: not bringing such a seat
+back is a rule for the tool acting on its own, and here the operator decides.
+Ruled 2026-09-18 in a walk: a recorded exit whose code is neither zero nor
+unknown is asked *"reboot-test stopped with exit code 1. Restart it? y/n"*
+instead, since an agent that crashed under a watching supervisor leaves a record
+too, and a seat carrying a recorded exit with no leftover session at all, as
+after a reboot, is asked the same question at a terminal and restarted the same
+way on a yes; the question for a seat whose handoff asks to be consulted,
+*"prof's handoff says: <reason> Restart it? y/n"*, whose yes relaunches it
+plain, stands as built.
 Ruled 2026-09-18 in a walk: when that prediction already shows a yes would end
 in a refusal or a running seat, nothing is asked and nothing is closed — *"it
 refuses straight away with the reason and leaves the window open"*, since *"no
