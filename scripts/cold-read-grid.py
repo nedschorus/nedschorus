@@ -5,8 +5,8 @@ One invocation = one review: six cold-read-cells launched in parallel -- the
 defect-hunt pass in four ({good, floor} x {claude, codex}) and the
 terminology pass in two (good x {claude, codex}) -- every report saved
 into a cold-read-record named
-`cold-read-records/<YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>/`
-(a -2, -3 suffix when two runs start in one minute), progress and next-step
+`cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
+(a -2, -3 suffix for a second read of the document that day), progress and next-step
 instructions printed for the reviewing agent as reviews land.
 
 Usage:
@@ -137,10 +137,10 @@ Keep your judgments provisional until you have read all six, as later
 reports may offer more insight than earlier ones. Then formulate your draft
 response: which problems are real, and what you propose to do about each.
 Walk that with the user using the walk-me-through skill, ordered from most
-important to least. The walk's anchor is {record_dir}/dispositions.md.
+important to least.
 
 This record was shipped to the log-store on ned-box when the run ended (the
-`record:` line above says whether it arrived); once dispositions.md is written,
+`record:` line above says whether it arrived); once triage.md is written,
 run `scripts/cold-read-record-ship.py {record_dir}` so it joins the reports
 there. cold-read-records/ stays gitignored: never commit it. Leave {record_dir}
 in place once the work it served has landed — these records are kept, not
@@ -167,22 +167,24 @@ directory it is kept, not deleted (user-ruled 2026-08-25), and its FAILED
 line says what the Opus cell reported."""
 
 
-# THE RECORD-NAME RULE, for every document, with no special cases (user-ruled
-# 2026-09-16): `<YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>`, the
-# date and 24-hour time local and from one clock read. It replaced
-# `<YYYY-MM-DD>-<file stem>` and its patch for SKILL, README and index, for
-# two measured reasons: the patch left every other shared file name colliding
-# (`.claude/skills/cold-read/prompts/terminology.md` still took the name of
-# any other `terminology.md`), and the date did not separate re-reads of one
-# document on one day (of 104 records on the user's Mac, eight carried a -2
-# or -3 from a same-day re-read, which says nothing about which draft each
-# read). The parent directory's leading dots are stripped, so a file in
-# `~/.claude/` gives `claude-CLAUDE`; a parent with no name left gives the
-# stem alone. Restated, not imported, in scripts/cold-read-fast-read.py,
-# because the cold-read-grid is a program rather than a module; the two must
-# stay identical. Every file the cold-read-grid writes into the
-# cold-read-record is named from the whole record directory name (see
-# cell_report_path), so it carries the date, time and document part too.
+# THE RECORD-NAME RULE (user-ruled 2026-09-18, walk
+# docs/walk/cold-read-and-walk-file-names-and-dispositions, item 4):
+# `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a
+# skill, whose stem is always SKILL and whose name is its directory's; a
+# second read of one document on one day takes -2, -3. The document comes
+# first so every read of one document sits together in the log-store's
+# listing, and the date is all the time a reader needs. It replaced
+# `<YYYY-MM-DD>-<HHMM>-<parent directory>-<file stem>` (ruled 2026-09-16),
+# and knowingly gives up what that form bought: two documents with the same
+# stem in different directories read on one day come out as -2 of each other
+# (the record's target/ shows which was which), and the -N count says nothing
+# about which draft each read was. Both accepted at the walk, since the name
+# is now shared with the walk that rules on the read (item 6) and has to be
+# short enough to type. Restated, not imported, in
+# scripts/cold-read-fast-read.py, because the cold-read-grid is a program
+# rather than a module; the two must stay identical. The files inside the
+# record carry none of this name (item 5): the directory says which read, the
+# file says which agent ran which attack.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
@@ -205,24 +207,27 @@ def record_clock_reading() -> datetime.datetime:
 
 
 def record_name_for_target(target: pathlib.Path) -> str:
-    """The cold-read-target's part of a cold-read-record name: the parent
-    directory's name without leading dots, a hyphen, and the file stem; the
-    stem alone when the parent's name is empty."""
-    parent_name = target.parent.name.lstrip(".")
-    return f"{parent_name}-{target.stem}" if parent_name else target.stem
+    """The cold-read-target's part of a cold-read-record name: its file stem,
+    except that a file whose stem is exactly `SKILL` -- every skill in this
+    project is `.claude/skills/<name>/SKILL.md` -- is `SKILL-<skill name>`,
+    the name being its directory's."""
+    if target.stem == "SKILL" and target.parent.name:
+        return f"SKILL-{target.parent.name}"
+    return target.stem
 
 
 def record_directory_name_for_target(
     target: pathlib.Path, now: datetime.datetime,
 ) -> str:
-    """`<YYYY-MM-DD>-<HHMM>-<document part>`, before any -2, -3 suffix."""
-    return (f"{now.strftime('%Y-%m-%d')}-{now.strftime('%H%M')}-"
-            f"{record_name_for_target(target)}")
+    """`<document part>-<YYYY-MM-DD>`, before any -2, -3 suffix. Only the
+    date of the clock reading is used."""
+    return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
-    """Create and return the record directory: the minute's name, or the
-    first of -2, -3, ... that is not taken (two runs started in one minute)."""
+    """Create and return the record directory: the day's name, or the
+    first of -2, -3, ... that is not taken (a second read of the document
+    that day)."""
     base = record_directory_name_for_target(target, now)
     record_dir = RECORDS_DIR / base
     suffix = 2
@@ -253,7 +258,7 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{clean}`")
     if not candidates:
         lines.append("- no path-like references found")
-    (record_dir / f"{record_dir.name}--reference-check.md").write_text(
+    (record_dir / "reference-check.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -396,19 +401,19 @@ def mark_reports_target_changed(
 def cell_report_path(
     record_dir: pathlib.Path, runtime: str, cell_pass: str, tier: str,
 ) -> pathlib.Path:
-    """Where one cold-read-cell's report goes: `<record dir>/<record dir name>--<runtime>-<pass token>-<tier>.md`.
+    """Where one cold-read-cell's report goes: `<record dir>/<runtime>-<pass token>-<tier>.md`.
 
-    THE FILE NAME CARRIES THE RUN (user-ruled 2026-08-25). Every file this
-    cold-read-grid writes into a cold-read-record is prefixed with that
-    directory's own name, so a report says which run produced it wherever it
-    is later found or copied. Before this, all eight of a run's reports were
-    named for the cold-read-cell alone -- `codex-hunt-floor.md` and seven
-    like it -- and two cold-read-full-runs running at once in one checkout
-    (three did that day) each had a file of every one of those names. A
-    cold-read-cell of the first run that wrote nothing could then have the
-    second run's correctly placed report recovered as its own: the first
-    run holds a review of the wrong document under its stamp, and the second
-    loses the review it produced.
+    THE FILE SAYS WHICH AGENT RAN WHICH ATTACK, AND NOTHING ELSE (user-ruled
+    2026-09-18, walk docs/walk/cold-read-and-walk-file-names-and-dispositions,
+    item 5); the directory says which read. From 2026-09-15 to 2026-09-18
+    every file carried the record's name as a prefix, added on 2026-08-25
+    because two cold-read-full-runs going at once in one checkout each held a
+    `codex-hunt-floor.md`, and a cold-read-cell of the first run that wrote
+    nothing could have the second run's correctly placed report recovered as
+    its own. That case is now met where it arises, in the cold-read-cell's
+    near-miss recovery (scripts/cold-read-cell-common.py,
+    recover_near_miss_report), which never takes a file from a directory the
+    instrument built.
 
     The pass token is the cell name, except that defect-hunt is `hunt` --
     the token every record set since 2026-08-25 has carried. One function
@@ -416,7 +421,7 @@ def cell_report_path(
     belonged to by the same rule that named it.
     """
     pass_token = "hunt" if cell_pass == "defect-hunt" else cell_pass
-    return record_dir / f"{record_dir.name}--{runtime}-{pass_token}-{tier}.md"
+    return record_dir / f"{runtime}-{pass_token}-{tier}.md"
 
 
 def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
@@ -631,7 +636,7 @@ def main() -> int:
 
     # The cold-read-record goes to the log-store now, whatever landed: a set
     # marked TARGET CHANGED is evidence too, and a failed cold-read-cell's
-    # log is part of the cold-read-record. dispositions.md is not written
+    # log is part of the cold-read-record. triage.md is not written
     # yet; the agent ships again after writing it, and the shipper adds
     # it beside the reports.
     print(f"record: {ship_record(record_dir)}", flush=True)
@@ -701,13 +706,13 @@ def main() -> int:
         elif only_fable_cell_failed:
             what_to_do = (
                 "That is the Fable floor cell, a when-available seat: note its "
-                "absence in dispositions.md and continue with the reports that "
+                "absence in triage.md and continue with the reports that "
                 "landed, which are the Opus, Codex good and Codex floor "
                 "defect-hunt reviews and the Opus and Codex terminology reviews.")
         else:
             what_to_do = (
                 "Rerun them singly with the cell launchers before triage, or note "
-                "their absence in dispositions.md.")
+                "their absence in triage.md.")
         print(f"\nNOTE: {len(failures)} review(s) failed and are absent from the "
               f"record: {', '.join(failures)}. {what_to_do}")
     # A moved cold-read-target outranks a failed cold-read-cell in the exit

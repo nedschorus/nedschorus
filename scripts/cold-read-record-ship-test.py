@@ -95,11 +95,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the second run touched nothing in the store",
           stored_a.stat().st_mtime_ns == mtime_before)
 
-    (demo / "dispositions.md").write_text("# dispositions\n\nnone\n", encoding="utf-8")
+    (demo / "triage.md").write_text("# triage\n\nnone\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
-    check("dispositions.md written later joins the reports on the next run",
+    check("triage.md written later joins the reports on the next run",
           result.returncode == 0 and "1 file(s) added" in result.stdout
-          and (store_root / "cold-read-records" / demo.name / "dispositions.md").is_file(),
+          and (store_root / "cold-read-records" / demo.name / "triage.md").is_file(),
           result.stdout)
 
     os.utime(demo / "b.md")  # same bytes, newer mtime
@@ -149,11 +149,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     (demo / "a.md").write_text(REPORT_A, encoding="utf-8")
     (demo / "b.md").write_text(REPORT_B, encoding="utf-8")
 
-    (demo / "dispositions.md").write_text("# dispositions\n\nrewritten\n", encoding="utf-8")
+    (demo / "triage.md").write_text("# triage\n\nrewritten\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
     check("a differing file with no provenance comment says so instead of crashing",
           result.returncode == 2 and "(no provenance comment)" in result.stdout, result.stdout)
-    (demo / "dispositions.md").write_text("# dispositions\n\nnone\n", encoding="utf-8")
+    (demo / "triage.md").write_text("# triage\n\nnone\n", encoding="utf-8")
 
     # --- Rule 3, fail loudly -------------------------------------------------
     result = ship("nobody@no-such-host.invalid:/tmp/no-store", str(demo))

@@ -59,12 +59,11 @@ suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
 the walk reads next. Anything else -- a design, a skill, a record copy, a
 file outside this checkout -- gets a cold-read-record of its own under the
 gitignored records tree:
-`cold-read-records/<YYYY-MM-DD>-<HHMM>-<name>/<name>-fast-read.md`, where the
-date and the 24-hour time are local and come from one clock read, <name> is
-the cold-read-target's parent directory name without leading dots, a hyphen,
-and the cold-read-target's file name without its extension (the file name
-alone when the parent name is empty), and the directory takes a -2, -3 suffix
-when the minute's name is taken, the cold-read-grid's rule. That directory
+`cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
+cold-read-target's file name without its extension -- `SKILL-<skill name>`
+for a skill, whose file is always SKILL.md -- the date is local, and the
+directory takes a -2, -3 suffix when the day's name is taken, the
+cold-read-grid's rule (user-ruled 2026-09-18). That directory
 also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
@@ -256,25 +255,24 @@ def fast_read_report_path_for_target(
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
         return REPO_ROOT / WALK_DIRECTORY_RELATIVE / f"{name}-suggestions.md"
-    name = record_name_for_target(target)
     return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
-            / f"{name}-fast-read.md")
+            / "fast-read.md")
 
 
-# THE RECORD-NAME RULE, for every document, with no special cases (user-ruled
-# 2026-09-16): `<YYYY-MM-DD>-<HHMM>-<parent directory name>-<file stem>`.
-# It replaced `<YYYY-MM-DD>-<file stem>` and its patch for SKILL, README and
-# index, for two measured reasons. The patch named a skill after its directory
-# but left every other shared file name colliding:
-# `.claude/skills/cold-read/prompts/terminology.md` still took the name of any
-# other `terminology.md`. And the date did not separate re-reads of one
-# document on one day: of 104 records on the user's Mac, eight carried a -2
-# or -3 from a same-day re-read (2026-09-15-handoff-system-overview-3 among
-# them), and the suffix says nothing about which draft each read. The parent
-# directory's leading dots are stripped, so a file in `~/.claude/` gives
-# `claude-CLAUDE`; a parent with no name left gives the stem alone. Restated,
-# not imported, in scripts/cold-read-grid.py, because the cold-read-grid is a
-# program rather than a module; the two must stay identical.
+# THE RECORD-NAME RULE (user-ruled 2026-09-18, walk
+# docs/walk/cold-read-and-walk-file-names-and-dispositions, item 4):
+# `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a
+# skill; a second read of one document on one day takes -2, -3. The document
+# comes first so every read of one document sits together in the log-store's
+# listing. It replaced `<YYYY-MM-DD>-<HHMM>-<parent directory>-<file stem>`
+# (ruled 2026-09-16), and knowingly gives up what that form bought: two
+# documents with the same stem in different directories read on one day come
+# out as -2 of each other (target/ shows which was which), and the -N count
+# says nothing about which draft each read was. Both accepted at the walk.
+# Restated, not imported, in scripts/cold-read-grid.py, because the
+# cold-read-grid is a program rather than a module; the two must stay
+# identical. The report inside the record is bare `fast-read.md` (item 5):
+# the directory says which read, the file says what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
@@ -297,31 +295,33 @@ def record_clock_reading() -> datetime.datetime:
 
 
 def record_name_for_target(target: pathlib.Path) -> str:
-    """The cold-read-target's part of a cold-read-record name: the parent
-    directory's name without leading dots, a hyphen, and the file stem; the
-    stem alone when the parent's name is empty."""
-    parent_name = target.parent.name.lstrip(".")
-    return f"{parent_name}-{target.stem}" if parent_name else target.stem
+    """The cold-read-target's part of a cold-read-record name: its file stem,
+    except that a file whose stem is exactly `SKILL` -- every skill in this
+    project is `.claude/skills/<name>/SKILL.md` -- is `SKILL-<skill name>`,
+    the name being its directory's."""
+    if target.stem == "SKILL" and target.parent.name:
+        return f"SKILL-{target.parent.name}"
+    return target.stem
 
 
 def record_directory_name_for_target(
     target: pathlib.Path, now: datetime.datetime,
 ) -> str:
-    """`<YYYY-MM-DD>-<HHMM>-<document part>`, before any -2, -3 suffix."""
-    return (f"{now.strftime('%Y-%m-%d')}-{now.strftime('%H%M')}-"
-            f"{record_name_for_target(target)}")
+    """`<document part>-<YYYY-MM-DD>`, before any -2, -3 suffix. Only the
+    date of the clock reading is used."""
+    return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
 
 
 def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
-    """The minute's name, or the first of -2, -3, ... that is not taken.
+    """The day's name, or the first of -2, -3, ... that is not taken.
 
     The rule scripts/cold-read-grid.py's make_record_dir applies, restated
     here rather than imported because the cold-read-grid is a program, not a
     module (user-ruled 2026-09-07 with the frozen cold-read-target: two frozen
     cold-read-targets never share a directory, so a cold-read-fast-read after
-    a cold-read-full-run on the same cold-read-target in the same minute, or
-    after an earlier cold-read-fast-read of a revised draft in that minute,
-    takes its own).
+    a cold-read-full-run on the same cold-read-target on the same day, or
+    after an earlier cold-read-fast-read of a revised draft that day, takes
+    its own).
     Nothing is created here; the launcher creates the report's directory.
     """
     record_dir = base
