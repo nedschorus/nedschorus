@@ -12,7 +12,7 @@ file rather than answering in chat.
 Usage:
   scripts/cold-read-agy-cell.py --cell fast-clarify --tier fast \\
       --target docs/walk/foo-draft.md \\
-      --report cold-read-records/2026-01-01-foo/foo-fast-read.md
+      --report cold-read-records/foo-2026-01-01/fast-read.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.

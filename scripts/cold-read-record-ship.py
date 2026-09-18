@@ -13,7 +13,7 @@ ned-box, one subdirectory per kind of byproduct; cold-read-records are the kind
 `cold-read-records/`, keeping their directory names. A cold-read-record
 there is cited with its host in scp form, so an agent on either machine
 knows the command:
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-05-SKILL/dispositions.md`.
+`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-05-SKILL/dispositions.md` (a record from before triage.md took that file's name).
 The cold-read-record in the checkout stays what it was: a
 gitignored directory under cold-read-records/, written by the cold-read-grid
 and by the agent.
@@ -23,7 +23,7 @@ name by rsync -- over ssh from the Mac, as a local copy on ned-box, the store
 itself being the only difference -- under three rules ruled with the design:
 
   1. ADD-ONLY. Files are added and never deleted or replaced, so
-     dispositions.md, written hours after the reports, joins them on a second
+     triage.md, written hours after the reports, joins them on a second
      run and nothing already there is touched. rsync writes each file whole
      or not at all (its default temporary-file-and-rename; --inplace is never
      passed), so a copy interrupted midway is finished by the next run.
@@ -44,7 +44,7 @@ cold-read-records dated before 2026-09-08 predate the frozen cold-read-target
 -- from the text in this file.
 
 WHO CALLS IT. scripts/cold-read-grid.py at the end of every run, whatever the
-outcome; the agent after writing dispositions.md (the cold-read skill's step
+outcome; the agent after writing triage.md (the cold-read skill's step
 7); scripts/cold-read-fast-read.py when it writes into cold-read-records/.
 A shipping failure never fails the cold read: the caller prints this
 program's one line and goes on. `--all` ships every directory under
@@ -107,7 +107,7 @@ the system -- good data, never part of the repository (user-ruled
 
 - `cold-read-records/` -- one directory per cold-read run, named
   `<date>-<document name>` with `-2`, `-3` for later runs on one day, holding
-  the reviewer reports, `dispositions.md` when the agent finished its triage
+  the reviewer reports, `triage.md` when the agent finished its triage
   (its absence means a triage that never finished, which is true state), and
   `target/<repository path>` with the exact bytes the reviewers read. Records
   dated before 2026-09-08 predate that freeze and hold no `target/`; the

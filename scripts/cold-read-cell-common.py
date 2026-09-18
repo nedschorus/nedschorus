@@ -546,6 +546,14 @@ def recover_report_from_runtime_stdout(
     return True
 
 
+def instrument_built_record_directory(directory: pathlib.Path) -> bool:
+    """True when `directory` is a cold-read-record the instrument built, as
+    opposed to one a model invented: it holds `target/` or `reference-check.md`,
+    both written before any reviewer is launched. The near-miss recovery never
+    takes a file from such a directory (see recover_near_miss_report)."""
+    return (directory / "target").is_dir() or (directory / "reference-check.md").is_file()
+
+
 def recover_near_miss_report(
     program: str, report: pathlib.Path, attempt_started_at: float,
 ) -> bool:
@@ -560,27 +568,34 @@ def recover_near_miss_report(
     threw it away. Losing a review to a typo in a directory name is not a
     review that did not happen.
 
-    WHY AN EXACT NAME IS ENOUGH TO SEARCH ON, and why this looks through the
-    whole tree rather than at neighbouring directories only. Every file the
-    cold-read-grid writes into a cold-read-record carries the run's own name:
-    `2026-08-25-ghi-write-SKILL--codex-hunt-floor.md` is written by one run and
-    by no other. Before that prefix existed, every run's Codex defect-hunt
-    cold-read-cell on the floor cold-read-tier wrote `codex-hunt-floor.md`, so
-    two cold-read-full-runs going at once in one checkout each had a file of
-    that name -- and a cold-read-cell of the first run that wrote nothing could
-    pick up the second run's correctly placed report, move it under the first
-    run's stamp, and leave the second run without the review it had produced
-    (user-ruled 2026-08-25). With the run in the name, a file of the report's
-    exact name is this run's report wherever it sits.
+    WHY THIS LOOKS THROUGH THE WHOLE TREE, AND WHAT IT MUST NOT TAKE. The
+    files inside a cold-read-record are bare cell names -- every run's Codex
+    defect-hunt cold-read-cell on the floor cold-read-tier writes
+    `codex-hunt-floor.md` (user-ruled 2026-09-18: the directory carries the
+    record's name, the files say only which agent ran which attack). So two
+    cold-read-full-runs going at once in one checkout each hold a file of
+    that name, and a search by name alone would let a cold-read-cell of the
+    first run that wrote nothing pick up the second run's correctly placed
+    report, move it under the first run's stamp, and leave the second run
+    without the review it had produced -- the case the user ruled against on
+    2026-08-25, when the fix was to prefix every file with the run's name.
+    What now keeps the two apart is where a file sits: a directory the
+    instrument built holds `target/` (the frozen cold-read-target, written by
+    both the cold-read-grid and the cold-read-fast-read before any reviewer
+    starts) or `reference-check.md` (the cold-read-grid's pre-pass), and a
+    file inside such a directory is another run's and is never a candidate.
+    A directory a model invented -- the 2026-08-25 miss, one character off --
+    holds neither, so a report misplaced there is still found.
 
     WHAT IS AND IS NOT ACCEPTED. Exactly one candidate is recovered: a
     non-empty file whose name is exactly the report's own, anywhere under the
     cold-read-record's parent -- the `cold-read-records/` tree, which includes
     a file left loose in the root of it and one inside a directory a model
-    invented -- whose mtime is at or after this ATTEMPT's start, and which is
-    not the expected path itself. Zero candidates is the ordinary failure and
-    stays one. Two or more is refused rather than guessed at, because picking
-    one would put a review under a stamp that may not describe it.
+    invented, but never one inside a directory the instrument built -- whose
+    mtime is at or after this ATTEMPT's start, and which is not the expected
+    path itself. Zero candidates is the ordinary failure and stays one. Two
+    or more is refused rather than guessed at, because picking one would put
+    a review under a stamp that may not describe it.
 
     WHY THE ATTEMPT'S START AND NOT THE COLD-READ-CELL'S. The ruling says
     "since the run started". Per-attempt is a strict subset of that and
@@ -603,6 +618,8 @@ def recover_near_miss_report(
                 continue
             candidate = pathlib.Path(directory) / file_name
             if candidate == report or not candidate.is_file():
+                continue
+            if instrument_built_record_directory(pathlib.Path(directory)):
                 continue
             if candidate.stat().st_mtime < attempt_started_at:
                 continue
@@ -635,7 +652,8 @@ def recover_near_miss_report(
     print(
         f"{program}: no near-miss report to recover — looked for a file named "
         f"{report.name}, modified at or after {cutoff_text}, anywhere under "
-        f"{records_root}, and found {found_text}.",
+        f"{records_root} outside the record directories the instrument built, "
+        f"and found {found_text}.",
         file=sys.stderr,
     )
     return False

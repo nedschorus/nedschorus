@@ -234,7 +234,10 @@ concurrent_run_report = step.get("concurrent_run_report")
 if concurrent_run_report:
     other_directory_name, other_file_name = concurrent_run_report
     other_directory = report_path.parent.parent / other_directory_name
-    other_directory.mkdir(parents=True, exist_ok=True)
+    # A record directory the instrument built carries target/ before any
+    # reviewer starts; that is how the recovery tells it from one a model
+    # invented (user-ruled 2026-09-18).
+    (other_directory / "target").mkdir(parents=True, exist_ok=True)
     (other_directory / other_file_name).write_text(
         CONCURRENT_RUN_REVIEW_TEXT, encoding="utf-8")
 if "edit" in step:
@@ -381,19 +384,21 @@ def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
 
 
 def report_path_for(repository, case_slug, runtime):
-    """A report path shaped exactly as the grid names one: the record
-    directory's own name, then `--`, then the cell.
+    """A report path shaped exactly as the grid names one: a record directory
+    of its own, and inside it the bare cell name, `<runtime>-hunt-floor.md`
+    (user-ruled 2026-09-18: the directory carries the record's name, the
+    files inside say only which agent ran which attack).
 
-    The prefix is what makes the recovery below safe to search the whole
-    records tree with (user-ruled 2026-08-25): one file name belongs to one
-    run. It also gives each case a record directory of its own, so one case's
-    leavings can never be a candidate for the next case's recovery. The cases
-    at the top of this file name their reports directly instead, because what
-    they pin — the stray-write detector — does not turn on the name.
+    Each case gets a record directory of its own, and every case that
+    exercises the recovery rebuilds the scratch repository first, so one
+    case's leavings can never be a candidate for the next case's recovery.
+    The cases at the top of this file name their reports directly instead,
+    because what they pin — the stray-write detector — does not turn on the
+    name.
     """
-    record_directory_name = f"2026-08-25-{case_slug}-aaaaaaa"
+    record_directory_name = f"{case_slug}-2026-08-25-aaaaaaa"
     return (repository / "cold-read-records" / record_directory_name
-            / f"{record_directory_name}--{runtime}-hunt-floor.md")
+            / f"{runtime}-hunt-floor.md")
 
 
 def near_miss_directory_of(report):
@@ -758,20 +763,24 @@ with tempfile.TemporaryDirectory() as scratch:
           not (report.parent.parent / report.name).exists(),
           "two files now hold one review")
 
-    # THE CASE THE RUN-NAMED FILE EXISTS FOR (user-ruled 2026-08-25). A second
-    # cold-read run, going on at the same time in the same checkout, writes its own
-    # report for the same cell while this attempt runs. Under the old bare
-    # names both files were `codex-hunt-floor.md`, and this cell could recover
-    # the other run's correctly placed report: this run would then hold a
-    # review of the wrong document under its stamp, and the other run would
-    # lose the review it produced. The prefix is what makes the two
-    # distinguishable, and this case is what proves the distinction holds.
+    # THE CASE THE RECOVERY MUST REFUSE (user-ruled 2026-08-25, the rule
+    # re-cut 2026-09-18). A second cold-read run, going on at the same time
+    # in the same checkout, writes its own report for the same cell while
+    # this attempt runs. Both files are `codex-hunt-floor.md`, and a search
+    # that went by name alone would recover the other run's correctly placed
+    # report: this run would then hold a review of the wrong document under
+    # its stamp, and the other run would lose the review it produced. From
+    # 2026-09-15 to 2026-09-18 the record's name was prefixed onto every
+    # file to keep the two apart; now the files are bare, and what tells
+    # them apart is where they sit: the other run's directory was built by
+    # the instrument, so it holds target/, and the recovery does not look
+    # inside such a directory. This case is what proves that holds.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     report = report_path_for(repository, "concurrent-run", "codex")
     concurrent_report = (
         report.parent.parent / report.parent.name.replace("aaaaaaa", "bbbbbbb")
-        / report.name.replace("aaaaaaa", "bbbbbbb"))
+        / report.name)
     result = run_codex_cell(
         repository, stubs,
         {"*": {"concurrent_run_report": [concurrent_report.parent.name,
@@ -785,7 +794,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the concurrent run keeps the report it wrote",
           concurrent_report.is_file(),
           f"{concurrent_report} was taken from the run that wrote it")
-    check("the failure names the file it looked for, prefix and all",
+    check("the failure names the file it looked for",
           "no near-miss report to recover" in result.stderr
           and report.name in result.stderr
           and "anywhere under" in result.stderr

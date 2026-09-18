@@ -87,22 +87,22 @@ WHAT IS PINNED HERE.
     strays into some other file is reported and the run still exits 0, so a
     stray write on its own is a warning and not a failure.
 
-  - Every file the grid writes into a record directory is named for the run
-    (user-ruled 2026-08-25) — `<record directory name>--<runtime>-<pass>-<tier>.md`,
-    and `<record directory name>--reference-check.md` for the pre-pass. Before
-    that prefix, all eight of a run's reports were named for the cell alone,
-    so a report on its own said nothing about which run produced it, and two
-    cold-read runs going at once in one checkout each held a file of every one of
-    those eight names. The cases below assert the prefix on every file in the
-    set, so a report that loses it fails here rather than in a record nobody
-    can place.
+  - Every file the grid writes into a record directory is a bare role name
+    (user-ruled 2026-09-18) — `<runtime>-<pass>-<tier>.md` for a report and
+    `reference-check.md` for the pre-pass; the directory's name says which
+    read. From 2026-09-15 to 2026-09-18 every file carried the record's name
+    as a prefix, added because two cold-read runs going at once in one
+    checkout each held a file of every one of those names and a cell's
+    near-miss recovery could take the other run's; that case is now met in
+    the recovery itself (scripts/cold-read-cell-common-test.py pins it). The
+    cases below assert the bare names on every file in the set.
 
-  - A record directory is named `<YYYY-MM-DD>-<HHMM>-<parent directory
-    name>-<file stem>` for every document, with no special cases (user-ruled
-    2026-09-16), and a second run started in the same minute takes -2. The
-    name function is handed a clock reading in-process, and every grid run
-    here is given COLD_READ_RECORD_CLOCK_OVERRIDE, so no case reads the wall
-    clock or can flake across a minute boundary.
+  - A record directory is named `<file stem>-<YYYY-MM-DD>`, or
+    `SKILL-<skill name>-<YYYY-MM-DD>` for a skill (user-ruled 2026-09-18,
+    reversing the date-first order of 2026-09-16), and a second run of the
+    same document on the same day takes -2. The name function is handed a
+    clock reading in-process, and every grid run here is given
+    COLD_READ_RECORD_CLOCK_OVERRIDE, so no case reads the wall clock.
 
   - An unreviewable target is refused before anything is created. Documents
     whose stem ends in `-log`, `-report` or `-capture` only record what
@@ -407,8 +407,8 @@ with tempfile.TemporaryDirectory() as scratch:
               for report in reports),
           [report.name for report in reports
            if "<!-- TARGET CHANGED DURING RUN:" not in report.read_text(encoding="utf-8")])
-    stamped = record_directory / f"{record_directory.name}--claude-hunt-good.md"
-    check("the set holds a report named for both the run and the cell",
+    stamped = record_directory / "claude-hunt-good.md"
+    check("the set holds a report named for the cell",
           stamped.is_file(), sorted(path.name for path in record_directory.iterdir()))
     # Read once, and survive an absent file: a name this suite got wrong should
     # fail by name above, not end the run in a traceback that takes the
@@ -426,8 +426,8 @@ with tempfile.TemporaryDirectory() as scratch:
           "STUB REVIEW: one restatement" in stamped_text, repr(stamped_text[:200]))
     # The reference-integrity pre-pass carries no provenance stamp, so its
     # marker goes at the very top.
-    unstamped = record_directory / f"{record_directory.name}--reference-check.md"
-    check("the reference-integrity pre-pass is named for the run too",
+    unstamped = record_directory / "reference-check.md"
+    check("the reference-integrity pre-pass is named reference-check.md",
           unstamped.is_file(), sorted(path.name for path in record_directory.iterdir()))
     unstamped_text = unstamped.read_text(encoding="utf-8") if unstamped.is_file() else ""
     unstamped_lines = unstamped_text.split("\n") if unstamped_text else [""]
@@ -562,7 +562,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT":
-         "--claude-terminology-good.md"},
+         "claude-terminology-good.md"},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
@@ -570,7 +570,7 @@ with tempfile.TemporaryDirectory() as scratch:
                   if line.startswith("NOTE: ")]
     check("losing only the terminology Opus cell: five land, grid exits 1",
           result.returncode == 1 and len(saved_lines) == 5
-          and any(line.endswith("--claude-hunt-good.md") for line in saved_lines),
+          and any(line.endswith("/claude-hunt-good.md") for line in saved_lines),
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("the terminology Opus cell alone still gets the stop-and-wait text",
           "Wait for Opus to come back" in result.stdout
@@ -593,7 +593,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_grid(
         repository, stubs,
         {"COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT":
-         "--codex-terminology-good.md"},
+         "codex-terminology-good.md"},
     )
     saved_lines = [line for line in result.stdout.splitlines()
                    if line.startswith("saved:")]
@@ -668,7 +668,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"stdout was {result.stdout!r}")
     check("the note names the Fable cell and says to continue",
           note_lines != [] and "claude-hunt-floor" in note_lines[0]
-          and "note its absence in dispositions.md and continue" in note_lines[0],
+          and "note its absence in triage.md and continue" in note_lines[0],
           f"note lines were {note_lines!r}")
     check("the note names the terminology reviews among those that landed",
           note_lines != [] and "the Opus and Codex terminology reviews" in note_lines[0],
@@ -681,7 +681,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the failed cell's stderr log is kept and the landed cells' logs are deleted",
           record_directory is not None
           and [path.name for path in record_directory.glob("*.stderr.log")]
-          == [f"{record_directory.name}--claude-hunt-floor.md.stderr.log"],
+          == ["claude-hunt-floor.md.stderr.log"],
           f"logs in {record_directory}: "
           f"{sorted(path.name for path in record_directory.glob('*.stderr.log')) if record_directory else None}")
 
@@ -747,12 +747,11 @@ with tempfile.TemporaryDirectory() as scratch:
         if directory.is_dir())
     grid_record_directories = [
         directory for directory in record_directories
-        if (directory / f"{directory.name}--reference-check.md").is_file()]
+        if (directory / "reference-check.md").is_file()]
     recovered_record_directory_name = (
         grid_record_directories[0].name if grid_record_directories else "")
-    check("the RECOVERED line names the cell it belongs to, run and all",
-          any(line.startswith(
-              f"RECOVERED: {recovered_record_directory_name}--claude-hunt-good.md")
+    check("the RECOVERED line names the cell it belongs to",
+          any(line.startswith("RECOVERED: claude-hunt-good.md")
               for line in recovered_lines),
           f"lifted lines were {recovered_lines!r}")
     check("the recovered reports are back in the directory the grid made",
@@ -804,14 +803,16 @@ with tempfile.TemporaryDirectory() as scratch:
     check("an accepted run says nothing about a genre suffix",
           "genre suffix" not in result.stderr, repr(result.stderr))
 
-    # --- The record-name rule: date, time, parent directory, file ----------
-    # User-ruled 2026-09-16, for every document with no special cases. The
-    # name it replaced, <date>-<stem> with a patch for SKILL, README and
-    # index, still collided on every other shared file name (a skill's
-    # prompts/terminology.md against any other terminology.md), and its date
-    # could not tell same-day re-reads apart (eight -2 and -3 records among
-    # 104 on the user's Mac). The grid is loaded in-process for the name
-    # function alone, which is handed its clock; nothing runs.
+    # --- The record-name rule: document stem, then date, then a count -------
+    # User-ruled 2026-09-18 (walk cold-read-and-walk-file-names-and-dispositions,
+    # item 4): `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>`
+    # for a skill, whose stem is always SKILL. It reverses the date-first,
+    # parent-directory form of 2026-09-16 so that every read of one document
+    # sits together in the store's listing, and accepts what that form
+    # bought: same-stem documents in different directories read on one day
+    # become -2 of each other, and the count says nothing about which draft
+    # each read was. The grid is loaded in-process for the name function
+    # alone, which is handed its clock; nothing runs.
     grid_spec = importlib.util.spec_from_file_location(
         "cold_read_grid_under_test", SCRIPTS_DIR / "cold-read-grid.py")
     grid_module = importlib.util.module_from_spec(grid_spec)
@@ -821,66 +822,65 @@ with tempfile.TemporaryDirectory() as scratch:
     def grid_record_name(path, clock=clock_at_1042):
         return grid_module.record_directory_name_for_target(Path(path), clock)
 
-    check("grid: a SKILL.md record is date, HHMM, directory, SKILL",
+    check("grid: a SKILL.md record is SKILL, the skill's name, then the date",
           grid_record_name("/r/.claude/skills/cold-read/SKILL.md")
-          == "2026-09-16-1042-cold-read-SKILL",
+          == "SKILL-cold-read-2026-09-16",
           grid_record_name("/r/.claude/skills/cold-read/SKILL.md"))
-    check("grid: a prompts/terminology.md record carries its prompts directory",
-          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology.md")
-          == "2026-09-16-1042-prompts-terminology",
-          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology.md"))
-    check("grid: an ordinary document carries its directory too",
+    check("grid: an ordinary document is its stem, then the date, with no directory",
           grid_record_name("/r/docs/drafts/explain-skill-draft.md")
-          == "2026-09-16-1042-drafts-explain-skill-draft")
-    check("grid: a parent directory's leading dot is stripped: ~/.claude/CLAUDE.md is claude-CLAUDE",
-          grid_record_name("/Users/someone/.claude/CLAUDE.md") == "2026-09-16-1042-claude-CLAUDE",
-          grid_record_name("/Users/someone/.claude/CLAUDE.md"))
-    check("grid: a file whose parent has no name is named by its stem alone",
-          grid_record_name("/CLAUDE.md") == "2026-09-16-1042-CLAUDE",
+          == "explain-skill-draft-2026-09-16",
+          grid_record_name("/r/docs/drafts/explain-skill-draft.md"))
+    check("grid: a skill's prompt file is its stem alone, like any other document",
+          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology.md")
+          == "terminology-2026-09-16",
+          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology.md"))
+    check("grid: README and index get no special case",
+          grid_record_name("/r/docs/nedschorus-wiki/README.md") == "README-2026-09-16"
+          and grid_record_name("/r/docs/index.md") == "index-2026-09-16")
+    check("grid: a file whose parent has no name is still its stem and the date",
+          grid_record_name("/CLAUDE.md") == "CLAUDE-2026-09-16",
           grid_record_name("/CLAUDE.md"))
-    check("grid: the hour and minute are zero-padded, 24-hour, with no separator",
+    check("grid: the time of day is not part of the name",
           grid_record_name("/r/docs/drafts/a.md", datetime.datetime(2026, 9, 16, 9, 5))
-          == "2026-09-16-0905-drafts-a"
+          == "a-2026-09-16"
           and grid_record_name("/r/docs/drafts/a.md", datetime.datetime(2026, 9, 16, 21, 5))
-          == "2026-09-16-2105-drafts-a")
+          == "a-2026-09-16")
 
-    # Through the real grid: a skill read twice in one minute, then once a
-    # minute later. The first run takes the plain name, the second -2, and
-    # the third its own later name with no suffix -- the time, not a suffix,
-    # is what tells the third apart.
+    # Through the real grid: a skill read twice in one day, then once the
+    # next day. The first run takes the plain name, the second -2, and the
+    # third its own later name with no suffix.
     repository = build_scratch_repository(scratch, "checkout-skill-record-name")
     skill_relative_path = ".claude/skills/some-named-skill/SKILL.md"
     write_target(repository, skill_relative_path)
     first_result = run_grid(repository, stubs, target_relative_path=skill_relative_path)
     second_result = run_grid(repository, stubs, target_relative_path=skill_relative_path)
-    records_after_one_minute = sorted(
+    records_after_one_day = sorted(
         p.name for p in (repository / "cold-read-records").glob("*"))
-    check("a skill target's record is named date, HHMM, the skill's directory, and SKILL",
+    check("a skill target's record is named SKILL, the skill's directory, and the date",
           first_result.returncode == 0
-          and "2026-09-16-1042-some-named-skill-SKILL" in records_after_one_minute,
-          f"exit {first_result.returncode}; records={records_after_one_minute}; "
+          and "SKILL-some-named-skill-2026-09-16" in records_after_one_day,
+          f"exit {first_result.returncode}; records={records_after_one_day}; "
           f"stderr={first_result.stderr[-300:]!r}")
-    check("a second run started in the same minute takes the -2 directory",
+    check("a second run on the same day takes the -2 directory",
           second_result.returncode == 0
-          and records_after_one_minute == ["2026-09-16-1042-some-named-skill-SKILL",
-                                           "2026-09-16-1042-some-named-skill-SKILL-2"],
-          f"exit {second_result.returncode}; records={records_after_one_minute}")
+          and records_after_one_day == ["SKILL-some-named-skill-2026-09-16",
+                                        "SKILL-some-named-skill-2026-09-16-2"],
+          f"exit {second_result.returncode}; records={records_after_one_day}")
     third_result = run_grid(
-        repository, stubs, {RECORD_CLOCK_OVERRIDE_VARIABLE: "2026-09-16T10:43"},
+        repository, stubs, {RECORD_CLOCK_OVERRIDE_VARIABLE: "2026-09-17T10:42"},
         target_relative_path=skill_relative_path)
-    records_after_two_minutes = sorted(
+    records_after_two_days = sorted(
         p.name for p in (repository / "cold-read-records").glob("*"))
-    check("a run in a different minute takes a distinct name with no suffix",
+    check("a run on a different day takes a distinct name with no suffix",
           third_result.returncode == 0
-          and records_after_two_minutes == ["2026-09-16-1042-some-named-skill-SKILL",
-                                            "2026-09-16-1042-some-named-skill-SKILL-2",
-                                            "2026-09-16-1043-some-named-skill-SKILL"],
-          f"exit {third_result.returncode}; records={records_after_two_minutes}")
-    suffixed_record = repository / "cold-read-records" / "2026-09-16-1042-some-named-skill-SKILL-2"
-    check("the files in a suffixed record are named from the whole record directory name",
-          (suffixed_record / "2026-09-16-1042-some-named-skill-SKILL-2--claude-hunt-good.md").is_file()
-          and (suffixed_record
-               / "2026-09-16-1042-some-named-skill-SKILL-2--reference-check.md").is_file(),
+          and records_after_two_days == ["SKILL-some-named-skill-2026-09-16",
+                                         "SKILL-some-named-skill-2026-09-16-2",
+                                         "SKILL-some-named-skill-2026-09-17"],
+          f"exit {third_result.returncode}; records={records_after_two_days}")
+    suffixed_record = repository / "cold-read-records" / "SKILL-some-named-skill-2026-09-16-2"
+    check("the files in a suffixed record are bare role names too",
+          (suffixed_record / "claude-hunt-good.md").is_file()
+          and (suffixed_record / "reference-check.md").is_file(),
           sorted(p.name for p in suffixed_record.iterdir()) if suffixed_record.is_dir() else "absent")
 
 
@@ -905,7 +905,7 @@ with tempfile.TemporaryDirectory() as scratch:
           store_copy.is_dir() and sorted(p.relative_to(store_copy) for p in store_copy.rglob("*") if p.is_file())
           == sorted(p.relative_to(record_directory) for p in record_directory.rglob("*") if p.is_file()),
           f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
-    check("the closing text names the ship command for after dispositions.md",
+    check("the closing text names the ship command for after triage.md",
           f"scripts/cold-read-record-ship.py {record_directory.resolve()}" in result.stdout
           and "gitignored" in result.stdout and "user-ruled 2026-08-14" not in result.stdout,
           result.stdout[-900:])
@@ -950,23 +950,20 @@ with tempfile.TemporaryDirectory() as scratch:
           len(record_directories) == 1,
           [directory.name for directory in record_directories])
     record_directory = record_directories[0]
-    # The frozen target lives under target/ at its own repository path, which
-    # is the one name in the record that is not the run's: it says where the
-    # reviewed file lived. Every file the run itself wrote still carries the
-    # record directory's name.
+    # The frozen target lives under target/ at its own repository path: it
+    # says where the reviewed file lived. Every file the run itself wrote is
+    # a bare role name; none carries the record directory's name.
     written_names = sorted(path.name for path in record_directory.iterdir()
                            if path.name != "target")
-    check("every file the run wrote carries the record directory's name",
-          all(name.startswith(f"{record_directory.name}--")
-              for name in written_names),
-          [name for name in written_names
-           if not name.startswith(f"{record_directory.name}--")])
+    check("no file the run wrote carries the record directory's name",
+          not any(record_directory.name in name for name in written_names),
+          [name for name in written_names if record_directory.name in name])
     check("beside them, the record holds only the frozen target directory",
           sorted(path.name for path in record_directory.iterdir()
-                 if not path.name.startswith(f"{record_directory.name}--")) == ["target"])
+                 if not path.name.endswith(".md")) == ["target"])
     expected_names = sorted(
-        [f"{record_directory.name}--reference-check.md"]
-        + [f"{record_directory.name}--{runtime}-{pass_token}-{tier}.md"
+        ["reference-check.md"]
+        + [f"{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
            for pass_token, tier in (("hunt", "good"), ("hunt", "floor"),
                                     ("terminology", "good"))])
@@ -988,7 +985,7 @@ with tempfile.TemporaryDirectory() as scratch:
     run_grid(repository, stubs / "dot-directory-reference")
     record_directory = record_directory_of(repository)
     reference_check = (
-        record_directory / f"{record_directory.name}--reference-check.md"
+        record_directory / "reference-check.md"
     ).read_text(encoding="utf-8")
     check("a path under a dot directory resolves with its dot intact",
           f"- ok: `{dotted}`" in reference_check, reference_check)
