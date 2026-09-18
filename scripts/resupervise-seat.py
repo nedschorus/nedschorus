@@ -31,7 +31,7 @@ WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
      (per-seat servers, `tmux -L <name>`, 2026-08-21) and on the default
      server, where seats launched before that change still live. That step is
      retire_seat_tmux_session below, which recover-crashed-seats.py runs too
-     when an operator says to close a seat's leftover idle shell.
+     when an operator says to restart a seat behind a leftover idle shell.
   5. Run the seat's launcher. The supervisor boots, finds the unconsumed handoff,
      and ignites the successor from it (handoff-supervisor.py's boot-ignition
      path, live since 2026-08-14).
@@ -243,8 +243,8 @@ def retire_seat_tmux_session(name: str):
 
     Step 4 of this script's procedure, and shared rather than copied:
     recover-crashed-seats.py performs the same retire when an operator answers
-    yes to closing a seat's leftover idle shell (ruled 2026-09-17). A second
-    set of kill rules would drift from these.
+    yes to restarting a seat behind a leftover idle shell (ruled 2026-09-17,
+    reworded 2026-09-18). A second set of kill rules would drift from these.
     """
     killed_sockets = []
     for socket_name in tmux_sockets_holding_seat_session(name):
