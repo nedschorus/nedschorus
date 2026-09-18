@@ -7,7 +7,7 @@ description: Present long or complex material to the user one item at a time, if
 
 Deliver complex material as a sequence of items, each step covering a single component, decision, section, or a step of a longer explanation, per turn. Write like one senior engineer explaining to another out loud. Assume the reader is new to this project, that they are not familiar with this repo, that this is the first conversation you have had with them about this project, so the walk should be understandable as a stand-alone document.  
 
-Each walk has 4 MD files in docs/walk/, a draft document - the proposed text of the walk, a suggestions document - the suggestions to clarify the walk, a walk document -  the text to be presented to the user during the walk, and a minutes document - the recording of the interactions or minutes of the walk. Name the walk <name> by the project naming rule in CLAUDE.md; it names four files, so glob `docs/walk/<name>*` before using it.
+Each walk has 4 MD files in docs/walk/, a draft document - the proposed text of the walk, a suggestions document - the suggestions to clarify the walk, a walk document -  the text to be presented to the user during the walk, and a minutes document - the recording of the interactions or minutes of the walk. Name the walk <name> by the project naming rule in CLAUDE.md, or, for a walk that rules on a cold-read-full-run, by that cold-read-record's name; it names four files, five for a cold-read walk, which adds `<name>-dispositions.md` at its close, so glob `docs/walk/<name>*` before using it.
 
 ## What goes into the walk text
 
