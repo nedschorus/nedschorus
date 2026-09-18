@@ -112,8 +112,11 @@ the system -- good data, never part of the repository (user-ruled
   `target/<repository path>` with the exact bytes the reviewers read. Records
   dated before 2026-09-08 predate that freeze and hold no `target/`; the
   grid recorded only a hash of the target then.
-- `sanity-check-records/` -- one directory per sanity-check run, named the
-  same way, holding the cells' reports, `finding-dispositions.md` when the
+- `sanity-check-records/` -- one directory per sanity-check run, named
+  `<date>-<target stem>` with `-2`, `-3` for later runs on one day (the
+  order scripts/sanity-check-attacks.py gives them, unchanged when cold-read
+  records went document-first on 2026-09-18), holding the cells' reports,
+  `finding-dispositions.md` when the
   requesting agent finished its triage, and each cell's `scratch/`. Written
   by scripts/sanity-check-record-ship.py in the nedschorus repository, under
   the same rules as the records beside them (user-ruled 2026-09-15).
