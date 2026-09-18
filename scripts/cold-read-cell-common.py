@@ -54,10 +54,13 @@ It declared "the model exited without writing" while a complete review sat one
 character away in a directory the model had created itself -- so
 a cold-read-cell now searches the whole `cold-read-records/` tree
 for a file of its report's own name before it declares failure
-(`recover_near_miss_report`). That search is safe to widen because every
-file the cold-read-grid writes into a cold-read-record is named for the run:
-`<record directory name>--<runtime>-<pass>-<tier>.md`, so one file name belongs
-to one run and cannot be another run's report.
+(`recover_near_miss_report`). That search is safe to widen because it never
+takes a file from a directory the instrument built
+(`instrument_built_record_directory`: one holding `target/` or
+`reference-check.md`). The files inside a cold-read-record are bare cell
+names since 2026-09-18 -- every run's `codex-hunt-floor.md` is called that --
+so a same-named report in another run's real record is never taken; only a
+directory a model invented can supply the near miss.
 It threw away the runtime's stderr on every successful run, which is the only
 channel carrying the Codex CLI's token total -- so stderr is captured and
 re-emitted, and the total is parsed out of it (`parse_tokens_used`). And its
@@ -148,11 +151,11 @@ TIER_CHOICES = ["good", "floor", "fast"]
 # free label, because a draft prompt is by definition not yet a named pass,
 # and the flag exists so a trial can run through the ordinary launcher.
 # The label becomes the pass token of the report's file name --
-# `<record directory name>--<runtime>-<pass token>-<tier>.md` -- so it is
-# held to the characters every existing token uses: lowercase letters and
-# digits, joined by single hyphens. No leading, trailing or doubled hyphen,
-# because `--` is that name's separator and a reader splitting on it would
-# be misled. Without --prompt-file, --cell is still one of CELL_CHOICES.
+# `<runtime>-<pass token>-<tier>.md`, bare cell names since 2026-09-18 -- so
+# it is held to the characters every existing token uses: lowercase letters
+# and digits, joined by single hyphens. No leading, trailing or doubled
+# hyphen, so the name stays one the existing tokens' readers can parse.
+# Without --prompt-file, --cell is still one of CELL_CHOICES.
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
@@ -805,7 +808,9 @@ def run_model_chain(
     The one thing that can now put a file at that path other than the model
     writing there directly is `recover_near_miss_report`, and it keeps the
     invariant rather than bending it: it accepts only a file of this report's
-    exact name -- a name that carries the run, so it belongs to no other run --
+    exact name, from no directory the instrument built -- the files inside a
+    cold-read-record are bare cell names, so another run's real report has
+    this name too, and the directory check is what keeps it out -- and
     whose mtime falls at or after the moment THIS attempt began, so what it
     moves into place was written during the attempt being judged and the stamp
     still names whoever wrote the text beneath it.

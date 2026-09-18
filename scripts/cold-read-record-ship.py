@@ -106,7 +106,7 @@ the system -- good data, never part of the repository (user-ruled
 2026-09-07: "separate the system from its logs"). One subdirectory per kind.
 
 - `cold-read-records/` -- one directory per cold-read run, named
-  `<date>-<document name>` with `-2`, `-3` for later runs on one day, holding
+  `<document name>-<date>` with `-2`, `-3` for later runs on one day, holding
   the reviewer reports, `triage.md` when the agent finished its triage
   (its absence means a triage that never finished, which is true state), and
   `target/<repository path>` with the exact bytes the reviewers read. Records
