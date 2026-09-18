@@ -21,16 +21,14 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 ## The actors
 
 - **The user** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
-- **choirmaster** — the primary agent (Claude runtime); the main-gatekeeper's most frequent requester.
-- **A Codex-runtime companion** (planned) — drafts and reviews in parallel from its own clone; checks its work in through the main-gatekeeper like every agent, and never pushes.
+- **Agent-seats** — the named, long-lived agents that do the work, one subject area each; the merge-lane seat reviews and merges every pull request. Why the work is divided this way: `docs/nedschorus-wiki/agent-seat-model.md`.
 
 ## The agent model
 
-Three agent lifetimes, used deliberately:
+Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`:
 
-- **Sustained agents** (choirmaster, the companion): live indefinitely. Choirmaster lives as a chain of sessions whose continuity is the handoff system — a numbered handoff file plus the session's committed transcript, written at each session's end and read automatically at the next session's start — so a session's end costs minutes, not context. The companion's continuity is its own runtime's persistent session: Codex auto-compaction plus resume by session id — it needs no handoff system (user-ruled 2026-07-21).
-- **Task-scoped agents**: spawned for one bounded, multi-step task (a promotion job, a dogfood run) with exactly the context that task needs; they end with the task.
-- **One-shot agents** ("kleenex"): a single call, then discarded — a fresh drafter, a review pass, a probe. Their empty context is the point: they are the system's test instrument for fresh-reader readability and its guard against context contamination.
+- **Agent-seats** live indefinitely, as a chain of agent-sessions joined by session-handoffs: when a session's context runs low it hands off, and the handoff-supervisor starts a successor that reads the handoff, so a session's end costs minutes, not context. The machinery: `docs/nedschorus-wiki/handoff-system-overview.md`.
+- **Fresh-agents** are spawned with minimal context for one job — a review, a fix round, a search, a single drafting call — and end with it. Their empty context is the point: they are the system's test instrument for fresh-reader readability and its guard against context contamination.
 
 ## Where things live
 
