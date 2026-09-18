@@ -2,7 +2,7 @@
 
 A list of the phrases and terms of this project approved by the user, in alphabetical order, skills first. Generic SDLC vocabulary is deliberately absent.
 
-Every project-specific term should be listed here; a term this page does not list is not a project term, at least not yet. If a term should be added to this list, ask the user to review it. A word needs a defined term only where this project does something unexpected with it or gives it a meaning that would be hard to guess; otherwise it stays ordinary prose. A defined term takes one of three forms: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat. The hyphens mark a phrase as a defined term with a project meaning, so a reader knows to look it up here and an ordinary word keeps its ordinary meaning (user-ruled 2026-09-15).
+Every project-term should be listed here; a term this page does not list is not a project-term, at least not yet. If a term should be added to this list, ask the user to review it. A word needs a project-term only where this project does something unexpected with it or gives it a meaning that would be hard to guess; otherwise it stays ordinary prose. A project-term takes one of three forms: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat. The hyphens mark a phrase as a project-term with a project meaning, so a reader knows to look it up here and an ordinary word keeps its ordinary meaning (user-ruled 2026-09-15; the term itself user-ruled 2026-09-18).
 
 - **/cold-read** — a skill used to improve the readability of prose.
 - **/ghi-write** — a skill used before any write to a GitHub issue.
@@ -42,6 +42,7 @@ Every project-specific term should be listed here; a term this page does not lis
 - **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
 - **NC** — this project, NedsChorus.
 - **objection-overruled** — the record of a review objection that the user overruled.
+- **project-term** — a name with a meaning specific to this project, listed in this glossary: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat. A word this glossary does not list is not a project-term.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff; triggered when the agent writes a session-handoff, usually because the Stop hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
 - **retire-seat** — freeing or repurposing an agent-seat's name: stop the handoff-supervisor, archive the session-handoff under `~/.claude/handoffs/retired/`, remove the worktree and seat branch, and date a retirement notice on the seat's brief. The steps are in `docs/nedschorus-wiki/agent-seat-model.md`. Distinct from pausing a seat.
 - **sanity-check-attack** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-attack (what should be deleted), the mechanization-attack (which English instruction should be code), the fresh-eyes-attack (an independent design built from the problem alone).
