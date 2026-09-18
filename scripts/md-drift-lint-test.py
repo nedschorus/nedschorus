@@ -166,39 +166,27 @@ with tempfile.TemporaryDirectory() as workspace:
     check("fenced code blocks are skipped",
           problems_for("```\n`scripts/ghost.py` and 2026-13-40\n```\n", root) == [])
 
-    # --- Quoted text vs its attributed source -----------------------------
-    check("a quote present in the one named file passes",
-          problems_for('it says "must stop working now and wait" ([d](docs/real-doc.md))',
+    # --- The quoted-span check is gone (user-ruled 2026-09-17) -------------
+    # It found one genuine drift in thirteen standing findings; the other
+    # eleven were correct prose it blamed on the wrong file. Pinned so it
+    # does not come back quietly.
+    check("a quote absent from the one named file is no longer reported",
+          problems_for('it says "never said anywhere in that file" ([d](docs/real-doc.md))',
                        root) == [])
-    problems = problems_for('it says "never said anywhere in that file" ([d](docs/real-doc.md))',
-                            root)
-    check("a quote absent from the named file is reported",
-          any("quoted text not found" in p for p in problems), str(problems))
-    check("emphasis in the source does not break the quote match",
-          problems_for('per "supervisor must stop working now" ([d](docs/real-doc.md))',
-                       root) == [])
-    check("an ellipsis quote checks its fragments and passes",
-          problems_for('the ruling "reports the store\'s depth ... the other queues" '
-                       "([d](docs/real-doc.md))", root) == [])
-    problems = problems_for('the ruling "reports the store\'s depth ... never in the file" '
-                            "([d](docs/real-doc.md))", root)
-    check("an ellipsis quote with a missing fragment is reported",
-          any("never in the file" in p for p in problems), str(problems))
-    check("a quote under four words is not checked",
-          problems_for('the "just a label" case ([d](docs/real-doc.md))', root) == [])
-    check("a line naming two files attributes nothing checkable",
-          problems_for('says "never said anywhere in that file" per [a](docs/real-doc.md) '
-                       "and `scripts/real-script.py`", root) == [])
-    check("a quote with no named file is not checked",
-          problems_for('he said "never said anywhere in that file" today', root) == [])
-    check("a quote touching a backtick span is skipped",
-          problems_for('prints `"not in the doc at all"` ([d](docs/real-doc.md))', root) == [])
-    check("punctuation closing the quoting sentence still matches",
-          problems_for('asked "reports the store\'s depth alongside the other queues?" '
-                       "([d](docs/real-doc.md))", root) == [])
-    check("a quote the line says was deleted is not checked",
-          problems_for('the "never said anywhere in that file" code was deleted 2026-08-10 '
-                       "([d](docs/real-doc.md))", root) == [])
+
+    # --- A path cited with a line number (added 2026-09-17) ----------------
+    # Every token with a colon used to be rejected as a path, so a citation
+    # written `design.md:120` was never checked at all.
+    check("a line-numbered citation of an existing file passes",
+          problems_for("see `docs/real-doc.md:2`", root) == [])
+    findings = problems_for("see `docs/ghost-design.md:40`", root)
+    check("a line-numbered citation of a missing file is reported as written",
+          findings == ["path does not exist: docs/ghost-design.md:40"], str(findings))
+    check("a colon that is not a trailing line number is still not a path",
+          problems_for("the `docs/real-doc.md:section` form", root) == [])
+    check("a line-numbered citation into nedsmessenger is not checked",
+          problems_for("verified at `adapter/adapter.py:379` in "
+                       "`~/Projects/nedsmessenger`", root) == [])
 
     # --- Numbers quoted from code -----------------------------------------
     check("a backtick number found in the named code file passes",
