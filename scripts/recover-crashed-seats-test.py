@@ -3170,6 +3170,17 @@ with tempfile.TemporaryDirectory() as temporary:
         with redirect_stdout(unattended_seen):
             return workspace.recover(), unattended_seen.getvalue()
 
+    def dry_run_ending_quoting_the_refusal(workspace):
+        """How a dry-run line that asks now ends (ruled 2026-09-18): the
+        2026-09-16 refusal a no or nobody to ask gives, spelled out byte for
+        byte, carrying the REFUSED that main counts."""
+        lock_path = workspace.handoffs / "seat-a-supervisor.lock"
+        return ("; on a no, or with no terminal, it reports: REFUSED — tmux session 'seat-a' "
+                "is alive on socket 'seat-a', but no live supervisor of this seat is confirmed "
+                f"(no supervisor lock at {lock_path}) — this tool never touches a live tmux "
+                "session. If the seat's supervisor has exited, that session is the shell an "
+                "attached launch leaves open: exit it, then rerun this recovery")
+
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-no")
     retired = []
     capture_retires(retired)
@@ -3225,7 +3236,9 @@ with tempfile.TemporaryDirectory() as temporary:
               answered_yes == [typed in ("Y", "yes")], (typed, answered_yes))
 
     # A dry run reports the question and asks nobody, whoever is at the
-    # terminal, because --dry-run promises to change nothing.
+    # terminal, because --dry-run promises to change nothing. It ends with the
+    # line a no or nobody to ask gives, quoted whole (ruled 2026-09-18), so
+    # main counts the seat by that line's REFUSED.
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-dry-run")
     retired = []
     capture_retires(retired)
@@ -3235,8 +3248,14 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_dry == ("seat-a: would ask an operator at a terminal — "
                              f'"{question_that_restarts_the_seat}" — and on a yes close that '
                              "session and assess the seat without it (it is one pane at a "
-                             "shell); with no terminal it refuses"),
+                             "shell)" + dry_run_ending_quoting_the_refusal(workspace)),
           (retired, workspace.launches, report_dry, seen))
+    report_unattended, _ = the_refusal_with_nobody_to_ask(workspace)
+    check("LEFTOVER SHELL (ruled 2026-09-18): --dry-run quotes the unattended refusal whole",
+          report_dry.endswith("; on a no, or with no terminal, it reports: "
+                              + report_unattended[len("seat-a: "):])
+          and retired == [],
+          (report_dry, report_unattended, retired))
     # And the question it reports is the predicted one, with what a yes does:
     # a seat stopped on purpose is restarted, resuming its session if it has one.
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-dry-run-exit-record")
@@ -3249,7 +3268,8 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_dry == ("seat-a: would ask an operator at a terminal — "
                              f'"{question_for_a_seat_stopped_on_purpose}" — and on a yes close '
                              "that session and restart the seat resuming session resume-me "
-                             "(it is one pane at a shell); with no terminal it refuses")
+                             "(it is one pane at a shell)"
+                             + dry_run_ending_quoting_the_refusal(workspace))
           and not any(workspace.handoffs.glob("*-prompt.md")),
           (retired, workspace.launches, report_dry, seen))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-dry-run-exit-record-fresh")
@@ -3264,7 +3284,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_dry == ("seat-a: would ask an operator at a terminal — "
                              f'"{question_for_a_seat_stopped_on_purpose}" — and on a yes close '
                              "that session and restart the seat as a fresh session (it is one "
-                             "pane at a shell); with no terminal it refuses"),
+                             "pane at a shell)" + dry_run_ending_quoting_the_refusal(workspace)),
           (retired, workspace.launches, report_dry, seen))
 
     # Ruled 2026-09-18: a seat carrying a recorded exit is asked "stopped on
@@ -3471,8 +3491,8 @@ with tempfile.TemporaryDirectory() as temporary:
               "seat-a: would ask an operator at a terminal — "
               f'"{question_for_a_seat_that_asked_to_be_consulted}" — and on a yes '
               "close that session and relaunch the seat plain, whose supervisor then asks its "
-              "own restart question before it starts a session (it is one pane at a shell); "
-              "with no terminal it refuses"),
+              "own restart question before it starts a session (it is one pane at a shell)"
+              + dry_run_ending_quoting_the_refusal(workspace)),
           (retired, workspace.launches, report_dry))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-consulted-no")
     consulted_handoff_path = workspace.handoffs / "seat-a-handoff.md"
@@ -3631,6 +3651,197 @@ with tempfile.TemporaryDirectory() as temporary:
           and seen.count(question_that_restarts_the_seat) == 1
           and "still holds the name" in report_survived,
           (retired, workspace.launches, report_survived, seen))
+
+    # --- the proof again, immediately before the retire --------------------
+    # Ruled 2026-09-18 in a walk, answering the independent review of the pull
+    # request that added the question: between the proof in assess_seat and
+    # the retire, the operator's think time is unbounded, and the retire kills
+    # whatever holds the seat's name when it runs. The shape it names: while
+    # the question waits, the operator goes to the seat's own window and starts
+    # something in that shell, and a yes then kills it. So after the yes the
+    # shell is proven idle once more, and nothing is closed if it is not.
+    the_shell_proven_idle = (True, [4242], "it is one pane at a shell")
+    work_started_in_the_shell_while_the_question_waited = (
+        False, [], "a pane of session 'seat-a' on socket 'seat-a' is running vim, not an "
+                   "idle shell")
+
+    def main_at_a_terminal_answering_yes(workspace, events, proof_before_the_question,
+                                         proof_after_the_question,
+                                         rooted_before_and_after_the_question=None):
+        """recovery.main on seat-a with an operator at a terminal who answers
+        yes. The idle-shell proof gives one answer until the question has been
+        put and the other after it, and every proof, question and retire is
+        appended to events in the order it happens. With
+        rooted_before_and_after_the_question, lsof names the first list as
+        rooted in the seat until the question is put, and the second after.
+        Returns (exit code, every printed line, every logged line)."""
+        def the_proof(name, seat_directory):
+            events.append("proof")
+            return (proof_after_the_question if "question" in events
+                    else proof_before_the_question)
+
+        def input_answering_yes(prompt=""):
+            events.append("question")
+            return "y"
+
+        def fake_retire(name):
+            events.append("retire")
+            patch("tmux_session_alive_anywhere", lambda name: (False, ""))
+            return ["seat-a"], None
+
+        patch("tmux_session_is_a_leftover_idle_shell", the_proof)
+        if rooted_before_and_after_the_question is not None:
+            rooted_before, rooted_after = rooted_before_and_after_the_question
+            patch("processes_rooted_in_seat_directory",
+                  lambda seat_directory, require_a_complete_listing=False: (
+                      list(rooted_after if "question" in events else rooted_before), ""))
+        recovery.resupervise.retire_seat_tmux_session = fake_retire
+        recovery.input = input_answering_yes
+        an_operator_terminal()
+        printed = io.StringIO()
+        try:
+            with redirect_stdout(printed):
+                exit_code = recovery.main(["seat-a",
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(workspace.handoffs),
+                                           "--projects-root", str(workspace.projects)])
+        finally:
+            del recovery.input
+            no_operator_terminal()
+        log_path = workspace.handoffs / "recover-crashed-seats-log.txt"
+        logged = log_path.read_text(encoding="utf-8").splitlines() if log_path.is_file() else []
+        return exit_code, printed.getvalue().splitlines(), logged
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-work-started-while-asked")
+    events = []
+    exit_code, printed, logged = main_at_a_terminal_answering_yes(
+        workspace, events, the_shell_proven_idle,
+        work_started_in_the_shell_while_the_question_waited)
+    no_longer_only_an_empty_shell = ("seat-a: REFUSED — its tmux session is no longer only an "
+                                     "empty shell, so it was not closed")
+    check("LEFTOVER SHELL (ruled 2026-09-18): after a yes the shell is proven again, and work "
+          "started in it while the question waited is not closed",
+          events == ["proof", "question", "proof"] and workspace.launches == [],
+          (events, workspace.launches, printed))
+    check("LEFTOVER SHELL (ruled 2026-09-18): its line is exactly \"seat-a: REFUSED — its tmux "
+          "session is no longer only an empty shell, so it was not closed\", logged, and main "
+          "exits 1",
+          printed[-1:] == ["recover-crashed-seats: " + no_longer_only_an_empty_shell]
+          and len(logged) == 1 and logged[0].endswith(" " + no_longer_only_an_empty_shell)
+          and exit_code == 1,
+          (exit_code, printed, logged))
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-still-idle-when-proven-again")
+    events = []
+    exit_code, printed, logged = main_at_a_terminal_answering_yes(
+        workspace, events, the_shell_proven_idle, the_shell_proven_idle)
+    check("LEFTOVER SHELL (ruled 2026-09-18): a shell still idle after the yes is proven again, "
+          "THEN retired, and the seat is restarted as before",
+          events == ["proof", "question", "proof", "retire"]
+          and [launch[:2] for launch in workspace.launches] == [
+              ("seat-a", "--resume-session-id resume-me")]
+          and printed[-1:] == [
+              "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
+              + the_operator_said_to_restart_it]
+          and exit_code == 0,
+          (events, workspace.launches, printed, exit_code))
+
+    # The panes excused from the occupancy check after the retire are the ones
+    # the second proof found, since those are what the retire closed: a second
+    # idle shell opened in the session while the question waited is closed with
+    # the first, and lsof still naming it must not refuse the seat.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-second-pane-while-asked")
+    events = []
+    exit_code, printed, logged = main_at_a_terminal_answering_yes(
+        workspace, events, the_shell_proven_idle,
+        (True, [4242, 5151], "it is two panes at a shell"),
+        rooted_before_and_after_the_question=([4242], [4242, 5151]))
+    check("LEFTOVER SHELL: the panes excused after the retire are those the second proof found",
+          events == ["proof", "question", "proof", "retire"]
+          and [launch[:2] for launch in workspace.launches] == [
+              ("seat-a", "--resume-session-id resume-me")]
+          and printed[-1:] == [
+              "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
+              + the_operator_said_to_restart_it]
+          and exit_code == 0,
+          (events, workspace.launches, printed, exit_code))
+
+    # --- a practice run counts a seat it would ask about --------------------
+    # Ruled 2026-09-18 in a walk: a practice run exits 1 if any seat would stay
+    # down with nobody at the keyboard. A dry-run line that asks now ends with
+    # the refusal a no, or nobody to ask, gives, quoted whole as the recorded
+    # exit's own dry run quotes its line, so main counts it by that REFUSED.
+    # Every verdict the question is asked for, through main, byte for byte.
+    def write_a_waiting_handoff(workspace):
+        (workspace.handoffs / "seat-a-handoff.md").write_text(
+            "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
+
+    def write_a_handoff_asking_to_be_consulted(workspace):
+        (workspace.handoffs / "seat-a-handoff.md").write_text(consulted_handoff_text,
+                                                              encoding="utf-8")
+
+    def remove_the_transcript(workspace):
+        (workspace.project_directory() / "resume-me.jsonl").unlink()
+
+    def remove_the_transcript_and_record_an_unknown_exit(workspace):
+        remove_the_transcript(workspace)
+        record_an_agent_exit(workspace, None)
+
+    for case_slug, prepare, question, what_a_yes_does in (
+            ("defer-to-boot-ignition", write_a_waiting_handoff,
+             question_that_restarts_the_seat, "assess the seat without it"),
+            ("resume", lambda workspace: None,
+             question_that_restarts_the_seat, "assess the seat without it"),
+            ("ignite", remove_the_transcript,
+             question_that_restarts_the_seat, "assess the seat without it"),
+            ("offer-after-recorded-exit-code-0-resuming",
+             lambda workspace: record_an_agent_exit(workspace, 0),
+             question_for_a_seat_stopped_on_purpose,
+             "restart the seat resuming session resume-me"),
+            ("offer-after-recorded-exit-unknown-code-fresh",
+             remove_the_transcript_and_record_an_unknown_exit,
+             question_for_a_seat_stopped_on_purpose, "restart the seat as a fresh session"),
+            ("offer-after-recorded-exit-code-1-resuming",
+             lambda workspace: record_an_agent_exit(workspace, 1),
+             question_for_a_seat_that_stopped_with_exit_code_1,
+             "restart the seat resuming session resume-me"),
+            ("seat-asked-to-be-consulted", write_a_handoff_asking_to_be_consulted,
+             question_for_a_seat_that_asked_to_be_consulted,
+             "relaunch the seat plain, whose supervisor then asks its own restart question "
+             "before it starts a session")):
+        workspace = a_seat_behind_a_leftover_shell(f"leftover-shell-practice-run-{case_slug}")
+        prepare(workspace)
+        retired = []
+        capture_retires(retired)
+        prompts = []
+
+        def input_recording_the_prompt(prompt=""):
+            prompts.append(prompt)
+            return "y"
+
+        recovery.input = input_recording_the_prompt
+        printed = io.StringIO()
+        try:
+            with redirect_stdout(printed):
+                exit_code = recovery.main(["seat-a", "--dry-run",
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(workspace.handoffs),
+                                           "--projects-root", str(workspace.projects)])
+        finally:
+            del recovery.input
+        check(f"PRACTICE RUN (ruled 2026-09-18): {case_slug} behind a leftover shell ends "
+              "\"; on a no, or with no terminal, it reports: REFUSED — <the unattended "
+              "refusal>\", byte for byte",
+              printed.getvalue().splitlines() == [
+                  "recover-crashed-seats: seat-a: would ask an operator at a terminal — "
+                  f'"{question}" — and on a yes close that session and {what_a_yes_does} '
+                  "(it is one pane at a shell)" + dry_run_ending_quoting_the_refusal(workspace)],
+              printed.getvalue())
+        check(f"PRACTICE RUN (ruled 2026-09-18): a --dry-run whose only seat is {case_slug} "
+              "behind a leftover shell exits 1, asking, closing and launching nothing",
+              exit_code == 1 and prompts == [] and retired == [] and workspace.launches == []
+              and not (workspace.handoffs / "recover-crashed-seats-log.txt").exists(),
+              (exit_code, prompts, retired, workspace.launches))
 
     # --- what proves "nothing but an idle shell" ----------------------------
     # Both halves, because neither is enough on its own. Measured on the Mac,

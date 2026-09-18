@@ -313,6 +313,13 @@ and nothing but those panes rooted in the seat directory. The pane's command
 alone decides nothing, because a live attached seat's pane reports a shell too —
 the launcher's pane process IS the shell, with the supervisor running under it
 (measured 2026-09-17).
+Ruled 2026-09-18 in a walk, on questions from the independent review of the pull
+request [Ask the operator about a seat's leftover idle shell](https://github.com/nedschorus/nedschorus/pull/471):
+because the operator may take any time to answer, a yes is followed by the same
+proof again immediately before the session is closed, and a session that is no
+longer only an empty shell is not closed but REFUSED; and a dry run that would
+ask quotes the REFUSED line a no or nobody to ask gives, so a practice run exits
+1 if any seat would stay down with nobody at the keyboard.
 
 ## Closing a seat deliberately, and reopening it later
 
