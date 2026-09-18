@@ -551,7 +551,7 @@ machine-suffixed seat names (rider 5); other-seat-home write blocking
 
 Produced at the close of the git/worktree rules walk (fifteen items,
 2026-08-17/18, git-infra seat, the user ruling item by item). The walk
-shipped PRs [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)–PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) and PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) and closed issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50). Its working papers —
+shipped the six PRs from PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86) through PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91), and PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) and closed issue [Worktree file hygiene: classify untracked files so junk is ignored rather than accumulating in search results](https://github.com/nedschorus/nedschorus/issues/50). Its working papers —
 `walk-ledgers/2026-08-17-git-worktree-rules-inventory.md` and
 `walk-ledgers/2026-08-16-agent-worktree-git-coalesce-shape.md` — were
 kept on one machine and gitignored, deleted once this document was verified on
