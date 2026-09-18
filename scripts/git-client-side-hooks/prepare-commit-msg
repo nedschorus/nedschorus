@@ -26,6 +26,15 @@
 session_id="$CLAUDE_CODE_BRIDGE_SESSION_ID"
 [ -n "$session_id" ] || exit 0
 
+# git refuses an empty message ("Aborting commit due to empty commit message"),
+# and the trailer must not turn an empty message into one that goes through:
+# a file with nothing but comment lines and whitespace is left untouched.
+# A missing file is left for interpret-trailers to report.
+comment_char="$(git config --get core.commentChar || echo '#')"
+if [ -f "$1" ] && ! grep -v "^$comment_char" "$1" | grep -q '[^[:space:]]'; then
+    exit 0
+fi
+
 # --no-divider: the file is a bare commit message, never a patch, so a "---"
 # line in its body is text, not the start of a diff to stamp above.
 git interpret-trailers --in-place --no-divider --if-exists addIfDifferent \

@@ -111,6 +111,18 @@ class ThrowawayRepository:
         return [line for line in output.splitlines() if line.strip()]
 
 
+def attempt_commit(repository, session_id, message, *commit_options):
+    """Stage a file and try to commit it with the message, returning the
+    completed process rather than raising, for cases where git must refuse."""
+    (repository.root / "a.txt").write_text("a\n")
+    repository.git(None, "add", "a.txt")
+    return subprocess.run(
+        ["git", "commit", "--quiet", *commit_options, "--file", "-"],
+        cwd=str(repository.root), env=repository.environment(session_id),
+        input=message, capture_output=True, text=True, timeout=30,
+    )
+
+
 def run_cases(scratch: Path):
     # --- The variable decides -------------------------------------------
 
@@ -166,6 +178,34 @@ def run_cases(scratch: Path):
           repository.message()
           == f"Add a\n\nBefore\n---\nAfter\n\n{session_line(FAKE_SESSION)}"
           and repository.session_trailers() == [url(FAKE_SESSION)],
+          repr(repository.message()))
+
+    # --- An empty message stays empty -----------------------------------
+
+    # git refuses a commit whose message has no content of its own; the
+    # trailer must not supply that content.
+    repository = ThrowawayRepository(scratch, "empty-message")
+    head_before = repository.git(None, "rev-parse", "HEAD").stdout.strip()
+    completed = attempt_commit(repository, FAKE_SESSION, "")
+    check("an empty message is still refused",
+          completed.returncode != 0,
+          f"exit 0, message {repository.message()!r}")
+    check("and leaves HEAD where it was",
+          repository.git(None, "rev-parse", "HEAD").stdout.strip() == head_before,
+          repr(repository.message()))
+
+    # The template git opens in an editor is all comment lines, and an edited
+    # message is cleaned with strip, which drops them; --cleanup=strip stands
+    # in for the editor here, since --file alone keeps comment lines as text.
+    repository = ThrowawayRepository(scratch, "comment-only-message")
+    head_before = repository.git(None, "rev-parse", "HEAD").stdout.strip()
+    completed = attempt_commit(repository, FAKE_SESSION, "# comment only\n",
+                               "--cleanup=strip")
+    check("a message of only comment lines is still refused",
+          completed.returncode != 0,
+          f"exit 0, message {repository.message()!r}")
+    check("and leaves HEAD where it was",
+          repository.git(None, "rev-parse", "HEAD").stdout.strip() == head_before,
           repr(repository.message()))
 
     # --- Commits git makes itself ---------------------------------------
