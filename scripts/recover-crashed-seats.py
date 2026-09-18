@@ -686,7 +686,7 @@ def write_resume_prompt(handoff_directory: Path, name: str,
     context the resume just restored. The hand recovery sent no prompt; a
     supervised launch must send one, so it says what actually happened.
     An unreplied reincarnation successor did not die mid-work — it never
-    started — so "died without writing a handoff" would be false for it
+    started — so "continue the work you were doing" would be false for it
     (the 2026-09-10 reboot); it is told to act on its ignition prompt."""
     # A --handoff-dir that does not exist yet must not crash the recovery
     # after assessment already chose to resume (PR #134 review, finding 2);
@@ -707,8 +707,8 @@ def write_resume_prompt(handoff_directory: Path, name: str,
     else:
         prompt = (
             "This session was resumed by crash recovery (nedschorus#120): your "
-            "previous incarnation died without writing a handoff — a crash, not a "
-            "reincarnation — and your transcript was resumed under a fresh supervisor. "
+            "previous session ended without writing a handoff, and your transcript "
+            "was resumed under a fresh supervisor. "
             "Re-verify any in-flight state before trusting it (files you were "
             "mid-edit in, processes you were watching, messages you were owed), "
             "then continue the work you were doing."

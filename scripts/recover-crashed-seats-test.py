@@ -285,6 +285,20 @@ FIRST_PROMPT_FOR_A_BY_HAND_RESUME_AFTER_A_RECORDED_EXIT = (
     FIRST_PROMPT_RECORDED_EXIT_SENTENCE + " It has now been restarted by hand, resuming "
     "this conversation. Re-verify any in-flight state before trusting it, then continue.")
 
+# The first prompt of a seat resumed because its supervisor vanished with no
+# exit record, spelled out byte for byte. That happens after a crash, but also
+# after a reboot, a power cut or a killed tmux server, so it does not say
+# "crash" about the session (ruled 2026-09-18, after that day's Mac reboot
+# told every seat its session ended in "a crash"). Its opening stays, because
+# "resumed by crash recovery" is how EMPTY_SUCCESSOR_MARKERS recognises this
+# tool's own earlier resumes.
+RESUME_PROMPT_AFTER_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
+    "This session was resumed by crash recovery (nedschorus#120): your previous session "
+    "ended without writing a handoff, and your transcript was resumed under a fresh "
+    "supervisor. Re-verify any in-flight state before trusting it (files you were "
+    "mid-edit in, processes you were watching, messages you were owed), then continue "
+    "the work you were doing.")
+
 
 def supervisor_first_turn_for_a_by_hand_command(command, workspace):
     """(prompt, resume) the REAL supervisor's first launch would carry for a
@@ -857,10 +871,18 @@ with tempfile.TemporaryDirectory() as temporary:
           workspace.launches and workspace.launches[0][2] is not None,
           workspace.launches)
     resume_prompt = workspace.launches[0][2].read_text(encoding="utf-8")
-    check("F2: the resume prompt says crash-not-reincarnation and re-verify, not ask-for-work",
-          "died without writing a handoff" in resume_prompt
+    check("F2: the resume prompt says the session ended without a handoff and to re-verify, "
+          "not ask-for-work",
+          "ended without writing a handoff" in resume_prompt
           and "Re-verify" in resume_prompt
           and "No handoff exists yet" not in resume_prompt, resume_prompt)
+    check("F2: the resume prompt is exactly the ruled text, and says nothing of a crash "
+          "(ruled 2026-09-18)",
+          resume_prompt == RESUME_PROMPT_AFTER_A_SESSION_ENDED_WITHOUT_A_HANDOFF
+          and "a crash" not in resume_prompt, resume_prompt)
+    check("F2: an EMPTY_SUCCESSOR_MARKERS entry still recognises the resume prompt",
+          any(marker in resume_prompt for marker in recovery.EMPTY_SUCCESSOR_MARKERS),
+          (resume_prompt, recovery.EMPTY_SUCCESSOR_MARKERS))
 
     # F3: recovery's own fresh-session shapes are skipped when small and workless...
     workspace = Workspace(root / "r4")
@@ -1257,7 +1279,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("REBOOT-0910: the resume prompt says the first reply never happened, not a crash",
           "first reply never happened" in unreplied_prompt
           and "first prompt above" in unreplied_prompt
-          and "died without writing a handoff" not in unreplied_prompt,
+          and "ended without writing a handoff" not in unreplied_prompt,
           unreplied_prompt)
 
     # Harness-authored turns are not work. Counted, the notice made the
@@ -1302,7 +1324,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("REBOOT-0910: a successor that worked after its resume gets the crash prompt",
           "relaunched resuming resumed-successor-then-crashed" in report
           and "never replied" not in report
-          and "died without writing a handoff" in crash_prompt
+          and crash_prompt == RESUME_PROMPT_AFTER_A_SESSION_ENDED_WITHOUT_A_HANDOFF
           and "first reply never happened" not in crash_prompt,
           (report, crash_prompt))
 
