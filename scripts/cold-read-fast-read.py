@@ -22,7 +22,14 @@ design contract -- the read also says that this fast read does not finish the
 review: one line on stderr and one line in the report (user-ruled 2026-09-17,
 item 4 of nedschorus#418, after a skill change merged on a fast read alone).
 It warns and never refuses, because the fast read is the cold-read-full-run's
-first step. Every cold-read-cell's own progress -- the launcher's stderr, the
+first step. When the cold-read-target is a walk draft, the read also lists every
+bare issue or pull request number in it -- `#426`, `nedschorus#418`, a link
+whose text is the number -- with one line on stderr giving the count and a
+section at the end of the suggestions file naming each by line (user-ruled
+2026-09-17, item 5 of nedschorus#418: the walk-me-through skill forbids bare
+numbers, and walk files had carried 33 and 35 of them unchecked). Bare file
+names and the walk's 300-word item cap are deliberately not checked, by the
+same rulings. Every cold-read-cell's own progress -- the launcher's stderr, the
 runtime's stderr, the stray-write and recovery lines -- is re-emitted on this
 program's stderr, so a caller watching stdout gets the one line and a caller
 reading stderr gets the whole account.
@@ -592,6 +599,48 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
     return "\n".join(lines).rstrip("\n") + "\n" + "\n".join(coverage) + "\n"
 
 
+# A bare issue or pull request number: `#` and digits, with whatever repository
+# name is glued to its front (`nedschorus#418`, `nedschorus/nedschorus#418`),
+# because each is a number where CLAUDE.md wants a type word and a title. What
+# precedes the match may not be a word character or any of `& / . : -`, which
+# keeps an HTML entity (`&#123;`) and a URL's fragment (`x.com/page#12`) out; a
+# markdown heading needs a space after its `#`, so `## 3` never matches. Measured on the 53 walk files
+# on the user's Mac, 2026-09-18: 268 bare `#N`, 53 with a repository prefix, 18
+# links whose text is the number, and none inside code.
+BARE_REFERENCE_PATTERN = re.compile(
+    r"(?<![&\w/.:-])(?:[A-Za-z0-9][\w.-]*(?:/[\w.-]+)?)?#\d+(?!\w)")
+
+# The heading of the section this program appends to a walk draft's
+# suggestions file, in the coverage heading's style.
+BARE_REFERENCES_HEADING = (
+    "## Bare issue and pull request numbers (added by cold-read-fast-read)")
+
+
+def bare_references_in(text: str) -> list:
+    """Every bare issue or pull request number in `text`, as (line number,
+    reference) pairs in reading order, numbering lines from 1 the way an
+    editor does."""
+    return [(line_number, found.group(0))
+            for line_number, line in enumerate(text.split("\n"), start=1)
+            for found in BARE_REFERENCE_PATTERN.finditer(line)]
+
+
+def bare_references_section(references: list) -> str:
+    """The section a walk draft's suggestions file ends with: one instruction
+    and a line per reference, or a line saying there are none. Text an agent
+    reads and acts on, so it is the instruction and the list, nothing else."""
+    lines = ["", BARE_REFERENCES_HEADING, ""]
+    if not references:
+        lines.append("- None.")
+    else:
+        lines.append("Replace each with its type word and its title, as a link: "
+                     "write PR [its title](its URL), not PR #426.")
+        lines.append("")
+        lines.extend(f"- Line {line_number}: {reference}"
+                     for line_number, reference in references)
+    return "\n".join(lines) + "\n"
+
+
 def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
     """record_dir/target/<repository path>, or the absolute path minus its
     leading slash for a cold-read-target outside the repository -- the
@@ -683,6 +732,15 @@ def main() -> int:
     if on_records_route:
         freeze_target(target, report.parent)
 
+    # Only a walk draft is checked for bare numbers, and it is told before the
+    # cell runs, so the author hears it even when the read then fails.
+    bare_references = (None if on_records_route
+                       else bare_references_in(target.read_text(encoding="utf-8")))
+    if bare_references:
+        print(f"{PROGRAM}: bare issue or pull request numbers in this walk draft: "
+              f"{len(bare_references)}; the suggestions file lists each one.",
+              file=sys.stderr)
+
     last_exit_code = 1
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
         prompt_file = pathlib.Path(scratch) / EMBEDDED_PROMPT_FILE_NAME
@@ -704,12 +762,13 @@ def main() -> int:
                 # Before anything reads or ships it: put each original
                 # sentence under the restatement claiming its id, and say
                 # which sentences no restatement claimed.
-                report.write_text(
-                    attach_sentences_and_coverage(
-                        report.read_text(encoding="utf-8"), sentences, target,
-                        marked_copy if on_records_route else None,
-                        full_run_class_name),
-                    encoding="utf-8")
+                attached = attach_sentences_and_coverage(
+                    report.read_text(encoding="utf-8"), sentences, target,
+                    marked_copy if on_records_route else None,
+                    full_run_class_name)
+                if bare_references is not None:
+                    attached += bare_references_section(bare_references)
+                report.write_text(attached, encoding="utf-8")
                 if on_records_route:
                     print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
                 print(report)
