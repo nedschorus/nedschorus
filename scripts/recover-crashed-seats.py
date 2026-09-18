@@ -441,6 +441,13 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
 LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH = (
     "defer-to-boot-ignition", "resume", "ignite",
 )
+# The verdicts whose recovery launches nothing and prints the commands to bring
+# the seat back by hand: recover_seat's offer-after-recorded-exit and
+# seat-asked-to-be-consulted lines. A reassessment predicted to give one of
+# these is asked about in the sentence that says so.
+LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_LEFT_DOWN_WITH_BY_HAND_INSTRUCTIONS = (
+    "offer-after-recorded-exit", "seat-asked-to-be-consulted",
+)
 
 
 def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str) -> str:
@@ -456,18 +463,23 @@ def leftover_idle_shell_question_for_seat(name: str, predicted_verdict: str) -> 
     launched, and the line each prints after a yes gives the commands to bring
     the seat back by hand.
 
-    Every other verdict gets the second sentence too, because it is not
-    launched either — but for refuse and seat-already-running its promise of
-    by-hand instructions is not kept: a REFUSED line gives a reason, and an
-    ALREADY RUNNING seat needs none. Their words are the user's to rule on; no
-    third sentence is composed here until he does.
+    Those five verdicts are the only ones this is ever called with. A predicted
+    refuse or seat-already-running is not asked about at all (ruled 2026-09-18):
+    recover_seat reports it straight away and leaves the window open, before
+    reaching here. Anything else raises rather than put a question whose words
+    were never chosen for it, and the suite walks every verdict assess_seat can
+    return to keep each one either worded here or reported without asking.
     """
     if predicted_verdict in LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH:
         return (f"{name}'s window is open at a shell with nothing running. "
                 "Close it and bring the seat back? y/n")
-    return (f"{name}'s window is open at a shell with nothing running. "
-            "Close it? The seat will not be relaunched automatically — it will tell "
-            "you how to bring it back by hand. y/n")
+    if (predicted_verdict
+            in LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_LEFT_DOWN_WITH_BY_HAND_INSTRUCTIONS):
+        return (f"{name}'s window is open at a shell with nothing running. "
+                "Close it? The seat will not be relaunched automatically — it will tell "
+                "you how to bring it back by hand. y/n")
+    raise ValueError(f"no leftover-shell question is worded for the verdict "
+                     f"{predicted_verdict!r}")
 
 
 def recovery_has_an_operator_terminal() -> bool:
@@ -899,7 +911,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     what the operator asked for by answering yes.
 
     predicting_as_though_the_leftover_idle_shell_were_closed is for
-    predicted_verdict_once_the_leftover_idle_shell_is_closed alone: it reads a
+    predicted_assessment_once_the_leftover_idle_shell_is_closed alone: it reads a
     live tmux session as already closed, so the assessment can be taken before
     the retire. Without it a live session always decides at the `if alive:`
     branch, retired_pane_process_ids or not, because they are consulted only
@@ -1072,14 +1084,17 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     return "resume", (session_id, found)
 
 
-def predicted_verdict_once_the_leftover_idle_shell_is_closed(
+def predicted_assessment_once_the_leftover_idle_shell_is_closed(
         name: str, agents_root: Path, handoff_directory: Path, projects_root: Path,
-        pane_process_ids) -> str:
-    """The verdict the reassessment after a yes is expected to give, taken while
-    the leftover idle shell's tmux session is still alive, so the question can
-    say whether a yes brings the seat back (user-ruled 2026-09-17).
+        pane_process_ids):
+    """(verdict, detail): the assessment the reassessment after a yes is
+    expected to give, taken while the leftover idle shell's tmux session is
+    still alive.
 
-    It chooses the question's words and nothing else. What a yes actually does
+    It decides only what the operator is shown: whether the question is put at
+    all (ruled 2026-09-18 — a predicted refuse or seat-already-running is
+    reported straight away with this detail as its reason, and the window is
+    left open), and in which words (ruled 2026-09-17). What a yes actually does
     is decided, exactly as before, by the assessment recover_seat runs AFTER the
     retire. The two can disagree when the seat's state moves while the operator
     thinks — a supervisor starting, a handoff landing — and then the real
@@ -1091,11 +1106,10 @@ def predicted_verdict_once_the_leftover_idle_shell_is_closed(
     check assess_seat only reads (the supervisor lock and state, ps, lsof, the
     handoff, the transcripts), so asking early changes nothing on disk.
     """
-    verdict, _ = assess_seat(
+    return assess_seat(
         name, agents_root, handoff_directory, projects_root,
         retired_pane_process_ids=pane_process_ids,
         predicting_as_though_the_leftover_idle_shell_were_closed=True)
-    return verdict
 
 
 # A supervisor notices its session has died within HANDOFF_POLL_SECONDS and then
@@ -1217,6 +1231,16 @@ SEAT_NOT_RECOVERED_REPORT_MARKERS = (
 # The report class for assess_seat's seat-already-running verdict. Named so the
 # suites can pin that it contains none of the markers above.
 SEAT_ALREADY_RUNNING_REPORT_MARKER = "ALREADY RUNNING"
+# The predicted verdicts for which the leftover-shell question is not put (ruled
+# 2026-09-18), each with the report class its line carries — the class the
+# same verdict carries everywhere else, so what counts outcomes counts these
+# the same way. A yes would close a window and then report a problem the
+# operator must fix anyway, and a running seat is no time to offer closing a
+# window at all.
+LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING = {
+    "refuse": "REFUSED",
+    "seat-already-running": SEAT_ALREADY_RUNNING_REPORT_MARKER,
+}
 
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
@@ -1251,26 +1275,42 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     # of this function acts on (user-ruled 2026-09-17). The seat's tmux
     # session is alive with no confirmed supervisor, and assess_seat proved it
     # is nothing but the shell an attached launch leaves open. With an
-    # operator at a terminal that is a question; with no one to ask — at boot,
-    # under restart-live-seats-at-login — it is the refusal it has always been.
+    # operator at a terminal that is a question, unless a yes can already be
+    # seen to end in a refusal or a running seat, which is reported at once
+    # (user-ruled 2026-09-18); with no one to ask — at boot, under
+    # restart-live-seats-at-login — it is the refusal it has always been.
     if verdict == ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT:
         refusal, pane_process_ids, shell_detail = detail
 
-        def the_question_saying_what_a_yes_will_do() -> str:
-            """Composed only where the question is shown — a dry run's line and
-            an operator's terminal — so an unattended run never takes the
-            prediction. The prediction chooses the words; the reassessment
-            after the retire below still decides what happens."""
-            return leftover_idle_shell_question_for_seat(
-                name, predicted_verdict_once_the_leftover_idle_shell_is_closed(
-                    name, agents_root, handoff_directory, projects_root,
-                    pane_process_ids))
+        def the_prediction():
+            """Taken only where the operator is shown something — a dry run's
+            line and an operator's terminal — so an unattended run never takes
+            it. It decides whether the question is put and in which words; the
+            reassessment after the retire below still decides what a yes does."""
+            return predicted_assessment_once_the_leftover_idle_shell_is_closed(
+                name, agents_root, handoff_directory, projects_root, pane_process_ids)
+
+        def reported_without_asking(predicted_verdict, predicted_detail) -> str:
+            """The report for a predicted refuse or seat-already-running (ruled
+            2026-09-18): the prediction's own reason, in the class that verdict
+            carries everywhere else. Its reason was found with the shell read as
+            closed, which the line says, so it is never read as the window's
+            fault."""
+            return (f"{LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING[predicted_verdict]}"
+                    f" — {predicted_detail}. This was found assessing the seat as though "
+                    "its leftover shell were already closed")
 
         if dry_run:
             # Reported whether or not anyone is at a terminal: a dry run's
             # job is to say what a real run would do, and a run this one
             # cannot see — an operator's, later — is the one that would ask.
-            question = the_question_saying_what_a_yes_will_do()
+            predicted_verdict, predicted_detail = the_prediction()
+            if predicted_verdict in LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING:
+                return (f"{name}: with an operator at a terminal would ask nothing, leave the "
+                        f"window open ({shell_detail}) and report straight away: "
+                        f"{reported_without_asking(predicted_verdict, predicted_detail)}. "
+                        "With no terminal it refuses")
+            question = leftover_idle_shell_question_for_seat(name, predicted_verdict)
             return (f"{name}: would ask an operator at a terminal — \"{question}\" — and on a "
                     f"yes close that session and assess the seat without it ({shell_detail}); "
                     "with no terminal it refuses")
@@ -1282,7 +1322,15 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                     "this recovery")
         if not recovery_has_an_operator_terminal():
             return f"{name}: REFUSED — {refusal}"
-        question = the_question_saying_what_a_yes_will_do()
+        predicted_verdict, predicted_detail = the_prediction()
+        # A yes here would only close a window and then report what the
+        # prediction already shows, so nothing is asked and nothing is retired
+        # (ruled 2026-09-18) — what this tool did for every live window before
+        # the question existed.
+        if predicted_verdict in LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING:
+            return (f"{name}: {reported_without_asking(predicted_verdict, predicted_detail)}, "
+                    "so nothing was asked and its window was left open")
+        question = leftover_idle_shell_question_for_seat(name, predicted_verdict)
         print(f"recover-crashed-seats: {shell_detail}")
         if not ask_operator_to_close_the_leftover_idle_shell(question):
             return f"{name}: REFUSED — {refusal}"

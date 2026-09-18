@@ -288,7 +288,11 @@ there. Those words were ruled in a walk the same day, 2026-09-17, because the
 one question promised a seat with a recorded exit back and the next line
 reported it NOT RELAUNCHED: the question is worded by a prediction of the reassessment, which still decides
 alone, and which seats are relaunched did not change — *"how do we know if a
-seat is purposely left down - if we do, then we shouldn't bring it back"*. Run
+seat is purposely left down - if we do, then we shouldn't bring it back"*.
+Ruled 2026-09-18 in a walk: when that prediction already shows a yes would end
+in a refusal or a running seat, nothing is asked and nothing is closed — *"it
+refuses straight away with the reason and leaves the window open"*, since *"no
+wording makes the question worth asking"*. Run
 unattended, at boot and under `restart-live-seats-at-login`, it
 refuses exactly as it does today, which leaves the 2026-09-16 ruling whole on
 every path nobody is watching. And the shell is proven idle before the question

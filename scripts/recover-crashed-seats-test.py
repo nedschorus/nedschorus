@@ -233,6 +233,28 @@ def recover_with_an_operator_typing(workspace, typed, dry_run=False):
     return report, seen.getvalue()
 
 
+def recover_recording_every_prompt(workspace, dry_run=False):
+    """One recovery with an operator at a terminal who answers yes to anything
+    put to him. input() itself is replaced, so a question asked by any route is
+    recorded. Returns (report, every prompt input() was called with,
+    everything else the operator saw)."""
+    an_operator_terminal()
+    prompts = []
+
+    def input_answering_yes(prompt=""):
+        prompts.append(prompt)
+        return "y"
+
+    recovery.input = input_answering_yes
+    seen = io.StringIO()
+    try:
+        with redirect_stdout(seen):
+            report = workspace.recover(dry_run=dry_run)
+    finally:
+        del recovery.input
+    return report, prompts, seen.getvalue()
+
+
 no_leftover_idle_shell()
 no_operator_terminal()
 
@@ -2846,6 +2868,112 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_ignited.startswith("seat-a: relaunched fresh"),
           (retired, workspace.launches, report_ignited))
 
+    # --- a yes that could only end in a refusal or a running seat -----------
+    # Ruled 2026-09-18 in a walk: "Don't ask. When the tool can already see a
+    # yes would end in a refusal or a running seat, it refuses straight away
+    # with the reason and leaves the window open". Nothing is put to the
+    # operator (input() is never called), nothing is retired, and the line
+    # carries the prediction's reason in that verdict's usual report class.
+    reported_straight_away = ("This was found assessing the seat as though its leftover "
+                              "shell were already closed, so nothing was asked and its "
+                              "window was left open")
+
+    def a_seat_behind_a_leftover_shell_with_an_unreadable_handoff(directory_name):
+        """Its reassessment refuses whatever happens to the window: a handoff
+        whose restart-counter no supervisor could ever read."""
+        workspace = a_seat_behind_a_leftover_shell(directory_name)
+        handoff_path = workspace.handoffs / "seat-a-handoff.md"
+        handoff_path.write_text("# Handoff\nnext-step: go\n", encoding="utf-8")
+        return workspace, handoff_path
+
+    def a_supervisor_starts_right_after_the_idle_shell_proof(workspace):
+        """The seat's supervisor claims its lock between the assessment that
+        proved the shell idle and the prediction, and ps confirms it from then
+        on. Returns the lock's path; ps_answers_for_real puts ps back."""
+        lock_path = workspace.handoffs / "seat-a-supervisor.lock"
+
+        def the_proof_and_then_a_supervisor_starts(name, seat_directory):
+            lock_path.write_text("4321\n", encoding="utf-8")
+            ps_confirms_supervisors({4321: "seat-a"})
+            return True, [4242], "it is one pane at a shell"
+
+        patch("tmux_session_is_a_leftover_idle_shell", the_proof_and_then_a_supervisor_starts)
+        return lock_path
+
+    workspace, handoff_path = a_seat_behind_a_leftover_shell_with_an_unreadable_handoff(
+        "leftover-shell-predicted-refusal")
+    retired = []
+    capture_retires(retired)
+    report_refused, prompts, seen = recover_recording_every_prompt(workspace)
+    check("LEFTOVER SHELL: a predicted refusal asks nothing, retires nothing, launches nothing",
+          prompts == [] and retired == [] and workspace.launches == [],
+          (prompts, retired, workspace.launches, report_refused, seen))
+    check("LEFTOVER SHELL: and is REFUSED with the predicted reason, the window left open",
+          report_refused.startswith(f"seat-a: REFUSED — a handoff exists at {handoff_path} "
+                                    "but its restart-counter is missing or unreadable")
+          and report_refused.endswith(reported_straight_away)
+          and "never touches a live tmux session" not in report_refused
+          and any(marker in report_refused
+                  for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+          report_refused)
+
+    workspace, handoff_path = a_seat_behind_a_leftover_shell_with_an_unreadable_handoff(
+        "leftover-shell-predicted-refusal-dry-run")
+    retired = []
+    capture_retires(retired)
+    report_refused_dry, prompts, seen = recover_recording_every_prompt(workspace, dry_run=True)
+    check("LEFTOVER SHELL: --dry-run says a predicted refusal is reported without asking",
+          prompts == [] and retired == [] and workspace.launches == [] and seen == ""
+          and report_refused_dry.startswith(
+              "seat-a: with an operator at a terminal would ask nothing, leave the window "
+              "open (it is one pane at a shell) and report straight away: REFUSED — a "
+              f"handoff exists at {handoff_path} but its restart-counter is missing")
+          and report_refused_dry.endswith("With no terminal it refuses")
+          and "would ask an operator at a terminal —" not in report_refused_dry,
+          (prompts, retired, report_refused_dry))
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-predicted-running")
+    retired = []
+    capture_retires(retired)
+    try:
+        lock_path = a_supervisor_starts_right_after_the_idle_shell_proof(workspace)
+        report_running, prompts, seen = recover_recording_every_prompt(workspace)
+    finally:
+        ps_answers_for_real()
+    check("LEFTOVER SHELL: a seat predicted running asks nothing, retires nothing, launches "
+          "nothing",
+          prompts == [] and retired == [] and workspace.launches == [],
+          (prompts, retired, workspace.launches, report_running, seen))
+    check("LEFTOVER SHELL: and is ALREADY RUNNING with the predicted reason, the window left open",
+          report_running.startswith(
+              f"seat-a: {recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER} — the supervisor lock at "
+              f"{lock_path} is held by a live supervisor — ")
+          and "process 4321 is the supervisor of seat-a" in report_running
+          and report_running.endswith(reported_straight_away)
+          and not any(marker in report_running
+                      for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+          report_running)
+
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-predicted-running-dry-run")
+    retired = []
+    capture_retires(retired)
+    try:
+        lock_path = a_supervisor_starts_right_after_the_idle_shell_proof(workspace)
+        report_running_dry, prompts, seen = recover_recording_every_prompt(workspace,
+                                                                           dry_run=True)
+    finally:
+        ps_answers_for_real()
+    check("LEFTOVER SHELL: --dry-run says a seat predicted running is reported without asking",
+          prompts == [] and retired == [] and workspace.launches == [] and seen == ""
+          and report_running_dry.startswith(
+              "seat-a: with an operator at a terminal would ask nothing, leave the window "
+              "open (it is one pane at a shell) and report straight away: "
+              f"{recovery.SEAT_ALREADY_RUNNING_REPORT_MARKER} — the supervisor lock at "
+              f"{lock_path} is held by a live supervisor — ")
+          and report_running_dry.endswith("With no terminal it refuses")
+          and "would ask an operator at a terminal —" not in report_running_dry,
+          (prompts, retired, report_running_dry))
+
     # A retire that fails, and a session that survives one: refused, never
     # asked twice.
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-retire-fails")
@@ -3031,20 +3159,16 @@ with tempfile.TemporaryDirectory() as temporary:
               real_tmux_session_is_a_leftover_idle_shell)
         patch("recovery_has_an_operator_terminal", real_recovery_has_an_operator_terminal)
 
-    # The leftover-shell question's map, over every verdict the prediction can
-    # give (it cannot give ask-to-close-the-leftover-idle-shell: it reads the
-    # session as closed). Last, because it calls the composer directly.
-    # refuse and seat-already-running are not launched, so they get the second
-    # sentence, though neither prints by-hand instructions: their words are
-    # still the user's to rule on.
+    # The leftover-shell question's map, over the five verdicts it is worded
+    # for. Last, because it calls the composer directly. refuse and
+    # seat-already-running are reported without asking (ruled 2026-09-18), so
+    # no words are chosen for them.
     for predicted_verdict, expected_question in (
             ("defer-to-boot-ignition", question_that_brings_the_seat_back),
             ("resume", question_that_brings_the_seat_back),
             ("ignite", question_that_brings_the_seat_back),
             ("offer-after-recorded-exit", question_that_leaves_the_seat_down),
-            ("seat-asked-to-be-consulted", question_that_leaves_the_seat_down),
-            ("refuse", question_that_leaves_the_seat_down),
-            ("seat-already-running", question_that_leaves_the_seat_down)):
+            ("seat-asked-to-be-consulted", question_that_leaves_the_seat_down)):
         composed_question = recovery.leftover_idle_shell_question_for_seat(
             "seat-a", predicted_verdict)
         asked = ("whether to bring the seat back"
@@ -3052,6 +3176,41 @@ with tempfile.TemporaryDirectory() as temporary:
                  else "only to close")
         check(f"LEFTOVER SHELL: a reassessment predicted to give {predicted_verdict} is "
               f"asked {asked}", composed_question == expected_question, composed_question)
+
+    # A verdict with no words chosen for it is never put silently: the composer
+    # refuses to word it.
+    for unworded_verdict in ("refuse", "seat-already-running",
+                             recovery.ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT,
+                             "a-verdict-no-one-has-worded"):
+        try:
+            composed_question = recovery.leftover_idle_shell_question_for_seat(
+                "seat-a", unworded_verdict)
+        except ValueError as error:
+            composed_question = error
+        check(f"LEFTOVER SHELL: no question is worded for {unworded_verdict}",
+              isinstance(composed_question, ValueError), composed_question)
+
+    # And every verdict assess_seat can return is accounted for: worded by the
+    # composer, reported without asking, or the ask verdict itself, which the
+    # prediction cannot give because it reads the session as closed. Read from
+    # assess_seat's own returns, so a verdict added there without a place here
+    # fails this case rather than reaching the composer's refusal at a terminal.
+    import inspect
+    import re
+    assess_seat_source = inspect.getsource(recovery.assess_seat)
+    verdicts_assess_seat_returns = set(
+        re.findall(r'return\s*\(?\s*"([a-z-]+)"', assess_seat_source))
+    if "return ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT" in assess_seat_source:
+        verdicts_assess_seat_returns.add(recovery.ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT)
+    verdicts_accounted_for = (
+        set(recovery.LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH)
+        | set(recovery.LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_LEFT_DOWN_WITH_BY_HAND_INSTRUCTIONS)
+        | set(recovery.LEFTOVER_IDLE_SHELL_PREDICTIONS_REPORTED_WITHOUT_ASKING)
+        | {recovery.ASK_TO_CLOSE_THE_LEFTOVER_IDLE_SHELL_VERDICT})
+    check("LEFTOVER SHELL: every verdict assess_seat returns is worded or reported without asking",
+          len(verdicts_assess_seat_returns) == 8
+          and verdicts_assess_seat_returns == verdicts_accounted_for,
+          (sorted(verdicts_assess_seat_returns), sorted(verdicts_accounted_for)))
 
 
 print()
