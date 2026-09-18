@@ -1,0 +1,34 @@
+#!/bin/sh
+# Stamps the Claude-Session trailer on every commit made inside a Claude
+# session that has a claude.ai link.
+#
+# The harness asks each such session to end its commit messages with
+#   Claude-Session: https://claude.ai/code/<session id>
+# and puts that id in CLAUDE_CODE_BRIDGE_SESSION_ID. Agents forget the line:
+# all six pull requests of the reboot-test seat's 2026-09-17/18 session went
+# out without it (issue "Topic-branch base enforcement", piece 3). So git adds
+# it, and nobody has to remember. A session with no link has no variable and
+# gets no trailer, which is the harness's own rule.
+#
+# addIfDifferent: a message that already carries this session's line keeps
+# exactly one; a commit re-made by another session (amend, cherry-pick,
+# rebase) keeps the first session's line and gains its own beneath it.
+#
+# Installed once per clone, as an absolute path into the clone's reference
+# checkout, which stays on main, so every seat's worktree runs main's copy:
+#   Mac:      git config core.hooksPath /Users/el/Projects/nedschorus/scripts/git-client-side-hooks
+#   ned-box:  git config core.hooksPath /home/nedlern/Projects/nedschorus/scripts/git-client-side-hooks
+#
+# A prepare-commit-msg hook that exits non-zero aborts the commit, and this
+# one runs on every commit of every seat on the machine, so it always exits 0.
+# A failed stamp is reported on stderr, never fatal.
+
+session_id="$CLAUDE_CODE_BRIDGE_SESSION_ID"
+[ -n "$session_id" ] || exit 0
+
+# --no-divider: the file is a bare commit message, never a patch, so a "---"
+# line in its body is text, not the start of a diff to stamp above.
+git interpret-trailers --in-place --no-divider --if-exists addIfDifferent \
+    --trailer "Claude-Session: https://claude.ai/code/$session_id" "$1" ||
+    echo "prepare-commit-msg: could not add the Claude-Session trailer; add it by hand" >&2
+exit 0
