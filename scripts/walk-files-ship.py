@@ -23,6 +23,7 @@ walk/, each named by the walk's name and a role suffix
   <name>-minutes.md        the rulings and the recovery position, written as
                            the walk proceeds
   <name>-dispositions.md   a cold-read walk's fifth file, written at its close
+                           and updated after it as the findings' status moves
 
 The five paths are built from the name; nothing here globs docs/walk/<name>*,
 because one walk's name can be a prefix of another's. A walk lacking its walk
@@ -31,10 +32,16 @@ file is noted on stderr and the rest ships. Dispositions ships when present.
 Other files that begin with the walk's name are noted on stderr and not
 shipped; they are either another walk's or a shape the ruling did not name.
 
-THE RULES, from the ruling: "draft, suggestions and walk text add-only like
-records; the minutes are the one file it replaces". They are PER FILE:
+THE RULES. The first ruling (item 7 above) said "draft, suggestions and walk
+text add-only like records; the minutes are the one file it replaces", and
+this program shipped dispositions add-only because that ruling listed nothing
+else. The user then ruled (2026-09-18, walk
+skill-sentences-and-shipper-questions-2026-09-18, item 5) that the
+dispositions file is replaced exactly like the minutes, because a cold-read
+walk's dispositions "is not just a historical log to be preserved, it is a
+sometimes updated status file". The rules are PER FILE:
 
-  ADD-ONLY: draft, suggestions, walk text, dispositions. A file not yet in the
+  ADD-ONLY: draft, suggestions, walk text. A file not yet in the
     store is added; one already there with the same bytes is left alone; one
     already there with DIFFERENT bytes is refused BY NAME -- the one stdout line
     opens REFUSED:, names each such file with the store's sha256 and the local
@@ -44,22 +51,24 @@ records; the minutes are the one file it replaces". They are PER FILE:
     closed", and a reopened walk that re-planned has a changed walk text; a
     whole-walk refusal would then never deliver the one thing the second run
     exists for, the minutes.
-  REPLACED: the minutes, and only the minutes. The displaced copy's sha256 is
-    announced on stderr, as scripts/seat-shared-file-ship.py announces a
-    replacement, so a fresh session shipping an older local copy over a newer
-    stored one leaves a trace, and the displaced bytes can be found by digest in
-    the store's Timeshift snapshots. The copy passes --ignore-times, for the
-    reason that program's rsync_one_file records: openrsync on this Mac
-    silently skips a same-size, same-second revision otherwise.
+  REPLACED: the minutes and the dispositions, each on its own. A stored copy
+    with different bytes is overwritten, and each displaced copy's sha256 is
+    announced on its own stderr line, as scripts/seat-shared-file-ship.py
+    announces a replacement, so a fresh session shipping an older local copy
+    over a newer stored one leaves a trace, and the displaced bytes can be
+    found by digest in the store's Timeshift snapshots. The copy passes
+    --ignore-times, for the reason that program's rsync_one_file records:
+    openrsync on this Mac silently skips a same-size, same-second revision
+    otherwise.
   FAIL LOUDLY: an unreachable ned-box prints a line opening FAILED and exits 1
     with the files still on disk; ssh runs in batch mode with a connect
     timeout. Shipping is the only thing between a walk's rulings and their
     loss, so a failure to ship is never a clean result -- the rule
     report_stray_writes states in scripts/cold-read-cell-common.py.
 
-Dispositions is under ADD-ONLY because the ruling names the minutes as "the
-one file it replaces" and lists nothing else. Whether a reopened cold-read walk
-may rewrite its dispositions is a question this program leaves to the user.
+The minutes' citation at the end of the stdout line is the minutes' still,
+never the dispositions': the minutes are the record of the rulings and what a
+resumed walk reads.
 
 WHO CALLS IT. The agent running a walk, when the walk's closing sentence is
 delivered, and again if the walk is reopened and closed. The one stdout line
@@ -123,9 +132,14 @@ WALK_FILE_ROLES = (
     ("-minutes", "minutes"),
     ("-dispositions", "dispositions"),
 )
-REQUIRED_ROLE_SUFFIXES = ("", "-minutes")
+MINUTES_ROLE_SUFFIX = "-minutes"
+REQUIRED_ROLE_SUFFIXES = ("", MINUTES_ROLE_SUFFIX)
 NOTED_WHEN_ABSENT_ROLE_SUFFIXES = ("-draft", "-suggestions")
-REPLACED_ROLE_SUFFIX = "-minutes"
+# The files a walk replaces in the store (see REPLACED in the docstring); every
+# other role is add-only. The minutes since the first ruling; the dispositions
+# since the second (user-ruled 2026-09-18, walk
+# skill-sentences-and-shipper-questions-2026-09-18, item 5).
+REPLACED_ROLE_SUFFIXES = (MINUTES_ROLE_SUFFIX, "-dispositions")
 
 
 class WalkStoreDestination(typing.NamedTuple):
@@ -255,7 +269,7 @@ def ship_walk(destination: WalkStoreDestination, name: str,
               f"walk's, or a shape the ruling did not name): {', '.join(others)}",
               file=sys.stderr)
 
-    minutes_target = destination.walk_path / walk_file_name(name, REPLACED_ROLE_SUFFIX)
+    minutes_target = destination.walk_path / walk_file_name(name, MINUTES_ROLE_SUFFIX)
     citation = (f"{destination.citation_host}:{minutes_target}"
                 if destination.citation_host else str(minutes_target))
 
@@ -279,8 +293,10 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         return EXIT_FAILED
 
     to_copy, added, unchanged, refused = [], [], [], []
-    replaced_digest = None
-    local_minutes_digest = None
+    # (file name, role name, displaced sha256, local sha256) per replaced file,
+    # in the roles' order, which puts the minutes before the dispositions.
+    replaced = []
+    role_name_of = dict(WALK_FILE_ROLES)
     for suffix, source in present.items():
         local_digest = sha256_of(source)
         in_store = stored.get(str(targets[suffix]))
@@ -289,9 +305,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             added.append(source.name)
         elif in_store == local_digest:
             unchanged.append(source.name)
-        elif suffix == REPLACED_ROLE_SUFFIX:
+        elif suffix in REPLACED_ROLE_SUFFIXES:
             to_copy.append(source)
-            replaced_digest, local_minutes_digest = in_store, local_digest
+            replaced.append((source.name, role_name_of[suffix], in_store, local_digest))
         else:
             refused.append(f"{source.name} (store sha256 {in_store}, local sha256 {local_digest})")
 
@@ -304,13 +320,16 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
             sys.stderr.write(copied.stderr)
             return EXIT_FAILED
-    if replaced_digest is not None:
-        # Never on stdout: that line is the summary and the citation. See
-        # REPLACED in the module docstring for what this line is for.
-        print(f"{PROGRAM}: REPLACED {walk_file_name(name, REPLACED_ROLE_SUFFIX)} in the "
-              f"store — the content it held was sha256 {replaced_digest}, and what is "
-              f"there now is sha256 {local_minutes_digest}. The minutes are the one "
-              f"file a walk replaces (user-ruled 2026-09-18). If the displaced bytes "
+    for file_name, role_name, displaced_digest, local_digest in replaced:
+        # One line per replaced file, never on stdout: that line is the summary
+        # and the citation. See REPLACED in the module docstring for what this
+        # line is for.
+        print(f"{PROGRAM}: REPLACED {file_name} in the store — the content it held "
+              f"was sha256 {displaced_digest}, and what is there now is sha256 "
+              f"{local_digest}. The minutes and the dispositions are the two files a "
+              f"walk replaces (user-ruled 2026-09-18, walk "
+              f"skill-sentences-and-shipper-questions-2026-09-18 item 5), and this "
+              f"line is the trace a replacement leaves: if the displaced {role_name} "
               f"were wanted — a fresh session can hold an older copy than the store's "
               f"— the store is snapshotted every ten minutes by Timeshift, and the "
               f"digest above says which file to look for.", file=sys.stderr)
@@ -318,8 +337,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     parts = []
     if added:
         parts.append(f"{len(added)} file(s) added ({', '.join(added)})")
-    if replaced_digest is not None:
-        parts.append("minutes replaced")
+    for _, role_name, _, _ in replaced:
+        parts.append(f"{role_name} replaced")
     if unchanged:
         parts.append(f"{len(unchanged)} already there unchanged")
     summary = "; ".join(parts) if parts else "nothing to copy"

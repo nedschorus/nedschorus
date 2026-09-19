@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for scripts/walk-files-ship.py: the per-file rules (add-only by name,
-the minutes replaced, fail loudly), the five paths built without a glob, the
+the minutes and the dispositions replaced, fail loudly), the five paths built
+without a glob, the
 exits, the one-line stdout, and the shape of the remote invocation.
 
 Two modes, as scripts/cold-read-record-ship-test.py has them. LOCAL: the
@@ -32,6 +33,14 @@ STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["WALK_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
+"""
+
+# An ssh stub for a store that already holds one file: when asked for digests
+# it answers, as sha256sum does, that the dispositions file is there with the
+# digest the test put in WALK_SHIP_TEST_STORED_DIGEST_LINE. Records argv too.
+STUB_SSH_WITH_ONE_STORED_FILE = STUB_RECORDER + """
+if any("sha256sum" in a for a in sys.argv):
+    print(os.environ["WALK_SHIP_TEST_STORED_DIGEST_LINE"])
 """
 
 failures = []
@@ -148,6 +157,33 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           and f"{WALK}-dispositions.md" in result.stdout
           and (store_walk / f"{WALK}-dispositions.md").is_file(), result.stdout)
 
+    # --- The dispositions are replaced like the minutes, and announced --------
+    # (user-ruled 2026-09-18, walk skill-sentences-and-shipper-questions-2026-09-18
+    # item 5: the dispositions file "is a sometimes updated status file").
+    stored_dispositions = store_walk / f"{WALK}-dispositions.md"
+    old_dispositions_digest = subprocess.run(
+        ["shasum", "-a", "256", str(stored_dispositions)],
+        capture_output=True, text=True).stdout.split()[0]
+    (walks / f"{WALK}-dispositions.md").write_text(
+        "# dispositions\n\nF1 fixed in PR later.\n", encoding="utf-8")
+    result = ship(local_destination, str(walk_text))
+    check("edited dispositions are replaced, exit 0, one line saying so",
+          result.returncode == 0 and "dispositions replaced" in result.stdout
+          and "REFUSED" not in result.stdout and one_line(result.stdout),
+          result.stdout + result.stderr)
+    check("the store now holds the new dispositions",
+          stored_dispositions.read_text(encoding="utf-8").endswith("F1 fixed in PR later.\n"))
+    check("the dispositions replacement is announced on stderr, naming the file, "
+          "with the displaced sha256",
+          any("REPLACED" in line and f"{WALK}-dispositions.md" in line
+              and old_dispositions_digest in line
+              for line in result.stderr.splitlines()), result.stderr)
+    check("the dispositions replacement announcement is not on stdout",
+          "REPLACED" not in result.stdout)
+    check("the line still ends with the minutes' citation, not the dispositions'",
+          result.stdout.rstrip().endswith(f"minutes at {store_walk}/{WALK}-minutes.md"),
+          result.stdout)
+
     # --- An add-only file that differs is refused by name; the rest ships -----
     (walks / f"{WALK}.md").write_text("# walk\n\n## Item 1 of 3\n", encoding="utf-8")
     (walks / f"{WALK}-minutes.md").write_text("# minutes\n\nre-planned to 3 items\n",
@@ -254,6 +290,39 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           str(rsync_calls))
     check("rsync is never asked to delete or to write in place",
           not any(flag in rsync_calls[0] for flag in ("--delete", "--inplace")),
+          str(rsync_calls))
+
+    # Remote mode, a store that already holds a different dispositions file:
+    # replaced, not refused, and the displaced digest the store reported is
+    # what stderr announces.
+    stubs_with_store = scratch / "stub-bin-with-store"
+    stubs_with_store.mkdir()
+    for binary, text in (("ssh", STUB_SSH_WITH_ONE_STORED_FILE), ("rsync", STUB_RECORDER)):
+        stub = stubs_with_store / binary
+        stub.write_text(text, encoding="utf-8")
+        stub.chmod(0o755)
+    stored_digest = "0123456789abcdef" * 4
+    argv_log_with_store = scratch / "argv-with-store.jsonl"
+    result = ship(RULED_RECORDS_DESTINATION, str(walk_text), extra_env={
+        "PATH": f"{stubs_with_store}{os.pathsep}{os.environ.get('PATH', '')}",
+        "WALK_SHIP_TEST_ARGV_LOG": str(argv_log_with_store),
+        "WALK_SHIP_TEST_STORED_DIGEST_LINE":
+            f"{stored_digest}  {RULED_WALK_PATH}/{WALK}-dispositions.md"})
+    calls = [json.loads(line) for line in argv_log_with_store.read_text().splitlines()]
+    rsync_calls = [c for c in calls if c[0].endswith("rsync")]
+    check("remote mode replaces a differing stored dispositions file: exit 0, "
+          "four added and dispositions replaced",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and "4 file(s) added" in result.stdout and "dispositions replaced" in result.stdout
+          and one_line(result.stdout), result.stdout + result.stderr)
+    check("remote mode announces the dispositions replacement on stderr with the "
+          "digest the store reported",
+          any("REPLACED" in line and f"{WALK}-dispositions.md" in line
+              and stored_digest in line for line in result.stderr.splitlines()),
+          result.stderr)
+    check("remote mode's one rsync call still carries the dispositions file",
+          len(rsync_calls) == 1
+          and any(pathlib.Path(a).name == f"{WALK}-dispositions.md" for a in rsync_calls[0]),
           str(rsync_calls))
 
     # --- On ned-box the copy is local and the citation still names the host --
