@@ -44,7 +44,7 @@ WHAT IS PINNED HERE.
     sends to the cold-read-full-run -- a skill or its prompt, a file under
     docs/agents/, a wiki file, a design, a test design, a component-contract --
     is read with one line on stderr and one line in the report saying the
-    full run is still required; step 1's own exceptions (a walk file,
+    full run is still required; step 2's own exceptions (a walk file,
     CLAUDE.md) and everything else are read with nothing said. The warning
     never refuses and never touches stdout's one line.
 
@@ -829,11 +829,11 @@ check("a component-contract is named as the state-machine design names it",
 check("a design in docs/design-to-main/ is a design, by its name",
       class_of(root / "docs/design-to-main/design-to-main-state-machine-design.md")
       == "a design")
-check("a design's glossary is not in step 1's list, so it is not called a design",
+check("a design's glossary is not in step 2's list, so it is not called a design",
       class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)
 check("notes about a design are not the design",
       class_of(root / "docs/issues/142-draft-md-skill-design-notes.md") is None)
-check("step 1's own exceptions are not in the class: a walk file and CLAUDE.md",
+check("step 2's own exceptions are not in the class: a walk file and CLAUDE.md",
       class_of(root / "docs/walk/an-item-draft.md") is None
       and class_of(root / "CLAUDE.md") is None
       and class_of(root / "docs/agents/CLAUDE.local.md") is None)
