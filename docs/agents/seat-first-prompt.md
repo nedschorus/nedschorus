@@ -16,7 +16,7 @@ If either check fails — not a checkout, empty output, or a branch that is not 
 **Step 3 — read your instructions, in this order,** from inside your checkout:
 
 1. `docs/agents/<seat>-instructions.md`, with `<seat>` exactly as Step 1 gave it — your brief. If that exact file does not exist, stop and ask the user; do not adopt a neighbouring seat's brief, because that would mean adopting the wrong work.
-2. `docs/nedschorus-wiki/agent-seat-model.md` — how seats work, and the definitions of the words your brief uses: walked approval, slice, the C-numbers.
+2. `docs/nedschorus-wiki/nedschorus-agent-seat-model.md` — how seats work, and the definitions of the words your brief uses: walked approval, slice, the C-numbers.
 3. `CLAUDE.md` at the repository root — the project's standing rules.
 
 Briefs are not uniform. Each states the seat's work with its issues and pull requests, what to read, boundaries against other seats, and a first action, in its own proportions. Read yours for what it says rather than for what this paragraph predicts.

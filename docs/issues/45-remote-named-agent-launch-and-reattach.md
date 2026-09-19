@@ -9,10 +9,10 @@ GHI-MD for issue [Run named agents on the Ubuntu box, reachable from iTerm2 by n
 The launcher shipped, and the work grew from "reach an agent by name" into how the fleet is organised. Everything below is on main unless noted:
 
 - **`scripts/launch-claude-ubuntu`** and **`scripts/launch-claude-mac`** — the launchers (renamed from `launch-claude` 2026-08-13 so the target machine is in the name). They create the seat's home *as a checkout* before the session starts, because project settings — status line, reincarnation hook, instruction-file guard — load from `.claude/` in the working directory at session start.
-- **`docs/nedschorus-wiki/agent-seat-model.md`** — how work is divided among named seats, and why: grouped by shared context rather than workload, two or three running at a time, seats retired and resumed by name.
+- **`docs/nedschorus-wiki/nedschorus-agent-seat-model.md`** — how work is divided among named seats, and why: grouped by shared context rather than workload, two or three running at a time, seats retired and resumed by name.
 - **`docs/agents/<seat>-instructions.md`** — one brief per seat (`gatekeeper`, `sanity-checker`, `skill-builder`, `ghi`, `fleet`, `doctrine`), each stating the seat's work, its issues and PRs, what to read, and its first action.
 - **`docs/agents/seat-first-prompt.md`** — the launcher's `--first-prompt-file`: what a fresh agent reads to discover which seat it is and where to start.
-- **`docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md`** — full path map for both machines, the three checkout kinds, and what does and does not cross between them.
+- **`docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md`** — full path map for both machines, the three checkout kinds, and what does and does not cross between them.
 - **`docs/issues/queue/45-session-seat-and-isolation-riders.md`** — five ideas raised and deliberately not built, each with its reasoning: the one-live-session-per-directory guard (whose obvious `/proc` detection was tried and proved unreliable), a `--directory` flag for the launchers, a branch-per-session CLAUDE.md rule, a cold read of the paths reference, and the deferred `choirmaster` rename.
 - **`docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md`** — a 2026-08-13 snapshot of every open thread on the box, its context file, and the proposed seat split. Operational, so its PR and issue rows go stale; the thread map and context paths do not.
 

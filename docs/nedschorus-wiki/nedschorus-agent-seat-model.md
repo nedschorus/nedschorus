@@ -4,7 +4,7 @@ How work is divided among named agents, and why. Every agent reads its own brief
 
 ## The words this model uses
 
-The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, defines the words this page uses. The handoff-system overview, `docs/nedschorus-wiki/handoff-system-overview.md`, describes the machinery that retires a spent session and starts its successor.
+The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, defines the words this page uses. The handoff-system overview, `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md`, describes the machinery that retires a spent session and starts its successor.
 
 ## The grouping rule
 

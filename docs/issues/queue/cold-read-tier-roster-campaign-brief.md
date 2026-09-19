@@ -52,7 +52,7 @@ Four, frozen by copy and hash per METHOD.md §2:
 
 1. **pairG** — ghi-write SKILL.md at `c6fb95f` (728 words). Ground truth: the user's 15 labelled one-fix commits to HEAD.
 2. **fhspec** — fast-handoff-design.md at `c8652c9` (4,673 words). Ground truth: the final at `8c9b357`; carry its recorded contamination note.
-3. **workingmodel** — fleet-git-worktree-working-model.md at `c41eb80` (7,150 words). Ground truth: the final at `8afc20a`, the user's strongest language span.
+3. **workingmodel** — nedschorus-fleet-git-worktree-working-model.md at `c41eb80` (7,150 words). Ground truth: the final at `8afc20a`, the user's strongest language span.
 4. **238-round-1** — the topic-branch script design as first cold-read, at `~/agents/reboot-test`'s scratch copy `design-round1.md` (the seat can supply it; it is also reconstructible from that seat's transcript). Ground truth: the adjudicated cluster list from the round-1 dedup (49 clusters), with truth per cluster settled by measurement where the claim was about git and by the author's fix pass otherwise.
 
 Targets 1–3 are the ruled standard subjects. Target 4 is the one document with a per-finding adjudication already done and a mechanism-class defect known to be present (the `--ff-only` claim), so recall of that specific defect is reported by name.

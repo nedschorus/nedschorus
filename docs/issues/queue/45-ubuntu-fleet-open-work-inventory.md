@@ -10,7 +10,7 @@ The fastest way to catch up.
 - **Every seat document has been given a cold read**, twelve in all, and each review's findings applied to the document it reviewed. The reviews were brutal and useful: 23 findings on the gatekeeper brief, 28 on the seat model, 30 on the sanity-checker brief, 26 on the fleet brief, with "clean sections: none" on each of the first four. The corrections are in PR [A zero-context first prompt for every agent seat](https://github.com/nedschorus/nedschorus/pull/58).
 - **The largest single defect class was vocabulary**: the briefs used *pile*, *walked approval*, *instruction-class*, *slice* and the C-numbers as if established, and none was defined anywhere. The seat model now defines them once.
 - **Two corrections worth knowing because they were wrong facts, not wrong wording**: every document written that day was stamped `2026-08-14` (UTC job timestamps read as local dates) and is now corrected to `2026-08-13`; and the seat-first-prompt's repair command could not work — `git worktree add` refuses a non-empty path, and its "drop `-b`" variant was an invalid invocation, on the branch-already-exists path that any relaunched seat takes.
-- **Still owed:** a second-pass review of the documents that changed *after* their first review — applying findings can introduce new ones — starting with `seat-first-prompt.md`, `agent-seat-model.md` and `gatekeeper-instructions.md`.
+- **Still owed:** a second-pass review of the documents that changed *after* their first review — applying findings can introduce new ones — starting with `seat-first-prompt.md`, `nedschorus-agent-seat-model.md` and `gatekeeper-instructions.md`.
 
 ## 1. Open pull requests
 
