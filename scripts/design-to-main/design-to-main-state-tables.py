@@ -152,7 +152,7 @@ class StateTableRow:
 
 STATE_TABLE = (
     StateTableRow(INITIATE_DESIGN_TO_MAIN, (),
-                  "the user's invocation of the skill, naming the component",
+                  "the user's invocation of the skill, naming the component and the design's GHI-MD",
                   (V_INVOKED,), "conversation"),
     StateTableRow(DESIGN_WRITING, (),
                   "the invocation; on a redesign, the investigation report",
