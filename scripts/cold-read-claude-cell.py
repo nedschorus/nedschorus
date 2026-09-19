@@ -106,8 +106,8 @@ PROGRAM = "cold-read-claude-cell"
 # case (user-ruled 2026-09-11, nedschorus#413: "why is opus special? I
 # don't think it should be"): the cold-read-grid retries the cell once on
 # the same model, reports the report absent like any other, and when every
-# Claude cell is absent for one agent-cli-wide cause says once that the
-# agent-cli is down (scripts/cold-read-grid.py).
+# Claude cell is absent for one agent-binary-wide cause says once that the
+# agent-binary is down (scripts/cold-read-grid.py).
 #
 # Every cold-read-tier on both runtimes is therefore a single-entry chain. The
 # tuple shape and the shared chain loop in scripts/cold-read-cell-common.py
@@ -219,22 +219,22 @@ def invocation_builder(effort: str):
 
 def model_family_name(model: str) -> str:
     """`claude-fable-5-1` -> `Fable`, `claude-opus-5` -> `Opus`: the word the
-    `claude` agent-cli's model-limit message uses for the model."""
+    `claude` agent-binary's model-limit message uses for the model."""
     parts = model.split("-")
     return parts[1].capitalize() if len(parts) > 1 and parts[1] else model
 
 
-# THE TEXTS THE `claude` AGENT-CLI PRINTS WHEN AN ATTEMPT FAILS FOR A REASON
+# THE TEXTS THE `claude` AGENT-BINARY PRINTS WHEN AN ATTEMPT FAILS FOR A REASON
 # IT CAN NAME (nedschorus#413, design section 4). None is guessed: each is a
 # real line, and the fixture rule (nedschorus#18, user-ruled 2026-09-02)
-# wants its source beside it. All three arrive on the agent-cli's standard
+# wants its source beside it. All three arrive on the agent-binary's standard
 # output, which the shared chain runner re-emits into the cold-read-cell's
 # log, and each is matched only by how a line starts.
 #
 #   account-limit  "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
 #       line 2 of nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log,
 #       from scripts/cold-read-grid.py launching this program on the Mac,
-#       2026-09-10. Agent-cli-wide: the same limit fails every Claude cell.
+#       2026-09-10. Agent-binary-wide: the same limit fails every Claude cell.
 #       The detail is the rest of the line, "resets 8:50pm (America/Los_Angeles)".
 #   model-limit    "You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
 #       line 2 of nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-11-SKILL-2/2026-09-11-SKILL-2--claude-hunt-floor.md.stderr.log,
@@ -247,7 +247,7 @@ def model_family_name(model: str) -> str:
 #       directory outside any checkout, with an empty configuration
 #       directory so the real login was untouched:
 #       `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"`, exit 1, that
-#       line on stdout, stderr empty. Agent-cli-wide. The detail is the line.
+#       line on stdout, stderr empty. Agent-binary-wide. The detail is the line.
 def recognised_failure_texts_for_model(model: str) -> list:
     family = model_family_name(model)
     return [

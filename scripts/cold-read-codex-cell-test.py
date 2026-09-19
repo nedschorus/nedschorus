@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for cold-read-codex-cell.py — its exit codes, and the one text of
-the codex agent-cli it recognises.
+the codex agent-binary it recognises.
 
 WHY THIS SEAM. Until 2026-08-23 the cell used 2 for its own refusals and
 passed `codex exec`'s exit code through when codex failed, and codex exits 2

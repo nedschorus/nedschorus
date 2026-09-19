@@ -31,8 +31,8 @@ with its CAUSE, the `cause:` line the cold-read-cell program prints
 (scripts/cold-read-cell-common.py, classify_failed_attempt) or, when it left
 none, one the cold-read-grid names itself: `RETRYING:` at the first failure,
 `FAILED (exit N):` at the second, after which the report is ABSENT. When
-every cold-read-cell of one agent-cli has landed or is absent for the same
-agent-cli-wide cause, one `AGENT-CLI DOWN:` line says so. Every run closes
+every cold-read-cell of one agent-binary has landed or is absent for the same
+agent-binary-wide cause, one `AGENT-BINARY DOWN:` line says so. Every run closes
 with one closing text built from what landed: all landed, some landed (the
 set is valid and incomplete, and is triaged), none landed, or the
 cold-read-target changed, whatever else happened. When any report is absent
@@ -158,7 +158,7 @@ GRID_MARKER_PREFIXES = (TARGET_CHANGED_MARKER_PREFIX, INCOMPLETE_SET_MARKER_PREF
 # forms the cold-read skill's Monitor watches for. A FAILED line keeps its
 # `FAILED (exit` opening, the one marker carrying no colon.
 RETRYING_PREFIX = "RETRYING:"
-AGENT_CLI_DOWN_PREFIX = "AGENT-CLI DOWN:"
+AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 
 # ONE CLOSING TEXT FOR EVERY RUN (user-ruled 2026-09-11, point 3, replacing
 # the Opus-absent and Fable-only branches of 2026-09-04: "why is opus
@@ -514,7 +514,7 @@ class AbsentReport(typing.NamedTuple):
 class RunOutcome(typing.NamedTuple):
     """What the cold-read-cells left: the cell names that landed, in order;
     the absent reports by cell name, in the order they became absent; and
-    per agent-cli that went down, (cause class, detail, reports absent)."""
+    per agent-binary that went down, (cause class, detail, reports absent)."""
 
     landed: list
     absent: dict
@@ -522,7 +522,7 @@ class RunOutcome(typing.NamedTuple):
 
 
 def cell_name_of(report_path: pathlib.Path) -> str:
-    """`claude-hunt-good` from `.../claude-hunt-good.md`: the agent-cli, pass
+    """`claude-hunt-good` from `.../claude-hunt-good.md`: the agent-binary, pass
     token and tier the report's file name is, which is how the grid's own
     lines name a cold-read-cell."""
     return report_path.stem
@@ -661,7 +661,7 @@ def cause_of_failed_attempt(attempt: CellAttempt, exit_code, log_lines: list) ->
     if cause_lines:
         text = cause_lines[-1].split(f": {cell_common.CAUSE_PHRASE} ", 1)[1]
         # The separator without its trailing space: a cause line with an
-        # empty detail (`cause: account-limit — `, the agent-cli having
+        # empty detail (`cause: account-limit — `, the agent-binary having
         # printed its limit text with nothing after it) lost that space to
         # strip() above, and partitioning on the full separator then left the
         # class as "account-limit —", which matched no class the grid knows.
@@ -675,14 +675,14 @@ def cause_of_failed_attempt(attempt: CellAttempt, exit_code, log_lines: list) ->
     return f"exit-{exit_code}", detail
 
 
-def announce_agent_cli_down(cells_by_runtime: dict, outcome: RunOutcome) -> None:
-    """Print AGENT-CLI DOWN once per agent-cli, when its condition is met
+def announce_agent_binary_down(cells_by_runtime: dict, outcome: RunOutcome) -> None:
+    """Print AGENT-BINARY DOWN once per agent-binary, when its condition is met
     (user's direction 2026-09-14: "If opus is down, claude is down, so that
     should be reported"; the design's section 5, as the user revised it on
-    2026-09-16): a cold-read-cell is absent with an agent-cli-wide class,
-    and every other cold-read-cell of that agent-cli has landed or is absent
+    2026-09-16): a cold-read-cell is absent with an agent-binary-wide class,
+    and every other cold-read-cell of that agent-binary has landed or is absent
     with the same class. The detail is that of the last to become absent.
-    A model limit is not the agent-cli being down, and absent reports with
+    A model limit is not the agent-binary being down, and absent reports with
     different or unrecognised causes are three facts the cold-read-grid
     cannot join into one; both are listed one by one in the closing text."""
     for runtime, cells in cells_by_runtime.items():
@@ -695,11 +695,11 @@ def announce_agent_cli_down(cells_by_runtime: dict, outcome: RunOutcome) -> None
         if any(cell not in outcome.absent and cell not in outcome.landed for cell in cells):
             continue
         classes = {report.cause_class for report in absences}
-        if len(classes) != 1 or not classes <= cell_common.AGENT_CLI_WIDE_CAUSE_CLASSES:
+        if len(classes) != 1 or not classes <= cell_common.AGENT_BINARY_WIDE_CAUSE_CLASSES:
             continue
         last = absences[-1]
         outcome.down[runtime] = (last.cause_class, last.detail, len(absences))
-        print(f"{AGENT_CLI_DOWN_PREFIX} {runtime}{cell_common.CAUSE_SEPARATOR}"
+        print(f"{AGENT_BINARY_DOWN_PREFIX} {runtime}{cell_common.CAUSE_SEPARATOR}"
               f"{last.cause_class}{cell_common.CAUSE_SEPARATOR}{last.detail}; "
               f"{len(absences)} reports absent", flush=True)
 
@@ -711,7 +711,7 @@ def wait_for_cells(running: dict) -> RunOutcome:
     RETRY ONCE, HERE (user-ruled 2026-09-11, point 1: "Every failed cell is
     retried once, automatically, with the SAME model. No cell is special.").
     The cold-read-grid is what sees the first failure and can report it, and
-    one relaunch here covers both agent-clis and every attempt that ends with
+    one relaunch here covers both agent-binaries and every attempt that ends with
     the program exiting or never starting. The same command, at once, while
     the other cold-read-cells keep running; exit 64 too, since a refused
     relaunch costs seconds; a cause a retry cannot fix too, because
@@ -770,13 +770,13 @@ def wait_for_cells(running: dict) -> RunOutcome:
                           f"{cause} (stderr kept: {attempt.stderr_path})", flush=True)
                     outcome.absent[name] = AbsentReport(
                         name, runtime_of(name), cause_class, detail, attempt.stderr_path)
-            announce_agent_cli_down(cells_by_runtime, outcome)
+            announce_agent_binary_down(cells_by_runtime, outcome)
     return outcome
 
 
 def tell_the_user_sentence(absent: dict) -> str:
     """"Tell the user: <causes>." when any absent report's cause is one the
-    user can clear, else "". One cause per agent-cli and class, taking the
+    user can clear, else "". One cause per agent-binary and class, taking the
     detail and log of the last of them to become absent; each carries the
     path of the kept log it came from, because a cause read from text can
     mislead and the user can check it (the design's section 2)."""
@@ -793,8 +793,8 @@ def tell_the_user_sentence(absent: dict) -> str:
 
 
 def absence_lines(outcome: RunOutcome) -> str:
-    """The absent reports one per line, then each agent-cli that is down,
-    restated without the AGENT-CLI DOWN: prefix so the skill's Monitor sees
+    """The absent reports one per line, then each agent-binary that is down,
+    restated without the AGENT-BINARY DOWN: prefix so the skill's Monitor sees
     that line once."""
     lines = [f"- {report.cell_name}: {report.cause_class}{cell_common.CAUSE_SEPARATOR}"
              f"{report.detail} (log: {report.log_path})"
@@ -888,7 +888,7 @@ def main() -> int:
     # Otherwise the set is valid, and incomplete when a report is absent
     # (user-ruled 2026-09-11, point 4) -- the reports that landed are triaged
     # as the review that was asked for, and each absence is recorded. The
-    # absent reports and any agent-cli that is down are listed in every
+    # absent reports and any agent-binary that is down are listed in every
     # variant that has them, and a cause the user can clear ends the text.
     tell = tell_the_user_sentence(outcome.absent)
     absences = absence_lines(outcome)

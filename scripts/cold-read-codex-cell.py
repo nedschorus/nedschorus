@@ -162,10 +162,10 @@ def invocation_builder(effort: str):
     return build_invocation
 
 
-# THE ONE TEXT THE `codex` AGENT-CLI PRINTS WHEN AN ATTEMPT FAILS FOR A
+# THE ONE TEXT THE `codex` AGENT-BINARY PRINTS WHEN AN ATTEMPT FAILS FOR A
 # REASON IT CAN NAME (nedschorus#413, design section 4). It is not guessed:
 # it is a real line, and the fixture rule (nedschorus#18, user-ruled
-# 2026-09-02) wants its source beside it. It arrives on the agent-cli's
+# 2026-09-02) wants its source beside it. It arrives on the agent-binary's
 # standard error, which the shared chain runner re-emits into the
 # cold-read-cell's log.
 #
@@ -182,11 +182,11 @@ def invocation_builder(effort: str):
 #       exception to column-0 matching the user ruled on 2026-09-18 (walk
 #       skill-sentences-and-shipper-questions-2026-09-18, item 4). The
 #       prefix ends at "401 Unauthorized", before the url, which is the
-#       part that may vary. Agent-cli-wide. The detail is the line after
+#       part that may vary. Agent-binary-wide. The detail is the line after
 #       its timestamp, as the Claude launcher's logged-out text is the line.
 #
 # No quota text has been captured from a Codex run, so a Codex quota failure
-# still lands as exit-N, whose detail is the agent-cli's last stderr line,
+# still lands as exit-N, whose detail is the agent-binary's last stderr line,
 # until a real one is captured and added here.
 def recognised_failure_texts_for_model(model: str) -> list:
     del model

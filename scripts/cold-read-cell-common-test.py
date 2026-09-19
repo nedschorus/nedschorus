@@ -576,7 +576,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # from a scratch directory, exit 1, that line on stderr. The classes
     # come from the launcher's texts, matched only by how a line starts,
     # after the optional leading timestamp the Codex tracing logger prints
-    # (user-ruled 2026-09-18), and only in the agent-cli's own output; the
+    # (user-ruled 2026-09-18), and only in the agent-binary's own output; the
     # module knows none of its own.
     common_spec = importlib.util.spec_from_file_location(
         "cold_read_cell_common_under_test", SCRIPTS_DIR / "cold-read-cell-common.py")
@@ -625,9 +625,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a limit text inside a line, not at its start, is not recognised",
           classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")[0] == "exit-1",
           repr(classify(stdout=f"The document quotes: {SESSION_LIMIT_LINE}\n")))
-    check("an agent-cli that could not be started is agent-cli-missing with the error",
+    check("an agent-binary that could not be started is agent-binary-missing with the error",
           classify(exit_code=None, start_error="[Errno 2] No such file or directory: 'claude'")
-          == ("agent-cli-missing", "[Errno 2] No such file or directory: 'claude'"))
+          == ("agent-binary-missing", "[Errno 2] No such file or directory: 'claude'"))
     check("exit 0 with no report is no-report",
           classify(stdout="I read it and wrote nothing.\n", exit_code=0)
           == ("no-report", "no report written"))
