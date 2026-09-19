@@ -412,13 +412,21 @@ class WriteDetectorUnavailable(Exception):
 CAUSE_PHRASE = "cause:"
 CAUSE_SEPARATOR = " — "
 # The classes an agent-cli's own output can name. A line matches only by how
-# it STARTS, the rule nedschorus#244 applies to status lines, because text
-# found inside a line may be the model quoting a document; and each
-# agent-cli's texts are matched only in that agent-cli's own output, which is
-# why the launcher passes them and this module knows none of its own. A
-# class is AGENT-CLI-WIDE when it predicts the same failure for every
-# cold-read-cell of that agent-cli, which is what lets the grid say once that
-# the agent-cli is down.
+# it STARTS, after an optional leading timestamp of the form the Codex
+# tracing logger prints (`2026-09-18T19:37:41.140816Z `, matched by
+# LEADING_TRACING_LOGGER_TIMESTAMP below); that is the rule nedschorus#244
+# applies to status lines, because text found inside a line may be the model
+# quoting a document. The timestamp skip is the one exception, user-ruled
+# 2026-09-18 (walk skill-sentences-and-shipper-questions-2026-09-18, item 4)
+# when the Codex CLI's captured logged-out line turned out to carry that
+# prefix on every line it logs; it is a property of the classifier, so it
+# applies to every launcher's texts, and it is inert for the Claude CLI,
+# whose lines never carry one. Nothing else is skipped. Each agent-cli's
+# texts are matched only in that agent-cli's own output, which is why the
+# launcher passes them and this module knows none of its own. A class is
+# AGENT-CLI-WIDE when it predicts the same failure for every cold-read-cell
+# of that agent-cli, which is what lets the grid say once that the agent-cli
+# is down.
 AGENT_CLI_WIDE_CAUSE_CLASSES = frozenset(
     {"account-limit", "logged-out", "agent-cli-missing"})
 # The classes whose cause the user can clear -- a reset time passing, a
@@ -428,14 +436,23 @@ USER_CLEARABLE_CAUSE_CLASSES = frozenset(
 # An exit-N cause's detail is the agent-cli's last non-empty line, cut to this.
 CAUSE_DETAIL_MAX_CHARACTERS = 120
 # What the detail of a recognised text is: the rest of the matched line, the
-# whole matched line, or the fixed text the launcher gives instead.
+# whole matched line, or the fixed text the launcher gives instead. Both line
+# forms are taken after the leading timestamp, when there is one: the grid
+# carries the detail onto its AGENT-CLI DOWN: line, which speaks for every
+# cold-read-cell of that agent-cli, and one attempt's timestamp is noise there.
 DETAIL_IS_REST_OF_LINE = "rest-of-line"
 DETAIL_IS_WHOLE_LINE = "whole-line"
+# The timestamp the Codex CLI's tracing logger puts at the head of each line
+# it logs: an ISO-8601 instant, fractional seconds and the trailing Z
+# optional, then whitespace. Anchored at the start of the stripped line.
+LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\s+")
 
 
 class RecognisedFailureText(typing.NamedTuple):
     """One text an agent-cli prints when an attempt fails for a nameable
-    reason: the cause class it names, the text a line must START with, and
+    reason: the cause class it names, the text a line must START with (after
+    an optional leading timestamp, LEADING_TRACING_LOGGER_TIMESTAMP), and
     what the detail is (DETAIL_IS_REST_OF_LINE, DETAIL_IS_WHOLE_LINE, or a
     fixed string)."""
 
@@ -450,9 +467,11 @@ def classify_failed_attempt(
     """(class, detail) for one attempt that produced no report.
 
     Tested in this order, the first match naming the cause: the launcher's
-    recognised texts against every line of the agent-cli's own stdout and
-    stderr; then `agent-cli-missing` when `start_error` is set, which is the
-    OSError text from the attempt that could not start the agent-cli at all;
+    recognised texts against the start of every line of the agent-cli's own
+    stdout and stderr, a leading timestamp skipped first and the detail taken
+    from the line after it; then `agent-cli-missing` when `start_error` is
+    set, which is the OSError text from the attempt that could not start the
+    agent-cli at all;
     then `no-report` for an exit of 0 with no verified report; then `exit-N`
     with the agent-cli's last non-empty stderr line as the detail, or its
     last stdout line when stderr is empty, cut to CAUSE_DETAIL_MAX_CHARACTERS.
@@ -461,12 +480,14 @@ def classify_failed_attempt(
     """
     for line in f"{stdout}\n{stderr}".splitlines():
         stripped = line.strip()
+        timestamp = LEADING_TRACING_LOGGER_TIMESTAMP.match(stripped)
+        untimestamped = stripped[timestamp.end():] if timestamp else stripped
         for text in recognised_texts or ():
-            if stripped.startswith(text.line_prefix):
+            if untimestamped.startswith(text.line_prefix):
                 if text.detail == DETAIL_IS_REST_OF_LINE:
-                    detail = stripped[len(text.line_prefix):].lstrip(" \t·")
+                    detail = untimestamped[len(text.line_prefix):].lstrip(" \t·")
                 elif text.detail == DETAIL_IS_WHOLE_LINE:
-                    detail = stripped
+                    detail = untimestamped
                 else:
                     detail = text.detail
                 return text.cause_class, detail

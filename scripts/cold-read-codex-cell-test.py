@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for cold-read-codex-cell.py — its exit codes, and only those.
+"""Tests for cold-read-codex-cell.py — its exit codes, and the one text of
+the codex agent-cli it recognises.
 
 WHY THIS SEAM. Until 2026-08-23 the cell used 2 for its own refusals and
 passed `codex exec`'s exit code through when codex failed, and codex exits 2
@@ -39,6 +40,11 @@ argparse's own default is also 2, so moving only the hand-written checks
 would have left the collision standing for the commonest bad invocation there
 is, a mistyped flag.
 
+The one recognised text (nedschorus#413) is pinned from both sides too: the
+launcher's list holds the logged-out text alone, and a codex whose stderr
+carries the captured 401 line leaves the cell naming `cause: logged-out` in
+its own stderr, the line the grid lifts.
+
 Everything else about this cell — the model and effort pins, the memory store
 being off for the launch, the stray-write detector, the provenance stamp's
 fields — is NOT covered here; this file was written for the exit-code seam
@@ -52,6 +58,7 @@ without the model, the money, or the wait.
 Run: python3 scripts/cold-read-codex-cell-test.py
 """
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -59,6 +66,16 @@ import tempfile
 from pathlib import Path
 
 CELL_SCRIPT = Path(__file__).with_name("cold-read-codex-cell.py")
+
+# The Codex logged-out line, captured 2026-09-18 on ned-box (codex-cli
+# 0.153.4) from a scratch directory outside any checkout with an empty
+# CODEX_HOME: `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only
+# --skip-git-repo-check "say hi"`, exit 1, this line on stderr. Its source
+# is recorded beside recognised_failure_texts_for_model in the cell.
+CODEX_LOGGED_OUT_LINE = (
+    "2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::responses_websocket: "
+    "failed to connect to websocket: HTTP error: 401 Unauthorized, "
+    "url: wss://api.openai.com/v1/responses")
 
 # A stub codex that writes the report the cell is waiting for, then exits 0 —
 # the successful-cell path. The path arrives by environment: the cell puts it
@@ -74,12 +91,13 @@ sys.exit(0)
 """
 
 
-def stub_codex_exits(code):
-    """A stub codex that fails with `code` without writing anything."""
+def stub_codex_exits(code, stderr_line="stub codex: simulated failure"):
+    """A stub codex that fails with `code` after printing `stderr_line` to
+    stderr, writing nothing."""
     return (
         "#!/usr/bin/env python3\n"
         "import sys\n"
-        'sys.stderr.write("stub codex: simulated failure\\n")\n'
+        f"sys.stderr.write({stderr_line + chr(10)!r})\n"
         f"sys.exit({code})\n"
     )
 
@@ -177,6 +195,37 @@ with tempfile.TemporaryDirectory() as scratch:
         check(f"a codex that exits {codex_exit_code} leaves no report behind",
               not report.exists(),
               "a report survived a run that produced no review")
+
+    # --- The captured 401 line names the attempt's cause: logged-out --------
+    # From the launcher's side: the list holds one text, the logged-out one,
+    # and the shared classifier names the captured line through it, after
+    # the tracing logger's timestamp. From the cell's side: a codex whose
+    # stderr is that line leaves the cell's own cause line in its stderr,
+    # with the line after its timestamp as the detail.
+    codex_spec = importlib.util.spec_from_file_location(
+        "cold_read_codex_cell_under_test", CELL_SCRIPT)
+    codex_module = importlib.util.module_from_spec(codex_spec)
+    codex_spec.loader.exec_module(codex_module)
+    recognised = codex_module.recognised_failure_texts_for_model("gpt-5-codex")
+    check("the launcher recognises one text, and it is logged-out",
+          [text.cause_class for text in recognised] == ["logged-out"],
+          repr(recognised))
+    classified = codex_module.common.classify_failed_attempt(
+        stdout="", stderr=CODEX_LOGGED_OUT_LINE + "\n", exit_code=1,
+        recognised_texts=recognised)
+    check("the classifier names the captured 401 line logged-out through that text",
+          classified == ("logged-out", CODEX_LOGGED_OUT_LINE.split(" ", 1)[1]),
+          repr(classified))
+    report.unlink(missing_ok=True)
+    result = run_cell(stubs, stub_codex_exits(1, CODEX_LOGGED_OUT_LINE), report,
+                      "--cell", "restate", "--tier", "good", "--target", str(target))
+    check("a codex that prints the captured 401 line leaves the cell exiting 1",
+          result.returncode == 1 and not report.exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("that cell's stderr names the cause logged-out, the line after its timestamp",
+          "cold-read-codex-cell: cause: logged-out — "
+          + CODEX_LOGGED_OUT_LINE.split(" ", 1)[1] in result.stderr,
+          repr(result.stderr))
 
     # --- A --cell outside the list, without --prompt-file, is a refusal ----
     # The check left argparse (it depends on --prompt-file, which argparse

@@ -162,22 +162,41 @@ def invocation_builder(effort: str):
     return build_invocation
 
 
-# NO TEXT OF THE `codex` AGENT-CLI IS RECOGNISED (nedschorus#413, design
-# section 4), so every failed Codex attempt's cause is agent-cli-missing,
-# no-report or exit-N, whose detail is the agent-cli's last stderr line. No
-# quota text has been captured from a run. The logged-out capture was made
-# on 2026-09-18 on ned-box (codex-cli 0.153.4) from a scratch directory
-# outside any checkout with an empty CODEX_HOME:
-# `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only --skip-git-repo-check "say hi"`
-# exits 1 with, on stderr, lines of the form
-# `2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses`.
-# A line that starts with a timestamp cannot be recognised by how it starts,
-# which is the only match the design allows, so that failure lands as exit-1
-# with the 401 line as its detail, which the user can still read. Adding a
-# match on text inside a line is a decision for the user, not this file.
+# THE ONE TEXT THE `codex` AGENT-CLI PRINTS WHEN AN ATTEMPT FAILS FOR A
+# REASON IT CAN NAME (nedschorus#413, design section 4). It is not guessed:
+# it is a real line, and the fixture rule (nedschorus#18, user-ruled
+# 2026-09-02) wants its source beside it. It arrives on the agent-cli's
+# standard error, which the shared chain runner re-emits into the
+# cold-read-cell's log.
+#
+#   logged-out     "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized"
+#       captured 2026-09-18 on ned-box (codex-cli 0.153.4) from a scratch
+#       directory outside any checkout, with an empty CODEX_HOME so the real
+#       login was untouched:
+#       `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only --skip-git-repo-check "say hi"`,
+#       exit 1, with lines of this form on stderr:
+#       `2026-09-18T19:37:41.140816Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses`.
+#       The Codex CLI's tracing logger puts that timestamp at the head of
+#       every line it logs, so the shared classifier skips an optional
+#       leading timestamp and then matches by how the line starts, the one
+#       exception to column-0 matching the user ruled on 2026-09-18 (walk
+#       skill-sentences-and-shipper-questions-2026-09-18, item 4). The
+#       prefix ends at "401 Unauthorized", before the url, which is the
+#       part that may vary. Agent-cli-wide. The detail is the line after
+#       its timestamp, as the Claude launcher's logged-out text is the line.
+#
+# No quota text has been captured from a Codex run, so a Codex quota failure
+# still lands as exit-N, whose detail is the agent-cli's last stderr line,
+# until a real one is captured and added here.
 def recognised_failure_texts_for_model(model: str) -> list:
     del model
-    return []
+    return [
+        common.RecognisedFailureText(
+            "logged-out",
+            "ERROR codex_api::endpoint::responses_websocket: failed to connect to "
+            "websocket: HTTP error: 401 Unauthorized",
+            common.DETAIL_IS_WHOLE_LINE),
+    ]
 
 
 def main() -> int:
