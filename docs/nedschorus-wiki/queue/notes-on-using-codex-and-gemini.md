@@ -122,7 +122,7 @@ no `--prompt-file` flag (as of 2026-09-04; MD-skills has it queued) and no
 `agy` launcher at all. For a one-off prompt or runtime, the pattern that works
 is a direct invocation that composes the prompt with the same `{TARGET_PATH}` /
 `{REPORT_PATH}` substitution and writes the same provenance stamp
-(`<!-- provenance: runtime= model= effort= cell= duration_s= target= -->`), so
+(`<!-- provenance: runtime= model= effort= cell= duration_s= checkout= target= -->`), so
 the existing placement, adjudication and scoring tools take the record
 unchanged. Two working examples are in this record's `tools/`:
 `run-terminology-cells-direct.py` (claude + codex) and
