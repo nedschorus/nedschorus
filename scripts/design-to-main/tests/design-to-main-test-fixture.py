@@ -31,6 +31,9 @@ git_record_module = machine_module.git_record_module
 
 COMPONENT = "widget-counter"
 COMPONENT_DIRECTORY = "scripts/widget-counter"
+# The design's GHI-MD, which the invocation names: before code exists the
+# design is refined there in place (section 9).
+DESIGN_PATH = "docs/issues/901-widget-counter-design.md"
 
 
 def git(repo, *args):
@@ -72,7 +75,7 @@ FILES_WRITTEN_BEFORE_EMITTING = "files_written_before_emitting"
 # and names one file, as the agent it feigns would (the tenth walk, item
 # 3). A case that wants other files, or none, names `named_files` itself.
 DEFAULT_ARTIFACT_OF_WRITING_STATE = {
-    tables.DESIGN_WRITING: tables.design_path_while_no_code_exists(COMPONENT),
+    tables.DESIGN_WRITING: DESIGN_PATH,
     tables.CONTRACT_REVISING: "%s/%s-contract.md" % (COMPONENT_DIRECTORY, COMPONENT),
     tables.IMPLEMENTATION_WRITING: "%s/%s.py" % (COMPONENT_DIRECTORY, COMPONENT),
     tables.TEST_DESIGN_WRITING: "%s/%s-test-design.md" % (COMPONENT_DIRECTORY, COMPONENT),
@@ -132,7 +135,7 @@ def make_machine(script, repository=None):
     """A machine over a throwaway repository, driven by `script`."""
     repository = repository or ThrowawayRepository()
     record = git_record_module.TopicBranchGitRecord(
-        repository.checkout, COMPONENT, COMPONENT_DIRECTORY)
+        repository.checkout, COMPONENT, COMPONENT_DIRECTORY, DESIGN_PATH)
     launcher = ScriptedStateExitLauncherWritingFiles(script, repository.checkout)
     machine = machine_module.DesignToMainStateMachineFlow(
         record, launcher, today=lambda: "2026-09-08")

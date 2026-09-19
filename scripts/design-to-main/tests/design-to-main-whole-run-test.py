@@ -617,7 +617,7 @@ class ResumingAnInvestigation(unittest.TestCase):
 
     def test_the_design_edited_resumes_as_a_redesign(self):
         machine, run, record = self.open_investigation()
-        design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+        design = record.absolute(fixture.DESIGN_PATH)
         design.parent.mkdir(parents=True, exist_ok=True)
         design.write_text("# the design, edited by the user\n")
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
@@ -824,7 +824,7 @@ class OpeningAnInvestigationDiscardsThePausedAgentsWork(unittest.TestCase):
 
     def test_the_design_edited_resumes_as_a_redesign_without_the_discarded_draft(self):
         machine, run, record = self.open_investigation_from_test_design_writing()
-        design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+        design = record.absolute(fixture.DESIGN_PATH)
         design.parent.mkdir(parents=True, exist_ok=True)
         design.write_text("# the design, edited by the user\n")
         machine.launcher.script.append((T.INVESTIGATE_WORKFLOW, T.V_RESUME, {}))
@@ -1195,7 +1195,7 @@ class AStrayVerdictFromWithinAnInvestigation(unittest.TestCase):
 
     def test_the_users_edit_before_a_stray_verdict_is_still_seen_on_resume(self):
         machine, run, record = self.open_investigation()
-        design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+        design = record.absolute(fixture.DESIGN_PATH)
         design.parent.mkdir(parents=True, exist_ok=True)
         design.write_text("# the design, edited by the user before the stray verdict\n")
         self.stray_verdict_then_check_the_pause_is_unchanged(machine, run, record)
@@ -1608,7 +1608,7 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             machine, run, record, _ = fixture.make_machine(script, repository)
             fixture.drive(machine, run)
             self.assertEqual(run.current_state, T.INVESTIGATE_WORKFLOW)
-            design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+            design = record.absolute(fixture.DESIGN_PATH)
             design.parent.mkdir(parents=True, exist_ok=True)
             design.write_text("# the design, edited by the user before the process died\n")
             notes = record.absolute("seat-notes.md")
@@ -1685,7 +1685,7 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             self.assertEqual(recovered.current_state, T.INVESTIGATE_WORKFLOW)
             self.assertEqual(recovered.investigation_opened_at_commit,
                              run.investigation_opened_at_commit)
-            design = record.absolute(T.design_path_while_no_code_exists(fixture.COMPONENT))
+            design = record.absolute(fixture.DESIGN_PATH)
             design.parent.mkdir(parents=True, exist_ok=True)
             design.write_text("# the design, edited by the user during the investigation\n")
             fixture.drive(successor, recovered)
@@ -1693,6 +1693,40 @@ class RecoveryFromTheLastCommit(unittest.TestCase):
             self.assertEqual(recovered.current_state, T.DESIGN_WRITING)
             self.assertEqual(recovered.design_version, 2)
             self.assertEqual(recovered.counters.value("redesigns"), 1)
+        finally:
+            repository.remove()
+
+
+class TheDesignIsItsIssuesGhiMd(unittest.TestCase):
+    """Section 9 after the user's ruling of 2026-09-18: before code exists
+    the design is the GHI-MD the invocation names, refined in place, and
+    the component-contract sits beside it, named like it; there is no
+    `docs/designs/queue/`. After code starts both are in the component's
+    directory, as before."""
+
+    def test_the_contract_is_named_like_the_design_beside_it(self):
+        self.assertEqual(T.contract_path_beside_design("docs/issues/413-grid-failure-design.md"),
+                         "docs/issues/413-grid-failure-contract.md")
+        self.assertEqual(T.contract_path_beside_design("docs/issues/39-memory-drain.md"),
+                         "docs/issues/39-memory-drain-contract.md")
+
+    def test_the_record_knows_the_design_and_its_contract_by_the_named_ghi_md(self):
+        repository = fixture.ThrowawayRepository()
+        try:
+            record = G.TopicBranchGitRecord(
+                repository.checkout, fixture.COMPONENT, fixture.COMPONENT_DIRECTORY,
+                "docs/issues/413-grid-failure-design.md")
+            self.assertEqual(record.document_of_path("docs/issues/413-grid-failure-design.md"),
+                             "design")
+            self.assertEqual(record.document_of_path("docs/issues/413-grid-failure-contract.md"),
+                             "component-contract")
+            self.assertEqual(record.document_of_path(
+                "%s/%s-design.md" % (fixture.COMPONENT_DIRECTORY, fixture.COMPONENT)), "design")
+            self.assertEqual(record.document_of_path(
+                "%s/%s-contract.md" % (fixture.COMPONENT_DIRECTORY, fixture.COMPONENT)),
+                "component-contract")
+            self.assertNotEqual(record.document_of_path(
+                "docs/designs/queue/%s-design.md" % fixture.COMPONENT), "design")
         finally:
             repository.remove()
 
@@ -2075,7 +2109,8 @@ class TopicBranchRefusedAtRow1(unittest.TestCase):
         try:
             fixture.git(repository.checkout, "update-ref", "-d", "refs/remotes/origin/main")
             record = fixture.git_record_module.TopicBranchGitRecord(
-                repository.checkout, fixture.COMPONENT, fixture.COMPONENT_DIRECTORY)
+                repository.checkout, fixture.COMPONENT, fixture.COMPONENT_DIRECTORY,
+                fixture.DESIGN_PATH)
             machine = M.DesignToMainStateMachineFlow(
                 record, M.ScriptedStateExitLauncher([]), today=lambda: "2026-09-08")
             with self.assertRaises(M.TopicBranchCutRefused) as refused:

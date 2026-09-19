@@ -897,12 +897,19 @@ DESIGN_TRANSITION_ROWS = tuple(row.row for row in TRANSITION_TABLE if row.source
 
 # --- The paths of section 9 ----------------------------------------------
 
-def design_path_while_no_code_exists(component):
-    return "docs/designs/queue/%s-design.md" % component
+# Before code exists, the design is its issue's GHI-MD, refined in place, and
+# the component-contract sits beside it (user-ruled 2026-09-18); the
+# invocation names the GHI-MD. When code starts both move into the
+# component's directory as <component>-design.md and <component>-contract.md.
 
-
-def contract_path_while_no_code_exists(component):
-    return "docs/designs/queue/%s-contract.md" % component
+def contract_path_beside_design(design_path):
+    """The component-contract's path while no code exists: beside the design,
+    named like it, with `-design.md` (or plain `.md`) replaced by
+    `-contract.md`."""
+    stem = design_path[:-len(".md")] if design_path.endswith(".md") else design_path
+    if stem.endswith("-design"):
+        stem = stem[:-len("-design")]
+    return stem + "-contract.md"
 
 
 RECORD_DIRECTORY_NAME = "design-to-main-record"
