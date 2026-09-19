@@ -468,7 +468,15 @@ def cell_report_path(
     its own. That case is now met where it arises, in the cold-read-cell's
     near-miss recovery (scripts/cold-read-cell-common.py,
     recover_near_miss_report), which never takes a file from a directory the
-    instrument built.
+    instrument built. THE GAP THAT LEAVES, seen and left open (user-ruled
+    2026-09-18, walk docs/walk/skill-sentences-and-shipper-questions-2026-09-18,
+    item 6, no guard): a same-day second read is the `-2` record, and a
+    cold-read-cell of that read that drops the `-2` -- the one-character kind
+    of miss of 2026-08-25 -- writes its report into the first read's directory
+    under the first read's own file name, where the first read stamps it as
+    its own and neither read can tell, because the file name no longer says
+    which read it belongs to. No such drop has been seen; if a `-2` read's
+    report ever goes missing, look in the first read's directory.
 
     The pass token is the cell name, except that defect-hunt is `hunt` --
     the token every record set since 2026-08-25 has carried. One function
