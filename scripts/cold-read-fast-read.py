@@ -16,7 +16,7 @@ then prints exactly one line on stdout: the report's absolute path on success,
 or a line opening `FAILED` on failure. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
 was launched. When the cold-read-target belongs to a class the
-/cold-read skill's step 1 sends to the cold-read-full-run -- a skill or its
+/cold-read skill's step 2 sends to the cold-read-full-run -- a skill or its
 prompt, a file under docs/agents/, a wiki file, a design, a test design, a
 component-contract -- the read also says that this fast read does not finish the
 review: one line on stderr and one line in the report (user-ruled 2026-09-17,
@@ -136,7 +136,7 @@ EMBEDDED_PROMPT_FILE_NAME = "cold-read-fast-read-embedded-fast-clarify-prompt.md
 # as landed by PR #274 on 2026-09-07, verbatim. {TARGET_PATH} and
 # {REPORT_PATH} are substituted by the cold-read-cell launcher.
 FAST_CLARIFY_PROMPT_TEMPLATE = """\
-Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Your context is deliberately minimal — what your runtime already loaded, the document or documents under review, and whatever they reference by an explicit path. Nothing else: do not go looking. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this info. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report. If {TARGET_PATH} contains multiple documents, treat them like chapters of one book: any one of them can define or explain what the others rely on, and they should be consistent amongst themselves; repetition is fine, gaps or inconsistencies are not. Read all of them, then answer the 3 questions for each document in the report.
+Read {TARGET_PATH} in full, including any YAML frontmatter, and answer three questions about it, in three sections, in the order below. Your context is deliberately minimal — what your runtime already loaded, the project glossary at `docs/nedschorus-wiki/nedschorus-glossary.md`, which you read before the documents, the document or documents under review, and whatever they reference by an explicit path. Nothing else: do not go looking. That limit is the point, because {TARGET_PATH} must be usable by a future agent who has only this info. {TARGET_PATH} is read-only: do not edit it or anything else in the checkout. The one file you create is your report. If {TARGET_PATH} contains multiple documents, treat them like chapters of one book: any one of them can define or explain what the others rely on, and they should be consistent amongst themselves; repetition is fine, gaps or inconsistencies are not. Read all of them, then answer the 3 questions for each document in the report.
 
 ## Question 1: What it says
 
@@ -169,7 +169,7 @@ WALK_DRAFT_SUFFIX = "-draft.md"
 
 # WHICH DOCUMENTS THIS READ DOES NOT FINISH (user-ruled 2026-09-17, item 4 of
 # nedschorus#418, after PR #332 merged a skill change on a fast read alone).
-# The /cold-read skill's step 1 sends a class of documents to the
+# The /cold-read skill's step 2 sends a class of documents to the
 # cold-read-full-run and gives everything else the fast read only. Nothing
 # enforced that, so this program says so when its target is in that class:
 # one line on stderr, and one line in the report that ships with the record.
@@ -185,11 +185,11 @@ FULL_RUN_DIRECTORIES_RELATIVE = (
 # project's designs live beside the issues, the cross-project specs and in
 # docs/design-to-main/, and the state-machine design names all three files
 # `<component>-design.md`, `<component>-contract.md` and
-# `<component>-test-design.md` (its section on where artifacts land). Step 1
-# calls the component-contract a design contract; the glossary's term is used
-# here. No directory is a design class: a directory entry for
+# `<component>-test-design.md` (its section on where artifacts land). Step 2
+# and this program both use the glossary's term, component-contract. No
+# directory is a design class: a directory entry for
 # docs/design-to-main/ once called that directory's glossary "a design", and a
-# design's glossary is not in step 1's list. The suffixes are matched whole, so
+# design's glossary is not in step 2's list. The suffixes are matched whole, so
 # `-design-notes.md` -- notes about a design, not the design -- is not one.
 FULL_RUN_NAME_SUFFIXES = (
     ("-test-design.md", "a test design"),

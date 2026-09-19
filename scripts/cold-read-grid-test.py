@@ -517,7 +517,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # the wrong reason.
     closing_text = " ".join(result.stdout.split())
     check("the closing text says what the terminology reports are and how to triage them",
-          "The terminology reports list the document's key-terms that fail one of "
+          "The terminology reports list the document's terms that fail one of "
           "five criteria, with the criteria numbers per item and a closing counts "
           "line; triage them the same way as the defect-hunt reports." in closing_text,
           repr(result.stdout))

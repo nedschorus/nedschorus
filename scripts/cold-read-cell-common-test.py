@@ -1228,7 +1228,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_argv_path = scratch / "runtime-copy-codex-argv.json"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one key-term\n",
+        {"*": {"report": "STUB REVIEW: one term\n",
                "dump_argv": str(received_argv_path)}},
         report, cell="terminology",
     )
@@ -1249,7 +1249,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_prompt_path = scratch / "runtime-copy-claude-received.txt"
     result = run_claude_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one key-term\n",
+        {"*": {"report": "STUB REVIEW: one term\n",
                "dump_prompt": str(received_prompt_path)}},
         report, cell="terminology",
     )
@@ -1285,7 +1285,7 @@ with tempfile.TemporaryDirectory() as scratch:
     received_argv_path = scratch / "runtime-copy-under-prompt-file-argv.json"
     result = run_codex_cell(
         repository, stubs,
-        {"*": {"report": "STUB REVIEW: one key-term\n",
+        {"*": {"report": "STUB REVIEW: one term\n",
                "dump_argv": str(received_argv_path)}},
         report, "--prompt-file", draft_prompt_relative_path, cell="terminology",
     )

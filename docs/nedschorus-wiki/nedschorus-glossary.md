@@ -38,6 +38,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **handoff-system** — the subsystem that reincarnates agent-sessions. Overview: `docs/nedschorus-wiki/handoff-system-overview.md`.
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
 - **initial-agent-instructions** — defined in the agent-instructions entry above: the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent.
+- **key-term** — in a document under cold read, a term that is a project-term or should be one.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
 - **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
@@ -51,6 +52,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, `sanity-check-records/<date>-<target-stem>/`, holding its reports; kept as a log.
 - **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-attack: a problem statement plus off-limits and read-first lists, passed to the runner as `--problem-statement`.
 - **seat-branch** — the long-lived git branch of one agent-seat, named for the seat, that the handoff-supervisor's launcher creates; its agent-sessions work on topic-branches cut from main.
+- **SDLC-term** — a standard software-engineering term the user has directed the project to use in place of a coined one; listed in `docs/nedschorus-wiki/nedschorus-sdlc-terms.md`.
 - **seat-brief** — `docs/agents/<seat>-instructions.md`, what an agent-seat's occupant reads to learn its job. Seat-briefs vary in shape; read yours for what it says.
 - **session-handoff** — the act of transferring the key context and state of one agent-session to the next, and the file that carries it, `~/.claude/handoffs/<seat>-handoff.md`, on the seat's machine only and never committed.
 - **soft-block** — a hook refusal the agent can override by including a reason why the override is needed.  Usually accompanied by additional context given to teach the agent the desired behavior.  
