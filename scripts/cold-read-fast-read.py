@@ -26,7 +26,9 @@ first step. When the cold-read-target is a walk draft, the read also lists every
 bare issue or pull request number in it -- `#426`, `nedschorus#418`, a link
 whose text is the number, and a task number written `#N` too, because
 CLAUDE.md's citation rule covers tasks -- with one line on stderr giving the
-count and a section at the end of the suggestions file naming each by line
+count and a section at the end of the suggestions file naming each by line;
+when the read itself failed there is no suggestions file, so that line says so
+and the numbers are listed on stderr instead, each with its line
 (user-ruled 2026-09-17, item 5 of nedschorus#418: the walk-me-through skill
 forbids bare numbers, and walk files had carried 33 and 35 of them
 unchecked). Bare file names and the walk's 300-word item cap are deliberately
