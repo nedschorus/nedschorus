@@ -210,7 +210,7 @@ mkdir -p "$AGENT_DIRECTORY"
 # this step exists to skip. os.replace is atomic on macOS and Linux alike, so
 # a concurrent reader sees the whole old file or the whole new one, never a
 # partial one. The precedent is write_atomically in
-# scripts/main-gatekeeper.py (ruled 2026-08-12), and this follows it with two
+# nc-systems/main-gatekeeper/main-gatekeeper.py (ruled 2026-08-12), and this follows it with two
 # measured differences:
 #   - the temporary name is mkstemp-unique rather than that function's fixed
 #     `.<name>.writing` sibling, because two launches can overlap here where
