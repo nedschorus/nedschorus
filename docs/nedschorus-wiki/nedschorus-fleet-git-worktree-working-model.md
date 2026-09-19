@@ -34,21 +34,21 @@ passing review.
   operator.
 - **The two machines** — the user's Mac (user `el`) and `ned-box` (Ubuntu,
   user `nedlern`), each with its own clone. Path map:
-  `docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md` (flagged stale
+  `docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md` (flagged stale
   2026-08-17; verify before relying on specifics).
 - **Agent-seat** — a named, long-lived agent identity: home directory, own
   branch, brief. **Session** — one running conversation occupying an
   agent-seat; sessions end and are replaced, the agent-seat persists.
   **Reincarnate-seat** — the handoff-supervisor replacing a session with a
   fresh one, carrying the handoff forward. Definitions of record:
-  `docs/nedschorus-wiki/agent-seat-model.md`.
+  `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
 - **The reference checkout** — the machine's checkout that handoff-supervisors
   and launchers run from and other agents read expecting main. A standalone
   clone is its own workspace, never "the reference" — where any mechanical
   test disagrees with that definition, the definition governs (pinned
   2026-08-17). The test the guards use lives in the guard scripts.
 - **Walked approval** — the user's approval given item by item, not one
-  yes to a bundle (`docs/nedschorus-wiki/agent-seat-model.md` § The words this
+  yes to a bundle (`docs/nedschorus-wiki/nedschorus-agent-seat-model.md` § The words this
   model uses).
 - **The gatekeeper** — `nc-systems/main-gatekeeper/main-gatekeeper.py`, the main-gatekeeper:
   the permanent and only way a change reaches main; specification

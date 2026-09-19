@@ -26,7 +26,7 @@ Agent-instructions text, so it lands through the user's walk.
 
 ## 4. Cold-read the fleet paths reference
 
-`docs/nedschorus-wiki/fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the cold-read skill's stated target. Not yet reviewed.
+`docs/nedschorus-wiki/nedschorus-fleet-machine-paths-and-checkouts.md` was written 2026-08-13 and is a lasting reference, which is the cold-read skill's stated target. Not yet reviewed.
 
 ## 5. Migrating `choirmaster` to a machine-suffixed name
 

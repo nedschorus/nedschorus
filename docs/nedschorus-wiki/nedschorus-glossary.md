@@ -35,7 +35,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **GHI** — GitHub issue
 - **GHI-MD** — the MD file used to explain a GitHub issue.
 - **handoff-supervisor** — the program `scripts/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
-- **handoff-system** — the subsystem that reincarnates agent-sessions. Overview: `docs/nedschorus-wiki/handoff-system-overview.md`.
+- **handoff-system** — the subsystem that reincarnates agent-sessions. Overview: `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md`.
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
 - **initial-agent-instructions** — defined in the agent-instructions entry above: the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent.
 - **key-term** — in a document under cold read, a term that is a project-term or should be one.
@@ -46,7 +46,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **objection-overruled** — the record of a review objection that the user overruled.
 - **project-term** — a name with a meaning specific to this project, listed in this glossary: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat. A word this glossary does not list is not a project-term.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff; triggered when the agent writes a session-handoff, usually because the Stop hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
-- **retire-seat** — freeing or repurposing an agent-seat's name: stop the handoff-supervisor, archive the session-handoff under `~/.claude/handoffs/retired/`, remove the worktree and seat branch, and date a retirement notice on the seat's brief. The steps are in `docs/nedschorus-wiki/agent-seat-model.md`. Distinct from pausing a seat.
+- **retire-seat** — freeing or repurposing an agent-seat's name: stop the handoff-supervisor, archive the session-handoff under `~/.claude/handoffs/retired/`, remove the worktree and seat branch, and date a retirement notice on the seat's brief. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`. Distinct from pausing a seat.
 - **sanity-check-attack** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-attack (what should be deleted), the mechanization-attack (which English instruction should be code), the fresh-eyes-attack (an independent design built from the problem alone).
 - **sanity-check-cell** — one fresh agent running one sanity-check-attack with `claude` or with `codex`; a run is six, the three attacks with `claude` and the three with `codex`.
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, `sanity-check-records/<date>-<target-stem>/`, holding its reports; kept as a log.

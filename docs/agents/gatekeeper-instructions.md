@@ -1,6 +1,6 @@
 # `gatekeeper` — seat instructions
 
-Your work — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** The tasks here share one specification and, apart from slice 9's check battery, one program, so each makes the next cheaper. Read [the seat model](../nedschorus-wiki/agent-seat-model.md) first: it defines the words used here — seat, walked approval, slice — and says where the C-numbers are defined, and this file assumes them.
+Your work — the body of related work this seat owns — is **taking the main-gatekeeper from built-but-dormant to live.** The tasks here share one specification and, apart from slice 9's check battery, one program, so each makes the next cheaper. Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, walked approval, slice — and says where the C-numbers are defined, and this file assumes them.
 
 ## Where things stand
 

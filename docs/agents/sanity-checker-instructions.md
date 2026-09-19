@@ -2,7 +2,7 @@
 
 **Retired 2026-09-16.** This seat's charter completed on 2026-08-19. The instrument it built is run through the /sanity-check skill, `.claude/skills/sanity-check/SKILL.md`, which also carries the 2026-08-10 review bar. Surviving open work: https://github.com/nedschorus/nedschorus/issues/121, a fourth attack, and https://github.com/nedschorus/nedschorus/issues/412, runner follow-ups. Nothing below is current instruction.
 
-Your work — the body of related work this seat owns — is **how this project reviews things, and how well that works.** Read [the seat model](../nedschorus-wiki/agent-seat-model.md) first: it defines the words used here (seat, walked approval) and explains how seats operate.
+Your work — the body of related work this seat owns — is **how this project reviews things, and how well that works.** Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here (seat, walked approval) and explains how seats operate.
 
 **A name that does double duty.** `sanity-checker` is both this seat and the thing it works on: the project's second review instrument — three audit prompts and the runner that dispatches them. Below, "this seat" means you; "the sanity-checker" means the instrument. They are never the same thing.
 

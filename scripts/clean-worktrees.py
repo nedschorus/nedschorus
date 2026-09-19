@@ -44,7 +44,7 @@ typically because the worktree's directory is gone, which is what a
 temp-area clearing leaves behind — each with git's own reason, and the
 prune command. The line prints in every mode and is report only: the prune
 stays a deliberate human act (ruled 2026-08-18; R25 in
-docs/nedschorus-wiki/fleet-git-worktree-working-model.md).
+docs/nedschorus-wiki/nedschorus-fleet-git-worktree-working-model.md).
 
 Modes:
   (default)    report every worktree, one line each
