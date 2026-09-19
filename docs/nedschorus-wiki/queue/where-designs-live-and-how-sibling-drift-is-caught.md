@@ -1,8 +1,12 @@
 ---
-status: queued for the drain — not decided
+status: queued for the drain — placement ruled 2026-09-18, the rest not decided
 ---
 
 # Where designs live, and how drift between a design and its siblings is caught
+
+## Ruled 2026-09-18
+
+The user ruled where a design lives: "A design is written in its issue's GHI-MD and refined in place; design-to-main adds the component-contract beside it, and both move into the component's directory when code starts." There are no phase names for design material, and `docs/designs/queue/` is not created. This settles the placement question below, and the contradiction between the queued design-to-main agent-instructions and the designs under `docs/issues/`. Still open: a design that more than one issue cites, and how design-to-main takes an existing GHI-MD as its design instead of writing one from scratch.
 
 Queued 2026-09-17 from a conversation between the user and the MD-skills agent-seat. The
 conversation started from a finding — `docs/designs/` does not exist on main, while a landed
