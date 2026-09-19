@@ -761,7 +761,15 @@ class DesignToMainStateMachineFlow:
             "state": state,
             "composite-state": composite,
             "component": run.component,
-            "standard-package": ("the design", "the component-contract",
+            # Section 2: the set of files the launched agent is told to
+            # read, so each is a path. Before code exists the design is its
+            # issue's GHI-MD, as the invocation named it, and the
+            # component-contract sits beside it (section 9; user-ruled
+            # 2026-09-18). The move into the component's directory when
+            # implementation-writing is first entered is not built yet;
+            # when it is, this package follows the documents.
+            "standard-package": (self.git_record.design_path,
+                                 tables.contract_path_beside_design(self.git_record.design_path),
                                  str(self.git_record.user_rulings_path)),
             "beyond-the-standard-package": row.package_beyond_standard,
             "package-commit": self.git_record.head_commit(),

@@ -152,6 +152,24 @@ class WholeRunThatPasses(unittest.TestCase):
         self.assertIn(str(self.record.user_rulings_path),
                       launched[T.IMPLEMENTATION_WRITING]["standard-package"])
 
+    def test_the_standard_package_carries_the_design_and_contract_paths(self):
+        # Section 2: a state-package is the set of files the machine tells
+        # the launched agent to read, and the standard-package is the
+        # design, the component-contract and the user-rulings file. Before
+        # code exists the design is its issue's GHI-MD, as the invocation
+        # names it, and the component-contract sits beside it (section 9;
+        # user-ruled 2026-09-18), and that path is no longer derivable from
+        # the component's name, so the package carries the path itself,
+        # never a placeholder such as "the design".
+        launched = {p["state"]: p for p in self.machine.launcher.launched}
+        standard_package = launched[T.DESIGN_WRITING]["standard-package"]
+        self.assertEqual(
+            tuple(standard_package),
+            (self.record.design_path,
+             T.contract_path_beside_design(self.record.design_path),
+             str(self.record.user_rulings_path)))
+        self.assertEqual(fixture.DESIGN_PATH, self.record.design_path)
+
     def test_a_run_with_no_investigation_names_no_investigation_report_in_any_package(self):
         # Sections 2 and 9: only investigate-workflow's package, and
         # design-writing's on a redesign, carry `investigation-report`.
