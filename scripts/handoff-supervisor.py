@@ -1312,7 +1312,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # file, and this default makes the by-hand flag equally truthful).
         prompt = (
             "This session was resumed by crash recovery (nedschorus#120): the "
-            "previous incarnation died without a handoff. Re-verify in-flight "
+            "previous session ended without writing a handoff. Re-verify in-flight "
             "state before trusting it, then continue the work underway."
         )
     else:

@@ -102,8 +102,11 @@ the last check and the launch:
   One composed opener is exempt: the supervisor's reincarnation opener. The
   supervisor writes it only after marking the handoff consumed, so the session
   before it handed off and is retired, and the successor is resumed even if it
-  never replied. Its resume prompt then says its first reply never happened
-  rather than calling it a crash. The same prompt goes to a successor the
+  never replied. Its resume prompt then says its first reply never happened.
+  No resume prompt calls the event a crash: since PR [recover-crashed-seats: the
+  resume prompt no longer calls every recovery a crash](https://github.com/nedschorus/nedschorus/pull/503)
+  and its 2026-09-19 sequel they all say the session ended without writing a
+  handoff, because a reboot or a power cut ends one the same way. The same prompt goes to a successor the
   supervisor started at boot from a handoff with no dialog to hand over, if it
   never replied. This is from the 2026-09-10 Mac reboot,
   recorded on issue [Fleet survives a machine restart without losing seat context: detect, hand off on notice, relaunch at boot, resume from transcript](https://github.com/nedschorus/nedschorus/issues/116).
