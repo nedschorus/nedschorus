@@ -47,7 +47,10 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
 The agent's messages travel as the hook's `hookSpecificOutput.additionalContext`
 and the user's as `systemMessage`, in one JSON object. Plain stdout on exit 0
 reaches neither for a Stop hook — which is why, before 2026-09-15, every
-report this script made was read by nobody.
+report this script made was read by nobody. Every note the agent receives
+ends by saying it is not for the user, because agents were repeating these
+notes to him (ruled 2026-09-18: "you don't need to tell me what other agents
+are doing").
 
 Everything here exits 0: a freshness fault must never block a turn from
 ending, and nothing here costs the agent a turn (the decision:block channel
@@ -115,6 +118,16 @@ DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before work
 UNKNOWN_ADVICE = ("Your head state could not be determined (git did not run); nothing was "
                   "changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = "Rerun the test suites for what you touched: your work now sits on newer code."
+
+# Appended to EVERY note the agent receives, by tell() itself, so no note can
+# forget it. Agents were relaying these notes to the user, who ruled
+# 2026-09-18: "you don't need to tell me what other agents are doing." and
+# "Seems like we should change the hook to mention that the user doesn't need
+# to be told."
+NOT_FOR_THE_USER_ADVICE = (
+    "Do not report this to the user: he does not need to hear that main moved, or "
+    "what other agents merged, unless it changes the work you are doing with him."
+)
 
 # Categories worth naming, most consequential first, each labelled with WHY an
 # agent should care where that is not self-evident (user, 2026-09-15: "explain
@@ -211,8 +224,9 @@ def report(line: str) -> None:
 
 
 def tell(text: str) -> None:
-    """Queue text for the AGENT's context."""
-    AGENT_LINES.append(text)
+    """Queue text for the AGENT's context, ending with the line that says it
+    is not for the user — here, the one place every note passes through."""
+    AGENT_LINES.append(f"{text}\n{NOT_FOR_THE_USER_ADVICE}")
 
 
 def flush_report() -> None:

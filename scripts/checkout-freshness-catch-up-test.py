@@ -18,6 +18,15 @@ from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("checkout-freshness-catch-up.py")
 
+# Spelled out here, NOT imported from the script: a typo in the script's copy
+# would propagate through an import and the pin would pass anyway. Ruled
+# 2026-09-18, after agents relayed the hook's notes to the user: "you don't
+# need to tell me what other agents are doing."
+NOT_FOR_THE_USER_LINE = (
+    "Do not report this to the user: he does not need to hear that main moved, or "
+    "what other agents merged, unless it changes the work you are doing with him."
+)
+
 failures = []
 
 
@@ -145,6 +154,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           agent_text(result))
     check("and told to rerun the suites for what it touched",
           "Rerun the test suites" in agent_text(result), agent_text(result))
+    check("the rebased note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the USER hears nothing about routine drift",
           display_text(result) == "", display_text(result))
     check("never a block", never_blocks(result), result.stdout)
@@ -181,6 +192,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "Not updated: 1 uncommitted tracked change(s)" in agent_text(result)
           and "commit or set aside any uncommitted work" in agent_text(result),
           agent_text(result))
+    check("the skipped note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing about a dirty seat", display_text(result) == "",
           display_text(result))
     dirty_again = run_catch_up(["--cwd", str(seat)])
@@ -218,6 +231,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "conflicts on shared.txt" in agent_text(result)
           and "`git rebase --abort` puts everything back" in agent_text(result),
           agent_text(result))
+    check("the conflict note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing about a conflict either", display_text(result) == "",
           display_text(result))
     check("the conflict is not told again while nothing changed",
@@ -281,6 +296,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a merge from main on a working branch is reported to the USER",
           "carries 1 merge commit(s) from main" in display_text(result)
           and "nedschorus#324" in display_text(result), result.stdout)
+    check("a user line does not carry the agent's not-for-the-user sentence",
+          display_text(result) != "" and NOT_FOR_THE_USER_LINE not in display_text(result),
+          display_text(result))
     check("and only once", display_text(run_catch_up(["--cwd", str(merge_seat)])) == "")
     # A merge of another topic branch is not the banned thing.
     topic_seat = tmp / "topic-merge-worktree"
@@ -325,6 +343,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("and told to leave it and start the next topic from main",
           "Do not rebase, merge or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
+    check("the pushed-branch note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
     check("the stamp records the head state", stamp_of(seat).get("head_state") == "pushed")
     check("main standing still: nothing more is said",
@@ -660,6 +680,8 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
           (reference / "advance.txt").exists())
     check("--reference-pull still speaks PLAIN TEXT — launchers read it on a terminal",
           emitted_object(pulled) is None, pulled.stdout)
+    check("and the operator's terminal line does not carry the agent's not-for-the-user sentence",
+          NOT_FOR_THE_USER_LINE not in pulled.stdout, pulled.stdout)
     check("a successful pull clears the reference's reason key",
           "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
 
@@ -909,6 +931,12 @@ with tempfile.TemporaryDirectory() as abort_scratch:
     check("the agent is told to inspect before doing anything else",
           "could not be aborted cleanly" in agent_text(result)
           and "Inspect `git status`" in agent_text(result), agent_text(result))
+    # Both channels speak on this one run: the sentence must end the agent's
+    # note and be absent from the user's line, side by side.
+    check("the abort-failed note ends by saying it is not for the user; the user line does not",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE)
+          and NOT_FOR_THE_USER_LINE not in display_text(result),
+          result.stdout)
     # The structural claim merge-lane set out to test: a true abort-failed
     # cannot repeat. It holds, and for a reason one step earlier than the
     # in-progress blocker: a tree parked mid-rebase has a DETACHED HEAD sitting
