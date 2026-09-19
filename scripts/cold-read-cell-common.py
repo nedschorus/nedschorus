@@ -825,11 +825,64 @@ def parse_tokens_used(runtime_output: str) -> str:
     return matches[-1].replace(",", "") if matches else ""
 
 
+# HOW LONG THE STAMP MAY WAIT ON GIT. Two read-only commands in a checkout
+# answer in milliseconds; the bound is here because a checkout on a stalled
+# network filesystem, or a git waiting on an index lock another process holds,
+# must not hold a finished review hostage. A cold-read-cell that has a report
+# in hand always writes it: the stamp describes the review and never decides
+# whether it survives.
+CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS = 10
+
+
+def checkout_commit_for_provenance_stamp(checkout: pathlib.Path) -> str:
+    """`checkout=`'s value for one directory: a commit, `-dirty`, or "".
+
+    A commit alone means the checkout's tracked files are exactly that
+    commit's. `-dirty` appended means tracked files were modified or staged,
+    so the commit does not reproduce what the reviewer could read. UNTRACKED
+    FILES ALONE DO NOT MAKE A CHECKOUT DIRTY -- `--untracked-files=no` is
+    deliberate here, though the write detector above asks for the opposite:
+    this project's seats routinely carry untracked drafts, and a mark that
+    appeared on nearly every stamp would tell a reader nothing.
+
+    Anything that is not a question git can answer here -- a directory that is
+    no checkout, a checkout with no commit yet, no `git` on PATH, a call that
+    outlives CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS -- returns "", and the caller
+    omits the field. It never raises and it never prints: a cold-read-cell's
+    stderr is read by scripts/cold-read-grid.py for phrases it has a contract
+    with, and a stamp's own trouble is not one of them.
+    """
+    def git_output(*arguments):
+        """git's stdout for one read-only call, or None if it did not answer."""
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(checkout), *arguments],
+                capture_output=True, text=True, check=False,
+                timeout=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.SubprocessError):
+            # OSError is git missing or the directory gone; SubprocessError
+            # covers TimeoutExpired. Both are "no answer", which is the one
+            # outcome this function has for everything short of a commit.
+            return None
+        return completed.stdout if completed.returncode == 0 else None
+
+    commit = (git_output("rev-parse", "--short", "HEAD") or "").strip()
+    if not commit:
+        return ""
+    # Asked only once the commit is in hand: a directory that is no checkout
+    # has already returned, so this call answers the one remaining question.
+    tracked_changes = git_output("status", "--porcelain", "--untracked-files=no")
+    if tracked_changes is None:
+        return ""
+    return commit + ("-dirty" if tracked_changes.strip() else "")
+
+
 def stamp_provenance(
     report: pathlib.Path, *, runtime: str, model: str, effort: str,
     cell: str, tier: str, target_argument: str, duration_s: int,
-    fallback_from: str = "", tokens: str = "", prompt_file_argument: str = "",
-    runtime_prompt_name: str = "",
+    fallback_from: str = "", checkout: str = "", tokens: str = "",
+    prompt_file_argument: str = "", runtime_prompt_name: str = "",
 ) -> None:
     """Prepend the provenance line the records convention requires.
 
@@ -849,6 +902,31 @@ def stamp_provenance(
     the cell's cost, not the winning model's. `tokens=` is present only when
     the runtime reported a total; see `parse_tokens_used`.
 
+    A REPORT NAMES THE CHECKOUT ITS REVIEWER READ (user-ruled 2026-09-19,
+    walk seat-loose-ends-and-stale-tasks-2026-09-18, item 5). A cold-read
+    reviewer runs inside a checkout of this repository and reads that
+    checkout's CLAUDE.md and glossary, and two checkouts can differ on the
+    same day: on 2026-09-16 main dropped a sentence from CLAUDE.md at 13:06
+    while a seat's checkout had last synced at 12:42, and two terminology
+    trials that afternoon read the sentence main no longer had -- so the
+    prompt calibrated on those trials was calibrated against a rule already
+    gone, and nothing in the record said so. `checkout=` is that fact, and
+    `-dirty` on it says tracked files differed from the commit somewhere in
+    the tree, NOT that CLAUDE.md or the glossary did; untracked files alone
+    never set it (see `checkout_commit_for_provenance_stamp`). The value is
+    read as the stamp is written, minutes after the reviewer loaded CLAUDE.md,
+    so a checkout pulled from under a running cell names the later commit.
+
+    THE CHECKOUT IS `REPO_ROOT`, NOT THIS PROCESS'S WORKING DIRECTORY, and the
+    difference is the whole point of the field: `run_model_chain` launches the
+    agent-binary with `cwd=REPO_ROOT` -- the Codex and agy legs name the same
+    tree again with `-C` and `--add-dir` -- while the cold-read-cell's own
+    working directory is whatever its launcher happened to be in, which the
+    cold-read-grid never sets. Outside a checkout the field is OMITTED rather
+    than filled with a placeholder, exactly as `tokens=` is when no total was
+    reported: an omitted field reads as "not recorded", and no substitute
+    value could be trusted to mean that.
+
     `prompt_file=` is present only when the cell ran under --prompt-file, and
     names the template it read as it was given, so a trial's report says which
     draft produced it rather than passing as a run of the cell's own prompt.
@@ -861,9 +939,15 @@ def stamp_provenance(
     any reader splitting this line on whitespace. Everything added here goes
     in front of it -- `prompt_file=` included, though its value is a path
     too: it appears only under a trial flag, so the ordinary stamp keeps one
-    path-valued field and the one rule about it.
+    path-valued field and the one rule about it. `checkout=` sits immediately
+    after `duration_s=` because that is the last slot still ahead of BOTH
+    path-valued fields, and putting it there leaves the `runtime=` through
+    `duration_s=` opening of every stamp written before 2026-09-19 unchanged
+    to the byte -- which is the prefix each launcher's test pins and what a
+    reader comparing an old record with a new one lines up by eye.
     """
     fallback_note = f"fallback_from={fallback_from} " if fallback_from else ""
+    checkout_note = f"checkout={checkout} " if checkout else ""
     tokens_note = f"tokens={tokens} " if tokens else ""
     prompt_file_note = (
         f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
@@ -872,7 +956,7 @@ def stamp_provenance(
     stamp = (
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
         f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
-        f"{tokens_note}{prompt_file_note}{runtime_prompt_note}"
+        f"{checkout_note}{tokens_note}{prompt_file_note}{runtime_prompt_note}"
         f"target={target_argument} -->\n\n"
     )
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1120,6 +1204,11 @@ def run_model_chain(
         effort=(model_to_effort or {}).get(produced_by, effort), cell=cell,
         tier=tier, target_argument=target_argument,
         duration_s=int(time.time() - cell_started_at),
+        # The checkout the reviewer read, asked for here with the run's other
+        # facts rather than inside the formatter, and asked of REPO_ROOT
+        # because that is the directory the loop above launched the
+        # agent-binary in -- the tree whose CLAUDE.md and glossary it read.
+        checkout=checkout_commit_for_provenance_stamp(REPO_ROOT),
         fallback_from="+".join(failed_attempts),
         tokens=produced_tokens,
         prompt_file_argument=prompt_file_argument,
