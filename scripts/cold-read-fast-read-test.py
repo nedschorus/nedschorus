@@ -40,7 +40,7 @@ WHAT IS PINNED HERE.
   - A --target that is not a file is refused, exit 64, with FAILED on stdout
     and nothing launched.
 
-  - The full-run warning. A target in the class the /cold-read skill's step 1
+  - The full-run warning. A target in the class the /cold-read skill's step 2
     sends to the cold-read-full-run -- a skill or its prompt, a file under
     docs/agents/, a wiki file, a design, a test design, a component-contract --
     is read with one line on stderr and one line in the report saying the
@@ -798,7 +798,7 @@ check("on the walk route it says the copy was temporary and is gone",
 
 
 # --- The full-run warning (item 4 of nedschorus#418, user-ruled 2026-09-17) --
-# The /cold-read skill's step 1 sends a class of documents to the
+# The /cold-read skill's step 2 sends a class of documents to the
 # cold-read-full-run; PR #332 merged a skill change on a fast read alone
 # because nothing said so. The read now says it, and these cases pin which
 # targets it says it about.

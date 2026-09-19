@@ -127,7 +127,7 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # -- one cold-read-cell against one walk item -- never by the cold-read-grid,
 # whose roster is scripts/cold-read-grid.py's own. `terminology` (user-ruled
 # 2026-09-05) is the cold-read-grid's second pass: the cold-read-target's
-# key-terms against five criteria.
+# terms against five criteria.
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # The restater judge is deliberately absent from that list. Its pass token,
 # `restater-judge`, is a constant in scripts/cold-read-restater-judge-cell.py,

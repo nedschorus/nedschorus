@@ -109,13 +109,13 @@ CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # what is cut is only this default roster.
 #
 # The terminology pass was added 2026-09-05 (user-ruled that day): the
-# cold-read-target's key-terms against five criteria, on the good
+# cold-read-target's terms against five criteria, on the good
 # cold-read-tier of both runtimes only, at max effort on both. Measured
 # on the final prompt by the cold-read-research seat (REPORT.md under
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
 # section "Addendum 2026-09-04 late"; on that machine only and not committed,
 # which is why the numbers are inline here): opus-max flagged 20/15/28
-# key-terms on three targets and sol-max 44/41/49; no cheaper cold-read-cell
+# terms on three targets and sol-max 44/41/49; no cheaper cold-read-cell
 # added a criterion-1 catch, so no floor cold-read-cell runs for this pass;
 # wall clock 16-20 min per cold-read-cell, inside the defect-hunt strong
 # cold-read-cells' 18-23. The effort is passed to the launchers explicitly
@@ -184,7 +184,7 @@ COMPLETION_BODY = """\
 Read every report in full. The defect-hunt reports flag defects with each
 reviewer's own confidence; expect heavy overlap — the same defect found
 independently by several reviewers is one defect. The terminology reports
-list the document's key-terms that fail one of five criteria, with the
+list the document's terms that fail one of five criteria, with the
 criteria numbers per item and a closing counts line; triage them the same
 way as the defect-hunt reports.
 
