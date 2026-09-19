@@ -29,7 +29,7 @@ Style: Direct, to the point. Be concrete, not abstract. Use real, relevant or we
 
 References: cite every issue, PR, commit, or file the user may want to open as a full clickable URL or absolute `file://` path, with link text that names what it is — never a bare issue number or bare filename as the reference. A script or command named in prose stays plain text.
 
-If you are quoting phrases, quote the whole sentence. If proposing a change to a sentence, write out the old and new sentences. If proposing new text, write out the exact words, not a description of them. 
+If you are quoting phrases, quote the whole sentence. If proposing a change to a sentence, write out the old and new sentences. If proposing a rewrite of a section, a heading and the text under it, where sentences are added, removed or reordered, show the section whole, original and proposal. If proposing new text, write out the exact words, not a description of them. 
 
 When the walk covers a design, plan or MD file that has already been reviewed by the user, present what it does; do not remind the user what they have already reviewed and ruled on. 
 
