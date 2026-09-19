@@ -10,6 +10,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **/sanity-check** — a skill used to improve designs.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
 - **agent-arbitrator** — a fresh-agent, used to resolve conflicts between agents.
+- **agent-binary** — the installed program a review cell runs its model through, `claude` or `codex`; recorded as `runtime=` in a report's provenance stamp.
 - **agent-instructions** — prompts or MD files that instruct agents. Initial agent instructions are the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent. In addition, instructions can live in CLAUDE.md, CLAUDE.local.md, the project's appended system-prompt file, the project's memory index, a session-start hook, or the equivalent for non-Claude agents such as AGENTS.md.
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief; context compressed and renewed by a series of agent-sessions connected by session-handoffs from old agent to new agent.
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
