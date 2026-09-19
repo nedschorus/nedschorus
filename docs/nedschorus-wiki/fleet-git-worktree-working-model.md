@@ -50,9 +50,9 @@ passing review.
 - **Walked approval** — the user's approval given item by item, not one
   yes to a bundle (`docs/nedschorus-wiki/agent-seat-model.md` § The words this
   model uses).
-- **The gatekeeper** — `scripts/main-gatekeeper.py`, the main-gatekeeper:
+- **The gatekeeper** — `nc-systems/main-gatekeeper/main-gatekeeper.py`, the main-gatekeeper:
   the permanent and only way a change reaches main; specification
-  `docs/cross-project/main-gatekeeper-design.md`
+  `nc-systems/main-gatekeeper/main-gatekeeper-design.md`
   (canonical for everything gate-related, including credential ruling C2:
   the credential able to push main belongs to a dedicated system user,
   reached only through the main-gatekeeper, which logs every use). Dormant
@@ -311,7 +311,7 @@ test established that a refused push leaves NO trace in the activity log
 — a quiet log means nothing got through, never that nobody tried. The
 gate's own program path was proven end to end 2026-08-18 (commit b24e376;
 record at
-`docs/cross-project/main-gatekeeper-first-live-check-in-record.md`) while
+`nc-systems/main-gatekeeper/main-gatekeeper-first-live-check-in-record.md`) while
 the gate stays dormant for daily work.
 
 **R13. The PR process — built-live (process); retired when the gate

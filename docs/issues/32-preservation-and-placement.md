@@ -102,7 +102,7 @@ one concept, one home.
 
 ## Part 3 — codification: the duties land in builds already planned
 
-- **The main-gatekeeper** (issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3))
+- **The main-gatekeeper** (issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3))
   owns the git-preserved class's entrance; its commit trailers are the
   provenance record. This design adds requirements, not features.
 - **The handoff build** (issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2))
