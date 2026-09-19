@@ -81,7 +81,7 @@ Subject: the user's thesis that agents are not humans and testing need not be li
 
 ## 6b. Gatekeeper-bindings walk (outer item 3c, restructured 2026-07-30) — walk minutes
 
-**Stale-spec catch (fleet flank, confirmed):** the nine dogfood gaps were derived 2026-07-23 against `fast-pr-to-prod-design.md` (2026-07-22, superseded). Re-validated against main's canonical `docs/cross-project/main-gatekeeper-design.md` (2026-07-24). Casualties and survivors — all nine rows:
+**Stale-spec catch (fleet flank, confirmed):** the nine dogfood gaps were derived 2026-07-23 against `fast-pr-to-prod-design.md` (2026-07-22, superseded). Re-validated against main's canonical `nc-systems/main-gatekeeper/main-gatekeeper-design.md` (2026-07-24). Casualties and survivors — all nine rows:
 
 | # | Gap | Fate |
 |---|---|---|

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The single program through which every change reaches main in nedschorus.
 
-Specification: docs/cross-project/main-gatekeeper-design.md (canonical).
+Specification: nc-systems/main-gatekeeper/main-gatekeeper-design.md (canonical).
 Build bindings: docs/issues/queue/3-gatekeeper-build-bindings.md (B1-B6).
 Build order and the design points left to the builder:
 docs/issues/3-main-gatekeeper-build-slice-plan.md. Issue: nedschorus#3.
@@ -119,7 +119,7 @@ UNSAFE_PATH_MARKER = "->"
 # itself would be reviewing the code performing the review. Both disappear if the
 # path simply never comes through this door: it reaches main by pull request,
 # reviewed before merge.
-GATEKEEPER_SOURCE_PATH = "scripts/main-gatekeeper.py"
+GATEKEEPER_SOURCE_PATH = "nc-systems/main-gatekeeper/main-gatekeeper.py"
 
 # The integration loop is bounded rather than open: refusing beats spinning.
 MAX_INTEGRATION_ROUNDS = 5
@@ -243,10 +243,10 @@ def screen_gatekeeper_source_path(path: str) -> None:
     the point. The next action names the lane that does admit it.
     """
     # Case-folded, deliberately (merge-lane review of PR #92, 2026-08-18).
-    # A case-sensitive comparison let `scripts/Main-Gatekeeper.py` through every
-    # screen and land as a distinct file on main; on a case-insensitive checkout
-    # — every Mac clone — an ordinary pull then writes that file over
-    # `scripts/main-gatekeeper.py` on disk. That is exactly the self-replacement
+    # A case-sensitive comparison let a differently-cased path (then
+    # `scripts/Main-Gatekeeper.py`) through every screen and land as a distinct
+    # file on main; on a case-insensitive checkout — every Mac clone — an
+    # ordinary pull then writes that file over the gate's own source on disk. That is exactly the self-replacement
     # this refusal exists to prevent, defeated by one character. Over-refusing a
     # differently-cased path costs nothing: there is one such file, and no
     # legitimate check-in needs a case variant of it.
@@ -1703,7 +1703,7 @@ class TeachingArgumentParser(argparse.ArgumentParser):
         raise Refusal(
             "malformed-field", f"the command line is malformed: {message}",
             "Resubmit with a corrected invocation; the request grammar is in the "
-            "specification (docs/cross-project/main-gatekeeper-design.md). "
+            "specification (nc-systems/main-gatekeeper/main-gatekeeper-design.md). "
             "(--help is deliberately not cited here: it prints usage text, "
             "not the JSON every other invocation returns.)",
         )

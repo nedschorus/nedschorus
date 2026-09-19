@@ -610,9 +610,13 @@ def run_branch_protection_audit() -> str:
     named finding, and a broken audit must never break a handoff."""
     if os.environ.get("HANDOFF_SKIP_PROTECTION_AUDIT"):
         return "branch-protection audit: skipped (HANDOFF_SKIP_PROTECTION_AUDIT set)"
-    gatekeeper_path = Path(__file__).with_name("main-gatekeeper.py")
+    # The gate lives in its system's directory, nc-systems/main-gatekeeper/,
+    # two levels up from scripts/ (GitHub issue #224's layout rule; moved
+    # 2026-09-19), no longer beside this script.
+    gatekeeper_path = (Path(__file__).resolve().parent.parent
+                       / "nc-systems" / "main-gatekeeper" / "main-gatekeeper.py")
     if not gatekeeper_path.is_file():
-        return "branch-protection audit: audit-failed — no gatekeeper beside this script"
+        return f"branch-protection audit: audit-failed — no gatekeeper at {gatekeeper_path}"
     try:
         completed = subprocess.run(
             [sys.executable, str(gatekeeper_path), "audit"],

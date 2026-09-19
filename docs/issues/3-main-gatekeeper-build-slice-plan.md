@@ -1,15 +1,15 @@
 # main-gatekeeper build — slice plan
 
-Issue: issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)
+Issue: issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)
 
-Working material for the build of `scripts/main-gatekeeper.py`, the single
+Working material for the build of `nc-systems/main-gatekeeper/main-gatekeeper.py`, the single
 program through which every change reaches `main` in nedschorus. This
 document decomposes that build into slices, fixes the boundary of the first
 one, and records the design points the specification deliberately leaves to
 the builder.
 
 **The specification is canonical, not this document.**
-[`docs/cross-project/main-gatekeeper-design.md`](../cross-project/main-gatekeeper-design.md)
+[`nc-systems/main-gatekeeper/main-gatekeeper-design.md`](../../nc-systems/main-gatekeeper/main-gatekeeper-design.md)
 (design-as-of 2026-07-24) states the contract; the build bindings in
 [`docs/issues/queue/3-gatekeeper-build-bindings.md`](queue/3-gatekeeper-build-bindings.md)
 (user-walked 2026-07-30) supplement it with B1–B6. This plan only says what
@@ -69,7 +69,7 @@ instruction — and its cost is that no instruction-bearing change could
 ever land unattended.
 
 What replaces it, so C2's reasoning is discharged rather than dropped:
-the gatekeeper **refuses any check-in declaring `scripts/main-gatekeeper.py`**
+the gatekeeper **refuses any check-in declaring `nc-systems/main-gatekeeper/main-gatekeeper.py`**
 (`gatekeeper-source-refused`), so its own source keeps reaching main
 through the reviewed pull-request lane. Prerequisite ruled the same day:
 main's push allow-list keeps the user's own account alongside the
@@ -104,13 +104,13 @@ it. Full reasoning:
 
 ## Slice 1 — synchronous check-in, end to end
 
-*BUILT 2026-08-08. `scripts/main-gatekeeper.py` with
-`scripts/main-gatekeeper-test.py`; every item below is in place. The
+*BUILT 2026-08-08. `nc-systems/main-gatekeeper/main-gatekeeper.py` with
+`nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py`; every item below is in place. The
 gate is working but dormant: this box authenticates as `ubuntu-claude`
 and branch protection admits only `NedLern`, so nothing checks in to
 the real repository until open item 1 is settled.*
 
-**Built:** `scripts/main-gatekeeper.py`, command `check-in`, `--wait` only,
+**Built:** `nc-systems/main-gatekeeper/main-gatekeeper.py`, command `check-in`, `--wait` only,
 `--import none` only.
 
 In scope:
@@ -149,7 +149,7 @@ Out of scope, each with the slice that takes it: `--import` (2), `imports`
 branch-protection audit (5),
 repo git config (5), CLAUDE.md workflow lines (5), review evidence (6).
 
-**Tests** — `scripts/main-gatekeeper-test.py`, matching the convention
+**Tests** — `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py`, matching the convention
 already in `scripts/`: standard library only, self-running, one PASS/FAIL
 line per case, non-zero exit on any failure. Cases: T1 every form refusal,
 each asserted to leave no side effect; T2 the happy path's four success
@@ -892,14 +892,14 @@ automatic integration (clean re-application, the usual case) and `conflict`
 **Ruled 2026-09-14 at the merge-lane seat: shape 1.** Provenance, recorded
 exactly: merge-lane presented two shapes with a recommendation for shape 1;
 the user's whole reply was "shape 1". Every other word in this section is
-merge-lane's. Issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body and the specification's Implementation status
+merge-lane's. Issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body and the specification's Implementation status
 paragraph each carry the ruling in one sentence; this section is its record.
 
 **Shape 1.** At activation the merge lane keeps reviewing and approving the
 gate's pull requests. The gate is the program that opens them: attribution
 computed (it already writes the `Gatekeeper-origin` trailer from
 `CLAUDE_CODE_SESSION_ID` — the request's `origin` field in
-`scripts/main-gatekeeper.py`, pinned by the suite's case "the origin trailer
+`nc-systems/main-gatekeeper/main-gatekeeper.py`, pinned by the suite's case "the origin trailer
 records the submitting session"), mechanical checks run, per-file staleness
 reported, one topic per request. Review stays where it sits today, at the
 pull request. The merge lane does not retire at activation; its hand-typed
@@ -936,7 +936,7 @@ exactly: merge-lane presented two shapes with a recommendation for shape A;
 the user's whole reply was "a". Every other word in this section is
 merge-lane's. The specification's Implementation status paragraph and the
 state machine's § 3.4 each carry the ruling in one sentence; this section
-is its record. The ghi-write split that makes room in issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body for
+is its record. The ghi-write split that makes room in issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body for
 this ruling is § The per-file staleness report — slice 8's requirement:
 that requirement's substance lives here now, and the body keeps a summary
 and a pointer to it.
@@ -996,7 +996,7 @@ Found in the walk of the five seat-brief cold reads, 2026-09-16.
 
 ### The per-file staleness report — slice 8's requirement
 
-Moved here from issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body by the ghi-write split: that body stood at
+Moved here from issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3)'s body by the ghi-write split: that body stood at
 1135 words, over the skill's 1000-word cap, and a body over the cap splits
 rather than being shortened. The requirement and the quoted words are the
 user's; the arrangement is merge-lane's. The body keeps the summary.
@@ -1101,9 +1101,9 @@ not redone:
    it. Neither does the specification, nor the build bindings: `git grep -icE
    'ruff|mypy|pytest|gitleaks|nc-checkin-quality-gate|check battery' main --`
    over `docs/issues/3-main-gatekeeper-build-slice-plan.md`,
-   `docs/cross-project/main-gatekeeper-design.md` and
+   `nc-systems/main-gatekeeper/main-gatekeeper-design.md` and
    `docs/issues/queue/3-gatekeeper-build-bindings.md` returns zero hits in
-   all three; the same query over `scripts/main-gatekeeper.py` also returns
+   all three; the same query over `nc-systems/main-gatekeeper/main-gatekeeper.py` also returns
    zero. Only the two toolchain documents name it. All five slices are
    built, so today the gate screens the request, builds the candidate and
    handles the race, and runs no style check, no type check, no test suite

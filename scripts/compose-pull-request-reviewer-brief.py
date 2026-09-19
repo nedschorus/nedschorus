@@ -43,7 +43,7 @@ one marker line; the instructions file is empty (zero bytes); either file is
 unreadable (missing, unreadable, or not a regular file); a malformed command
 line, including a `--pull-request` that is not a positive integer. Exit 2 is
 reserved for a defect in this program, per the project convention set by
-`scripts/main-gatekeeper.py`'s reply contract — which is why argparse's own
+`nc-systems/main-gatekeeper/main-gatekeeper.py`'s reply contract — which is why argparse's own
 usage-and-exit-2 is overridden below. No network, no git, no subprocess: pure
 text.
 
@@ -74,7 +74,7 @@ class RefusingArgumentParser(argparse.ArgumentParser):
     """A malformed command line is a refusal (exit 1), not a defect (exit 2).
 
     argparse's default is usage text on stderr and exit 2, which this project
-    reserves for a program defect; `scripts/main-gatekeeper.py` overrides it
+    reserves for a program defect; `nc-systems/main-gatekeeper/main-gatekeeper.py` overrides it
     the same way.
     """
 

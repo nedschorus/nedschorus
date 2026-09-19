@@ -501,7 +501,7 @@ Outer walk, 17 items:
     Cluster 4 (git/GitHub/review) processed 2026-07-27, walked per-entry
     at the user's direction (ten entries, each ruled individually): two
     sentences captured (one-coherent-change-set-per-check-in →
-    issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+    issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
     reply-incapable-sender terminal-state requirement →
     issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1));
     check-in composition ANSWERED by user ruling (lifecycle bundling is

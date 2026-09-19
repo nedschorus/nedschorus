@@ -818,7 +818,7 @@ check("so is one in its queue, which becomes such a file",
 check("a wiki file is in the class",
       class_of(root / "docs/nedschorus-wiki/nedschorus-glossary.md") == "a wiki file")
 check("a design is recognised by its name, wherever it sits",
-      class_of(root / "docs/cross-project/main-gatekeeper-design.md") == "a design"
+      class_of(root / "nc-systems/main-gatekeeper/main-gatekeeper-design.md") == "a design"
       and class_of(root / "docs/issues/46-ghi-info-agent-design.md") == "a design")
 check("a test design and a component-contract have their own names",
       class_of(root / "docs/issues/x-test-design.md") == "a test design"

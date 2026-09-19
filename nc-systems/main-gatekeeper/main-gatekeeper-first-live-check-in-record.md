@@ -1,9 +1,9 @@
 # main-gatekeeper: record of its first live check-in
 
 **What this file is.** The payload of the first check-in ever performed by
-`scripts/main-gatekeeper.py` against the real repository. Its content is
+`nc-systems/main-gatekeeper/main-gatekeeper.py` against the real repository. Its content is
 incidental; its existence is the evidence. The specification is
-`docs/cross-project/main-gatekeeper-design.md`.
+`nc-systems/main-gatekeeper/main-gatekeeper-design.md`.
 
 **Why it exists.** The gate had been built through all five slices and exercised
 by a suite of over two hundred cases, but every one of those cases ran against
