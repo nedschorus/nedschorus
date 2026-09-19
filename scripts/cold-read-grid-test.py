@@ -40,8 +40,8 @@ WHAT IS PINNED HERE.
     changed -- replacing the Opus-absent and Fable-only branches of
     2026-09-04 ("why is opus special? I don't think it should be"). Absent
     reports are listed with their causes, every .md file in the record is
-    marked INCOMPLETE SET, an agent-cli whose every cell is absent for one
-    agent-cli-wide cause gets one AGENT-CLI DOWN: line, and a cause the user
+    marked INCOMPLETE SET, an agent-binary whose every cell is absent for one
+    agent-binary-wide cause gets one AGENT-BINARY DOWN: line, and a cause the user
     can clear ends the text with "Tell the user:". A cause changes what is
     reported, never what is decided: the cases below drive the stub through
     the real limit texts and check that the retry, the closing text and the
@@ -195,7 +195,7 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # writes nothing and exits 1 on its first "attempts" launches, printing
 # "stdout" on stdout first -- the real limit texts of the cases below, with
 # `{family}` standing for the model's family name (Opus, Fable), as the
-# `claude` agent-cli's model-limit message names it -- or the attempt's own
+# `claude` agent-binary's model-limit message names it -- or the attempt's own
 # text from "stdout_by_attempt" ({"2": ...}), and appending to the file
 # "edit" before failing, for a stray write by a failed first attempt.
 STUB_MODEL_RUNTIME = r'''#!/usr/bin/env python3
@@ -612,8 +612,8 @@ with tempfile.TemporaryDirectory() as scratch:
           "until you have read every report that landed" in closing_text
           and "Record each absent report and its cause in triage.md." in closing_text
           and "read all six" not in closing_text, repr(result.stdout))
-    check("an exit-N cause is not one the user can clear: no Tell the user sentence, no AGENT-CLI DOWN",
-          "Tell the user:" not in result.stdout and "AGENT-CLI DOWN:" not in result.stdout,
+    check("an exit-N cause is not one the user can clear: no Tell the user sentence, no AGENT-BINARY DOWN",
+          "Tell the user:" not in result.stdout and "AGENT-BINARY DOWN:" not in result.stdout,
           repr(result.stdout))
     record_directory = record_directory_of(repository)
     check("the INCOMPLETE SET marker is in all six .md files of the record",
@@ -635,9 +635,9 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-claude-down")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
-    down_lines = lines_opening(result, "AGENT-CLI DOWN:")
-    check("one AGENT-CLI DOWN line, naming claude, the class and the reset text",
-          down_lines == ["AGENT-CLI DOWN: claude — account-limit — resets 8:50pm "
+    down_lines = lines_opening(result, "AGENT-BINARY DOWN:")
+    check("one AGENT-BINARY DOWN line, naming claude, the class and the reset text",
+          down_lines == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
                          "(America/Los_Angeles); 3 reports absent"],
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
     check("every RETRYING and FAILED line names account-limit with the reset text",
@@ -648,7 +648,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the closing text restates the down line without the prefix, once",
           result.stdout.count("- claude is down: account-limit — resets 8:50pm "
                               "(America/Los_Angeles); 3 reports absent") == 1
-          and result.stdout.count("AGENT-CLI DOWN:") == 1, repr(result.stdout))
+          and result.stdout.count("AGENT-BINARY DOWN:") == 1, repr(result.stdout))
     check("the closing text ends by telling the user the cause, with the log to check",
           result.stdout.rstrip().splitlines()[-1].startswith(
               "Tell the user: claude account-limit — resets 8:50pm (America/Los_Angeles) (log: ")
@@ -660,21 +660,21 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
     # --- The account limit printed bare: an empty detail still names the class
-    # The agent-cli printed "You've hit your session limit" with nothing after
+    # The agent-binary printed "You've hit your session limit" with nothing after
     # it, so the cell's cause line ends `account-limit — ` and the grid's
     # strip() took the separator's trailing space with it; partitioning on
     # the full separator then found none, and the class "account-limit —"
-    # matched no class the grid knows, losing the AGENT-CLI DOWN line and
+    # matched no class the grid knows, losing the AGENT-BINARY DOWN line and
     # the Tell-the-user sentence. Found by the same review as the marker
     # case above:
     # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
     repository = build_scratch_repository(scratch, "checkout-claude-down-bare-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-", "attempts": 2, "stdout": "You've hit your session limit"}])})
-    down_lines = lines_opening(result, "AGENT-CLI DOWN:")
-    check("a bare limit text is still one AGENT-CLI DOWN line naming account-limit",
-          len(down_lines) == 1 and result.stdout.count("AGENT-CLI DOWN:") == 1
-          and down_lines[0].startswith("AGENT-CLI DOWN: claude — account-limit — ")
+    down_lines = lines_opening(result, "AGENT-BINARY DOWN:")
+    check("a bare limit text is still one AGENT-BINARY DOWN line naming account-limit",
+          len(down_lines) == 1 and result.stdout.count("AGENT-BINARY DOWN:") == 1
+          and down_lines[0].startswith("AGENT-BINARY DOWN: claude — account-limit — ")
           and down_lines[0].endswith("; 3 reports absent"),
           f"down lines were {down_lines!r}; stdout={result.stdout!r}")
     check("the user is still told the bare cause",
@@ -683,35 +683,35 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- Two Claude cells hit the account limit after the third landed -------
     # The rule as the user revised it at item 3 of the design's walk
     # (2026-09-16): the down line prints when a cell becomes absent with an
-    # agent-cli-wide class and every other cell of its agent-cli has either
+    # agent-binary-wide class and every other cell of its agent-binary has either
     # LANDED or is absent with the same class -- a report that landed before
-    # the limit hit does not stop the agent-cli from being reported down.
+    # the limit hit does not stop the agent-binary from being reported down.
     repository = build_scratch_repository(scratch, "checkout-claude-down-after-one-landed")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-hunt-floor.md", "attempts": 0},
          {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     check("one landed Claude cell and two absent with the account limit is still claude down",
-          lines_opening(result, "AGENT-CLI DOWN:")
-          == ["AGENT-CLI DOWN: claude — account-limit — resets 8:50pm "
+          lines_opening(result, "AGENT-BINARY DOWN:")
+          == ["AGENT-BINARY DOWN: claude — account-limit — resets 8:50pm "
               "(America/Los_Angeles); 2 reports absent"]
           and "- claude is down: account-limit — resets 8:50pm (America/Los_Angeles); 2 reports absent"
           in result.stdout
           and result.returncode == 1 and len(lines_opening(result, "saved:")) == 4,
           f"exit {result.returncode}; stdout={result.stdout!r}")
 
-    # --- All three Claude cells fail with a model limit: no agent-cli is down --
+    # --- All three Claude cells fail with a model limit: no agent-binary is down --
     repository = build_scratch_repository(scratch, "checkout-model-limits")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
         [{"fragment": "claude-", "attempts": 2, "stdout": MODEL_LIMIT_LINE}])})
-    check("a model limit on every Claude cell is three absences, not an agent-cli down",
-          "AGENT-CLI DOWN:" not in result.stdout and "is down:" not in result.stdout
+    check("a model limit on every Claude cell is three absences, not an agent-binary down",
+          "AGENT-BINARY DOWN:" not in result.stdout and "is down:" not in result.stdout
           and len(lines_opening(result, "- claude-")) == 3, repr(result.stdout))
     check("each absence names model-limit and the model's family",
           any(line.startswith("- claude-hunt-good: model-limit — Opus (log:")
               for line in result.stdout.splitlines())
           and any(line.startswith("- claude-hunt-floor: model-limit — Fable (log:")
                   for line in result.stdout.splitlines()), repr(result.stdout))
-    check("the user is told, one cause per agent-cli and class",
+    check("the user is told, one cause per agent-binary and class",
           result.stdout.count("Tell the user: claude model-limit — ") == 1, repr(result.stdout))
 
     # --- First attempts all account-limit; one retry fails otherwise ---------
@@ -729,8 +729,8 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in lines_opening(result, "FAILED"))
           and sum("account-limit" in line for line in lines_opening(result, "FAILED")) == 2,
           repr(lines_opening(result, "FAILED")))
-    check("differing causes on one agent-cli are three facts, not one down line",
-          "AGENT-CLI DOWN:" not in result.stdout, repr(result.stdout))
+    check("differing causes on one agent-binary are three facts, not one down line",
+          "AGENT-BINARY DOWN:" not in result.stdout, repr(result.stdout))
 
     # --- Three Codex cells fail both attempts with exit-N ----------------------
     repository = build_scratch_repository(scratch, "checkout-codex-exits")
@@ -739,7 +739,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("three exit-1 absences on codex: listed one by one, no down line, no Tell the user",
           result.returncode == 1 and len(lines_opening(result, "- codex-")) == 3
           and all("exit-1 — " in line for line in lines_opening(result, "- codex-"))
-          and "AGENT-CLI DOWN:" not in result.stdout and "Tell the user:" not in result.stdout,
+          and "AGENT-BINARY DOWN:" not in result.stdout and "Tell the user:" not in result.stdout,
           repr(result.stdout))
 
     # --- All six fail both attempts: the none-landed text ---------------------
@@ -764,7 +764,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # The copied Claude launcher loses its execute permission, so Popen
     # raises for all three Claude cells. Each is a failed attempt like any
     # other: retried, then absent as program-unstartable, which is not
-    # agent-cli-wide; the run goes on rather than ending in a traceback.
+    # agent-binary-wide; the run goes on rather than ending in a traceback.
     repository = build_scratch_repository(scratch, "checkout-unstartable")
     (repository / "scripts" / "cold-read-claude-cell.py").chmod(0o644)
     result = run_grid(repository, stubs)
@@ -777,8 +777,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the three Codex cells are unaffected: three land, some-landed text, exit 1",
           result.returncode == 1 and len(lines_opening(result, "saved:")) == 3
           and "3 of 6 reports landed in" in result.stdout, repr(result.stdout))
-    check("program-unstartable says nothing about the agent-cli: no down line",
-          "AGENT-CLI DOWN:" not in result.stdout, repr(result.stdout))
+    check("program-unstartable says nothing about the agent-binary: no down line",
+          "AGENT-BINARY DOWN:" not in result.stdout, repr(result.stdout))
     record_directory = record_directory_of(repository)
     check("the unstartable attempts' logs hold the start error and are kept",
           (record_directory / "claude-hunt-good.md.attempt-1.stderr.log").is_file()
@@ -828,7 +828,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a Codex failure whose output starts with the Claude limit text is exit-1",
           any(line.startswith("FAILED (exit 1): codex-terminology-good — exit-1 — ")
               for line in lines_opening(result, "FAILED"))
-          and "account-limit" not in result.stdout and "AGENT-CLI DOWN:" not in result.stdout,
+          and "account-limit" not in result.stdout and "AGENT-BINARY DOWN:" not in result.stdout,
           repr(result.stdout))
     def decisions(text):
         return (text.count("RETRYING:"), text.count("FAILED (exit"), text.count("saved:"),

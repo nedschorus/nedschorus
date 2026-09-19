@@ -411,7 +411,7 @@ class WriteDetectorUnavailable(Exception):
 # message could print that message).
 CAUSE_PHRASE = "cause:"
 CAUSE_SEPARATOR = " — "
-# The classes an agent-cli's own output can name. A line matches only by how
+# The classes an agent-binary's own output can name. A line matches only by how
 # it STARTS, after an optional leading timestamp of the form the Codex
 # tracing logger prints (`2026-09-18T19:37:41.140816Z `, matched by
 # LEADING_TRACING_LOGGER_TIMESTAMP below); that is the rule nedschorus#244
@@ -421,25 +421,25 @@ CAUSE_SEPARATOR = " — "
 # when the Codex CLI's captured logged-out line turned out to carry that
 # prefix on every line it logs; it is a property of the classifier, so it
 # applies to every launcher's texts, and it is inert for the Claude CLI,
-# whose lines never carry one. Nothing else is skipped. Each agent-cli's
-# texts are matched only in that agent-cli's own output, which is why the
+# whose lines never carry one. Nothing else is skipped. Each agent-binary's
+# texts are matched only in that agent-binary's own output, which is why the
 # launcher passes them and this module knows none of its own. A class is
-# AGENT-CLI-WIDE when it predicts the same failure for every cold-read-cell
-# of that agent-cli, which is what lets the grid say once that the agent-cli
+# AGENT-BINARY-WIDE when it predicts the same failure for every cold-read-cell
+# of that agent-binary, which is what lets the grid say once that the agent-binary
 # is down.
-AGENT_CLI_WIDE_CAUSE_CLASSES = frozenset(
-    {"account-limit", "logged-out", "agent-cli-missing"})
+AGENT_BINARY_WIDE_CAUSE_CLASSES = frozenset(
+    {"account-limit", "logged-out", "agent-binary-missing"})
 # The classes whose cause the user can clear -- a reset time passing, a
 # login, an install, a usage setting -- so the grid's closing text tells him.
 USER_CLEARABLE_CAUSE_CLASSES = frozenset(
-    {"logged-out", "agent-cli-missing", "account-limit", "model-limit"})
-# An exit-N cause's detail is the agent-cli's last non-empty line, cut to this.
+    {"logged-out", "agent-binary-missing", "account-limit", "model-limit"})
+# An exit-N cause's detail is the agent-binary's last non-empty line, cut to this.
 CAUSE_DETAIL_MAX_CHARACTERS = 120
 # What the detail of a recognised text is: the rest of the matched line, the
 # whole matched line, or the fixed text the launcher gives instead. Both line
 # forms are taken after the leading timestamp, when there is one: the grid
-# carries the detail onto its AGENT-CLI DOWN: line, which speaks for every
-# cold-read-cell of that agent-cli, and one attempt's timestamp is noise there.
+# carries the detail onto its AGENT-BINARY DOWN: line, which speaks for every
+# cold-read-cell of that agent-binary, and one attempt's timestamp is noise there.
 DETAIL_IS_REST_OF_LINE = "rest-of-line"
 DETAIL_IS_WHOLE_LINE = "whole-line"
 # The timestamp the Codex CLI's tracing logger puts at the head of each line
@@ -450,7 +450,7 @@ LEADING_TRACING_LOGGER_TIMESTAMP = re.compile(
 
 
 class RecognisedFailureText(typing.NamedTuple):
-    """One text an agent-cli prints when an attempt fails for a nameable
+    """One text an agent-binary prints when an attempt fails for a nameable
     reason: the cause class it names, the text a line must START with (after
     an optional leading timestamp, LEADING_TRACING_LOGGER_TIMESTAMP), and
     what the detail is (DETAIL_IS_REST_OF_LINE, DETAIL_IS_WHOLE_LINE, or a
@@ -467,13 +467,13 @@ def classify_failed_attempt(
     """(class, detail) for one attempt that produced no report.
 
     Tested in this order, the first match naming the cause: the launcher's
-    recognised texts against the start of every line of the agent-cli's own
+    recognised texts against the start of every line of the agent-binary's own
     stdout and stderr, a leading timestamp skipped first and the detail taken
-    from the line after it; then `agent-cli-missing` when `start_error` is
+    from the line after it; then `agent-binary-missing` when `start_error` is
     set, which is the OSError text from the attempt that could not start the
-    agent-cli at all;
+    agent-binary at all;
     then `no-report` for an exit of 0 with no verified report; then `exit-N`
-    with the agent-cli's last non-empty stderr line as the detail, or its
+    with the agent-binary's last non-empty stderr line as the detail, or its
     last stdout line when stderr is empty, cut to CAUSE_DETAIL_MAX_CHARACTERS.
     That last class covers 64 for a refused invocation, a traceback, and a
     signal, which Python reports as a negative number.
@@ -492,7 +492,7 @@ def classify_failed_attempt(
                     detail = text.detail
                 return text.cause_class, detail
     if start_error:
-        return "agent-cli-missing", start_error
+        return "agent-binary-missing", start_error
     if exit_code == 0:
         return "no-report", "no report written"
     last_lines = [line.strip() for line in (stderr if stderr.strip() else stdout).splitlines()
@@ -888,12 +888,12 @@ def run_model_chain(
     """Try each model in turn until one produces a report; then stamp it.
 
     EVERY FAILED ATTEMPT NAMES ITS CAUSE (nedschorus#413). The three ways an
-    attempt ends without a report -- the agent-cli could not be started, it
+    attempt ends without a report -- the agent-binary could not be started, it
     exited non-zero, it exited 0 having written nothing -- each end with one
     `cause:` line from `classify_failed_attempt`, given this launcher's
     recognised texts for the model that ran (`recognised_failure_texts_for_model`,
     a callable of the model id; None means no text is recognised, and every
-    failure is agent-cli-missing, no-report or exit-N). It is the last line
+    failure is agent-binary-missing, no-report or exit-N). It is the last line
     this program prints about the attempt, so the grid takes the last cause
     line in the log as the attempt's.
 
@@ -980,7 +980,7 @@ def run_model_chain(
         # "claude-fable-5 failed (exit 1)" -- with the runtime's own
         # explanation nowhere in it; this program's own classifier
         # (classify_failed_attempt) reads the captured streams for the
-        # agent-cli's limit and logged-out texts and names the cause the
+        # agent-binary's limit and logged-out texts and names the cause the
         # cold-read-grid carries to the user, so a discarded stream leaves
         # that classifier reading a channel that cannot carry what it tests
         # for. stderr
