@@ -413,7 +413,7 @@ Recoverable from git history. This shrinks walk item 17 cluster 6.
 
 DISPERSED 2026-07-27 (walk item 17 cluster 4, user-ruled per entry; marks in
 place below). Net result: two sentences captured (the one-coherent-change-set
-workflow rule on issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
+workflow rule on issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3);
 the reply-incapable-sender terminal-state requirement on
 issue [Founding program — boot up nedschorus (plan of record: docs/cross-project/nedschorus-founding-plan.md)](https://github.com/nedschorus/nedschorus/issues/1)); one entry
 answered directly by ruling (check-in composition — lifecycle bundling is
@@ -423,7 +423,7 @@ wake when the user gates an artifact class (the item-15 grow-back trigger).
 
 - Keep PRs atomic and independently mergeable.
   — processed 2026-07-27 → sentence on
-  issue [main-gatekeeper — the single check-in gate (design: docs/cross-project/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
+  issue [main-gatekeeper — the single check-in gate (design: nc-systems/main-gatekeeper/main-gatekeeper-design.md)](https://github.com/nedschorus/nedschorus/issues/3): the
   gatekeeper's CLAUDE.md workflow lines teach one coherent change set per
   check-in (NC has no pull requests).
 - Decide by change type whether code, tests, design, and test plans should be checked

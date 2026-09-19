@@ -749,7 +749,8 @@ def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
     resuming).
 
     Without it the supervisor's own first prompt is the wrong one: a resume
-    with no prompt file tells the agent it "died without a handoff", a crash,
+    with no prompt file tells the agent its session "ended without writing a
+    handoff", which reads as a crash,
     for a seat that got here precisely because its exit was recorded (review
     5240813304 on the pull request that added the record).
 
@@ -1638,8 +1639,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             # its session if there is one, fresh if there is none. The rule that
             # a seat stopped on purpose is not brought back is about this tool
             # doing it on its own. --ignite-fallback does not change this: its
-            # degraded restart tells the agent that its session died without a
-            # handoff, which a recorded exit says it did not, and the ruling
+            # degraded restart tells the agent that its session ended without
+            # writing a handoff, which a recorded exit says it did not, and the ruling
             # names these two outcomes only. So no fallback is offered either.
             if session_id is None:
                 launch_exit_code = launch(
@@ -1668,7 +1669,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             by_hand = f"to bring it back by hand as a fresh session: {fresh}"
         else:
             # The resume carries its own first prompt, or the supervisor's
-            # default for a resume tells the agent it died without a handoff
+            # default for a resume tells the agent its session ended without a handoff
             # (review 5240813304). Written here, where the command naming it is
             # printed, so the command works when it is typed. A dry run changes
             # nothing, so it names the file without writing it.
@@ -1752,8 +1753,8 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         return f"{name}: relaunched fresh{in_window} (nothing to resume, no extract to read)"
     prompt = (
         f"Read {extract} — it is the dialog from this seat's last recorded "
-        "session; the session that followed it died without a handoff (crash "
-        "recovery, nedschorus#120). Continue from where that dialog ends, "
+        "session; the session that followed it ended without writing a handoff "
+        "(crash recovery, nedschorus#120). Continue from where that dialog ends, "
         "checking the repository's current state before trusting any of the "
         "dialog's in-flight assumptions."
     )

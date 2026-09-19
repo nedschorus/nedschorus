@@ -774,8 +774,8 @@ with tempfile.TemporaryDirectory() as temporary:
           and "igniting from seat-a-dialog-0007.md" in report,
           (report, workspace.launches))
     prompt_text = workspace.launches[0][2].read_text(encoding="utf-8")
-    check("the recovery's initial agent instructions name the extract, the crash, and #120",
-          "seat-a-dialog-0007.md" in prompt_text and "died without a handoff" in prompt_text
+    check("the recovery's initial agent instructions name the extract, the missing handoff, and #120",
+          "seat-a-dialog-0007.md" in prompt_text and "ended without writing a handoff" in prompt_text
           and "nedschorus#120" in prompt_text, prompt_text)
 
     workspace = Workspace(root / "w10")
@@ -3400,7 +3400,7 @@ with tempfile.TemporaryDirectory() as temporary:
           (retired, workspace.launches, launched_prompt, report_fresh))
 
     # --ignite-fallback does not turn that restart into an ignite: the degraded
-    # restart's prompt says the session died without a handoff, which the
+    # restart's prompt says the session ended without writing a handoff, which the
     # record says it did not, and the ruling names resume-or-fresh only.
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-exit-record-ignite-fallback")
     record_an_agent_exit(workspace, 0)

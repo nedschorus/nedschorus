@@ -16,7 +16,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
 - **approval-walk** — presenting material to the user one item at a time for a decision, conducted by the /walk-me-through skill; its outcomes are recorded in walk-minutes and its approvals are walked-approvals.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
-- **C-numbers** — `C1`, `C3`, `C7`…, the identifiers of the main-gatekeeper's credential rulings, defined in `docs/cross-project/main-gatekeeper-design.md` § The credential and enforcement.
+- **C-numbers** — `C1`, `C3`, `C7`…, the identifiers of the main-gatekeeper's credential rulings, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
 - **code-prompt-code (aka CPC)** — a program built from both code and prompts.
 - **cold-read-cell** — one reviewer model reading one cold-read-target under one prompt; a cold-read-full-run is six of them.
 - **cold-read-fast-read** — the one-reviewer pass that precedes a cold-read-full-run, run by `scripts/cold-read-fast-read.py`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for main-gatekeeper.py, slices 1 to 5.
 
-Run: python3 scripts/main-gatekeeper-test.py
+Run: python3 nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py
 
 Every pushing case targets a throwaway local BARE repository, fresh per case
 (build binding B3a). Atomic ref update and non-fast-forward rejection are
@@ -50,7 +50,9 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).with_name("main-gatekeeper.py")
+# The gate is the tests directory's parent: nc-systems/main-gatekeeper/,
+# the system's own directory (GitHub issue #224's layout rule; moved 2026-09-19).
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "main-gatekeeper.py"
 
 _spec = importlib.util.spec_from_file_location("main_gatekeeper", SCRIPT_PATH)
 gatekeeper = importlib.util.module_from_spec(_spec)
@@ -484,15 +486,15 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # The deployed copy updates itself from main, so the gate must not be the
     # door its own source comes through; it goes by pull request instead.
     # docs/issues/3-slice-6-review-evidence-not-built.md
-    (work / "scripts").mkdir(exist_ok=True)
-    (work / "scripts" / "main-gatekeeper.py").write_text("# altered\n", encoding="utf-8")
+    (work / "nc-systems" / "main-gatekeeper").mkdir(parents=True, exist_ok=True)
+    (work / "nc-systems" / "main-gatekeeper" / "main-gatekeeper.py").write_text("# altered\n", encoding="utf-8")
     source_cases = [
-        ("alone", ["scripts/main-gatekeeper.py"]),
-        ("mixed with an unrelated path", ["README.md", "scripts/main-gatekeeper.py"]),
-        ("spelled with a leading ./", ["./scripts/main-gatekeeper.py"]),
+        ("alone", ["nc-systems/main-gatekeeper/main-gatekeeper.py"]),
+        ("mixed with an unrelated path", ["README.md", "nc-systems/main-gatekeeper/main-gatekeeper.py"]),
+        ("spelled with a leading ./", ["./nc-systems/main-gatekeeper/main-gatekeeper.py"]),
         # Case variant: refused case-sensitively before 2026-08-18, it landed as a
         # distinct file that overwrites the real one on any case-insensitive checkout.
-        ("spelled with different case", ["scripts/Main-Gatekeeper.py"]),
+        ("spelled with different case", ["nc-systems/main-gatekeeper/Main-Gatekeeper.py"]),
     ]
     for label_fragment, declared in source_cases:
         code, payload = run_gatekeeper(
@@ -502,7 +504,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
               payload.get("error") == "gatekeeper-source-refused", payload)
         check(f"{label} exits 1", code == 1, code)
         check(f"{label} names the path in its facts",
-              "scripts/main-gatekeeper.py" in (payload.get("facts") or ""), payload)
+              "nc-systems/main-gatekeeper/main-gatekeeper.py" in (payload.get("facts") or ""), payload)
         check(f"{label} points at the pull-request lane",
               "pull-request" in (payload.get("next_action") or ""), payload)
 
@@ -510,7 +512,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # ordinary paths that merely contain the gate's name, and they must reach the
     # later screens instead of being refused here. They do not exist in the
     # worktree, so `unknown-path` is the proof that this screen let them by.
-    for near_miss in ["other/scripts/main-gatekeeper.py", "scripts/main-gatekeeper.py.bak"]:
+    for near_miss in ["other/nc-systems/main-gatekeeper/main-gatekeeper.py", "nc-systems/main-gatekeeper/main-gatekeeper.py.bak"]:
         code, payload = run_gatekeeper(
             base_request(work, remote, base, [near_miss]), state_home)
         check(f"T13 {near_miss} is not caught by the own-source screen",

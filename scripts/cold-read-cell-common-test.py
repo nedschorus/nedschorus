@@ -96,6 +96,14 @@ WHAT IS PINNED HERE.
     model costs can write "tokens used: N" in its findings, and that sentence
     is not what the run cost.
 
+  - The stamp names the checkout its reviewer read. `checkout=<commit>` for
+    a clean checkout, `-dirty` appended when a tracked file is modified, and
+    NO `-dirty` when only untracked files are present -- this project's seats
+    routinely carry untracked drafts, so a mark on every stamp would say
+    nothing. A cell that ran where there is no checkout at all omits the
+    field and still writes its report. `target=` stays the last field in
+    every one of those cases.
+
   - The runtime's stderr survives a successful run. It used to be passed
     straight through to the log scripts/cold-read-grid.py deletes on success,
     which is why the only token figure recoverable from six cold-read runs on
@@ -1032,6 +1040,118 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("an unreported token total is omitted, never guessed at",
           "tokens=" not in provenance_stamp_of(report), repr(provenance_stamp_of(report)))
+
+    # --- A report names the checkout its reviewer read --------------------
+    # User-ruled 2026-09-19 at item 5 of the walk
+    # seat-loose-ends-and-stale-tasks-2026-09-18. On 2026-09-16 main dropped a
+    # sentence from CLAUDE.md at 13:06 while a seat's checkout had last synced
+    # at 12:42; two terminology trials that afternoon read the sentence main no
+    # longer had, and the prompt calibrated on them was calibrated against a
+    # rule already gone. Nothing in the record said which checkout had been
+    # read, so nobody could see it from the record.
+    #
+    # Each case drives a whole launcher rather than the formatter, because what
+    # needs pinning is WHICH tree the field names. The scratch checkout is the
+    # one the cell scripts were copied into — the tree the shared runner
+    # launches the agent-binary in, and the only one whose CLAUDE.md that
+    # reviewer could read — and it is not the directory this test process runs
+    # in, which is the real repository.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    seed_commit = git(repository, "rev-parse", "--short", "HEAD").strip()
+    report = report_path_for(repository, "checkout-clean", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    stamp = provenance_stamp_of(report)
+    check("a cell run in a clean checkout succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a clean checkout is stamped by its commit, with no -dirty",
+          f"checkout={seed_commit} " in stamp and "-dirty" not in stamp,
+          f"commit={seed_commit!r}; stamp={stamp!r}")
+    # The cell process inherits ITS working directory from this test, which
+    # runs in the real repository; only the agent-binary is launched in the
+    # scratch checkout. A field read from the process's working directory
+    # would therefore carry the commit below, and this is the case that tells
+    # the two apart. Asked tolerantly: a copy of these scripts unpacked
+    # outside any checkout has no commit here, and that is not a failure.
+    this_test_process_checkout_commit = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True, check=False).stdout.strip()
+    check("the stamped commit is the scratch checkout's, not the one this test runs in",
+          f"checkout={seed_commit} " in stamp
+          and seed_commit != this_test_process_checkout_commit,
+          f"scratch={seed_commit!r}; this process={this_test_process_checkout_commit!r}; "
+          f"stamp={stamp!r}")
+    check("checkout= comes before target=, which is still the last field",
+          "checkout=" in stamp
+          and stamp.index("checkout=") < stamp.index("target=")
+          and stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # A modified tracked file — the ordinary state of a cold read's subject,
+    # which is why the mark is worth having: the commit alone does not
+    # reproduce what the reviewer could read. Through the Codex launcher, so
+    # the field is pinned on both legs of the shared call rather than one.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    seed_commit = git(repository, "rev-parse", "--short", "HEAD").strip()
+    dirty_the_target(repository)
+    report = report_path_for(repository, "checkout-dirty", "codex")
+    result = run_codex_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    stamp = provenance_stamp_of(report)
+    check("a cell run in a checkout with a modified tracked file succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("a modified tracked file stamps the commit with -dirty",
+          f"checkout={seed_commit}-dirty " in stamp,
+          f"commit={seed_commit!r}; stamp={stamp!r}")
+    check("target= stays last on a -dirty stamp too",
+          "checkout=" in stamp
+          and stamp.index("checkout=") < stamp.index("target=")
+          and stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # Untracked files alone are NOT dirt. The seats of this fleet routinely
+    # carry untracked drafts, so a stamp that read -dirty on nearly every run
+    # would carry no information at all.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    seed_commit = git(repository, "rev-parse", "--short", "HEAD").strip()
+    (repository / "docs" / "drafts"
+     / "an-untracked-draft-a-seat-is-carrying.md").write_text(
+        "A draft this seat has not committed.\n", encoding="utf-8")
+    report = report_path_for(repository, "checkout-untracked-only", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    stamp = provenance_stamp_of(report)
+    check("a cell run in a checkout carrying only untracked files succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    check("untracked files alone do not stamp -dirty",
+          f"checkout={seed_commit} " in stamp and "-dirty" not in stamp,
+          f"commit={seed_commit!r}; stamp={stamp!r}")
+
+    # And where there is no checkout at all — the .git directory is moved
+    # aside before the cell starts, which is also how the pre-run snapshot
+    # comes to be unavailable — the field is omitted rather than guessed at,
+    # and the review is still written and still stamped.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    (repository / ".git").rename(repository / ".git-moved-aside-before-the-run")
+    report = report_path_for(repository, "checkout-absent", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    stamp = provenance_stamp_of(report)
+    check("a cell that ran where there is no checkout still writes its report",
+          result.returncode == 0 and stamp.startswith("<!-- provenance:"),
+          f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
+    check("with no checkout to name, the field is omitted rather than guessed at",
+          "checkout=" not in stamp, repr(stamp))
+    check("and nothing raised on the way to that stamp",
+          "Traceback" not in result.stderr, repr(result.stderr))
+    check("target= is still the last field when checkout= is absent",
+          stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
 
     # --- The Claude cell denies Bash; the Codex good tier runs at xhigh ----
     # Both settled 2026-09-15 on the union analysis in the log-store at
