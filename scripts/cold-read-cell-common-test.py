@@ -1329,13 +1329,13 @@ with tempfile.TemporaryDirectory() as scratch:
           "prompt_file=" not in provenance_stamp_of(report),
           repr(provenance_stamp_of(report)))
 
-    # --- One runtime's own copy of a pass's prompt ------------------------
-    # `<cell>.<runtime>.md` beside `<cell>.md` is read by that runtime's cell
-    # and by no other (user-ruled 2026-09-16: the Claude and Codex terminology
-    # reviewers take the same words in opposite directions). The copy carries
-    # a marker the shared file lacks, so the case reads which template each
-    # cell composed rather than inferring it, and the stamp's `prompt=` field
-    # says which reports were given the copy.
+    # --- One prompt per pass, read by both agent-binaries -----------------
+    # Until 2026-09-19 a sibling `<cell>.<runtime>.md` was read in place of
+    # the shared `<cell>.md` by that runtime's cell. The user ended the split
+    # on 2026-09-18 ("we just should have one prompt for both") and the lookup
+    # went with it, so a file left at the old name is now ignored: the case
+    # plants one, with a marker the shared file lacks, and reads what each
+    # cell actually composed.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
@@ -1344,29 +1344,28 @@ with tempfile.TemporaryDirectory() as scratch:
         encoding="utf-8")
     # The Codex leg passes the prompt as an argument, not on stdin, so the
     # case reads the argv the stub was given.
-    report = report_path_for(repository, "runtime-copy-codex", "codex")
-    received_argv_path = scratch / "runtime-copy-codex-argv.json"
+    report = report_path_for(repository, "sibling-copy-codex", "codex")
+    received_argv_path = scratch / "sibling-copy-codex-argv.json"
     result = run_codex_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one term\n",
                "dump_argv": str(received_argv_path)}},
         report, cell="terminology",
     )
-    received_prompt = (" ".join(json.loads(received_argv_path.read_text(encoding="utf-8")))
-                       if received_argv_path.is_file() else "")
-    check("the Codex cell reads terminology.codex.md where it exists",
-          result.returncode == 0 and "CODEX COPY MARKER" in received_prompt
-          and str(report) in received_prompt and "{REPORT_PATH}" not in received_prompt,
-          f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
+    received_argv = (" ".join(json.loads(received_argv_path.read_text(encoding="utf-8")))
+                     if received_argv_path.is_file() else "")
+    check("a sibling terminology.codex.md is ignored: the Codex cell reads the shared file",
+          result.returncode == 0 and "CODEX COPY MARKER" not in received_argv
+          and str(report) in received_argv and "{REPORT_PATH}" not in received_argv,
+          f"exit {result.returncode}; prompt={received_argv[:200]!r}")
     stamp = provenance_stamp_of(report)
-    check("the stamp names the runtime's copy it read",
-          " prompt=terminology.codex.md " in stamp and "prompt_file=" not in stamp,
-          repr(stamp))
-    check("target= is still the last field with prompt= present",
+    check("no prompt= field names a per-runtime copy any more",
+          " prompt=" not in stamp and "prompt_file=" not in stamp, repr(stamp))
+    check("target= is still the last field",
           stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
 
-    report = report_path_for(repository, "runtime-copy-claude", "claude")
-    received_prompt_path = scratch / "runtime-copy-claude-received.txt"
+    report = report_path_for(repository, "sibling-copy-claude", "claude")
+    received_prompt_path = scratch / "sibling-copy-claude-received.txt"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one term\n",
@@ -1386,38 +1385,34 @@ with tempfile.TemporaryDirectory() as scratch:
         .replace(str((repository / TARGET_RELATIVE_PATH).resolve()), "<path>")
         .replace(str(repository / TARGET_RELATIVE_PATH), "<path>")
         .replace(str(report), "<path>"))
-    check("the Claude cell beside it still reads the shared terminology.md",
+    check("the Claude cell reads that same shared terminology.md",
           result.returncode == 0 and "CODEX COPY MARKER" not in received_prompt
           and received_prompt_paths_blanked == shared_terminology_template,
           f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
-    check("a cell given the shared file stamps no prompt= field",
-          " prompt=" not in provenance_stamp_of(report),
-          repr(provenance_stamp_of(report)))
 
-    # --prompt-file still wins over the runtime's copy: a trial of a draft
-    # must run the draft whichever runtime it runs on.
+    # --prompt-file still wins over whatever sits under PROMPTS_DIR: a trial
+    # of a draft must run the draft on whichever agent-binary it runs.
     draft_prompt = repository / draft_prompt_relative_path
     draft_prompt.parent.mkdir(parents=True, exist_ok=True)
     draft_prompt.write_text(
         "DRAFT PROMPT MARKER. Read {TARGET_PATH}; write to {REPORT_PATH}.\n",
         encoding="utf-8")
-    report = report_path_for(repository, "runtime-copy-under-prompt-file", "codex")
-    received_argv_path = scratch / "runtime-copy-under-prompt-file-argv.json"
+    report = report_path_for(repository, "draft-under-prompt-file", "codex")
+    received_argv_path = scratch / "draft-under-prompt-file-argv.json"
     result = run_codex_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one term\n",
                "dump_argv": str(received_argv_path)}},
         report, "--prompt-file", draft_prompt_relative_path, cell="terminology",
     )
-    received_prompt = (" ".join(json.loads(received_argv_path.read_text(encoding="utf-8")))
-                       if received_argv_path.is_file() else "")
+    received_argv = (" ".join(json.loads(received_argv_path.read_text(encoding="utf-8")))
+                     if received_argv_path.is_file() else "")
     stamp = provenance_stamp_of(report)
-    check("--prompt-file overrides the runtime's own copy",
-          result.returncode == 0 and "DRAFT PROMPT MARKER" in received_prompt
-          and "CODEX COPY MARKER" not in received_prompt
+    check("--prompt-file reads the draft, not the pass's own prompt",
+          result.returncode == 0 and "DRAFT PROMPT MARKER" in received_argv
           and f"prompt_file={draft_prompt_relative_path} " in stamp
           and " prompt=" not in stamp,
-          f"exit {result.returncode}; prompt={received_prompt[:120]!r}; stamp={stamp!r}")
+          f"exit {result.returncode}; prompt={received_argv[:120]!r}; stamp={stamp!r}")
 
     # A path naming no file is a bad invocation, refused before any model
     # runs, with the path it looked for -- the trial that mistypes its
