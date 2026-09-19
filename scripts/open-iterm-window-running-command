@@ -156,7 +156,18 @@ WRAPPED_COMMAND="$LOGIN_SHELL -l -c 'exec \"\$@\"' open-iterm-window-running-com
 # Escape for embedding in an AppleScript double-quoted string.
 ESCAPED=$(printf '%s' "$WRAPPED_COMMAND" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 
+# `activate` BRINGS ITERM TO THE FRONT, and is not decoration. AppleScript's
+# `tell application` launches an app that is not running, but launches it in
+# the BACKGROUND: the window is created and the app never comes forward. After
+# the 2026-09-18 Mac reboot every seat was restarted into its own window --
+# the run log names their window ids -- and the user saw nothing until he
+# clicked iTerm's Dock icon: "I thought after recovery iterm2 was running but
+# closed. I had to click on its icon to 'see' it." A restart whose windows are
+# invisible is a restart the user cannot act on. `activate` before the window
+# is created rather than after, so the app is frontmost when the window
+# arrives instead of the window appearing behind whatever is in front.
 APPLESCRIPT="tell application \"iTerm\"
+	activate
 	create window with default profile command \"$ESCAPED\"
 end tell"
 

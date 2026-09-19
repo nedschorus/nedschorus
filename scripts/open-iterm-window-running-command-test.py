@@ -67,6 +67,15 @@ check("a single command string lands verbatim behind the login-shell wrapper",
       in result.stdout,
       result.stdout or result.stderr)
 
+# The window is useless if the app stays in the background: AppleScript's
+# `tell application` launches iTerm without bringing it forward, which is how
+# a whole reboot's worth of restarted seats stayed invisible on 2026-09-18.
+check("the script activates iTerm before creating the window",
+      result.returncode == 0
+      and "\tactivate\n" in result.stdout
+      and result.stdout.index("activate") < result.stdout.index("create window"),
+      result.stdout or result.stderr)
+
 result = run_opener(["ssh", "-t", "ned", "tmux", "attach"])
 check("several simple arguments join with single spaces",
       result.returncode == 0
