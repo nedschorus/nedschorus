@@ -17,7 +17,14 @@ What it checks:
   backticked names of the From, Trigger and To cells (see
   `transition_row_pairing_mismatches` for how each cell is read);
 - section 3.1's states are STATE_TABLE's, both directions, and each
-  state's sub-states are STATE_TABLE's, in the order section 3.1 lists.
+  state's sub-states are STATE_TABLE's, in the order section 3.1 lists;
+- each state's "Package beyond the standard-package" cell is the text of
+  STATE_TABLE's `package_beyond_standard`, because assemble_state_package
+  emits that text to the launched agent as `beyond-the-standard-package`
+  (section 2), so a cell that drifts misinforms a real agent (user-ruled
+  2026-09-19, after two pull requests edited the column by hand and a
+  reviewer asked why no test pinned it). The design's "—" is the code's
+  empty string.
 
 What it does not check:
 - guards. The Trigger column's guard words are free text and the code's
@@ -265,6 +272,36 @@ def section_3_1_states_and_sub_states(design_text):
     return states
 
 
+# Section 3.1's cell for a state that receives nothing beyond the
+# standard-package.
+SECTION_3_1_EMPTY_PACKAGE_CELL = "\u2014"
+
+
+def section_3_1_packages_beyond_standard(design_text):
+    """{state: the "Package beyond the standard-package" cell} for each row
+    of section 3.1, an em dash read as the empty string."""
+    packages = {}
+    for state_cell, _sub_states, package_cell, _verdicts in markdown_table_cells_under_header(
+            design_text, SECTION_3_1_TABLE_HEADER, 4):
+        names = backticked_tokens(state_cell)
+        if len(names) != 1:
+            raise DesignTableMalformed("section 3.1 State cell %r names %d states"
+                                       % (state_cell, len(names)))
+        packages[names[0]] = "" if package_cell == SECTION_3_1_EMPTY_PACKAGE_CELL else package_cell
+    return packages
+
+
+def package_column_mismatches(section_3_1_packages, state_table):
+    """The states whose package text differs between the two copies. A
+    state in one copy only is state_pairing_mismatches' to report."""
+    mismatches = []
+    for row in state_table:
+        if row.name in section_3_1_packages and section_3_1_packages[row.name] != row.package_beyond_standard:
+            mismatches.append("state %s: package %r in section 3.1, %r in STATE_TABLE" % (
+                row.name, section_3_1_packages[row.name], row.package_beyond_standard))
+    return mismatches
+
+
 def state_pairing_mismatches(section_3_1_states, state_table):
     mismatches = []
     prose_names = [name for name, _ in section_3_1_states]
@@ -307,6 +344,11 @@ class DesignRowsPairWithTheCode(unittest.TestCase):
         self.assertEqual(
             state_pairing_mismatches(section_3_1_states_and_sub_states(self.design_text),
                                      T.STATE_TABLE), [])
+
+    def test_every_section_3_1_package_cell_is_the_state_table_row_s_text(self):
+        self.assertEqual(
+            package_column_mismatches(section_3_1_packages_beyond_standard(self.design_text),
+                                      T.STATE_TABLE), [])
 
     def test_every_phrase_the_matcher_reads_is_in_the_design(self):
         # A phrase the design no longer uses would make its reading dead
@@ -421,6 +463,20 @@ class TheMatcherFailsOnDrift(unittest.TestCase):
             dataclasses.replace(row, sub_states=tuple(reversed(row.sub_states)))
             if row.name == T.DESIGN_REVIEWING else row for row in T.STATE_TABLE)
         self.assertEqual(len(state_pairing_mismatches(section_3_1, reordered)), 1)
+
+    def test_a_package_cell_changed_in_either_copy_fails(self):
+        packages = section_3_1_packages_beyond_standard(DESIGN_PATH.read_text())
+        self.assertEqual(packages[T.ENDED], "")
+        # One word added to the code's copy of a row.
+        one_word_more = tuple(
+            dataclasses.replace(row, package_beyond_standard=row.package_beyond_standard + " and its notes")
+            if row.name == T.TEST_SUITE_EXECUTING else row for row in T.STATE_TABLE)
+        self.assertEqual([m.split(":")[0] for m in package_column_mismatches(packages, one_word_more)],
+                         ["state %s" % T.TEST_SUITE_EXECUTING])
+        # A cell emptied in the prose's copy.
+        emptied = dict(packages, **{T.TEST_SUITE_EXECUTING: ""})
+        self.assertEqual([m.split(":")[0] for m in package_column_mismatches(emptied, T.STATE_TABLE)],
+                         ["state %s" % T.TEST_SUITE_EXECUTING])
 
 
 if __name__ == "__main__":
