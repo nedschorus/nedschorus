@@ -80,9 +80,14 @@ class TopicBranchGitRecord:
     """The component's topic branch in one repository checkout."""
 
     def __init__(self, repository_dir, component, component_directory,
-                 topic_branch_start_point="origin/main"):
+                 design_path, topic_branch_start_point="origin/main"):
         self.repository_dir = pathlib.Path(repository_dir)
         self.component = component
+        # The design's GHI-MD, repository-relative, as the invocation names
+        # it: before code exists the design is refined there in place, and
+        # the component-contract sits beside it (section 9; user-ruled
+        # 2026-09-18).
+        self.design_path = str(design_path)
         # Where the topic branch is cut from (section 9: `origin/main`),
         # and so where the run's own commits begin: the cut and the count
         # of a state's instances (instances_of_state_so_far) both read it,
@@ -384,10 +389,10 @@ class TopicBranchGitRecord:
         """Which of section 9's documents a changed path belongs to:
         design, component-contract, test-design, tests, or implementation."""
         component_dir = str(self.component_directory)
-        if path in (tables.design_path_while_no_code_exists(self.component),
+        if path in (self.design_path,
                     "%s/%s-design.md" % (component_dir, self.component)):
             return "design"
-        if path in (tables.contract_path_while_no_code_exists(self.component),
+        if path in (tables.contract_path_beside_design(self.design_path),
                     "%s/%s-contract.md" % (component_dir, self.component)):
             return "component-contract"
         if path == str(self.test_design_path):
