@@ -570,9 +570,14 @@ with tempfile.TemporaryDirectory() as scratch:
     # both from the grid launching the Claude cell on the Mac; the logged-out
     # line is the 2026-09-18 capture on ned-box, Claude Code 2.1.272,
     # `CLAUDE_CONFIG_DIR=$(mktemp -d) claude -p "say hi"` from a scratch
-    # directory, exit 1, that line on stdout. The classes come from the
-    # launcher's texts, matched only by how a line starts and only in the
-    # agent-cli's own output; the module knows none of its own.
+    # directory, exit 1, that line on stdout; and the Codex logged-out line
+    # is the 2026-09-18 capture on ned-box, codex-cli 0.153.4,
+    # `CODEX_HOME=$(mktemp -d) codex exec --sandbox read-only --skip-git-repo-check "say hi"`
+    # from a scratch directory, exit 1, that line on stderr. The classes
+    # come from the launcher's texts, matched only by how a line starts,
+    # after the optional leading timestamp the Codex tracing logger prints
+    # (user-ruled 2026-09-18), and only in the agent-cli's own output; the
+    # module knows none of its own.
     common_spec = importlib.util.spec_from_file_location(
         "cold_read_cell_common_under_test", SCRIPTS_DIR / "cold-read-cell-common.py")
     common_module = importlib.util.module_from_spec(common_spec)
@@ -581,11 +586,20 @@ with tempfile.TemporaryDirectory() as scratch:
         "cold_read_claude_cell_under_test", SCRIPTS_DIR / "cold-read-claude-cell.py")
     claude_module = importlib.util.module_from_spec(claude_spec)
     claude_spec.loader.exec_module(claude_module)
+    codex_spec = importlib.util.spec_from_file_location(
+        "cold_read_codex_cell_under_test", SCRIPTS_DIR / "cold-read-codex-cell.py")
+    codex_module = importlib.util.module_from_spec(codex_spec)
+    codex_spec.loader.exec_module(codex_module)
     SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
     FABLE_LIMIT_LINE = ("You've reached your Fable limit. Switch to another model, or manage "
                         "usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, "
                         "to continue.")
     LOGGED_OUT_LINE = "Not logged in · Please run /login"
+    CODEX_LOGGED_OUT_TIMESTAMP = "2026-09-18T19:37:41.140816Z"
+    CODEX_LOGGED_OUT_TEXT = ("ERROR codex_api::endpoint::responses_websocket: failed to connect "
+                             "to websocket: HTTP error: 401 Unauthorized, "
+                             "url: wss://api.openai.com/v1/responses")
+    CODEX_LOGGED_OUT_LINE = f"{CODEX_LOGGED_OUT_TIMESTAMP} {CODEX_LOGGED_OUT_TEXT}"
     PERMISSION_NOISE = ("Permission allow rule (/Users/el/.claude/settings.json): "
                         "Glob(//Users/el/agents/**) is not matched by file permission checks\n")
 
@@ -628,6 +642,34 @@ with tempfile.TemporaryDirectory() as scratch:
           common_module.classify_failed_attempt(
               stdout=SESSION_LIMIT_LINE + "\n", stderr="", exit_code=1, recognised_texts=[])
           == ("exit-1", SESSION_LIMIT_LINE))
+
+    # The Codex logged-out line carries the tracing logger's timestamp, which
+    # the classifier skips before matching by how the line starts; the
+    # detail is the line after that timestamp.
+    def classify_codex(stdout="", stderr="", exit_code=1):
+        return common_module.classify_failed_attempt(
+            stdout=stdout, stderr=stderr, exit_code=exit_code,
+            recognised_texts=codex_module.recognised_failure_texts_for_model("gpt-5-codex"))
+
+    check("the Codex 401 capture on stderr is logged-out, the line after its timestamp as detail",
+          classify_codex(stderr=CODEX_LOGGED_OUT_LINE + "\n")
+          == ("logged-out", CODEX_LOGGED_OUT_TEXT),
+          repr(classify_codex(stderr=CODEX_LOGGED_OUT_LINE + "\n")))
+    check("the same Codex text inside a line, not at its start, is not recognised",
+          classify_codex(stderr=f"the doc says: {CODEX_LOGGED_OUT_TEXT}\n")[0] == "exit-1",
+          repr(classify_codex(stderr=f"the doc says: {CODEX_LOGGED_OUT_TEXT}\n")))
+    check("a timestamp followed by the Codex text mid-line is not recognised either",
+          classify_codex(
+              stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} the doc says: {CODEX_LOGGED_OUT_TEXT}\n")[0]
+          == "exit-1",
+          repr(classify_codex(
+              stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} the doc says: {CODEX_LOGGED_OUT_TEXT}\n")))
+    check("a timestamp then an unrecognised text falls through to exit-N, detail untouched",
+          classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")
+          == ("exit-1", f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}"),
+          repr(classify_codex(stderr=f"{CODEX_LOGGED_OUT_TIMESTAMP} {SESSION_LIMIT_LINE}\n")))
+    check("the Claude logged-out line still matches at column 0 with no timestamp",
+          classify(stdout=LOGGED_OUT_LINE + "\n") == ("logged-out", LOGGED_OUT_LINE))
     check("the family name is the model id's second word, capitalised",
           claude_module.model_family_name("claude-fable-5-1") == "Fable"
           and claude_module.model_family_name("claude-opus-5") == "Opus")
