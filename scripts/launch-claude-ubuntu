@@ -253,7 +253,7 @@ if [ \$UPDATE_STATUS -eq 124 ]; then echo \"launch-claude-ubuntu: the update was
 # that file is the harness's own live state file, written by every running
 # session, so a truncate-and-stream is a file the harness can read torn. The
 # reasoning in full, its precedent (write_atomically in
-# scripts/main-gatekeeper.py), the two places it departs from that
+# nc-systems/main-gatekeeper/main-gatekeeper.py), the two places it departs from that
 # precedent, and what it deliberately does not fix — the read-modify-write,
 # and why no lock — are at the Mac twin, scripts/launch-claude-mac. Two
 # things here are the BOX's:
