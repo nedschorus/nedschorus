@@ -15,6 +15,7 @@ and the resume rides --resume-session-id to the supervisor.
 Run: python3 scripts/recover-crashed-seats-test.py
 """
 
+import atexit
 import importlib.util
 import io
 import json
@@ -35,14 +36,47 @@ recovery = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(recovery)
 
 failures = []
+skips = []
+passes = []
+verdict_reached = False
 
 
 def check(case_name, condition, detail=""):
     if condition:
         print(f"PASS  {case_name}")
+        passes.append(case_name)
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+def skip(case_name, reason):
+    """A case this machine cannot run, said out loud (nedschorus#172). A
+    silent platform guard leaves no FAIL line and no trace that anything was
+    left out, which read as a clean run once already: on ned-box the suite
+    died at the attached-launcher probe with 55 PASS lines and no verdict,
+    and a pull request reported that as "55 pass, 0 fail"."""
+    print(f"SKIP  {case_name}: {reason}")
+    skips.append(case_name)
+
+
+def print_verdict():
+    """The summary, on EVERY exit path. Registered with atexit so an
+    exception that escapes the cases still ends with a verdict line naming
+    the run as unfinished, instead of a traceback that leaves the PASS lines
+    above it reading as a complete run (nedschorus#172)."""
+    counts = (f"{len(passes)} passed, {len(failures)} failed, {len(skips)} skipped"
+              f"{' (' + '; '.join(skips) + ')' if skips else ''}")
+    print()
+    if not verdict_reached:
+        print(f"ABORTED before the last case: {counts} so far; this run did not finish")
+    elif failures:
+        print(f"{len(failures)} case(s) failed: {counts}")
+    else:
+        print(f"all cases passed: {counts}")
+
+
+atexit.register(print_verdict)
 
 
 # The two harness-authored assistant shapes the 2026-09-10 reboot left in its
@@ -1728,6 +1762,9 @@ with tempfile.TemporaryDirectory() as temporary:
               and str(launcher_from_relative) in captured_window_run[-1][1],
               (launcher_from_relative,
                captured_window_run[-1] if captured_window_run else None))
+    else:
+        skip("WINDOW: launcher and opener stay absolute when the script is run by a relative path",
+             "macOS only: launcher_path() is None off macOS and the iTerm opener is Mac-side")
 
     # Round 4 codex finding A (handoff dir) and finding B (agents root):
     # probed through the REAL launch_seat on the launcher branch, in codex's
@@ -1936,10 +1973,16 @@ with tempfile.TemporaryDirectory() as temporary:
         detached_capture = (capture_path.read_text(encoding="utf-8")
                             if capture_path.is_file() else "")
         capture_path.write_text("", encoding="utf-8")
-        recovery.subprocess.run([str(recovery.launcher_path()), workspace.name],
-                                capture_output=True, text=True, check=False)
-        attached_capture = (capture_path.read_text(encoding="utf-8")
-                            if capture_path.is_file() else "")
+        # launcher_path() is None off macOS -- the box composes its launch
+        # directly -- and handing subprocess the string "None" aborted the
+        # whole run there (nedschorus#172), so the probe is skipped out loud.
+        if recovery.launcher_path() is None:
+            attached_capture = None
+        else:
+            recovery.subprocess.run([str(recovery.launcher_path()), workspace.name],
+                                    capture_output=True, text=True, check=False)
+            attached_capture = (capture_path.read_text(encoding="utf-8")
+                                if capture_path.is_file() else "")
     finally:
         os.environ["PATH"] = saved_path_env
         if saved_home_env is None:
@@ -1966,20 +2009,25 @@ with tempfile.TemporaryDirectory() as temporary:
           in command_tokens
           and str(workspace.seat_directory) in command_tokens,
           command_tokens)
-    attached_line = next((line for line in attached_capture.splitlines()
-                          if "handoff-supervisor.py" in line), "")
-    try:
-        attached_tokens = shlex.split(attached_line)
-        attached_problem = ""
-    except ValueError as error:
-        attached_tokens, attached_problem = [], str(error)
-    check("F1: the attached launch's after-exit shell command parses too",
-          not attached_problem and attached_tokens
-          # containment, not equality: the composed string juxtaposes ';'
-          # against the closing quote, so the directory's token carries it
-          and any(str(workspace.seat_directory) in token
-                  for token in attached_tokens),
-          (attached_problem, attached_line))
+    if attached_capture is None:
+        skip("F1: the attached launch's after-exit shell command parses too",
+             "macOS only: the attached launch runs launch-claude-mac, and "
+             "launcher_path() is None on this platform")
+    else:
+        attached_line = next((line for line in attached_capture.splitlines()
+                              if "handoff-supervisor.py" in line), "")
+        try:
+            attached_tokens = shlex.split(attached_line)
+            attached_problem = ""
+        except ValueError as error:
+            attached_tokens, attached_problem = [], str(error)
+        check("F1: the attached launch's after-exit shell command parses too",
+              not attached_problem and attached_tokens
+              # containment, not equality: the composed string juxtaposes ';'
+              # against the closing quote, so the directory's token carries it
+              and any(str(workspace.seat_directory) in token
+                      for token in attached_tokens),
+              (attached_problem, attached_line))
 
     # Round-4 review note (user-ruled 2026-08-22: allowed overrides must
     # work): default_agents_root resolves the same way the launchers do —
@@ -4202,8 +4250,5 @@ with tempfile.TemporaryDirectory() as temporary:
           (sorted(verdicts_assess_seat_returns), sorted(verdicts_accounted_for)))
 
 
-print()
-if failures:
-    print(f"{len(failures)} case(s) failed")
-    sys.exit(1)
-print("all cases passed")
+verdict_reached = True
+sys.exit(1 if failures else 0)
