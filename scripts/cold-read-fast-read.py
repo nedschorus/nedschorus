@@ -185,11 +185,11 @@ FULL_RUN_DIRECTORIES_RELATIVE = (
 # project's designs live beside the issues, the cross-project specs and in
 # docs/design-to-main/, and the state-machine design names all three files
 # `<component>-design.md`, `<component>-contract.md` and
-# `<component>-test-design.md` (its section on where artifacts land). Step 1
-# calls the component-contract a design contract; the glossary's term is used
-# here. No directory is a design class: a directory entry for
+# `<component>-test-design.md` (its section on where artifacts land). Step 2
+# and this program both use the glossary's term, component-contract. No
+# directory is a design class: a directory entry for
 # docs/design-to-main/ once called that directory's glossary "a design", and a
-# design's glossary is not in step 1's list. The suffixes are matched whole, so
+# design's glossary is not in step 2's list. The suffixes are matched whole, so
 # `-design-notes.md` -- notes about a design, not the design -- is not one.
 FULL_RUN_NAME_SUFFIXES = (
     ("-test-design.md", "a test design"),
