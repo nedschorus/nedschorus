@@ -118,7 +118,6 @@ _recovery_spec.loader.exec_module(recovery)
 # interval through timing alone; the two live seats of the 2026-09-01
 # measurement were stamped 8 seconds apart.
 LIVE_SET_WINDOW_SECONDS = 2 * supervisor.HEARTBEAT_INTERVAL_SECONDS
-SUPERVISOR_STATE_FILE_SUFFIX = supervisor.SUPERVISOR_STATE_FILE_SUFFIX
 # One JSON object per line, appended, never rewritten (user-ruled 2026-09-11:
 # "a log ... not a single file"). It lives beside the state files, as
 # recover-crashed-seats-log.txt does.
@@ -348,8 +347,8 @@ def select_seats_live_at_the_stop(handoff_directory: Path, boot_at: datetime,
     if not handoff_directory.is_dir():
         return None, [], False
     readings = []
-    for state_path in sorted(handoff_directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}")):
-        seat = state_path.name[:-len(SUPERVISOR_STATE_FILE_SUFFIX)]
+    for state_path in supervisor.supervisor_state_paths(handoff_directory):
+        seat = supervisor.agent_name_from_supervisor_file(state_path)
         stamp, problem = read_supervisor_heartbeat(state_path, now)
         written_at = datetime.fromtimestamp(state_path.stat().st_mtime, timezone.utc)
         heartbeat_at = stamp if stamp is not None else written_at

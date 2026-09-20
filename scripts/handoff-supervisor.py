@@ -296,6 +296,21 @@ def supervisor_lock_path(handoff_directory: Path, agent: str) -> Path:
     return Path(handoff_directory) / f"{agent}{SUPERVISOR_LOCK_FILE_SUFFIX}"
 
 
+def supervisor_state_paths(handoff_directory: Path) -> list:
+    """Every seat's supervisor state file under `handoff_directory`, sorted.
+
+    The login restart reads them all to decide which seats were live at the
+    stop, and it used to glob f"*{SUPERVISOR_STATE_FILE_SUFFIX}" itself. A
+    search pattern spells the name out as surely as a path does, so it
+    belongs here with the rest. Pair it with agent_name_from_supervisor_file
+    above to get each seat's name back.
+    """
+    directory = Path(handoff_directory)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}"))
+
+
 def read_process_command_line(process_id: int):
     """(command_line, ps_answered) for a process id.
 
@@ -464,7 +479,7 @@ def supervisor_liveness(state_path: Path):
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 
     agent_name = agent_name_from_supervisor_file(state_path)
-    lock_path = state_path.with_name(f"{agent_name}{SUPERVISOR_LOCK_FILE_SUFFIX}")
+    lock_path = supervisor_lock_path(state_path.parent, agent_name)
     # Every dead verdict opens with the same words, so a caller can report the
     # verdict and the reason without knowing which reason it got; resupervise-seat
     # prints this sentence as its own reason for proceeding.
