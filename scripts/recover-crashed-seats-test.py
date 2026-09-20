@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -334,6 +335,24 @@ RESUME_PROMPT_AFTER_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "supervisor. Re-verify any in-flight state before trusting it (files you were "
     "mid-edit in, processes you were watching, messages you were owed), then continue "
     "the work you were doing.")
+# The handoff-supervisor's default when it resumes a session and no first
+# prompt was given (handoff-supervisor.py, the resume_session_id branch).
+# A different sentence from the one above: the supervisor says "the previous
+# session", this tool says "your previous session". Asserted against the
+# supervisor's source at F8, because nothing asserted it until 2026-09-20
+# and its opening is what EMPTY_SUCCESSOR_MARKERS recognises.
+SUPERVISOR_DEFAULT_RESUME_PROMPT = (
+    "This session was resumed by crash recovery (nedschorus#120): the previous session "
+    "ended without writing a handoff. Re-verify in-flight state before trusting it, "
+    "then continue the work underway.")
+
+
+def joined_string_literals(source):
+    """`source` with Python's implicit string-literal concatenation collapsed,
+    so a sentence a program wraps across several lines can be matched whole.
+    The assertions that use it pin the words, not the line breaks: rewrapping
+    handoff-supervisor.py must not fail a test that is about its wording."""
+    return re.sub(r'"\s*\n\s*"', "", source)
 
 
 def supervisor_first_turn_for_a_by_hand_command(command, workspace):
@@ -977,6 +996,27 @@ with tempfile.TemporaryDirectory() as temporary:
     check("F8: the reincarnation opener is not a skip marker (2026-09-10 reboot)",
           recovery.REINCARNATION_OPENER_MARKER not in recovery.EMPTY_SUCCESSOR_MARKERS,
           recovery.EMPTY_SUCCESSOR_MARKERS)
+    # F8: the supervisor's default resume prompt, which no suite asserted until
+    # 2026-09-20 (found by merge-lane-e2). It matters because its opening is an
+    # EMPTY_SUCCESSOR_MARKERS entry: reword it and a supervisor-resumed
+    # successor that never worked stops being recognised as workless, so
+    # recovery passes it over for its retired parent — the failure of the
+    # 2026-09-10 Mac reboot (nedschorus#116, comment of 2026-09-11). The
+    # supervisor builds it inline rather than from a constant, so it is matched
+    # against the source with the line wrapping collapsed.
+    supervisor_prompts = joined_string_literals(source)
+    check("F8: the supervisor's default resume prompt is verbatim in handoff-supervisor.py",
+          SUPERVISOR_DEFAULT_RESUME_PROMPT in supervisor_prompts,
+          "supervisor default resume prompt changed, or its wrapping defeated the match")
+    check("F8: the supervisor's default resume prompt carries a skip marker",
+          any(marker in SUPERVISOR_DEFAULT_RESUME_PROMPT
+              for marker in recovery.EMPTY_SUCCESSOR_MARKERS),
+          (SUPERVISOR_DEFAULT_RESUME_PROMPT, recovery.EMPTY_SUCCESSOR_MARKERS))
+    check("F8: the supervisor's default resume prompt says the session ended, "
+          "never that it died (ruled 2026-09-19)",
+          "ended without writing a handoff" in SUPERVISOR_DEFAULT_RESUME_PROMPT
+          and "died" not in SUPERVISOR_DEFAULT_RESUME_PROMPT,
+          SUPERVISOR_DEFAULT_RESUME_PROMPT)
 
     # Q2: an unparseable handoff counter refuses with both paths named.
     workspace = Workspace(root / "r7")
@@ -2682,8 +2722,11 @@ with tempfile.TemporaryDirectory() as temporary:
     write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
     recorded_at = record_an_agent_exit(workspace, 0)
     # The by-hand resume carries its own first prompt (review 5240813304): without
-    # one, the supervisor's default for a resume tells the agent it died without
-    # a handoff — a crash, for a seat that is here because its exit was recorded.
+    # one, the supervisor's default for a resume tells the agent the previous
+    # session ended without writing a handoff — untrue of a seat that is here
+    # because its exit was recorded. (Until 2026-09-18 that default also called
+    # it a crash and said "died"; both are gone, and the default is still the
+    # wrong sentence for a recorded exit.)
     # A dry run names the file and writes nothing; the real run writes it, so
     # the printed command works when it is typed.
     by_hand_prompt_path = (workspace.handoffs
