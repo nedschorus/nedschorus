@@ -1,14 +1,21 @@
 #!/bin/sh
-# Stamps the Claude-Session trailer on every commit made inside a Claude
-# session that has a claude.ai link.
+# Stamps a session trailer on every commit made inside a Claude session that
+# the harness has identified, preferring the claude.ai link and falling back
+# to the session id.
 #
-# The harness asks each such session to end its commit messages with
+# The harness asks a session that has a link to end its commit messages with
 #   Claude-Session: https://claude.ai/code/<session id>
 # and puts that id in CLAUDE_CODE_BRIDGE_SESSION_ID. Agents forget the line:
 # all six pull requests of the reboot-test seat's 2026-09-17/18 session went
 # out without it (issue "Topic-branch base enforcement", piece 3). So git adds
-# it, and nobody has to remember. A session with no link has no variable and
-# gets no trailer, which is the harness's own rule.
+# it, and nobody has to remember.
+#
+# A session with no link once got no trailer at all, which this file called
+# the harness's own rule. That left 12 of main's last 60 non-merge commits
+# untraceable and cost a merge-lane reviewer a misdiagnosis, so since
+# 2026-09-20 such a session gets its session id instead (see the selection
+# below). Only a session the harness identifies by neither variable goes
+# unstamped.
 #
 # addIfDifferent: a message that already carries this session's line keeps
 # exactly one; a commit re-made by another session (amend, cherry-pick,
@@ -27,13 +34,20 @@
 # that has a claude.ai link CLAUDE_CODE_BRIDGE_SESSION_ID, and gives every
 # session CLAUDE_CODE_SESSION_ID, which names its transcript on the authoring
 # machine at ~/.claude/projects/<slugged working directory>/<id>.jsonl. A
-# session without a link — a child session, for one — has only the second, and
-# until 2026-09-20 got no trailer at all: 12 of main's last 60 non-merge
-# commits carried none, and a merge-lane reviewer had to reconstruct one such
-# commit's authoring session from its content, then wrongly diagnosed the
-# absence as an unwired core.hooksPath and told a seat to rewire it. The
-# linked form stays first because a reviewer can open it; the id is the
-# fallback because a reviewer can still find the transcript from it.
+# session without a link has only the second, and until 2026-09-20 got no
+# trailer at all: 12 of main's last 60 non-merge commits carried none, and a
+# merge-lane reviewer had to reconstruct one such commit's authoring session
+# from its content, then wrongly diagnosed the absence as an unwired
+# core.hooksPath and told a seat to rewire it. The linked form stays first
+# because a reviewer can open it; the id is the fallback because a reviewer
+# can still find the transcript from it.
+#
+# Which sessions lack the link is not known and is not this hook's business:
+# it keys on the variables it is given, never on a kind of session. An
+# earlier draft of this comment offered a child session as the example and
+# was wrong — an independent reviewer of the pull request that added the
+# fallback was itself a child session, CLAUDE_CODE_CHILD_SESSION=1, and had
+# both variables.
 bridge_session_id="$CLAUDE_CODE_BRIDGE_SESSION_ID"
 local_session_id="$CLAUDE_CODE_SESSION_ID"
 if [ -n "$bridge_session_id" ]; then
