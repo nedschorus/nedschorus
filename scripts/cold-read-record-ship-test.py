@@ -190,6 +190,9 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     scratch_repo = scratch / "repo"
     (scratch_repo / "scripts").mkdir(parents=True)
     shutil.copy(SHIP, scratch_repo / "scripts" / SHIP.name)
+    # The shipper imports it for the records directory name.
+    record_names = SCRIPTS_DIR / "cold-read-record-names.py"
+    shutil.copy(record_names, scratch_repo / "scripts" / record_names.name)
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "store-all" / "cold-read-records")
     good = make_record(scratch_repo / "cold-read-records", "2026-09-01-good", {"r.md": REPORT_A})

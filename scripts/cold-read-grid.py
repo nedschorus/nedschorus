@@ -63,7 +63,17 @@ import time
 import typing
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-RECORDS_DIR = REPO_ROOT / "cold-read-records"
+# What a cold-read-record is called and where it lives, defined once in a
+# module so no program keeps its own copy (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 4). The
+# convention -- importlib for a module whose filename has hyphens -- is
+# scripts/cold-read-cell-common.py's.
+_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names",
+    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+record_names = importlib.util.module_from_spec(_record_names_spec)
+_record_names_spec.loader.exec_module(record_names)
+RECORDS_DIR = record_names.RECORDS_DIR
 # cold-read-cell launchers, one per runtime.
 CELL_LAUNCHERS = {
     "claude": REPO_ROOT / "scripts" / "cold-read-claude-cell.py",
@@ -75,11 +85,7 @@ CELL_LAUNCHERS = {
 # outcome; its one line is printed and the run goes on, because a store that
 # cannot be reached is no reason to lose a review that landed.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "cold-read-record-ship.py"
-# Where the cold-read-target's bytes are frozen inside the cold-read-record:
-# under this name, at the cold-read-target's own repository path, so a
-# reader of an old cold-read-record sees both the exact text reviewed
-# and where it lived.
-FROZEN_TARGET_DIRECTORY_NAME = "target"
+FROZEN_TARGET_DIRECTORY_NAME = record_names.FROZEN_TARGET_DIRECTORY_NAME
 # The cold-read-cells' shared module, loaded the way the cold-read-cells
 # load it, for the status phrases it pins. Imported rather than copied so
 # the cold-read-grid and the cold-read-cells cannot drift on the words the
@@ -244,34 +250,16 @@ def record_clock_reading() -> datetime.datetime:
     return datetime.datetime.now()
 
 
-def record_name_for_target(target: pathlib.Path) -> str:
-    """The cold-read-target's part of a cold-read-record name: its file stem,
-    except that a file whose stem is exactly `SKILL` -- every skill in this
-    project is `.claude/skills/<name>/SKILL.md` -- is `SKILL-<skill name>`,
-    the name being its directory's."""
-    if target.stem == "SKILL" and target.parent.name:
-        return f"SKILL-{target.parent.name}"
-    return target.stem
-
-
-def record_directory_name_for_target(
-    target: pathlib.Path, now: datetime.datetime,
-) -> str:
-    """`<document part>-<YYYY-MM-DD>`, before any -2, -3 suffix. Only the
-    date of the clock reading is used."""
-    return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
+record_name_for_target = record_names.record_name_for_target
+record_directory_name_for_target = record_names.record_directory_name_for_target
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
     """Create and return the record directory: the day's name, or the
     first of -2, -3, ... that is not taken (a second read of the document
     that day)."""
-    base = record_directory_name_for_target(target, now)
-    record_dir = RECORDS_DIR / base
-    suffix = 2
-    while record_dir.exists():
-        record_dir = RECORDS_DIR / f"{base}-{suffix}"
-        suffix += 1
+    record_dir = record_names.fresh_record_directory(
+        RECORDS_DIR / record_directory_name_for_target(target, now))
     record_dir.mkdir(parents=True)
     return record_dir
 

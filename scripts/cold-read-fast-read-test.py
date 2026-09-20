@@ -83,6 +83,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 SCRIPT_NAMES = (
+    "cold-read-record-names.py",
     "cold-read-cell-common.py",
     "cold-read-agy-cell.py",
     "cold-read-fast-read.py",

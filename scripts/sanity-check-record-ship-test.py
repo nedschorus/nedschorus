@@ -145,8 +145,9 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     (scratch_repo / "scripts").mkdir(parents=True)
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     shutil.copy(SHIP, scratch_ship)
-    shutil.copy(SCRIPTS_DIR / "cold-read-record-ship.py",
-                scratch_repo / "scripts" / "cold-read-record-ship.py")
+    for script_name in ("cold-read-record-ship.py", "cold-read-record-names.py"):
+        shutil.copy(SCRIPTS_DIR / script_name,
+                    scratch_repo / "scripts" / script_name)
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",
                        {"cut-claude.md": CUT_REPORT})
