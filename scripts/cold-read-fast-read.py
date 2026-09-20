@@ -100,6 +100,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
+import importlib.util
 import pathlib
 import re
 import subprocess
@@ -114,12 +115,22 @@ AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
 # since this program's stdout is the report path and nothing else, and a
 # shipping failure never fails the read.
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+# What a cold-read-record is called and where it lives, defined once in a
+# module so no program keeps its own copy (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 4). The
+# convention -- importlib for a module whose filename has hyphens -- is
+# scripts/cold-read-cell-common.py's.
+_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names",
+    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+record_names = importlib.util.module_from_spec(_record_names_spec)
+_record_names_spec.loader.exec_module(record_names)
 # Where the cold-read-target's bytes are frozen inside the cold-read-record:
 # under this name at the cold-read-target's own repository path, as
 # scripts/cold-read-grid.py does.
-FROZEN_TARGET_DIRECTORY_NAME = "target"
+FROZEN_TARGET_DIRECTORY_NAME = record_names.FROZEN_TARGET_DIRECTORY_NAME
 WALK_DIRECTORY_RELATIVE = pathlib.Path("docs") / "walk"
-RECORDS_DIR = REPO_ROOT / "cold-read-records"
+RECORDS_DIR = record_names.RECORDS_DIR
 
 FAST_READ_CELL = "fast-clarify"
 FAST_READ_TIER = "fast"
@@ -278,10 +289,12 @@ def fast_read_report_path_for_target(
 # documents with the same stem in different directories read on one day come
 # out as -2 of each other (target/ shows which was which), and the -N count
 # says nothing about which draft each read was. Both accepted at the walk.
-# Restated, not imported, in scripts/cold-read-grid.py, because the
-# cold-read-grid is a program rather than a module; the two must stay
-# identical. The report inside the record is bare `fast-read.md` (item 5):
-# the directory says which read, the file says what it is.
+# The code implementing it is not restated: scripts/cold-read-record-names.py
+# holds it, and this program and scripts/cold-read-grid.py both import it, so
+# the two cannot drift apart. scripts/cold-read-record-names-test.py fails a
+# program that writes its own copy back. The report inside the record is
+# bare `fast-read.md` (item 5): the directory says which read, the file says
+# what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
@@ -303,42 +316,11 @@ def record_clock_reading() -> datetime.datetime:
     return datetime.datetime.now()
 
 
-def record_name_for_target(target: pathlib.Path) -> str:
-    """The cold-read-target's part of a cold-read-record name: its file stem,
-    except that a file whose stem is exactly `SKILL` -- every skill in this
-    project is `.claude/skills/<name>/SKILL.md` -- is `SKILL-<skill name>`,
-    the name being its directory's."""
-    if target.stem == "SKILL" and target.parent.name:
-        return f"SKILL-{target.parent.name}"
-    return target.stem
+record_name_for_target = record_names.record_name_for_target
+record_directory_name_for_target = record_names.record_directory_name_for_target
 
 
-def record_directory_name_for_target(
-    target: pathlib.Path, now: datetime.datetime,
-) -> str:
-    """`<document part>-<YYYY-MM-DD>`, before any -2, -3 suffix. Only the
-    date of the clock reading is used."""
-    return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
-
-
-def fresh_record_dir(base: pathlib.Path) -> pathlib.Path:
-    """The day's name, or the first of -2, -3, ... that is not taken.
-
-    The rule scripts/cold-read-grid.py's make_record_dir applies, restated
-    here rather than imported because the cold-read-grid is a program, not a
-    module (user-ruled 2026-09-07 with the frozen cold-read-target: two frozen
-    cold-read-targets never share a directory, so a cold-read-fast-read after
-    a cold-read-full-run on the same cold-read-target on the same day, or
-    after an earlier cold-read-fast-read of a revised draft that day, takes
-    its own).
-    Nothing is created here; the launcher creates the report's directory.
-    """
-    record_dir = base
-    suffix = 2
-    while record_dir.exists():
-        record_dir = base.with_name(f"{base.name}-{suffix}")
-        suffix += 1
-    return record_dir
+fresh_record_dir = record_names.fresh_record_directory
 
 
 # --- Sentence ids -------------------------------------------------------

@@ -111,7 +111,17 @@ import sys
 import time
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-RECORDS_DIR = REPO_ROOT / "cold-read-records"
+# What a cold-read-record is called and where it lives, defined once in a
+# module so no program keeps its own copy (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 4). The
+# convention -- importlib for a module whose filename has hyphens -- is
+# scripts/cold-read-cell-common.py's.
+_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names",
+    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+record_names = importlib.util.module_from_spec(_record_names_spec)
+_record_names_spec.loader.exec_module(record_names)
+RECORDS_DIR = record_names.RECORDS_DIR
 JUDGE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-restater-judge-cell.py")
 
 # The judge cold-read-cell itself, loaded the way the cold-read-grid loads
@@ -242,12 +252,8 @@ def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
     module's near-miss recovery searches the records tree by, so the two
     judgings' reports stay as distinguishable as their directories.
     """
-    base = f"{today}-restater-judge-{restater_class}"
-    record_dir = RECORDS_DIR / base
-    suffix = 2
-    while record_dir.exists():
-        record_dir = RECORDS_DIR / f"{base}-{suffix}"
-        suffix += 1
+    record_dir = record_names.fresh_record_directory(
+        RECORDS_DIR / f"{today}-restater-judge-{restater_class}")
     record_dir.mkdir(parents=True)
     return record_dir
 

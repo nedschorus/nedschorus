@@ -102,6 +102,19 @@ import sys
 import time
 import typing
 
+import importlib.util
+
+# What a cold-read-record is called and where it lives, defined once in a
+# module so no program keeps its own copy (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 4). The
+# convention -- importlib for a module whose filename has hyphens -- is
+# scripts/cold-read-cell-common.py's.
+_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names",
+    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+record_names = importlib.util.module_from_spec(_record_names_spec)
+_record_names_spec.loader.exec_module(record_names)
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
@@ -647,7 +660,8 @@ def instrument_built_record_directory(directory: pathlib.Path) -> bool:
     opposed to one a model invented: it holds `target/` or `reference-check.md`,
     both written before any reviewer is launched. The near-miss recovery never
     takes a file from such a directory (see recover_near_miss_report)."""
-    return (directory / "target").is_dir() or (directory / "reference-check.md").is_file()
+    return ((directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()
+            or (directory / "reference-check.md").is_file())
 
 
 def recover_near_miss_report(

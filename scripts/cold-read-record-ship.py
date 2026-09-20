@@ -78,13 +78,24 @@ the invocation). A destination with no `host:` prefix is local.
 import argparse
 import hashlib
 import os
+import importlib.util
 import pathlib
 import socket
 import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-RECORDS_DIR = REPO_ROOT / "cold-read-records"
+# What a cold-read-record is called and where it lives, defined once in a
+# module so no program keeps its own copy (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 4). The
+# convention -- importlib for a module whose filename has hyphens -- is
+# scripts/cold-read-cell-common.py's.
+_record_names_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_names",
+    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+record_names = importlib.util.module_from_spec(_record_names_spec)
+_record_names_spec.loader.exec_module(record_names)
+RECORDS_DIR = record_names.RECORDS_DIR
 PROGRAM = "cold-read-record-ship"
 
 # The one constant. Host and path in scp form; the path's parent is the

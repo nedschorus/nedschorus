@@ -138,6 +138,7 @@ REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 GRID_SCRIPT_NAMES = (
     "cold-read-grid.py",
+    "cold-read-record-names.py",
     "cold-read-cell-common.py",
     "cold-read-claude-cell.py",
     "cold-read-codex-cell.py",

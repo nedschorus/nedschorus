@@ -156,6 +156,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 CELL_SCRIPT_NAMES = (
+    "cold-read-record-names.py",
     "cold-read-cell-common.py",
     "cold-read-claude-cell.py",
     "cold-read-codex-cell.py",
