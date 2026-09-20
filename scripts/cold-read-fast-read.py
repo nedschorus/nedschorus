@@ -168,6 +168,12 @@ Write your report to {REPORT_PATH}, once, when your analysis is complete. That f
 
 PROGRAM = "cold-read-fast-read"
 WALK_DRAFT_SUFFIX = "-draft.md"
+# Both endings are the walk-me-through skill's to name; this program only
+# follows them, and scripts/walk-file-endings-match-the-skill-test.py fails
+# if these two drift from what .claude/skills/walk-me-through/SKILL.md says
+# (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 4).
+WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
 
 # WHICH DOCUMENTS THIS READ DOES NOT FINISH (user-ruled 2026-09-17, item 4 of
 # nedschorus#418, after PR #332 merged a skill change on a fast read alone).
@@ -256,7 +262,8 @@ def fast_read_report_path_for_target(
             and relative.name.endswith(WALK_DRAFT_SUFFIX)
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
-        return REPO_ROOT / WALK_DIRECTORY_RELATIVE / f"{name}-suggestions.md"
+        return (REPO_ROOT / WALK_DIRECTORY_RELATIVE
+                / f"{name}{WALK_SUGGESTIONS_SUFFIX}")
     return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
             / "fast-read.md")
 
