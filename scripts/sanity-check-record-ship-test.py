@@ -106,8 +106,10 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     check("a cell's scratch directory ships with the reports",
           (shipped_dir / "scratch" / "cut-claude" / "notes.md").is_file(),
           sorted(str(p.relative_to(shipped_dir)) for p in shipped_dir.rglob("*")))
-    check("the store's README names this kind",
-          "`sanity-check-records/`" in (store / "README.md").read_text(encoding="utf-8"),
+    check("the store's README points at the wiki page rather than naming "
+          "this kind, which it listed until 2026-09-19",
+          "nedschorus-file-naming-and-location-standards.md"
+          in (store / "README.md").read_text(encoding="utf-8"),
           (store / "README.md").read_text(encoding="utf-8")[:400])
 
     # --- The second ship sends only finding-dispositions.md -------------------

@@ -99,10 +99,8 @@ how the tests point at a scratch directory.
 import argparse
 import hashlib
 import importlib.util
-import json
 import os
 import pathlib
-import shlex
 import subprocess
 import sys
 import typing
@@ -128,19 +126,6 @@ EXIT_SHIPPED = shipper.EXIT_SHIPPED
 EXIT_FAILED = shipper.EXIT_FAILED
 EXIT_BAD_INVOCATION = shipper.EXIT_BAD_INVOCATION
 
-# Appended to the store's README when it does not already describe this kind.
-# The record shipper's STORE_README carries the same bullet, so a store born
-# fresh is complete and one that predates this program is completed on first
-# use. The two copies are the drift this program accepts; they are one PR's
-# worth of text and the test asserts they match.
-SEATS_README_BULLET = """\
-- `seats/` -- the one kind organized by PRODUCER rather than by kind: one
-  directory per agent seat, holding the files that seat must cite from the
-  other machine and that belong to no other kind. Written by
-  scripts/seat-shared-file-ship.py in the nedschorus repository, which prints
-  the citation to paste. A seat replaces its own files, the records beside it
-  being add-only (user-ruled 2026-09-09).
-"""
 
 
 def seat_name_from_environment():
@@ -204,87 +189,38 @@ def seats_path_for_this_machine() -> SeatsStoreDestination:
                                  records_path.parent / SEATS_KIND_DIRECTORY)
 
 
-def readme_with_seats_bullet(existing: str) -> str:
-    """The README's text with the seats bullet in its list of kinds.
-
-    An append to the end of the file would put the bullet after the closing
-    paragraph, where it reads as an afterthought rather than as one of the
-    kinds -- which is what a first version of this did to the live store. The
-    bullet goes after the last existing bullet and its indented continuation
-    lines instead, so the list stays a list. A README with no bullet list at
-    all is appended to, which is the only thing left to do with it.
-    """
-    lines = existing.splitlines(keepends=True)
-    last_bullet_end = None
-    for index, line in enumerate(lines):
-        if line.startswith("- "):
-            last_bullet_end = index + 1
-        elif last_bullet_end == index and line.startswith("  ") and line.strip():
-            last_bullet_end = index + 1
-    if last_bullet_end is None:
-        separator = "" if existing.endswith("\n") or not existing else "\n"
-        return existing + separator + SEATS_README_BULLET
-    return "".join(lines[:last_bullet_end]) + SEATS_README_BULLET + "".join(
-        lines[last_bullet_end:])
-
-
 def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
-    """The seat's directory exists and the store's root has a README.
+    """The seat's directory exists and the store's root holds STORE_README.
 
-    Two cases, and they match the record shipper's `ensure_store`. NO README
-    AT ALL -- a store whose first writer was this program -- gets the record
-    shipper's whole STORE_README, imported rather than copied; that text
-    already lists the seats kind, so there is no bullet left to append. A
-    README that is already there and predates this program gains the bullet
-    in its list of kinds instead.
+    BOTH THE DIRECTORY AND THE README ARE THE RECORD SHIPPER'S RULES, called
+    here rather than restated: `refresh_store_readme` locally and
+    `make_directory_and_refresh_readme_script` over ssh, so this program and
+    scripts/cold-read-record-ship.py cannot disagree about when the README is
+    rewritten. One ssh round trip remotely, as before.
 
-    The README is only ever ADDED to: one that already describes the kind is
-    untouched. Remotely both writes are done by a Python one-liner over ssh
-    rather than a shell append, because placing the bullet in the list needs
-    more than `cat >>`; the two texts go over stdin as JSON, and the file is
-    written whole to a temporary sibling and renamed, so an interrupted run
-    cannot leave a half README.
+    THIS PROGRAM USED TO APPEND A `seats/` BULLET to a README that lacked
+    one, placing it inside the list of kinds. The README stopped listing the
+    kinds on 2026-09-19 (user-ruled, walk
+    file-naming-and-location-standards-cold-read-findings, item 5): what each
+    subdirectory holds and how its files are named lives in
+    docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
+    instead, because a restatement here went stale at every ruling. With no
+    list of kinds there is no bullet to place, and appending one would have
+    started a fight: this program would add it, the record shipper would see
+    the text differ from STORE_README and write the pointer back, on every
+    shipment either made.
     """
     seat_directory = destination.seats_path / seat
     root = destination.seats_path.parent
-    readme_path = f"{root}/README.md"
     if destination.copy_host is None:
         pathlib.Path(seat_directory).mkdir(parents=True, exist_ok=True)
-        readme = pathlib.Path(readme_path)
-        if not readme.exists():
-            readme.write_text(shipper.STORE_README, encoding="utf-8")
-        else:
-            existing = readme.read_text(encoding="utf-8")
-            if existing and f"`{SEATS_KIND_DIRECTORY}/`" not in existing:
-                readme.write_text(readme_with_seats_bullet(existing),
-                                  encoding="utf-8")
+        shipper.refresh_store_readme(root)
         return subprocess.CompletedProcess([], 0, "", "")
-    remote_program = (
-        "import json,os,pathlib,sys\n"
-        f"p=pathlib.Path({readme_path!r})\n"
-        "texts=json.loads(sys.stdin.read())\n"
-        f"k={'`' + SEATS_KIND_DIRECTORY + '/`'!r}\n"
-        "out=None\n"
-        "if not p.exists():\n"
-        "    out=texts['store_readme']\n"
-        "else:\n"
-        "    t=p.read_text(encoding='utf-8')\n"
-        "    if t and k not in t:\n"
-        "        b=texts['seats_bullet']\n"
-        "        lines=t.splitlines(keepends=True); end=None\n"
-        "        for i,l in enumerate(lines):\n"
-        "            if l.startswith('- '): end=i+1\n"
-        "            elif end==i and l.startswith('  ') and l.strip(): end=i+1\n"
-        "        out=(t+b) if end is None else (''.join(lines[:end])+b+''.join(lines[end:]))\n"
-        "if out is not None:\n"
-        "    tmp=p.with_name(p.name+'.new')\n"
-        "    tmp.write_text(out,encoding='utf-8'); os.replace(tmp,p)\n")
-    script = (f"mkdir -p -- '{seat_directory}' && "
-              f"python3 -c {shlex.quote(remote_program)}")
+    script = shipper.make_directory_and_refresh_readme_script(
+        seat_directory, root)
     return subprocess.run(
         shipper.SSH_COMMAND + [destination.copy_host, script],
-        input=json.dumps({"store_readme": shipper.STORE_README,
-                          "seats_bullet": SEATS_README_BULLET}),
+        input=shipper.STORE_README,
         capture_output=True, text=True, check=False)
 
 

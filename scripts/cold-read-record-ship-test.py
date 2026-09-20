@@ -93,6 +93,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the store's root gained a README saying what the store is",
           (store_root / "README.md").is_file()
           and "log-store" in (store_root / "README.md").read_text(encoding="utf-8"))
+    check("the README points at the wiki page for the naming rules "
+          "rather than restating them",
+          "nedschorus-file-naming-and-location-standards.md"
+          in (store_root / "README.md").read_text(encoding="utf-8"))
     check("the line names the store path the files went to",
           demo.name in result.stdout and "2 file(s) added" in result.stdout, result.stdout)
 
@@ -103,6 +107,25 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           result.returncode == 0 and "nothing new" in result.stdout, result.stdout)
     check("the second run touched nothing in the store",
           stored_a.stat().st_mtime_ns == mtime_before)
+
+    # --- The README is refreshed when it differs, not only when absent -----
+    # It was written once when the store was new and never again, so every
+    # ruling that changed the text left the live file behind (user-ruled
+    # 2026-09-19, walk file-naming-and-location-standards-cold-read-findings,
+    # item 5). A stale README is the state this checks: not missing, wrong.
+    readme_path = store_root / "README.md"
+    fresh = readme_path.read_text(encoding="utf-8")
+    readme_path.write_text("# stale\n\ndispositions.md\n", encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("a README whose text differs is rewritten from the program's copy",
+          result.returncode == 0
+          and readme_path.read_text(encoding="utf-8") == fresh, result.stdout)
+
+    readme_mtime_before = readme_path.stat().st_mtime_ns
+    result = ship(local_destination, str(demo))
+    check("a README that already matches is left alone, not rewritten each run",
+          result.returncode == 0
+          and readme_path.stat().st_mtime_ns == readme_mtime_before)
 
     (demo / "triage.md").write_text("# triage\n\nnone\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
@@ -245,10 +268,15 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("every ssh call runs in batch mode with a connect timeout",
           ssh_calls and all("BatchMode=yes" in c and any(a.startswith("ConnectTimeout=") for a in c)
                             for c in ssh_calls), str(ssh_calls))
-    check("the store is prepared over ssh: mkdir -p of the records path and the README when absent",
+    check("the store is prepared over ssh: mkdir -p of the records path and the README",
           any("mkdir -p" in " ".join(c) and "README.md" in " ".join(c)
               and "/home/nedlern/nedschorus-logs/cold-read-records" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))
+    check("the README is compared and copied only on a difference, never "
+          "written only when absent",
+          any("cmp -s" in " ".join(c) and "cp --" in " ".join(c)
+              and "test -e" not in " ".join(c)
+              for c in ssh_calls if "README.md" in " ".join(c)), str(ssh_calls))
     check("the store's inventory is one ssh call running sha256sum under the record's directory",
           any("sha256sum" in " ".join(c) and f"cold-read-records/{demo.name}" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))

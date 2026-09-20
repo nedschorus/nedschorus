@@ -116,49 +116,42 @@ EXIT_FAILED = 1
 EXIT_REFUSED = 2
 EXIT_BAD_INVOCATION = 64
 
+# The note at the door of the log-store, written into it by this program.
+#
+# AGENT-FACING TEXT, so it is instruction and nothing else: what the store is,
+# how to cite a file in it, where the naming rules are, and what to edit to
+# change this file. No dates, no ruling citations, no account of why it reads
+# this way -- those live here and in `refresh_store_readme` below, where a
+# maintainer reads them (user-ruled 2026-09-18, on the force-push guard's
+# refusal, in CLAUDE.md).
+#
+# It used to list every kind and how its files were named. That restatement
+# went stale at each ruling that changed one, and when the cold-read-records'
+# triage file was renamed from dispositions.md to triage.md a reader following
+# this text would have looked for the old name, not found it, and reported a
+# finished triage as unfinished. The rules now live in the wiki page it points
+# at; what the store is and how to cite a file in it do not change
+# (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 5). The
+# 2026-09-07 ruling that made the store at all is "separate the system from
+# its logs".
 STORE_README = """\
 # nedschorus-logs
 
 The log-store: the byproducts of the nedschorus project's work that are not
-the system -- good data, never part of the repository (user-ruled
-2026-09-07: "separate the system from its logs"). One subdirectory per kind.
-
-- `cold-read-records/` -- one directory per cold-read run, named
-  `<document name>-<date>` with `-2`, `-3` for later runs on one day, holding
-  the reviewer reports, `triage.md` when the agent finished its triage
-  (its absence means a triage that never finished, which is true state), and
-  `target/<repository path>` with the exact bytes the reviewers read. Records
-  dated before 2026-09-08 predate that freeze and hold no `target/`; the
-  grid recorded only a hash of the target then.
-- `sanity-check-records/` -- one directory per sanity-check run, named
-  `<date>-<target stem>` with `-2`, `-3` for later runs on one day (the
-  order scripts/sanity-check-attacks.py gives them, unchanged when cold-read
-  records went document-first on 2026-09-18), holding the cells' reports,
-  `finding-dispositions.md` when the
-  requesting agent finished its triage, and each cell's `scratch/`. Written
-  by scripts/sanity-check-record-ship.py in the nedschorus repository, under
-  the same rules as the records beside them (user-ruled 2026-09-15).
-- `walk/` -- the files of each walk-me-through walk, flat: draft, suggestions,
-  walk text, minutes, and a cold-read walk's dispositions. Written by
-  scripts/walk-files-ship.py in the nedschorus repository at the walk's close:
-  draft, suggestions and walk text add-only; the minutes and the dispositions
-  replaced, each displaced copy's digest announced (user-ruled 2026-09-18).
-- `transcripts/` -- Claude Code session transcripts and handoffs, one
-  subdirectory per machine (nedschorus#7).
-- `seats/` -- the one kind organized by PRODUCER rather than by kind: one
-  directory per agent seat, holding the files that seat must cite from the
-  other machine and that belong to no other kind. Written by
-  scripts/seat-shared-file-ship.py in the nedschorus repository, which prints
-  the citation to paste. A seat replaces its own files, the records beside it
-  being add-only (user-ruled 2026-09-09).
+the system. Good data, never part of the repository. One subdirectory per
+kind.
 
 Cite a file here with its host, in the form scp takes:
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/<kind>/<path>`.
 
-Written by scripts/cold-read-record-ship.py in the nedschorus repository when
-it found no README here; that program is what puts records in
-`cold-read-records/`, add-only, never overwriting a file whose content
-differs.
+What each subdirectory holds, and how its files are named, is not written
+here. Read it in the nedschorus repository, which this machine also clones:
+docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
+
+To change this file, edit STORE_README in
+scripts/cold-read-record-ship.py. The next shipment rewrites this file
+whenever it differs from that text, so an edit made here is lost.
 """
 
 
@@ -231,18 +224,65 @@ def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *ex
     return command + [f"{source}/", destination]
 
 
+def refresh_store_readme(root) -> None:
+    """STORE_README into <root>/README.md, on this machine, when it differs.
+
+    REWRITTEN WHENEVER IT DIFFERS, not only when it is missing (user-ruled
+    2026-09-19, walk file-naming-and-location-standards-cold-read-findings,
+    item 5). The README was written once, when the store was new, and never
+    again, so every later ruling that changed the text left the live file
+    behind: read over ssh on 2026-09-19 it still gave cold-read-record names
+    in the old date-first order, still called the triage file
+    dispositions.md, still said a walk has four files, and had no analysis/
+    entry at all. Refreshing here means the next shipment carries a change,
+    and nobody edits a file on ned-box by hand to land one.
+
+    The README is the shippers' own file, so the add-only rule that protects
+    the records does not cover it.
+    """
+    readme = pathlib.Path(root) / "README.md"
+    try:
+        live = readme.read_text(encoding="utf-8")
+    except OSError:
+        live = None
+    if live != STORE_README:
+        readme.write_text(STORE_README, encoding="utf-8")
+
+
+def make_directory_and_refresh_readme_script(directory, root) -> str:
+    """The remote script for `mkdir -p <directory>` and the README refresh.
+
+    ONE DEFINITION, here, called by every shipper that prepares the store:
+    this program's `ensure_store` and scripts/seat-shared-file-ship.py's
+    `ensure_seat_directory`. A second copy is how two programs come to
+    disagree about when the README is rewritten -- and they would rewrite it
+    against each other on every shipment.
+
+    The new text arrives on stdin rather than quoted into the script, so a
+    README holding quotes needs no escaping. `cmp` then decides: the file is
+    copied only when it differs, so an unchanged store is not rewritten, and
+    its modification time still says when the text last changed.
+
+    POSIX shell only -- ned-box's /bin/sh is dash.
+    """
+    return (f"mkdir -p -- '{directory}' || exit 1\n"
+            "readme_new=$(mktemp) || exit 1\n"
+            'cat > "$readme_new" || { rm -f -- "$readme_new"; exit 1; }\n'
+            f'cmp -s -- "$readme_new" \'{root}/README.md\' '
+            f'|| cp -- "$readme_new" \'{root}/README.md\' '
+            '|| { rm -f -- "$readme_new"; exit 1; }\n'
+            'rm -f -- "$readme_new"\n')
+
+
 def ensure_store(host, records_path: pathlib.PurePosixPath) -> subprocess.CompletedProcess:
-    """The records directory exists and the store's root has its README.
+    """The records directory exists and the store's root holds STORE_README.
     One ssh round trip remotely; plain filesystem calls locally."""
     root = records_path.parent
     if host is None:
         pathlib.Path(records_path).mkdir(parents=True, exist_ok=True)
-        readme = pathlib.Path(root) / "README.md"
-        if not readme.exists():
-            readme.write_text(STORE_README, encoding="utf-8")
+        refresh_store_readme(root)
         return subprocess.CompletedProcess([], 0, "", "")
-    script = (f"mkdir -p -- '{records_path}' && "
-              f"{{ test -e '{root}/README.md' || cat > '{root}/README.md'; }}")
+    script = make_directory_and_refresh_readme_script(records_path, root)
     return subprocess.run(SSH_COMMAND + [host, script], input=STORE_README,
                           capture_output=True, text=True, check=False)
 
