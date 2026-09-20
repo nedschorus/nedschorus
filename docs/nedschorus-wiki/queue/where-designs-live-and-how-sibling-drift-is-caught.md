@@ -1,8 +1,18 @@
 ---
-status: queued for the drain — placement ruled 2026-09-18, the rest not decided
+status: queued for the drain — placement ruled 2026-09-18 and 2026-09-20, the rest not decided
 ---
 
 # Where designs live, and how drift between a design and its siblings is caught
+
+## Ruled 2026-09-20: a test-design lives beside the design and the contract
+
+The user ruled where the third document goes: **a test-design is written beside its design and its component-contract, and the three move together into the component's directory when code starts.** One rule for all three documents rather than two and an exception.
+
+What it settles. `docs/design-to-main/design-to-main-state-machine-design.md` says the design, the component-contract and the test-design are all durable prose that land with the component, so the test-design's final home was already stated. Its home before that was not, and a search of `docs/design-to-main/` and `docs/agents/queue/design-to-main-*` for a path convention returned nothing. The gap bites because the test-design is written by the test-work-stream, after the design is approved, so its author is a different agent from the design's and needs a stated path.
+
+A second ruling of the same walk, recorded on [Rationalize the repository layout](https://github.com/nedschorus/nedschorus/issues/224) rather than here: each system's directory carries a `docs/` subdirectory beside its `tests/`, which is where these three documents land once code starts.
+
+Minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/where-test-designs-and-per-system-docs-live-minutes.md`.
 
 ## Ruled 2026-09-18
 
@@ -65,6 +75,9 @@ design in the tree needs it yet: eight designs exist and each serves one issue.
 
 **Not decided: not every GHI needs a design.** Stated by the user, consistent with the tree, not
 written anywhere.
+
+**Decided 2026-09-20, was open above: where a test-design lives.** Beside its design and its
+component-contract, the three moving together. See the section at the head of this note.
 
 **A contradiction to settle at the drain, not before.**
 `docs/agents/queue/design-to-main-design-writing-agent-instructions.md`, itself queued, tells its
