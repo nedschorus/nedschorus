@@ -8,10 +8,11 @@ complete, and the last section lists what is known to be unsettled.
 The standards are scattered, and this page maps them without moving them: the
 general naming rule sits in the project's root `CLAUDE.md`; four skills,
 /cold-read, /ghi-write, /handoff and /walk-me-through, each name their own
-files; several names are constants in scripts, some defined in
-more than one script; and some conventions are only what the existing files
-do. The note under "Working files the scripts and skills create" lists the
-names defined more than once.
+files; several names are constants in scripts, each now with one
+definition and a test that keeps it that way; and some conventions are only
+what the existing files do. The note under "Working files the scripts and
+skills create" names those single homes, and the few names still written in
+more than one place.
 
 ## Terms this page uses
 
@@ -68,12 +69,16 @@ One ruling on how far that rule reaches is written outside `CLAUDE.md`, in
 
 ## How to read the tables
 
+The values in these tables were copied from the scripts and documents the
+Decided by column names, as they stood on main at commit `986bc31` on
+2026-09-20. They may be stale: where a value here and its source disagree,
+the source is right, and `git log 986bc31..origin/main -- <path>` lists every
+change to that source since this page last looked.
+
 Every row names what decided the value, or says nothing did:
 
 - A script and a name in it means that constant or function decides the
-  value. The tables show the value so the page can be read on its own; the
-  value on this page is a copy, and where the two disagree the script is
-  right and this page is stale.
+  value. The tables show the value so the page can be read on its own.
 - A prose file means the prose decides the value and the code that uses it
   carries a copy by hand: no program reads a value out of these documents, so
   a change to the prose must be chased into every copy the note below lists.
@@ -88,9 +93,7 @@ The rule behind citing rather than repeating is stated in
 > how two instruments come to disagree about what a genre is.
 
 Where a value is defined in more than one place today, the row says so and the
-note under the second table lists the places. None of those definitions wins
-over the others: there is no tie-break if they diverge, and that is the
-defect the note records.
+note under the second table lists the places.
 
 In every table the Location column holds the directory and the Naming column
 holds the filename pattern.
@@ -105,18 +108,18 @@ holds the filename pattern.
 | Skill | `.claude/skills/<skill name>/` | `SKILL.md`; the directory is named for the skill, and the `name:` in its frontmatter agrees with it | no written rule |
 | Skill prompt, the text a skill's own reviewer or cell runs | `.claude/skills/<skill name>/prompts/` | `<pass>.md`, named for the pass it drives; `defect-hunt.md`, `terminology.md`, `restate.md`, `fast-clarify.md` exist | no written rule |
 | Hook | `.claude/hooks/` | `<what it guards>.py`, hyphenated | no written rule, mixed: three hooks are hyphenated and named for what they guard; the shared module `guard_approval_marker.py` is neither. Existing names stand: a file is renamed, if at all, only when it is already being edited for another reason (the ruling under "The one general rule") |
-| Test | beside the thing it tests, in the same directory; design-to-main's tests sit in a `tests/` subdirectory instead, `scripts/design-to-main/tests/` | the stem plus `-test`, before the extension: `scripts/cold-read-grid-test.py`, `.claude/hooks/instruction-file-guard-test.py`; a launcher with no extension gets `-test.py`: `scripts/launch-claude-mac-test.py` | no written rule; for design-to-main's tests, `docs/design-to-main/design-to-main-state-machine-design.md` §9, which puts a component's tests in a `tests/` subdirectory of its directory |
+| Test | beside the thing it tests, in the same directory; a subsystem or system with its own directory puts its tests in a `tests/` subdirectory of it instead, `scripts/design-to-main/tests/` and `nc-systems/main-gatekeeper/tests/` | the stem plus `-test`, before the extension: `scripts/cold-read-grid-test.py`, `.claude/hooks/instruction-file-guard-test.py`; a launcher with no extension gets `-test.py`: `scripts/launch-claude-mac-test.py` | no written rule; for design-to-main's tests, `docs/design-to-main/design-to-main-state-machine-design.md` §9, which puts a component's tests in a `tests/` subdirectory of its directory |
 | Standing instructions for a designed agent, or an agent-seat's seat-brief | `docs/agents/` | `<subject>-instructions.md` | `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`, which says an agent-seat's brief lives under `docs/agents`, for a seat-brief; no written rule for a designed agent's |
 | Prompt text handed to an agent verbatim: an agent-seat's or agent's first prompt, a sanity-check attack prompt, the appended system prompt | `docs/agents/` | `<subject>-first-prompt.md`, `<subject>-<attack>-attack-prompt.md`, `seat-session-appended-system-prompt.md` | no written rule |
-| Wiki page | `docs/nedschorus-wiki/` | `nedschorus-<subject>.md` on two of the five tracked pages, `nedschorus-glossary.md` and `nedschorus-ai-native-software-development-objective.md`; the other three carry no prefix | no written rule, mixed. Existing names stand: a page is renamed, if at all, only when it is already being edited for another reason (the ruling under "The one general rule") |
+| Wiki page | `docs/nedschorus-wiki/` | `nedschorus-<subject>.md`, which all seven pages on main follow | user-ruled 2026-09-19, for new pages and existing ones alike; the four unprefixed pages were renamed and every citation in the tree swept (PR 541). This narrows the no-full-rename ruling under "The one general rule" for this directory |
 | GHI-MD, the document paired with a GitHub issue | `docs/issues/` | `<issue number>-<name>.md` | no written rule; what a GHI-MD is and when one is written is `.claude/skills/ghi-write/SKILL.md` |
-| Design document | its issue's GHI-MD in `docs/issues/`, where it is written and refined in place; `docs/design-to-main/` for design-to-main's own | `<issue number>-<name>.md` as the GHI-MD, so a design carries no ending of its own; `<issue number>-<name>-design.md` is the older form still on main, and `-design` also appears in `docs/drafts/` and `docs/design-to-main/` | user-ruled 2026-09-18, in `.claude/skills/ghi-write/SKILL.md` and `docs/nedschorus-wiki/queue/where-designs-live-and-how-sibling-drift-is-caught.md`: "A design is written in its issue's GHI-MD and refined in place; design-to-main adds the component-contract beside it, and both move into the component's directory when code starts" |
+| Design document | its issue's GHI-MD in `docs/issues/`, where it is written and refined in place; `docs/design-to-main/` for design-to-main's own; `nc-systems/<system>/` once a system's code starts and the design moves beside it, `nc-systems/main-gatekeeper/main-gatekeeper-design.md` | `<issue number>-<name>.md` as the GHI-MD, so a design carries no ending of its own; `<issue number>-<name>-design.md` is the older form still on main, and `-design` also appears in `docs/drafts/` and `docs/design-to-main/` | user-ruled 2026-09-18, in `.claude/skills/ghi-write/SKILL.md` and `docs/nedschorus-wiki/queue/where-designs-live-and-how-sibling-drift-is-caught.md`: "A design is written in its issue's GHI-MD and refined in place; design-to-main adds the component-contract beside it, and both move into the component's directory when code starts" |
 | Design-to-main's own documents: the state machine's design, its glossary, and its scripts under `scripts/design-to-main/` | `docs/design-to-main/` | `design-to-main-<subject>.md` | glossary entry design-to-main; no written rule for the names |
-| Python script | `scripts/`, or `scripts/design-to-main/` for that subsystem's | `<multi-part-name>.py`, noun-led as often as verb-led: `cold-read-grid.py`, `handoff-supervisor.py`, `restart-live-seats-at-login.py` | no written rule |
+| Python script | `scripts/`; `scripts/design-to-main/` for that subsystem's; `nc-systems/<system>/` for a system kept whole in one directory with its design, record and tests, as the main-gatekeeper has been since 2026-09-19 | `<multi-part-name>.py`, noun-led as often as verb-led: `cold-read-grid.py`, `handoff-supervisor.py`, `restart-live-seats-at-login.py` | no written rule |
 | Launcher and shell script | `scripts/` | no extension for the three launchers (`launch-claude-mac`, `launch-claude-ubuntu`, `open-iterm-window-running-command`); `.sh` for two shell scripts | no written rule |
 | Queued material, not yet at its home | `docs/nedschorus-wiki/queue/` for wiki-bound doctrine; `docs/issues/queue/` for pair-bound documents; `docs/agents/queue/` for agent-instructions. A design does not queue: since 2026-09-18 it is written in its issue's GHI-MD | as the file will be named at its home, so the drain is a move | `.claude/skills/ghi-write/SKILL.md` step 2; the drain is nedschorus#24 |
 | Requested note awaiting its first approval-walk | `nc-queue/`, then `nc-queue/archived/` once walked | `<YYYY-MM-DD>-<slug>.md` | `nc-queue/README.md` |
-| Draft of a kind that has no queue | `docs/drafts/` | `<subject>-draft.md` in most tracked cases; `cold-read-tooling-design.md` and the five files under `claude-builtin-code-review-reverse-engineering/` do not use it; a seat's untracked working copies there also use `-candidate`, dated stamps and `-r2`, `-r3`, and go to the log-store's `seats/` kind once the work they served has landed | no written rule |
+| Draft of a kind that has no queue | `docs/drafts/` | `<subject>-draft.md` in most tracked cases; `cold-read-tooling-design.md` and the five files under `claude-builtin-code-review-reverse-engineering/` do not use it. `-candidate` marks a version put to the user for review, as against an agent's own draft: a candidate lives untracked in `docs/drafts/` while he reads it, and goes to the log-store's `seats/` kind once the work it served has landed. A seat's other untracked working copies there also use dated stamps and `-r2`, `-r3`, and go the same way | `-candidate` user-ruled 2026-09-19; no written rule for the rest |
 
 A draft of a kind that has a queue goes to the queue, not to `docs/drafts/`;
 a `-draft.md` in `docs/walk/` is one of an approval-walk's four files, not an
@@ -131,51 +134,69 @@ tell from a path whether that rule applies. See the last section.
 
 | File or directory | Location | Naming | Decided by |
 |---|---|---|---|
-| Cold-read-record directory | `cold-read-records/` | `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a skill, whose stem is always `SKILL` and whose name is its directory's, so `.claude/skills/cold-read/SKILL.md` gets `SKILL-cold-read-<date>`; the document comes first so every read of one document sits together in a listing, and the date is the local date of the machine that ran it. Ruled 2026-09-18, replacing a date-first form; two documents with the same stem in different directories, read on one day, come out as `-2` of each other, and the record's `target/` shows which was which | `scripts/cold-read-grid.py`, `make_record_dir` and `record_name_for_target`, with `GENERIC_DOCUMENT_STEMS`, under `RECORDS_DIR`; defined again elsewhere, see the note below |
-| Same directory, on a same-day collision | as above | `-2`, `-3` appended, counting up, no cap in the code; the cold-read-fast-read and the cold-read-grid share this rule, so on one day the first to run takes the bare name and the next takes `-2` | `scripts/cold-read-grid.py`, `make_record_dir`; defined again elsewhere, see the note below |
-| Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-grid.py`, `frozen_target_path`; defined again in `scripts/cold-read-fast-read.py`, see the note below |
+| Cold-read-record directory | `cold-read-records/` | `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a skill, whose stem is always `SKILL` and whose name is its directory's, so `.claude/skills/cold-read/SKILL.md` gets `SKILL-cold-read-<date>`; the document comes first so every read of one document sits together in a listing, and the date is the local date of the machine that ran it. Ruled 2026-09-18, replacing a date-first form; two documents with the same stem in different directories, read on one day, come out as `-2` of each other, and the record's `target/` shows which was which | `scripts/cold-read-record-names.py`, `record_directory_name_for_target` and `record_name_for_target`, under its `RECORDS_DIR`; the four programs that create or find cold-read-records import it |
+| Same directory, on a same-day collision | as above | `-2`, `-3` appended, counting up, no cap in the code; the cold-read-fast-read and the cold-read-grid share this rule, so on one day the first to run takes the bare name and the next takes `-2` | `scripts/cold-read-record-names.py`, `fresh_record_directory`, which every one of those programs calls |
+| Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-record-names.py`, `FROZEN_TARGET_DIRECTORY_NAME`; the path built under it is `frozen_target_path`, which the cold-read-grid and `scripts/cold-read-fast-read.py` still define separately, see the note below |
 | Reviewer report | inside the cold-read-record | `<agent-binary>-<pass token>-<tier>.md`, the pass token being `hunt` for `defect-hunt`; six names are possible, `hunt-good`, `hunt-floor` and `terminology-good` under each of `claude` and `codex`, and an absent cold-read-cell leaves its name absent. The file says which agent ran which pass and nothing else; the directory says which read (user-ruled 2026-09-18, replacing a name that repeated the record's). A report's own name ends in `-good` or `-floor`, never `-report`, so the cold-read-grid does not refuse it | `scripts/cold-read-grid.py`, `cell_report_path`; the set of cold-read-cells is `GRID_CELL_ROSTER` |
 | Reference check | inside the cold-read-record | `reference-check.md` | `scripts/cold-read-grid.py` |
 | A cold-read-cell's stderr | inside the cold-read-record, kept only for an attempt that produced no report: the cold-read-grid deletes the log of an attempt that succeeded | `<report name>.attempt-1.stderr.log` for the first attempt and `.attempt-2.stderr.log` for the retry, since every failed cold-read-cell is retried once (nedschorus#413) | `scripts/cold-read-grid.py` |
 | Triage of the reviewers' findings | inside the cold-read-record | `triage.md` (user-ruled 2026-09-18, replacing `dispositions.md`, which now names a walk's fifth file instead) | `.claude/skills/cold-read/SKILL.md`; spelled again in the cold-read-grid's closing text and in the log-store README |
-| Cold-read-fast-read of an approval-walk draft | `docs/walk/` | `<walk name>-suggestions.md`, the cold-read-fast-read's report under the name /walk-me-through reads | `scripts/cold-read-fast-read.py`, and /walk-me-through states it too, see the note below |
-| Cold-read-fast-read of anything else | `cold-read-records/<file stem>-<YYYY-MM-DD>/`, the same record name the cold-read-grid uses | `fast-read.md`, beside `<target stem>-with-sentence-ids.md`, the marked copy the reviewer read; a skill's is `cold-read-records/SKILL-cold-read-<date>/fast-read.md` beside `SKILL-with-sentence-ids.md` | `scripts/cold-read-fast-read.py`, `record_name_for_target` for the directory; defined again elsewhere, see the note below |
+| Cold-read-fast-read of an approval-walk draft | `docs/walk/` | `<walk name>-suggestions.md`, the cold-read-fast-read's report under the name /walk-me-through reads | `.claude/skills/walk-me-through/SKILL.md` names the ending; `scripts/cold-read-fast-read.py` builds it, and `scripts/walk-file-endings-match-the-skill-test.py` holds the two together |
+| Cold-read-fast-read of anything else | `cold-read-records/<file stem>-<YYYY-MM-DD>/`, the same record name the cold-read-grid uses | `fast-read.md`, beside `<target stem>-with-sentence-ids.md`, the marked copy the reviewer read; a skill's is `cold-read-records/SKILL-cold-read-<date>/fast-read.md` beside `SKILL-with-sentence-ids.md` | `scripts/cold-read-record-names.py`, `record_name_for_target` for the directory, which `scripts/cold-read-fast-read.py` imports |
 | Restater-judge run | `cold-read-records/` | `<YYYY-MM-DD>-restater-judge-<restater class>`, the one cold-read-record kind not named for a cold-read-target | `scripts/cold-read-restater-judge-runner.py` |
-| Approval-walk files, four by the approval-walk's close and five for an approval-walk that rules on a cold-read-full-run | `docs/walk/` | `<walk name>-draft.md` first, then `-suggestions.md`, then `<walk name>.md`, then `-minutes.md`, and for a cold-read approval-walk `-dispositions.md` at its close. The approval-walk that rules on a cold-read-full-run is named after that cold-read-record, so its files sit under the record's name (user-ruled 2026-09-18) | `.claude/skills/walk-me-through/SKILL.md` and `.claude/skills/cold-read/SKILL.md`; the five roles are `WALK_FILE_ROLES` in `scripts/walk-files-ship.py`, and `scripts/cold-read-fast-read.py` hard-codes `-draft.md` and `-suggestions.md`, see the note below |
+| Approval-walk files, four by the approval-walk's close and five for an approval-walk that rules on a cold-read-full-run | `docs/walk/` | `<walk name>-draft.md` first, then `-suggestions.md`, then `<walk name>.md`, then `-minutes.md`, and for a cold-read approval-walk `-dispositions.md` at its close. The approval-walk that rules on a cold-read-full-run is named after that cold-read-record, so its files sit under the record's name (user-ruled 2026-09-18) | `.claude/skills/walk-me-through/SKILL.md` decides the endings, with `.claude/skills/cold-read/SKILL.md` for the fifth file; `WALK_FILE_ROLES` in `scripts/walk-files-ship.py` and the two endings in `scripts/cold-read-fast-read.py` are held to the skill's text by `scripts/walk-file-endings-match-the-skill-test.py` |
 | Next-step file, written by /handoff | `~/.claude/handoffs/` | `<seat name>-next-step-<YYYYMMDD-HHMMSS>.md`, which /handoff gives as the expression `~/.claude/handoffs/$(basename "$PWD")-next-step-$(date +%Y%m%d-%H%M%S).md`, to be run rather than composed; the seat name is the working directory's name, the agent-seat name the handoff-supervisor watches | `.claude/skills/handoff/SKILL.md` step 1; the same name is the default `--agent` of `scripts/handoff-write-and-check-supervisor.py`, `default_agent_name` |
-| The handoff-supervisor's own files | `~/.claude/handoffs/` by default, or the directory its `--handoff-dir` names | `<seat name>-handoff.md`, `<seat name>-handoff-<NNNN>.md`, `<seat name>-dialog-<NNNN>.md` and its `-complete.md` companion, `<seat name>-supervisor.lock`, `<seat name>-supervisor-state.json`. Of the numbered files it keeps the two newest generations of `-handoff-<NNNN>.md` and of `-dialog-<NNNN>.md`, a `-complete.md` companion counting as part of its generation, and deletes the older ones | `scripts/handoff-supervisor.py`, the path properties around its `state_path`, and `prune_old_generations` with `GENERATIONS_KEPT`; the dialog files are written by `scripts/handoff-extract-conversation.py`; the state suffix is defined again elsewhere, see the note below |
+| The handoff-supervisor's own files | `~/.claude/handoffs/` by default, or the directory its `--handoff-dir` names | `<seat name>-handoff.md`, `<seat name>-handoff-<NNNN>.md`, `<seat name>-dialog-<NNNN>.md` and its `-complete.md` companion, `<seat name>-supervisor.lock`, `<seat name>-supervisor-state.json`. Of the numbered files it keeps the two newest generations of `-handoff-<NNNN>.md` and of `-dialog-<NNNN>.md`, a `-complete.md` companion counting as part of its generation, and deletes the older ones | `scripts/handoff-supervisor.py`: the state and lock names through `supervisor_state_path()` and `supervisor_lock_path()` over `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX`, and the generations through `prune_old_generations` with `GENERATIONS_KEPT`; the dialog files are written by `scripts/handoff-extract-conversation.py`. The handoff file's own name has no constant, see the note below |
 | Retired session-handoff, moved there by hand when an agent-seat is retired | `~/.claude/handoffs/retired/`, created if needed | `<seat name>-handoff-<YYYY-MM-DD>.md`; if that name exists, `-2`, `-3` before `.md`, never onto an existing archive | `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`, "Pausing and retiring a seat", step 2 |
 
-**More than one definition today.** `RECORDS_DIR` is defined in four scripts:
-`scripts/cold-read-grid.py`, `scripts/cold-read-record-ship.py`,
-`scripts/cold-read-fast-read.py` and `scripts/cold-read-restater-judge-runner.py`.
-The same-day collision rule is coded in the same three that create
-cold-read-records. `FROZEN_TARGET_DIRECTORY_NAME` and the frozen-path rule are
-in the cold-read-grid and `scripts/cold-read-fast-read.py`.
-`GENERIC_DOCUMENT_STEMS` and `record_name_for_target`, the document name in a
-cold-read-record's name, are in the same two, and each one's comment names
-the other as the restatement; the module docstring of
-`scripts/cold-read-fast-read.py` still describes that name as the
-cold-read-target's file name without its extension.
-`SUPERVISOR_STATE_FILE_SUFFIX` is defined twice over, in
-`scripts/handoff-supervisor.py` and `scripts/restart-live-seats-at-login.py`,
-and seven further places in working code build the same name from a literal
-instead of either constant: twice each in `scripts/handoff-supervisor.py`,
-`scripts/handoff-write-and-check-supervisor.py` and
-`scripts/recover-crashed-seats.py`, and once in `scripts/resupervise-seat.py`.
-Two of those seven sit inside the file that defines the constant. The handoff
-file's own name has no shared constant at all: it is a local variable in
-`scripts/handoff-write-and-check-supervisor.py` and a spelled-out literal in
-that script and three others. The glossary restates two file names in prose:
-`docs/agents/<seat>-instructions.md` under seat-brief and
-`~/.claude/handoffs/<seat>-handoff.md` under session-handoff. The
-approval-walk files' `-draft.md` and `-suggestions.md` are stated in
-/walk-me-through and hard-coded in `scripts/cold-read-fast-read.py`. Within
-each set the definitions agree now, and no shared constant or test keeps them
-the same. None is the authority over the others, which is the defect: there is no
-tie-break if they diverge. `RECORDS_DIR` is also a two-part name that a grep
-confuses with `RECORDS_DIRECTORY_NAME` in `scripts/sanity-check-attacks.py`,
-which is a different instrument's constant.
+**One definition each, and the guards that hold them there.** Three sets of
+repeated names were reduced to one definition apiece on 2026-09-19
+(user-ruled), each with a test that a second definition does not come back:
+
+- What a cold-read-record is called lives in
+  `scripts/cold-read-record-names.py`, a module and nothing else, imported by
+  the four programs that create or find cold-read-records. Seven places had
+  carried their own `RECORDS_DIR`, `FROZEN_TARGET_DIRECTORY_NAME`, or copies
+  of the naming and same-day-collision rules. The copies had a stated reason
+  — that a program cannot be imported — and a module answers it. Guard:
+  `scripts/cold-read-record-names-test.py`.
+- The supervisor's state and lock file names are
+  `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX` in
+  `scripts/handoff-supervisor.py`, reached through `supervisor_state_path()`
+  and `supervisor_lock_path()`. Eleven production sites across five scripts
+  had built those names by hand, two of them inside the file that defines the
+  constants. Guard: `scripts/supervisor-file-names-defined-once-test.py`.
+- The approval-walk files' endings are decided by
+  `.claude/skills/walk-me-through/SKILL.md`. Prose cannot be imported, so the
+  tie-break is a test rather than a constant, and it runs one way only: a
+  program may not build an ending the skill does not name, though the skill
+  may name an ending no program builds yet. Guard:
+  `scripts/walk-file-endings-match-the-skill-test.py`.
+
+**What is still written more than once.** The handoff file's own name has no
+shared constant: eight places in four scripts compose it, one as a local
+`suffix` variable in `scripts/handoff-write-and-check-supervisor.py` and
+seven as spelled-out literals in that script,
+`scripts/handoff-supervisor.py`, `scripts/recover-crashed-seats.py` and
+`scripts/resupervise-seat.py`. It is the same defect the supervisor's state
+file had, and it is not ruled on yet. The frozen copy's directory name is one
+constant now, but the path built under it is not: `frozen_target_path` is
+defined in the cold-read-grid and again in `scripts/cold-read-fast-read.py`,
+and the two differ — the cold-read-grid resolves the cold-read-target before
+making it relative and the cold-read-fast-read does not, so a cold-read-target
+reached through a symlink freezes to two different paths. The glossary
+restates two file names in prose, `docs/agents/<seat>-instructions.md` under
+seat-brief and `~/.claude/handoffs/<seat>-handoff.md` under session-handoff.
+Apart from the two frozen-path copies, the writings in each set agree today,
+and nothing keeps them agreeing; none is the authority over the others, which
+is the defect. `RECORDS_DIR` is
+also a two-part name a grep confuses with `RECORDS_DIRECTORY_NAME` in
+`scripts/sanity-check-attacks.py`, a different instrument's constant.
+
+Each of those guards carries a list of what it does not catch. That list is
+not documentation of the guard: it is the instrument that tests it. Across
+the eight pull requests this consolidation took on 2026-09-19, every review
+finding landed on the guards and none on the consolidation itself.
 
 ## Filename suffixes an instrument reads
 
@@ -279,12 +300,5 @@ decision for the user, tracked at the MD-skills agent-seat.
   the cold-read-grid's code do not each carry a copy.
 - What the cold-read-tiers are called: `good` and `floor` no longer describe
   the models in them, and the rename is a decision for the user.
-- Which of the repeated definitions listed under the second table survives
-  when they are reduced to one each.
-- Whether the wiki's `nedschorus-` prefix is the rule, given that three of
-  five pages lack it. Existing pages keep their names: a page is renamed, if
-  at all, only when it is already being edited for another reason (the
-  ruling under "The one general rule").
-- Whether `-candidate` is a second draft suffix or a stray.
 - Whether kept cold-read-records, and `docs/walk/`, need a retention limit
   as they accumulate; until ruled, everything is kept.
