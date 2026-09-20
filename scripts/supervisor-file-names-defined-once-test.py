@@ -23,12 +23,22 @@ or one written with str.format instead of an f-string. The tree has no
 comments in it at all, does not care where a line ends, and says what each
 expression is, so all three go away together rather than one regex at a time.
 
+Every case reads the tree, including the one that counts where the suffix
+constants are defined. That one kept its line regex for a round while the
+rest moved, which is how a duplicate definition written
+SUPERVISOR_STATE_FILE_SUFFIX = ("-supervisor-state.json") came to pass a
+suite that the plain form still failed -- the regex wanted a quote straight
+after the `=` and saw a parenthesis. Half a guard reading the tree and half
+reading lines is worse than either, because the two halves exempt and count
+different things; suffix_definition_assignments() below is now the one
+answer both halves use.
+
 What counts as composing the name, and so fails:
 
 - a string that contains the file name, wherever it appears
 - an f-string with either suffix constant in a replacement field
-- either suffix constant on one side of a `+`
-- either suffix constant passed to .format()
+- either suffix constant on one side of a `+`, or appended with `+=`
+- either suffix constant passed to .format(), positionally or by keyword
 
 What does not: taking a name apart, as agent_name_from_supervisor_file() does
 with endswith() and len(); a docstring that writes the pattern out for a
@@ -36,6 +46,14 @@ reader; and the bodies of the composing helpers, whose whole job this is.
 Their line ranges come from the tree, so a helper renamed without being
 renamed in COMPOSING_HELPERS below fails a case rather than silently
 exempting whatever takes its place.
+
+Three more ways to build the name are out of scope on purpose, because no
+agent in this project has written any of them: "".join(...), `%` formatting,
+and assigning the constant to a local variable and composing from that. The
+last has no cheap answer at all -- following a value through a function needs
+more than one node in hand. The list grows when one of them is written, not
+before; what it must never do is claim coverage the code does not have, which
+is how the keyword form of .format() went uncaught for a round.
 
 Test files keep their literals on purpose: that literal is the assertion, and
 it is what fails loudly if the name is ever changed.
@@ -45,7 +63,6 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import ast
-import re
 import sys
 from pathlib import Path
 
@@ -60,9 +77,6 @@ SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock")
 # The constants that hold them.
 SUFFIX_CONSTANTS = frozenset(
     {"SUPERVISOR_STATE_FILE_SUFFIX", "SUPERVISOR_LOCK_FILE_SUFFIX"})
-# The suffix constants where they are defined, at the start of a line.
-SUFFIX_DEFINITION = re.compile(
-    r'^SUPERVISOR_(?:STATE|LOCK)_FILE_SUFFIX\s*=\s*["\']', re.MULTILINE)
 
 failures = []
 
@@ -116,20 +130,26 @@ def docstring_nodes(tree):
     return found
 
 
-def definition_value_nodes(tree):
-    """The right-hand side of each `SUPERVISOR_*_FILE_SUFFIX = "..."`.
+def suffix_definition_assignments(tree):
+    """Every `SUPERVISOR_*_FILE_SUFFIX = ...` assignment in the module.
 
-    That string is the one definition this test exists to protect, so it is
-    the one string allowed to spell the name out.
+    Both questions this test asks about a definition are answered from this
+    one list: which string is allowed to spell the name out, and which
+    scripts define the constants at all. They used to be answered separately
+    -- a line regex counted the definitions while the tree exempted their
+    values -- and the two disagreed about what a definition looks like. The
+    regex wanted a quote straight after the `=`, so a second copy written
+    SUPERVISOR_STATE_FILE_SUFFIX = ("-supervisor-state.json"), or split over
+    two lines, was exempted by the tree and never counted by the regex, and
+    passed the whole suite. Reading both from this list makes that
+    disagreement impossible: whatever is exempt here is counted here, so a
+    definition outside handoff-supervisor.py fails however it is written.
     """
-    found = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if any(isinstance(target, ast.Name) and target.id in SUFFIX_CONSTANTS
-               for target in node.targets):
-            found.add(id(node.value))
-    return found
+    return [node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name)
+                    and target.id in SUFFIX_CONSTANTS
+                    for target in node.targets)]
 
 
 def exempt_lines_and_helpers(tree, path):
@@ -145,10 +165,15 @@ def exempt_lines_and_helpers(tree, path):
 
 
 def composing_sites(path):
-    """Every place in `path` that builds either file name."""
+    """Every place in `path` that builds either file name.
+
+    Returns the sites, the composing helpers found, and whether this script
+    defines the suffix constants -- all from the one parse.
+    """
     tree = ast.parse(path.read_text())
     exempt_lines, helpers = exempt_lines_and_helpers(tree, path)
-    allowed = docstring_nodes(tree) | definition_value_nodes(tree)
+    definitions = suffix_definition_assignments(tree)
+    allowed = docstring_nodes(tree) | {id(node.value) for node in definitions}
     sites = []
 
     def report(node, how):
@@ -169,20 +194,33 @@ def composing_sites(path):
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             if names_a_suffix_constant(node.left) or names_a_suffix_constant(node.right):
                 report(node, "the suffix constant concatenated")
+        elif isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Add):
+            # `name += SUFFIX` composes the name as surely as `name + SUFFIX`,
+            # and is a different node type, so the `+` case above never saw it.
+            if names_a_suffix_constant(node.value):
+                report(node, "the suffix constant appended with +=")
         elif isinstance(node, ast.Call):
+            # Keyword arguments count as much as positional ones: the call
+            # "{a}{s}".format(a=agent, s=SUFFIX) builds exactly the name
+            # .format(agent, SUFFIX) builds.
+            arguments = list(node.args) + [keyword.value
+                                           for keyword in node.keywords]
             if (isinstance(node.func, ast.Attribute) and node.func.attr == "format"
                     and any(names_a_suffix_constant(argument)
-                            for argument in node.args)):
+                            for argument in arguments)):
                 report(node, "the suffix constant passed to .format()")
-    return sites, helpers
+    return sites, helpers, bool(definitions)
 
 
 composing = []
 helpers_found = []
+defining = []
 for script in production_scripts():
-    sites, helpers = composing_sites(script)
+    sites, helpers, defines_the_suffixes = composing_sites(script)
     composing.extend(sites)
     helpers_found.extend(helpers)
+    if defines_the_suffixes:
+        defining.append(script.name)
 
 check("no production script composes either file name itself",
       not composing,
@@ -196,8 +234,6 @@ check("every composing helper was found in the syntax tree",
       f"{sorted(COMPOSING_HELPERS)}; a helper that is renamed must be renamed "
       f"in COMPOSING_HELPERS here, or its body stops being checked")
 
-defining = [path.name for path in production_scripts()
-            if SUFFIX_DEFINITION.search(path.read_text())]
 check("the suffix constants are defined in one script",
       defining == [SUPERVISOR_SCRIPT.name],
       f"defined in {defining or 'no script'}, expected only "
