@@ -274,6 +274,28 @@ def agent_name_from_supervisor_file(path: Path) -> str:
     return path.stem
 
 
+def supervisor_state_path(handoff_directory: Path, agent: str) -> Path:
+    """Where `agent`'s supervisor state file lives under `handoff_directory`.
+
+    The inverse of agent_name_from_supervisor_file above, and with it the one
+    place the state file's name is composed. Five programs need this path --
+    this one, the recovery tool, resupervise-seat.py, the login restart and
+    the handoff writer -- and each used to build it from its own f-string, so
+    a rename had eleven sites to find and no test that found them (walk
+    file-naming-and-location-standards-cold-read-findings, item 4, user-ruled
+    2026-09-19: reduce each repeated name to one definition).
+    """
+    return Path(handoff_directory) / f"{agent}{SUPERVISOR_STATE_FILE_SUFFIX}"
+
+
+def supervisor_lock_path(handoff_directory: Path, agent: str) -> Path:
+    """Where `agent`'s supervisor lock file lives under `handoff_directory`.
+
+    The lock beside the state file, composed here for the same reason.
+    """
+    return Path(handoff_directory) / f"{agent}{SUPERVISOR_LOCK_FILE_SUFFIX}"
+
+
 def read_process_command_line(process_id: int):
     """(command_line, ps_answered) for a process id.
 
@@ -1234,11 +1256,11 @@ class SupervisorSettings:
 
     @property
     def state_path(self) -> Path:
-        return self.handoff_directory / f"{self.agent}-supervisor-state.json"
+        return supervisor_state_path(self.handoff_directory, self.agent)
 
     @property
     def lock_path(self) -> Path:
-        return self.handoff_directory / f"{self.agent}-supervisor.lock"
+        return supervisor_lock_path(self.handoff_directory, self.agent)
 
     @property
     def appended_system_prompt_agent_part_path(self) -> Path:
@@ -1556,9 +1578,8 @@ def main(argv=None) -> int:
     arguments = parser.parse_args(argv)
 
     if arguments.check:
-        state_path = (
-            Path(arguments.handoff_dir).expanduser() / f"{arguments.agent}-supervisor-state.json"
-        )
+        state_path = supervisor_state_path(
+            Path(arguments.handoff_dir).expanduser(), arguments.agent)
         alive, explanation = supervisor_liveness(state_path)
         print(explanation)
         return 0 if alive else 1

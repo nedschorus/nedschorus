@@ -292,7 +292,7 @@ def supervised_name_for_this_directory(handoff_directory: Path, agent: str,
         other = other_handoff.name[: -len(suffix)]
         if other == agent:
             continue
-        if not (handoff_directory / f"{other}-supervisor-state.json").is_file():
+        if not supervisor.supervisor_state_path(handoff_directory, other).is_file():
             continue
         written_in = claiming_directory(other_handoff)
         if written_in and str(Path(written_in).resolve()) == here:
@@ -692,7 +692,7 @@ def main(argv=None) -> int:
     seat_directory = agent_seat_working_directory()
     handoff_directory = Path(arguments.handoff_dir).expanduser()
     handoff_path = handoff_directory / f"{agent}-handoff.md"
-    state_path = handoff_directory / f"{agent}-supervisor-state.json"
+    state_path = supervisor.supervisor_state_path(handoff_directory, agent)
 
     # Refuse a foreign claim rather than overwrite it. Successive generations
     # of one seat run in the same directory, so a DIFFERENT directory holding

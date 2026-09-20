@@ -118,7 +118,7 @@ _recovery_spec.loader.exec_module(recovery)
 # interval through timing alone; the two live seats of the 2026-09-01
 # measurement were stamped 8 seconds apart.
 LIVE_SET_WINDOW_SECONDS = 2 * supervisor.HEARTBEAT_INTERVAL_SECONDS
-SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
+SUPERVISOR_STATE_FILE_SUFFIX = supervisor.SUPERVISOR_STATE_FILE_SUFFIX
 # One JSON object per line, appended, never rewritten (user-ruled 2026-09-11:
 # "a log ... not a single file"). It lives beside the state files, as
 # recover-crashed-seats-log.txt does.
