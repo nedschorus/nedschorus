@@ -9,31 +9,36 @@ eleven sites across the five, plus a second copy of the suffix constant in
 scripts/restart-live-seats-at-login.py -- so a rename had eleven places to
 find and nothing that failed when it missed one. The suffixes now live in
 scripts/handoff-supervisor.py alone, and the path is composed only by its
-supervisor_state_path() and supervisor_lock_path() (user-ruled 2026-09-19,
-walk file-naming-and-location-standards-cold-read-findings, item 4: reduce
-each repeated name to one definition).
+supervisor_state_path(), supervisor_lock_path() and supervisor_state_paths()
+(user-ruled 2026-09-19, walk
+file-naming-and-location-standards-cold-read-findings, item 4: reduce each
+repeated name to one definition).
 
-A name can be composed two ways, and the first version of this test caught
-only one. It looked for the suffix spelled out inside an f-string, so a
-twelfth site written f"{name}{SUPERVISOR_STATE_FILE_SUFFIX}" -- following the
-constant, but composing the path itself -- passed it. The reviewers of PR 545
-found the blind spot and a live instance of the second form in the supervisor
-itself. Both forms now fail, and that instance calls supervisor_lock_path()
-instead.
+This reads each script's syntax tree rather than its lines, after two rounds
+of the earlier line-matching version being wrong in both directions. Matching
+text could not tell a comment from code: a comment containing an apostrophe
+and the file name failed the suite, while the same comment without the
+apostrophe passed. It also could not see a composition spread over two lines,
+or one written with str.format instead of an f-string. The tree has no
+comments in it at all, does not care where a line ends, and says what each
+expression is, so all three go away together rather than one regex at a time.
 
-Widening the pattern found a second site the first version missed: the login
-restart searched for every seat's state file with glob(f"*{SUFFIX}"), which
-spells the name out as surely as a path does. It calls the new
-supervisor_state_paths() instead, and no longer needs the suffix at all.
+What counts as composing the name, and so fails:
 
-The three helpers compose the name, which is their whole job, so their bodies
-are the one exemption. Their line ranges are read from the syntax tree rather
-than matched as text, so renaming or moving one does not silently widen the
-exemption -- a helper renamed without being renamed here fails the second
-case instead.
+- a string that contains the file name, wherever it appears
+- an f-string with either suffix constant in a replacement field
+- either suffix constant on one side of a `+`
+- either suffix constant passed to .format()
 
-This test reads the scripts as source rather than importing them, because
-what it checks is how the name is written, not what the programs compute.
+What does not: taking a name apart, as agent_name_from_supervisor_file() does
+with endswith() and len(); a docstring that writes the pattern out for a
+reader; and the bodies of the composing helpers, whose whole job this is.
+Their line ranges come from the tree, so a helper renamed without being
+renamed in COMPOSING_HELPERS below fails a case rather than silently
+exempting whatever takes its place.
+
+Test files keep their literals on purpose: that literal is the assertion, and
+it is what fails loudly if the name is ever changed.
 
 Run: python3 scripts/supervisor-file-names-defined-once-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -50,18 +55,11 @@ SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
 # The functions that compose the names, and so the only code allowed to.
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths")
-
-# The file name written out inside a quoted string, e.g. "-supervisor.lock"
-# or f"{agent}-supervisor-state.json". Docstrings and comments write the
-# pattern as <agent>-supervisor-state.json, unquoted, which this does not
-# match.
-SPELLED_OUT = re.compile(r"""["'][^"'\n]*-supervisor(?:-state\.json|\.lock)""")
-# The suffix constant used to build a name: inside an f-string replacement
-# field, or concatenated. `endswith(suffix)` and `len(suffix)`, which take a
-# name apart rather than build one, do not match.
-COMPOSED_FROM_CONSTANT = re.compile(
-    r"\{[^{}\n]*SUPERVISOR_(?:STATE|LOCK)_FILE_SUFFIX[^{}\n]*\}"
-    r"|\+\s*(?:\w+\.)?SUPERVISOR_(?:STATE|LOCK)_FILE_SUFFIX")
+# The two file names, as they read on disk.
+SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock")
+# The constants that hold them.
+SUFFIX_CONSTANTS = frozenset(
+    {"SUPERVISOR_STATE_FILE_SUFFIX", "SUPERVISOR_LOCK_FILE_SUFFIX"})
 # The suffix constants where they are defined, at the start of a line.
 SUFFIX_DEFINITION = re.compile(
     r'^SUPERVISOR_(?:STATE|LOCK)_FILE_SUFFIX\s*=\s*["\']', re.MULTILINE)
@@ -78,24 +76,66 @@ def check(case_name, condition, detail=""):
 
 
 def production_scripts():
-    """Every script a seat runs -- test files excluded.
-
-    A test file spells the real file name on purpose: that literal is the
-    assertion, and it is what fails loudly if the name is ever changed.
-    """
+    """Every script a seat runs -- test files excluded."""
     return sorted(path for path in SCRIPTS_DIRECTORY.glob("*.py")
                   if not path.name.endswith("-test.py"))
 
 
-def exempt_line_numbers(path):
-    """The lines the helpers occupy, which may compose the name.
+def names_a_suffix_constant(node):
+    """True when this expression is one of the suffix constants.
 
-    Read from the syntax tree, so a helper that is renamed stops being
-    exempt instead of exempting whatever takes its place.
+    Both `SUPERVISOR_STATE_FILE_SUFFIX` and the qualified
+    `supervisor.SUPERVISOR_STATE_FILE_SUFFIX` count: a program that reaches
+    for the constant through the imported module is composing the name just
+    as surely as one that holds its own copy.
     """
+    if isinstance(node, ast.Name):
+        return node.id in SUFFIX_CONSTANTS
+    if isinstance(node, ast.Attribute):
+        return node.attr in SUFFIX_CONSTANTS
+    return False
+
+
+def docstring_nodes(tree):
+    """Every docstring in the module, by identity.
+
+    A docstring writes the file name out for a reader -- the supervisor's own
+    explains that a state file and a lock file are named after the agent --
+    and explaining a name is not composing one.
+    """
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None)
+        if (body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            found.add(id(body[0].value))
+    return found
+
+
+def definition_value_nodes(tree):
+    """The right-hand side of each `SUPERVISOR_*_FILE_SUFFIX = "..."`.
+
+    That string is the one definition this test exists to protect, so it is
+    the one string allowed to spell the name out.
+    """
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id in SUFFIX_CONSTANTS
+               for target in node.targets):
+            found.add(id(node.value))
+    return found
+
+
+def exempt_lines_and_helpers(tree, path):
+    """The lines the composing helpers occupy, and which were found."""
     if path != SUPERVISOR_SCRIPT:
         return set(), []
-    tree = ast.parse(path.read_text())
     exempt, found = set(), []
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in COMPOSING_HELPERS:
@@ -104,25 +144,51 @@ def exempt_line_numbers(path):
     return exempt, found
 
 
+def composing_sites(path):
+    """Every place in `path` that builds either file name."""
+    tree = ast.parse(path.read_text())
+    exempt_lines, helpers = exempt_lines_and_helpers(tree, path)
+    allowed = docstring_nodes(tree) | definition_value_nodes(tree)
+    sites = []
+
+    def report(node, how):
+        line = getattr(node, "lineno", 0)
+        if line not in exempt_lines:
+            sites.append(f"{path.name}:{line} ({how})")
+
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in allowed
+                and any(name in node.value for name in SPELLED_OUT_NAMES)):
+            report(node, "the name spelled out")
+        elif isinstance(node, ast.JoinedStr):
+            if any(isinstance(part, ast.FormattedValue)
+                   and names_a_suffix_constant(part.value)
+                   for part in node.values):
+                report(node, "an f-string built from the suffix constant")
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            if names_a_suffix_constant(node.left) or names_a_suffix_constant(node.right):
+                report(node, "the suffix constant concatenated")
+        elif isinstance(node, ast.Call):
+            if (isinstance(node.func, ast.Attribute) and node.func.attr == "format"
+                    and any(names_a_suffix_constant(argument)
+                            for argument in node.args)):
+                report(node, "the suffix constant passed to .format()")
+    return sites, helpers
+
+
 composing = []
 helpers_found = []
-for path in production_scripts():
-    exempt, found = exempt_line_numbers(path)
-    helpers_found.extend(found)
-    source = path.read_text()
-    definition_lines = {source[:match.start()].count("\n") + 1
-                        for match in SUFFIX_DEFINITION.finditer(source)}
-    for line_number, line in enumerate(source.splitlines(), start=1):
-        if line_number in exempt or line_number in definition_lines:
-            continue
-        if SPELLED_OUT.search(line) or COMPOSED_FROM_CONSTANT.search(line):
-            composing.append(f"{path.name}:{line_number}")
+for script in production_scripts():
+    sites, helpers = composing_sites(script)
+    composing.extend(sites)
+    helpers_found.extend(helpers)
 
 check("no production script composes either file name itself",
       not composing,
       "composed at " + ", ".join(composing) + " -- call "
-      "supervisor_state_path() or supervisor_lock_path() instead, whether the "
-      "name is spelled out or built from the suffix constant")
+      "supervisor_state_path(), supervisor_lock_path() or "
+      "supervisor_state_paths() instead")
 
 check("every composing helper was found in the syntax tree",
       sorted(helpers_found) == sorted(COMPOSING_HELPERS),
