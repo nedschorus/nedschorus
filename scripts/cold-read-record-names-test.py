@@ -20,8 +20,11 @@ the tree skips those three rounds.
 WHAT IT FAILS, in a cold-read program:
 
   * a path join whose string operand holds `cold-read-records` anywhere, or
-    is exactly the frozen target's `target`, or is a name this program bound
-    to such a string itself;
+    is exactly the frozen target's `target`. For `cold-read-records` only, a
+    name this program bound to such a string is followed one hop, so
+    `MY_RECORDS = "cold-read-records"` and then `REPO_ROOT / MY_RECORDS`
+    fails. The frozen target is matched on the operand itself and is not
+    followed through a name -- see the list below;
   * a `def` of one of the module's names;
   * a binding of one of the module's names -- plain, annotated, augmented,
     walrus, or one element of an unpacking -- to anything but an attribute
@@ -51,6 +54,14 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
     asks the opposite question and is left alone.
   * the frozen target's name used anywhere but as a path join's operand:
     `if "target" in directory.name` passes.
+  * the frozen target's name reached through a name: `n = "target"` and then
+    `directory / n` passes, measured. Only `cold-read-records` is followed
+    one hop that way. The hop is what lets a two-part word like
+    `cold-read-records` hide in a constant; `target` is one short word that
+    reads as itself at the join, every copy this guard was written for wrote
+    it there directly, and following it would put a guard on a name so
+    ordinary that a program binding `target` for any other reason would be
+    refused.
   * an owned name that arrives as a function parameter, a class attribute or
     an `import ... as`, rather than as a binding of its own.
   * a copy of the value written out at a second remove: a name bound to a
