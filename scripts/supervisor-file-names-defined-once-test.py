@@ -170,7 +170,12 @@ def composing_sites(path):
     Returns the sites, the composing helpers found, and whether this script
     defines the suffix constants -- all from the one parse.
     """
-    tree = ast.parse(path.read_text())
+    # filename= so an unparseable script names itself. Without it the
+    # SyntaxError reads File "<unknown>", line 1, and this suite appears
+    # to report a fault in a file it has no other relationship with --
+    # it parses every production script, so the one at fault is not
+    # identified by being the only one parsed (reviewer of PR 549).
+    tree = ast.parse(path.read_text(), filename=str(path))
     exempt_lines, helpers = exempt_lines_and_helpers(tree, path)
     definitions = suffix_definition_assignments(tree)
     allowed = docstring_nodes(tree) | {id(node.value) for node in definitions}
