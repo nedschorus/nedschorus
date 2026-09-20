@@ -23,8 +23,26 @@
 # one runs on every commit of every seat on the machine, so it always exits 0.
 # A failed stamp is reported on stderr, never fatal.
 
-session_id="$CLAUDE_CODE_BRIDGE_SESSION_ID"
-[ -n "$session_id" ] || exit 0
+# Two variables, and the linked one is preferred. The harness gives a session
+# that has a claude.ai link CLAUDE_CODE_BRIDGE_SESSION_ID, and gives every
+# session CLAUDE_CODE_SESSION_ID, which names its transcript on the authoring
+# machine at ~/.claude/projects/<slugged working directory>/<id>.jsonl. A
+# session without a link — a child session, for one — has only the second, and
+# until 2026-09-20 got no trailer at all: 12 of main's last 60 non-merge
+# commits carried none, and a merge-lane reviewer had to reconstruct one such
+# commit's authoring session from its content, then wrongly diagnosed the
+# absence as an unwired core.hooksPath and told a seat to rewire it. The
+# linked form stays first because a reviewer can open it; the id is the
+# fallback because a reviewer can still find the transcript from it.
+bridge_session_id="$CLAUDE_CODE_BRIDGE_SESSION_ID"
+local_session_id="$CLAUDE_CODE_SESSION_ID"
+if [ -n "$bridge_session_id" ]; then
+    session_trailer="Claude-Session: https://claude.ai/code/$bridge_session_id"
+elif [ -n "$local_session_id" ]; then
+    session_trailer="Claude-Session-Id: $local_session_id"
+else
+    exit 0
+fi
 
 # git refuses an empty message ("Aborting commit due to empty commit message"),
 # and the trailer must not turn an empty message into one that goes through:
@@ -38,6 +56,6 @@ fi
 # --no-divider: the file is a bare commit message, never a patch, so a "---"
 # line in its body is text, not the start of a diff to stamp above.
 git interpret-trailers --in-place --no-divider --if-exists addIfDifferent \
-    --trailer "Claude-Session: https://claude.ai/code/$session_id" "$1" ||
-    echo "prepare-commit-msg: could not add the Claude-Session trailer; add it by hand" >&2
+    --trailer "$session_trailer" "$1" ||
+    echo "prepare-commit-msg: could not add the session trailer; add it by hand" >&2
 exit 0

@@ -9,8 +9,10 @@ with core.hooksPath pointed at this checkout's copy of the hook directory,
 so each case exercises exactly what git runs on a seat's commit.
 
 The session id is always a fake one injected here, never inherited: the
-seat running these tests has its own CLAUDE_CODE_BRIDGE_SESSION_ID, and the
-unset cases must not see it.
+seat running these tests has its own CLAUDE_CODE_BRIDGE_SESSION_ID and its
+own CLAUDE_CODE_SESSION_ID, and the unset cases must not see either. Both are
+removed from every case's environment and put back only when the case asks
+for them, so a case that means "no session at all" really has none.
 """
 
 import os
@@ -23,7 +25,9 @@ from pathlib import Path
 HOOK_DIRECTORY = Path(__file__).resolve().with_name("git-client-side-hooks")
 HOOK_SCRIPT = HOOK_DIRECTORY / "prepare-commit-msg"
 SESSION_VARIABLE = "CLAUDE_CODE_BRIDGE_SESSION_ID"
+LOCAL_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FAKE_SESSION = "session_0FakeTestSessionAAAAAAAA"
+FAKE_LOCAL_SESSION = "00000000-fake-4000-8000-00000000000a"
 OTHER_FAKE_SESSION = "session_0FakeTestSessionBBBBBBBB"
 CO_AUTHOR_LINE = "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
@@ -46,6 +50,10 @@ def session_line(session_id):
     return f"Claude-Session: {url(session_id)}"
 
 
+def local_session_line(local_session_id):
+    return f"Claude-Session-Id: {local_session_id}"
+
+
 class ThrowawayRepository:
     """One repository on main with one commit, wired to the hook under test.
 
@@ -64,19 +72,22 @@ class ThrowawayRepository:
         self.git(None, "config", "core.hooksPath", str(HOOK_DIRECTORY))
         self.write_and_commit(None, "base.txt", "base\n", "Base commit")
 
-    def environment(self, session_id):
+    def environment(self, session_id, local_session_id=None):
         env = dict(os.environ)
         env.pop(SESSION_VARIABLE, None)
+        env.pop(LOCAL_SESSION_VARIABLE, None)
         if session_id is not None:
             env[SESSION_VARIABLE] = session_id
+        if local_session_id is not None:
+            env[LOCAL_SESSION_VARIABLE] = local_session_id
         env["GIT_CONFIG_GLOBAL"] = str(self.empty_global_config)
         env["GIT_CONFIG_NOSYSTEM"] = "1"
         return env
 
-    def git(self, session_id, *arguments, cwd=None):
+    def git(self, session_id, *arguments, cwd=None, local_session_id=None):
         completed = subprocess.run(
             ["git", *arguments], cwd=str(cwd or self.root),
-            env=self.environment(session_id),
+            env=self.environment(session_id, local_session_id),
             capture_output=True, text=True, timeout=30,
         )
         if completed.returncode != 0:
@@ -84,13 +95,14 @@ class ThrowawayRepository:
                 f"git {' '.join(arguments)} failed: {completed.stderr.strip()}")
         return completed
 
-    def write_and_commit(self, session_id, filename, content, message, cwd=None):
+    def write_and_commit(self, session_id, filename, content, message, cwd=None,
+                         local_session_id=None):
         work_tree = cwd or self.root
         (work_tree / filename).write_text(content)
         self.git(session_id, "add", filename, cwd=work_tree)
         completed = subprocess.run(
             ["git", "commit", "--quiet", "--file", "-"], cwd=str(work_tree),
-            env=self.environment(session_id), input=message,
+            env=self.environment(session_id, local_session_id), input=message,
             capture_output=True, text=True, timeout=30,
         )
         if completed.returncode != 0:
@@ -99,6 +111,14 @@ class ThrowawayRepository:
     def message(self, revision="HEAD", cwd=None):
         return self.git(None, "log", "-1", "--format=%B", revision,
                         cwd=cwd).stdout.rstrip("\n")
+
+    def local_session_trailers(self, revision="HEAD", cwd=None):
+        """The Claude-Session-Id values, the fallback trailer's own key."""
+        output = self.git(
+            None, "log", "-1",
+            "--format=%(trailers:key=Claude-Session-Id,valueonly)", revision,
+            cwd=cwd).stdout
+        return [line for line in output.splitlines() if line.strip()]
 
     def session_trailers(self, revision="HEAD", cwd=None):
         """The Claude-Session values git itself parses out of the trailer
@@ -146,6 +166,50 @@ def run_cases(scratch: Path):
     repository = ThrowawayRepository(scratch, "empty")
     repository.write_and_commit("", "a.txt", "a\n", "Add a")
     check("an empty variable counts as no link",
+          repository.message() == "Add a", repr(repository.message()))
+
+    # --- The fallback when the session has no claude.ai link ------------
+    # A session without a link — a child session, for one — still has
+    # CLAUDE_CODE_SESSION_ID, which names its transcript on the authoring
+    # machine. Before this fallback such a commit carried nothing and its
+    # session had to be reconstructed from content.
+
+    repository = ThrowawayRepository(scratch, "local-only")
+    repository.write_and_commit(None, "a.txt", "a\n", "Add a",
+                                local_session_id=FAKE_LOCAL_SESSION)
+    check("no link but a local id gets the fallback trailer",
+          repository.message()
+          == f"Add a\n\n{local_session_line(FAKE_LOCAL_SESSION)}",
+          repr(repository.message()))
+    check("and git parses it under its own key",
+          repository.local_session_trailers() == [FAKE_LOCAL_SESSION],
+          repr(repository.message()))
+    check("and it is not read as the linked trailer",
+          repository.session_trailers() == [],
+          repr(repository.session_trailers()))
+
+    repository = ThrowawayRepository(scratch, "both-set")
+    repository.write_and_commit(FAKE_SESSION, "a.txt", "a\n", "Add a",
+                                local_session_id=FAKE_LOCAL_SESSION)
+    check("with both set the linked trailer wins",
+          repository.session_trailers() == [url(FAKE_SESSION)],
+          repr(repository.message()))
+    check("and the fallback is not also added",
+          repository.local_session_trailers() == [],
+          repr(repository.message()))
+
+    repository = ThrowawayRepository(scratch, "empty-link-local-set")
+    repository.write_and_commit("", "a.txt", "a\n", "Add a",
+                                local_session_id=FAKE_LOCAL_SESSION)
+    check("an empty link variable falls back to the local id",
+          repository.message()
+          == f"Add a\n\n{local_session_line(FAKE_LOCAL_SESSION)}",
+          repr(repository.message()))
+
+    repository = ThrowawayRepository(scratch, "local-empty")
+    repository.write_and_commit(None, "a.txt", "a\n", "Add a",
+                                local_session_id="")
+    check("an empty local id counts as no session at all",
           repository.message() == "Add a", repr(repository.message()))
 
     # --- The agent already wrote attribution ----------------------------
@@ -277,7 +341,7 @@ def run_cases(scratch: Path):
           completed.returncode == 0,
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
     check("and says so on stderr",
-          "could not add the Claude-Session trailer" in completed.stderr,
+          "could not add the session trailer" in completed.stderr,
           repr(completed.stderr))
 
     check("the hook is executable, or git would silently skip it",
