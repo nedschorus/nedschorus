@@ -1092,7 +1092,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     #
     # Asked here, before the tmux answer is acted on, because a live tmux
     # session needs the same confirmation.
-    lock_path = handoff_directory / f"{name}-supervisor.lock"
+    lock_path = supervisor.supervisor_lock_path(handoff_directory, name)
     supervisor_answer, identity = seat_supervisor_confirmed_by_ps(name, lock_path)
 
     # A live tmux session is not proof that the seat is running: an attached
@@ -1140,7 +1140,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
             f"the supervisor lock at {lock_path} names a live process, but ps could not "
             f"confirm it is a supervisor of this seat — {identity}")
 
-    state_path = handoff_directory / f"{name}-supervisor-state.json"
+    state_path = supervisor.supervisor_state_path(handoff_directory, name)
     supervisor_alive, liveness_detail = supervisor.supervisor_liveness(state_path)
     if supervisor_alive:
         # supervisor_liveness reads the same lock through the same predicate,
@@ -1296,7 +1296,7 @@ def wait_for_the_seat_to_come_up(name: str, handoff_directory: Path,
     """
     if identity_check is None:
         identity_check = supervisor.process_is_supervisor_for_agent
-    lock_path = handoff_directory / f"{name}-supervisor.lock"
+    lock_path = supervisor.supervisor_lock_path(handoff_directory, name)
 
     def a_supervisor_is_running():
         try:
@@ -1858,7 +1858,7 @@ def main(argv=None) -> int:
         # mistyped launch is not a seat, and "not running" is not "crashed").
         # A never-run directory can still be recovered by NAME, deliberately.
         def ever_ran(name: str) -> bool:
-            return ((handoff_directory / f"{name}-supervisor-state.json").is_file()
+            return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
                     or (handoff_directory / f"{name}-handoff.md").is_file()
                     or harness_project_directory(agents_root / name,
                                                  projects_root).is_dir())

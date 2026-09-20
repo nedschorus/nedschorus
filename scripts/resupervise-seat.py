@@ -385,7 +385,7 @@ def main(argv=None) -> int:
 
     handoff_directory = Path(arguments.handoff_dir or "~/.claude/handoffs").expanduser()
     handoff_path = handoff_directory / f"{arguments.name}-handoff.md"
-    state_path = handoff_directory / f"{arguments.name}-supervisor-state.json"
+    state_path = supervisor.supervisor_state_path(handoff_directory, arguments.name)
     agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
                    else default_agents_root())
     seat_directory = agents_root / arguments.name
