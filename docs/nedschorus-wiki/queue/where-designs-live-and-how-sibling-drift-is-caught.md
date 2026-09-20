@@ -76,8 +76,11 @@ design in the tree needs it yet: eight designs exist and each serves one issue.
 **Not decided: not every GHI needs a design.** Stated by the user, consistent with the tree, not
 written anywhere.
 
-**Decided 2026-09-20, was open above: where a test-design lives.** Beside its design and its
-component-contract, the three moving together. See the section at the head of this note.
+**Decided 2026-09-20: where a test-design lives.** Beside its design and its
+component-contract, the three moving together. See the section at the head of this note. This
+note had not listed the question: the gap was found while revising the ghi-info design, when
+nothing in `docs/design-to-main/` or the queued design-to-main agent-instructions turned out to
+place a test-design before it lands with its component.
 
 **A contradiction to settle at the drain, not before.**
 `docs/agents/queue/design-to-main-design-writing-agent-instructions.md`, itself queued, tells its
