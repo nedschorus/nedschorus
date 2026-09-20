@@ -30,7 +30,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_FILE = REPO_ROOT / ".claude" / "skills" / "walk-me-through" / "SKILL.md"
 # Every `<name>-something.md` and `<name>.md` the skill writes. The skill
 # spells the stem `<name>`, which is what makes an ending findable in prose.
-SKILL_ENDING = re.compile(r"<name>(-[a-z]+)?\.md")
+# The role itself may be several hyphenated words: the project's naming rule
+# pushes new names that way, so `<name>-fast-read.md` has to read as one
+# ending rather than not read at all (reviewer of PR 546, non-blocking; the
+# first version stopped at a single word and refused a multi-part role as
+# unnamed, which is the opposite of what this test promises).
+SKILL_ENDING = re.compile(r"<name>(-[a-z]+(?:-[a-z]+)*)?\.md")
 
 failures = []
 
