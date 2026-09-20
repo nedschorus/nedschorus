@@ -289,10 +289,12 @@ def fast_read_report_path_for_target(
 # documents with the same stem in different directories read on one day come
 # out as -2 of each other (target/ shows which was which), and the -N count
 # says nothing about which draft each read was. Both accepted at the walk.
-# Restated, not imported, in scripts/cold-read-grid.py, because the
-# cold-read-grid is a program rather than a module; the two must stay
-# identical. The report inside the record is bare `fast-read.md` (item 5):
-# the directory says which read, the file says what it is.
+# The code implementing it is not restated: scripts/cold-read-record-names.py
+# holds it, and this program and scripts/cold-read-grid.py both import it, so
+# the two cannot drift apart. scripts/cold-read-record-names-test.py fails a
+# program that writes its own copy back. The report inside the record is
+# bare `fast-read.md` (item 5): the directory says which read, the file says
+# what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 

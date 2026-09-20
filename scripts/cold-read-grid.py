@@ -224,11 +224,13 @@ where they live."""
 # (the record's target/ shows which was which), and the -N count says nothing
 # about which draft each read was. Both accepted at the walk, since the name
 # is now shared with the walk that rules on the read (item 6) and has to be
-# short enough to type. Restated, not imported, in
-# scripts/cold-read-fast-read.py, because the cold-read-grid is a program
-# rather than a module; the two must stay identical. The files inside the
-# record carry none of this name (item 5): the directory says which read, the
-# file says which agent ran which attack.
+# short enough to type. The code implementing it is not restated:
+# scripts/cold-read-record-names.py holds it, and this program and
+# scripts/cold-read-fast-read.py both import it, so the two cannot drift
+# apart. scripts/cold-read-record-names-test.py fails a program that writes
+# its own copy back. The files inside the record carry none of this name
+# (item 5): the directory says which read, the file says which agent ran
+# which attack.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 RECORD_CLOCK_OVERRIDE_FORMAT = "%Y-%m-%dT%H:%M"
 
