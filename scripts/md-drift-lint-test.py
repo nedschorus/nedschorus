@@ -238,6 +238,16 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("see `<!-- see docs/long-gone.py -->`", root)
     check("a path inside a backticked HTML comment is still checked",
           findings == ["path does not exist: docs/long-gone.py"], str(findings))
+    # "<?" opens a processing instruction -- the other shape this exclusion
+    # still rejects, now that "/" has come out -- and nothing failed on it
+    # until now: the whole suite passed against a copy of the lint reduced to
+    # `(?![!])`. Found in review of the pull request that removed "/",
+    # 2026-09-20. Unlike "/", this exclusion is load-bearing: without it the
+    # span collapses and the path is lost, in `<?xml ... ?>`,
+    # `<?xml-stylesheet ... ?>` and `<?php ... ?>` alike.
+    findings = problems_for("see `<?xml see docs/long-gone.py ?>`", root)
+    check("a path inside a backticked processing instruction is still checked",
+          findings == ["path does not exist: docs/long-gone.py"], str(findings))
     # The span is NOT collapsed, which is this case's subject: under the first
     # version of the pattern both paths vanished together. What each word then
     # meets is the older SKIP_MARKERS rule, unchanged by this change and older
