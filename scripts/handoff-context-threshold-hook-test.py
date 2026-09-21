@@ -610,7 +610,9 @@ with tempfile.TemporaryDirectory() as workspace:
 
     # --- The hook, as the harness runs it: a subprocess reading stdin -----
     # Probe session ids are namespaced to this test; their fired markers land
-    # in the real handoff directory and are removed on the way out.
+    # in this suite's own handoff directory -- never the real one, since the
+    # redirect above gives the suite its own HOME -- and are removed on the
+    # way out.
     PROBE_SESSION_ID = "handoff-threshold-hook-test-session"
     marker_file = hook.HANDOFF_DIRECTORY / f"{PROBE_SESSION_ID}-handoff-asked"
     # The deferral cases get session ids of their own: one case asserts that no
