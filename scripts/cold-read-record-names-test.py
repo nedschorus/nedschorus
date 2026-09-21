@@ -10,6 +10,17 @@ places to find and nothing failed when it missed one. They now come from
 scripts/cold-read-record-names.py (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4).
 
+`frozen_target_path`, the path built under the frozen copy's directory name,
+joined them on 2026-09-20 (user-ruled, walk
+md-skills-seat-open-decisions-2026-09-20, item 1). It had been defined in
+each launcher and the two disagreed -- the cold-read-grid resolved the
+cold-read-target before making it relative and the cold-read-fast-read did
+not, while calling its rule the cold-read-grid's -- so the same
+in-repository document, spelled through the /tmp symlink this fleet's
+worktrees sit under, froze at two different paths. The resolving version is
+the one kept. This test gained the name and one shape: the join beneath the
+frozen copy's directory, below.
+
 This reads each script's syntax tree rather than its lines, which is what
 scripts/supervisor-file-names-defined-once-test.py arrived at after three
 rounds of a line-matching version being wrong in both directions: matching
@@ -38,6 +49,13 @@ WHAT IT FAILS, in a cold-read program:
     carries. The three copies this change deleted were each written that way
     inside a differently named wrapper, so a list of names would not have
     found them.
+  * a path joined onto the frozen copy's directory name and then joined onto
+    again -- `record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative` -- which
+    is `frozen_target_path` written out, whatever the function around it is
+    called. The identifier is matched exactly, and off any object, so a
+    program that reads the constant from somewhere else is caught too. The
+    name is in the list above as well; this shape is what finds a copy that
+    carries another name, as the collision loop's three copies did.
 
 WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
 
@@ -54,6 +72,15 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
     asks the opposite question and is left alone.
   * the frozen target's name used anywhere but as a path join's operand:
     `if "target" in directory.name` passes.
+  * one join onto the frozen copy's directory with nothing beneath it:
+    `(directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()`, which
+    is how scripts/cold-read-cell-common.py asks whether a cold-read-record
+    froze its cold-read-target. Asking after the directory is not composing a
+    path inside it. Measured.
+  * the frozen path composed in another shape: `record_dir.joinpath(...)`, or
+    `pathlib.Path(record_dir, FROZEN_TARGET_DIRECTORY_NAME, relative)`. As
+    with the collision loop, the signature is the one shape the deleted
+    copies were written in, not the idea behind them.
   * the frozen target's name reached through a name: `n = "target"` and then
     `directory / n` passes, measured. Only `cold-read-records` is followed
     one hop that way. The hop is what lets a two-part word like
@@ -97,7 +124,13 @@ JOINED_SEGMENT_VALUES = ("target",)
 # RECORDS_DIR -- but only as a reference to the module's, never as a copy.
 OWNED_NAMES = frozenset({
     "RECORDS_DIR", "FROZEN_TARGET_DIRECTORY_NAME", "record_name_for_target",
-    "record_directory_name_for_target", "fresh_record_directory"})
+    "record_directory_name_for_target", "fresh_record_directory",
+    "frozen_target_path"})
+# The constant whose join says a path is being built inside the frozen copy's
+# directory. Matched as an identifier, exactly: a program reaches it as
+# `FROZEN_TARGET_DIRECTORY_NAME` or as `<module>.FROZEN_TARGET_DIRECTORY_NAME`,
+# and `FROZEN_TARGET_DIRECTORY_NAME_OLD` is a different name, not this one.
+FROZEN_TARGET_DIRECTORY_CONSTANT = "FROZEN_TARGET_DIRECTORY_NAME"
 # How a program loads the shared module: a spec from the file's name, then a
 # module from the spec. Followed rather than assumed, so a program that calls
 # its binding something other than `record_names` is still checked.
@@ -237,6 +270,36 @@ def reads_from_the_module(node, module_bindings):
             and node.value.id in module_bindings)
 
 
+def names_the_frozen_target_directory(node):
+    """True when this expression is the frozen copy's directory name, as
+    either spelling a program reaches it by: the constant itself, or the
+    attribute read off whatever it called the shared module. The object is
+    not checked here -- unlike an owned name's binding, a path built inside
+    the frozen directory is this rule's own whichever object the name came
+    off -- and the identifier is matched exactly, never as a substring."""
+    if isinstance(node, ast.Attribute):
+        return node.attr == FROZEN_TARGET_DIRECTORY_CONSTANT
+    if isinstance(node, ast.Name):
+        return node.id == FROZEN_TARGET_DIRECTORY_CONSTANT
+    return False
+
+
+def builds_a_path_under_the_frozen_target(node):
+    """True when this join composes a path BENEATH the frozen copy's
+    directory -- `record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative`, a
+    join whose left side is itself a join ending in the constant.
+
+    That is `frozen_target_path` and nothing else, so it is found without
+    asking what the function around it is called. Joining onto the constant
+    once and stopping there asks whether the directory exists, which
+    scripts/cold-read-cell-common.py does and which this leaves alone.
+    """
+    return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+            and isinstance(node.left, ast.BinOp)
+            and isinstance(node.left.op, ast.Div)
+            and names_the_frozen_target_directory(node.left.right))
+
+
 def searches_for_a_free_name(test):
     """True when a `while` test asks whether a candidate path is taken, which
     is how the same-day collision rule is written: `while candidate.exists()`.
@@ -267,6 +330,10 @@ for script in cold_read_scripts():
         # checkout's -- and prose naming a directory is not a program
         # composing its path.
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            if builds_a_path_under_the_frozen_target(node):
+                own_copies.append(
+                    f"{script.name}:{node.lineno} (its own path built under "
+                    f"the frozen target's directory)")
             for side in (node.left, node.right):
                 if isinstance(side, ast.Constant) and isinstance(side.value, str):
                     if any(value in side.value for value in SPELLED_OUT_VALUES):
@@ -301,7 +368,7 @@ for script in cold_read_scripts():
 check("no cold-read program keeps its own copy of these names",
       not own_copies,
       "found " + ", ".join(own_copies) + f" -- import {NAMES_MODULE.name} and "
-      "read the value from it")
+      "take the definition from it")
 
 # The module must actually define everything it is credited with, or the
 # check above passes by finding nothing anywhere.

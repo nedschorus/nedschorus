@@ -85,7 +85,6 @@ CELL_LAUNCHERS = {
 # outcome; its one line is printed and the run goes on, because a store that
 # cannot be reached is no reason to lose a review that landed.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "cold-read-record-ship.py"
-FROZEN_TARGET_DIRECTORY_NAME = record_names.FROZEN_TARGET_DIRECTORY_NAME
 # The cold-read-cells' shared module, loaded the way the cold-read-cells
 # load it, for the status phrases it pins. Imported rather than copied so
 # the cold-read-grid and the cold-read-cells cannot drift on the words the
@@ -290,17 +289,6 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
-    """record_dir/target/<repository path>; a cold-read-target outside the
-    repository keeps its absolute path minus the leading slash, so nothing
-    collides and the path still says where the file was."""
-    try:
-        relative = target.resolve().relative_to(REPO_ROOT)
-    except ValueError:
-        relative = pathlib.Path(*target.resolve().parts[1:])
-    return record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative
-
-
 def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
     """Copy the cold-read-target's bytes into the cold-read-record and return
     their sha256.
@@ -317,7 +305,7 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
         content = target.read_bytes()
     except OSError:
         return ""
-    frozen = frozen_target_path(target, record_dir)
+    frozen = record_names.frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_bytes(content)
     return hashlib.sha256(content).hexdigest()

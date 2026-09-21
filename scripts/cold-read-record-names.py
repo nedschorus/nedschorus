@@ -11,6 +11,23 @@ missed one (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4: reduce each
 repeated name to one definition).
 
+The path built under the frozen copy's directory name was the last piece
+still written twice: `frozen_target_path` was defined in each launcher and
+the two disagreed. The cold-read-grid resolved the cold-read-target before
+making it relative and scripts/cold-read-fast-read.py did not, while its
+docstring called its rule "the cold-read-grid's rule". On macOS /tmp is a
+symbolic link to /private/tmp and this fleet's worktrees live under it, so
+the same in-repository document, spelled through /tmp, froze at
+`target/CLAUDE.md` under the resolving rule and at
+`target/tmp/claude-501/.../CLAUDE.md` -- as though it lived outside the
+checkout -- under the other (both measured 2026-09-20). Already-resolved
+paths agree, which is why it stayed silent: the cold-read-fast-read's main()
+resolves before it freezes, so nothing in production had handed the
+non-resolving copy a path the two would disagree over, and the divergence
+was in the rule rather than in any frozen record. The resolving version is
+the one kept (user-ruled 2026-09-20, walk
+md-skills-seat-open-decisions-2026-09-20, item 1).
+
 The copies had a stated reason, in scripts/cold-read-fast-read.py: the rule
 was "restated here rather than imported because the cold-read-grid is a
 program, not a module". That was true of every candidate home, since all four
@@ -43,6 +60,29 @@ RECORDS_DIR = REPO_ROOT / "cold-read-records"
 # repository path, so a reader of an old cold-read-record sees both the
 # exact text reviewed and where it lived.
 FROZEN_TARGET_DIRECTORY_NAME = "target"
+
+
+def frozen_target_path(
+    target: pathlib.Path, record_dir: pathlib.Path,
+) -> pathlib.Path:
+    """Where this cold-read-target's bytes are frozen inside this
+    cold-read-record: `record_dir/target/<repository path>`.
+
+    The cold-read-target is resolved before it is made relative, so one
+    document reached by two spellings -- through a symbolic link and not --
+    freezes at one path, the one it has in the repository. A cold-read-target
+    outside the repository, which both instruments accept, keeps its absolute
+    path minus the leading slash, so nothing collides and the path still says
+    where the file was. Both rules are the cold-read-grid's, kept as the one
+    definition over the cold-read-fast-read's non-resolving copy (user-ruled
+    2026-09-20; the module docstring above holds what the two did).
+    """
+    resolved = target.resolve()
+    try:
+        relative = resolved.relative_to(REPO_ROOT)
+    except ValueError:
+        relative = pathlib.Path(*resolved.parts[1:])
+    return record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative
 
 
 def record_name_for_target(target: pathlib.Path) -> str:

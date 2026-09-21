@@ -125,10 +125,6 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
-# Where the cold-read-target's bytes are frozen inside the cold-read-record:
-# under this name at the cold-read-target's own repository path, as
-# scripts/cold-read-grid.py does.
-FROZEN_TARGET_DIRECTORY_NAME = record_names.FROZEN_TARGET_DIRECTORY_NAME
 WALK_DIRECTORY_RELATIVE = pathlib.Path("docs") / "walk"
 RECORDS_DIR = record_names.RECORDS_DIR
 
@@ -645,22 +641,11 @@ def bare_references_section(references: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-def frozen_target_path(target: pathlib.Path, record_dir: pathlib.Path) -> pathlib.Path:
-    """record_dir/target/<repository path>, or the absolute path minus its
-    leading slash for a cold-read-target outside the repository -- the
-    cold-read-grid's rule."""
-    try:
-        relative = target.relative_to(REPO_ROOT)
-    except ValueError:
-        relative = pathlib.Path(*target.parts[1:])
-    return record_dir / FROZEN_TARGET_DIRECTORY_NAME / relative
-
-
 def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     """Copy the cold-read-target's bytes into the cold-read-record before the
     cold-read-cell reads it, so the cold-read-record says exactly what was
     reviewed (user-ruled 2026-09-07)."""
-    frozen = frozen_target_path(target, record_dir)
+    frozen = record_names.frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_bytes(target.read_bytes())
 
