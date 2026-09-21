@@ -43,6 +43,7 @@ Exit codes: 0 clean stop, 2 bad invocation, 3 the agent command is missing.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -56,6 +57,29 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+# Which of a seat's transcripts is worth resuming — the same judgement
+# recover-crashed-seats.py makes, from the one module that defines it, so the
+# two programs cannot call one seat's transcripts two different things (issue
+# 242's change 5). The convention — importlib for a module whose filename has
+# hyphens — is scripts/cold-read-cell-common.py's.
+_worth_resuming_spec = importlib.util.spec_from_file_location(
+    "seat_transcript_worth_resuming",
+    Path(__file__).with_name("seat-transcript-worth-resuming.py"))
+worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
+_worth_resuming_spec.loader.exec_module(worth_resuming)
+
+# The first turn a resumed session gets when no first prompt was given. One
+# definition, because two paths reach it: --resume-session-id, which only
+# recover-crashed-seats.py passes, and the by-hand resume below. Its opening is
+# an EMPTY_SUCCESSOR_MARKERS entry in that tool, so a session resumed under it
+# that then does nothing is still recognised as workless — reword this and that
+# recognition breaks (pinned in recover-crashed-seats-test.py's F8 group).
+RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
+    "This session was resumed by crash recovery (nedschorus#120): the "
+    "previous session ended without writing a handoff. Re-verify in-flight "
+    "state before trusting it, then continue the work underway."
+)
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
@@ -1347,11 +1371,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         # default would tell it to ask for work it already has (PR #131
         # review round 3, P3-4 — the recovery script writes a richer prompt
         # file, and this default makes the by-hand flag equally truthful).
-        prompt = (
-            "This session was resumed by crash recovery (nedschorus#120): the "
-            "previous session ended without writing a handoff. Re-verify in-flight "
-            "state before trusting it, then continue the work underway."
-        )
+        prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
     else:
         prompt = f"You are {settings.agent}. No handoff exists yet; ask what to work on."
 
@@ -1438,6 +1458,40 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 print("handoff-supervisor: igniting from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
             session_id = successor_session_id
+
+    # Issue 242's change 5, ruled 2026-09-02: a by-hand launch resumes a
+    # crashed seat. Reaching here having taken none of the branches above means
+    # no first prompt, no --resume-session-id, no adopted session and no
+    # unconsumed handoff — which is what `launch-claude-mac <seat>` or
+    # `launch-claude-ubuntu <seat>` looks like on a seat that is simply down.
+    # Until now that minted an empty session whose first turn said "No handoff
+    # exists yet; ask what to work on", discarding the crashed context;
+    # measured on both machines 2026-09-02, and the shape of the 2026-08-21
+    # tmux death, where three supervisors minted near-empty successors beside
+    # three intact 1-2MB transcripts.
+    #
+    # A recorded exit means the seat was stopped under supervision rather than
+    # crashed, and still gets the fresh session. Any record counts, whatever
+    # its code and whether or not the code is known, which is the rule
+    # recover-crashed-seats.py applies to the same state file — so a seat this
+    # supervisor resumes by hand is a seat that tool would also call a crash.
+    if (not settings.first_prompt and not settings.resume_session_id
+            and adopted is None and ignition_plan is None
+            and agent_exit_record_from_supervisor_state(state) is None):
+        by_hand_session_id, by_hand_detail = worth_resuming.newest_real_transcript(
+            project_directory_for_working_directory(settings.working_directory))
+        if by_hand_session_id is not None:
+            # Reported in the terminal, as the design asks: this is a by-hand
+            # launch, so someone is reading it.
+            print("handoff-supervisor: no waiting handoff and no recorded exit — "
+                  f"resuming this seat's last transcript {by_hand_session_id} "
+                  "rather than starting it empty")
+            session_id = by_hand_session_id
+            resume_first_launch = True
+            prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
+        else:
+            print("handoff-supervisor: no waiting handoff and no recorded exit, and "
+                  f"nothing worth resuming ({by_hand_detail}); starting fresh")
 
     while True:
         state.update({"session_id": session_id, "generation": generation})

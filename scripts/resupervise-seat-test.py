@@ -212,7 +212,10 @@ def run_missing_launcher_case(workspace: Path):
     isolated.mkdir()
     copied = isolated / "resupervise-seat.py"
     copied.write_text(RESUPERVISE_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-    for sibling in ("handoff-supervisor.py",):
+    # handoff-supervisor.py imports the shared judgement of which transcript is
+    # worth resuming, so the isolated copy needs that module beside it too
+    # (issue 242 change 5).
+    for sibling in ("handoff-supervisor.py", "seat-transcript-worth-resuming.py"):
         (isolated / sibling).write_text(
             RESUPERVISE_SCRIPT.with_name(sibling).read_text(encoding="utf-8"), encoding="utf-8"
         )

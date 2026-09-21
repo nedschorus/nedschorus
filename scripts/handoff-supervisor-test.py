@@ -1580,6 +1580,133 @@ def run_agent_exit_record_cases(workspace: Path):
           str(state))
 
 
+def run_by_hand_resume_cases(workspace: Path):
+    """nedschorus#242 change 5 (ruled 2026-09-02, the #120 overview § Ruled:
+    what happens when a restart fails): a by-hand `launch-claude-mac <seat>` of
+    a seat with no waiting handoff and no recorded exit resumes its last
+    transcript instead of minting an empty session.
+
+    Measured 2026-09-02 on both machines, and the shape of the 2026-08-21 tmux
+    death: three supervisors fell through to their first-prompt path and minted
+    near-empty successors while three intact 1-2MB transcripts sat on disk. The
+    first case below is that defect written down; it fails against the code as
+    it stood before this change.
+
+    The seat's project directory is stubbed rather than derived, so these cases
+    never read or write the real ~/.claude/projects.
+    """
+    directory = workspace / "by-hand-resume"
+    directory.mkdir(parents=True, exist_ok=True)
+    projects = workspace / "by-hand-resume-projects"
+    projects.mkdir(parents=True, exist_ok=True)
+
+    def write_transcript(session_id: str, first_turn: str, assistant_turns: int):
+        lines = [json.dumps({"type": "user", "message": {"content": first_turn}})]
+        for _ in range(assistant_turns):
+            lines.append(json.dumps(
+                {"type": "assistant", "message": {"model": "claude", "content": "work"}}))
+        path = projects / f"{session_id}.jsonl"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def settings_for(case: str):
+        case_directory = directory / case
+        case_directory.mkdir(parents=True, exist_ok=True)
+        return supervisor.SupervisorSettings(
+            agent=f"byhand{case}", working_directory=workspace,
+            handoff_directory=case_directory, agent_command="unused-stub-agent",
+            first_prompt="")
+
+    no_branch_sync = lambda working_directory: (
+        "branch sync: not a git checkout, nothing to sync")
+
+    def launch_once(settings):
+        """(session_id, prompt, resume) of the one launch, which then ends."""
+        launched = []
+
+        def launch(agent_command, session_id, working_directory, prompt, **kwargs):
+            launched.append((session_id, prompt, kwargs.get("resume")))
+            return StubLaunchedSession(0)
+
+        with supervisor_names_replaced(
+                launch_agent_session=launch,
+                project_directory_for_working_directory=lambda _: projects,
+                sync_working_branch_with_main=no_branch_sync), \
+                contextlib.redirect_stdout(io.StringIO()):
+            supervisor.supervise_sessions(settings)
+        return launched[0] if launched else (None, None, None)
+
+    # 1. The defect: real work on disk, nothing to say the seat stopped on
+    # purpose. Before this change the supervisor minted a new id and told the
+    # agent no handoff exists.
+    crashed = write_transcript("crashed-with-real-work", "do the thing", assistant_turns=4)
+    settings = settings_for("crash")
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    session_id, prompt, resume = launch_once(settings)
+    check("BY HAND: a seat with no handoff and no recorded exit resumes its last transcript",
+          session_id == crashed.stem and resume is True,
+          (session_id, resume, crashed.stem))
+    check("BY HAND: and the resumed session is told the previous one ended without a handoff",
+          prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
+          and "No handoff exists yet" not in (prompt or ""),
+          prompt)
+
+    # 2. A recorded exit means the seat was stopped under supervision, not
+    # crashed. recover-crashed-seats.py reads the same record the same way:
+    # any record counts, whatever its code.
+    settings = settings_for("recorded-exit")
+    supervisor.write_supervisor_state(settings.state_path, {
+        "generation": 1,
+        supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
+        supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
+    session_id, prompt, resume = launch_once(settings)
+    check("BY HAND: a seat carrying a recorded exit still gets a fresh session",
+          resume is not True and session_id != crashed.stem,
+          (session_id, resume))
+    check("BY HAND: and that fresh session gets the no-handoff prompt",
+          "No handoff exists yet" in (prompt or ""), prompt)
+
+    # 3. Nothing worth resuming: every transcript is a session this machinery
+    # minted that then did nothing. Starting fresh is right, and the run must
+    # not resume one of them.
+    empty_projects = workspace / "by-hand-resume-projects-empty"
+    empty_projects.mkdir(parents=True, exist_ok=True)
+    (empty_projects / "failed-successor.jsonl").write_text(
+        json.dumps({"type": "user",
+                    "message": {"content": "You are x. No handoff exists yet; ask what "
+                                           "to work on."}}) + "\n",
+        encoding="utf-8")
+    settings = settings_for("nothing-worth-resuming")
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    launched = []
+
+    def launch_empty(agent_command, session_id, working_directory, prompt, **kwargs):
+        launched.append((session_id, prompt, kwargs.get("resume")))
+        return StubLaunchedSession(0)
+
+    with supervisor_names_replaced(
+            launch_agent_session=launch_empty,
+            project_directory_for_working_directory=lambda _: empty_projects,
+            sync_working_branch_with_main=no_branch_sync), \
+            contextlib.redirect_stdout(io.StringIO()):
+        supervisor.supervise_sessions(settings)
+    check("BY HAND: a seat whose every transcript is an empty successor starts fresh",
+          launched and launched[0][2] is not True
+          and launched[0][0] != "failed-successor",
+          str(launched))
+
+    # 4. An unconsumed handoff is the fresher truth and boot-ignition takes it,
+    # exactly as before: the by-hand resume must not steal a waiting handoff.
+    settings = settings_for("waiting-handoff")
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    settings.handoff_path.write_text(
+        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+    session_id, prompt, resume = launch_once(settings)
+    check("BY HAND: a waiting handoff still wins, and is not resumed over",
+          resume is not True and session_id != crashed.stem,
+          (session_id, resume))
+
+
 def run_boot_ignition_case(workspace: Path):
     """A fresh boot that finds an unconsumed handoff ignites from it directly.
     Launching first and letting the wait loop find the file would kill the
@@ -2125,6 +2252,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_agent_exit_record_cases(Path(temporary_directory))
+    run_by_hand_resume_cases(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))
     run_appended_system_prompt_agent_part_cases(Path(temporary_directory))

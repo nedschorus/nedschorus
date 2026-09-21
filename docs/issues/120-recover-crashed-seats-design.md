@@ -50,7 +50,9 @@ five are not built. Each is specified in the section named.
 4. **Verify a resumed seat actually came up, and offer the degraded restart when
    it did not** — § Ruled: what happens when a restart fails.
 5. **A by-hand launch resumes a crashed seat** instead of minting an empty
-   session — the same section.
+   session — the same section. Built 2026-09-20, in the supervisor's
+   first-launch path as this design says; the parked-mark clear that the same
+   sentence asks for waits on change 3, which is not built.
 6. **Recover into a window**, `--open-iterm-window-per-seat` — built
    2026-09-11; § Recover into a window.
 
