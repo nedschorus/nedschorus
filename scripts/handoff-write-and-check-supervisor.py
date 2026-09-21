@@ -287,9 +287,8 @@ def supervised_name_for_this_directory(handoff_directory: Path, agent: str,
     must use. The stray has no supervisor state; the real seat does.
     """
     here = str(seat_directory.resolve())
-    suffix = "-handoff.md"
-    for other_handoff in sorted(handoff_directory.glob(f"*{suffix}")):
-        other = other_handoff.name[: -len(suffix)]
+    for other_handoff in supervisor.handoff_file_paths(handoff_directory):
+        other = other_handoff.name[: -len(supervisor.HANDOFF_FILE_SUFFIX)]
         if other == agent:
             continue
         if not supervisor.supervisor_state_path(handoff_directory, other).is_file():
@@ -691,7 +690,7 @@ def main(argv=None) -> int:
     agent = arguments.agent or default_agent_name()
     seat_directory = agent_seat_working_directory()
     handoff_directory = Path(arguments.handoff_dir).expanduser()
-    handoff_path = handoff_directory / f"{agent}-handoff.md"
+    handoff_path = supervisor.handoff_file_path(handoff_directory, agent)
     state_path = supervisor.supervisor_state_path(handoff_directory, agent)
 
     # Refuse a foreign claim rather than overwrite it. Successive generations
@@ -750,11 +749,13 @@ def main(argv=None) -> int:
     if supervised_name and not state_path.is_file() and not arguments.claim:
         print(
             f"handoff-write-and-check-supervisor: no supervisor has ever run under the name "
-            f"{agent}, but {handoff_directory / (supervised_name + '-handoff.md')} was written "
+            f"{agent}, but {supervisor.handoff_file_path(handoff_directory, supervised_name)} "
+            f"was written "
             f"from this very directory ({seat_directory}) and has a supervisor state beside it. "
             f"{supervised_name} is this seat's supervised name. Nothing was written, because a "
             f"handoff under a name nothing polls is never read: the supervisor keeps waiting on "
-            f"{supervised_name}-handoff.md and this session is never reincarnated (measured "
+            f"{supervisor.handoff_file_path(handoff_directory, supervised_name).name} and this "
+            f"session is never reincarnated (measured "
             f"2026-09-15, five hours and a lost session). Rerun with --agent {supervised_name}, "
             f"or omit --agent entirely -- it defaults to {DEFAULT_AGENT_NAME_RULE_TEXT}, here "
             f"{default_agent_name()} -- or pass --claim if this seat really is being re-founded "
