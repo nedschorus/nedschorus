@@ -506,20 +506,24 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the out-of-range heading is named in the record, with the case count",
           "- Run 1: `## CASE 4` names no case of this run, which judged 3 "
           "case(s) numbered 1 to 3." in combined, repr(combined))
+    # Each needle carries its line's terminator, so it is line-exact: the
+    # section promises the items are "Kept as the judge wrote them", and
+    # without the "\n" anything the runner appended to an item was invisible
+    # to these two cases (swept 2026-09-20).
     check("every item under the out-of-range heading is kept verbatim, under "
           "that heading",
           "- Run 1, under `## CASE 4`: CAUGHT: 2 — a catch under a heading "
-          "this run has no case for." in combined
+          "this run has no case for.\n" in combined
           and "- Run 1, under `## CASE 4`: STUPID: \"A fourth sentence.\" — a "
-              "stupid place under the same heading." in combined
+              "stupid place under the same heading.\n" in combined
           and "- Run 1, under `## CASE 4`: NOT-ON-LIST: the fourth document's "
-              "title contradicts its first line." in combined, repr(combined))
+              "title contradicts its first line.\n" in combined, repr(combined))
     check("an item under a trailing summary heading is set aside, not counted "
           "against the last case",
           "- Run 1, under `## Summary`: CAUGHT: 5 — a closing remark that "
-          "belongs to no case." in combined
+          "belongs to no case.\n" in combined
           and "- Run 1, under `## Summary`: NOT-ON-LIST: a second off-list "
-              "problem, written under the summary heading." in combined,
+              "problem, written under the summary heading.\n" in combined,
           repr(combined))
     check("the set-aside section sends its off-list lines back to the scrub too",
           "READ THE NOT-ON-LIST LINES HERE BESIDE THE SECTION ABOVE" in combined,

@@ -45,6 +45,34 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def nothing_is_appended_to(prompt, tail, expected_rest_of_prompt):
+    """`tail` is in `prompt`, and what follows it is EXACTLY
+    `expected_rest_of_prompt` -- through to the end of the prompt.
+
+    A plain `tail in prompt` passes when text is APPENDED to the pinned
+    sentence, which is how three of these pins went blind: each was named
+    "exactly" while an extra sentence bolted onto the end of the real one was
+    invisible (swept 2026-09-20).
+
+    The first repair listed the sentences that may legitimately follow and
+    accepted any rest STARTING with one of them. That bounded the beginning of
+    what follows and never its end, so the defect survived in the shape it was
+    written to catch: " NOTE: Resume each one by its id." appended to the
+    orphaned-subagent roster sentence left all 228 cases green, and resume-by-id
+    is the exact instruction that sentence exists to keep out of a successor's
+    prompt -- a dead subagent cannot be resumed by id across a reincarnation
+    (probed 2026-08-29). Reviewed 2026-09-21.
+
+    So the rest is pinned whole. build_ignition_prompt's segments are
+    conditional in production, but each case's own fixture decides every one of
+    them, so what follows the pinned sentence is fully determined and can be
+    spelled out to the last character. A fixture that gains a branch sync, a
+    roster, an unterminated verbatim block, or a different next step must extend
+    `expected_rest_of_prompt` with the segment it adds -- never reopen the tail.
+    """
+    return tail in prompt and prompt.split(tail, 1)[1] == expected_rest_of_prompt
+
+
 def run_offline_cases(workspace: Path):
     # --- Handoff parsing --------------------------------------------------
     handoff_path = workspace / "agent-handoff.md"
@@ -871,10 +899,16 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # The pointer at the supervisor itself (user-ruled 2026-08-30, second
     # round), after the open-walks duty. Exact text; absent before.
     check("ignition points at the supervisor that composed it, exactly",
-          "continue them when you get a chance. This session was launched by "
-          "scripts/handoff-supervisor.py, which watches this seat and composed "
-          "this prompt — read it if you need to investigate the handoff "
-          "mechanism." in prompt,
+          nothing_is_appended_to(
+              prompt,
+              "continue them when you get a chance. This session was launched by "
+              "scripts/handoff-supervisor.py, which watches this seat and composed "
+              "this prompt — read it if you need to investigate the handoff "
+              "mechanism.",
+              # This fixture passes no sync report and no roster, and its
+              # verbatim block is not unterminated, so the pointer sentence is
+              # the last of the preamble and only the next step follows it.
+              "\n\nThen take the next step:\nfinish the supervisor"),
           prompt[:800])
     # The branch-state line (user-ruled 2026-08-30, second round): the sync's
     # own one-line result, then the static instruction. Called through
@@ -891,6 +925,25 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("ignition carries the branch sync's own one-line result",
           "branch sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
           synced_prompt[:900])
+    # The constant itself, word for word. The three checks below carry it into
+    # the prompt but each is containment, so until 2026-09-20 an extra sentence
+    # bolted onto the end of BRANCH_STATE_INSTRUCTION was invisible to all of
+    # them. This is the sentence every reincarnated seat reads about its own
+    # branch: the wording it replaced had a seat merge main into a branch under
+    # review thirty seconds after reading it (2026-09-15), against the ruling
+    # of 2026-09-14 that working branches never take merges from main, and the
+    # user replaced it word for word on 2026-09-16. Drift here is unruled
+    # instruction that seats act on at once.
+    check("the branch-state instruction is word for word what the user ruled",
+          supervisor.BRANCH_STATE_INSTRUCTION == (
+              " \u2014 If this branch has never been pushed, rebase it onto origin/main "
+              "before your first substantive action and rerun the tests for what you "
+              "touched. If it is pushed, leave it as it is, and start new work on a "
+              "branch from origin/main. If this seat has "
+              "open pull requests, check their state with `gh`: merge-lane reviews and "
+              "merges them; a changes-requested one gets a fix round from a fresh agent "
+              "\u2014 never extend a head you've already announced."),
+          repr(supervisor.BRANCH_STATE_INSTRUCTION))
     check("the branch-state instruction follows the sync result, exactly",
           "branch sync: fixture-branch is 3 commit(s) behind main — If this "
           "branch has never been pushed, rebase it onto origin/main before your "
@@ -2089,9 +2142,15 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     # agent on the job; the dead one's full transcript is at ... if its
     # state matters. A dead subagent cannot be resumed by id."
     check("ignition says the successor may need to re-commission similar agents, exactly",
-          ". You may need to re-commission similar agents. If you need more "
-          "context, the dead agents' full transcripts are at "
-          f"{predecessor_directory}/subagents/agent-<id>.jsonl." in prompt,
+          nothing_is_appended_to(
+              prompt,
+              ". You may need to re-commission similar agents. If you need more "
+              "context, the dead agents' full transcripts are at "
+              f"{predecessor_directory}/subagents/agent-<id>.jsonl.",
+              # The roster sentence is the last of the preamble, and this
+              # fixture's verbatim block is not unterminated, so only the next
+              # step follows it.
+              "\n\nThen take the next step:\nmerge the queue"),
           prompt)
     check("the first-round roster wording is gone",
           "Re-commission each" not in prompt and "if its state matters" not in prompt
