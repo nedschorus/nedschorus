@@ -151,7 +151,7 @@ command -v claude >/dev/null 2>&1 || {
     exit 2
 }
 [ -f "$SUPERVISOR" ] || {
-    echo "launch-claude-mac: no handoff-supervisor.py beside this script ($SUPERVISOR) — run the copy inside a nedschorus checkout" >&2
+    echo "launch-claude-mac: no handoff-supervisor.py at $SUPERVISOR — run the copy inside a nedschorus checkout" >&2
     exit 2
 }
 

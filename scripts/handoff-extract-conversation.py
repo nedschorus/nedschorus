@@ -67,7 +67,7 @@ MINIMUM_DIALOG_WORDS = 1000
 
 # Harness-injected user records open with one of these. The list is the
 # 2026-08-17 census of 341 transcripts across both machines and every project
-# (script: handoff-census-user-record-shapes.py, kept beside this one): of all
+# (script: nc-systems/handoff/handoff-census-user-record-shapes.py): of all
 # user-record words the old filter kept, 59% were injected, task-notifications
 # alone 860 records — displacing exactly the dialog the tail exists to carry.
 # <bash-input> is deliberately absent: those are commands the user personally

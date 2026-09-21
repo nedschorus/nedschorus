@@ -1929,6 +1929,24 @@ with tempfile.TemporaryDirectory() as temporary:
               for marker in ("CLAUDE_CODE_TASK_LIST_ID",
                              "CLAUDE_CODE_ENABLE_TODO_TOOLS")),
           box_command)
+    # This branch hand-composes the supervisor's path, and it is the only
+    # branch off macOS -- launcher_path() returns None there, which is
+    # ned-box, where the seats run. The assertion resolves the path and asks
+    # the disk, rather than matching the file name the cases above match: when
+    # the supervisor moved to nc-systems/handoff/ on 2026-09-20 and this
+    # command went on composing a sibling of the recovery tool, every one of
+    # those name matches still passed, because the path that no longer existed
+    # ends with the same file name. tmux still created the session, so
+    # launch_seat returned 0 and only the come-up check caught it: every
+    # recovered seat reported LAUNCHED BUT DID NOT COME UP.
+    composed_supervisor = next(
+        (Path(token) for token in box_tokens
+         if token.endswith("handoff-supervisor.py")), None)
+    check("the box branch runs the supervisor at the path it really lives at",
+          composed_supervisor is not None
+          and composed_supervisor.is_file()
+          and composed_supervisor.resolve() == SUPERVISOR_SCRIPT.resolve(),
+          (str(composed_supervisor), str(SUPERVISOR_SCRIPT)))
 
     # PR #134 review finding 1: an apostrophe in an operator's directory path
     # must survive the one shell parse each composed value gets — the

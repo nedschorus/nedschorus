@@ -119,9 +119,20 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# The supervisor's path, defined once because this file needs it twice: the
+# import just below loads it as a module, and launch_seat's box branch names
+# it in the tmux command it hand-composes. Both were siblings of this script
+# until the supervisor moved into nc-systems/handoff/ on 2026-09-20; the
+# import was re-pathed then and the tmux command was not, so off macOS --
+# where launcher_path() is None and that branch is the only one -- recovery
+# launched a session that ran a file that no longer existed, and every
+# recovered seat was reported LAUNCHED BUT DID NOT COME UP. One name here is
+# what makes a third move a single edit.
+SUPERVISOR_SCRIPT = (Path(__file__).resolve().parent.parent
+                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
+
 _supervisor_spec = importlib.util.spec_from_file_location(
-    "handoff_supervisor", Path(__file__).resolve().parent.parent
-    / "nc-systems" / "handoff" / "handoff-supervisor.py"
+    "handoff_supervisor", SUPERVISOR_SCRIPT
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
@@ -800,7 +811,7 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
         f'"$HOME/.claude/tasks/nedschorus-{name}-tasks"; fi; '
         f"export CLAUDE_CODE_TASK_LIST_ID={shlex.quote(f'nedschorus-{name}-tasks')}; "
         "export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; "
-        f"python3 {Path(__file__).with_name('handoff-supervisor.py')} "
+        f"python3 {SUPERVISOR_SCRIPT} "
         f"--agent {shlex.quote(name)} --cd {shlex.quote(str(seat_directory))} "
         f"{supervisor_arguments}"
     )
