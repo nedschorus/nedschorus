@@ -15,6 +15,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief; context compressed and renewed by a series of agent-sessions connected by session-handoffs from old agent to new agent.
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
 - **approval-walk** — presenting material to the user one item at a time for a decision, conducted by the /walk-me-through skill; its outcomes are recorded in walk-minutes and its approvals are walked-approvals.
+- **bare-number-sweep** — the project-wide replacement of references written as a bare number with titled clickable links, run class by class under the user's rulings; completed 2026-09-21.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — `C1`, `C3`, `C7`…, the identifiers of the main-gatekeeper's credential rulings, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
 - **code-prompt-code (aka CPC)** — a program built from both code and prompts.
@@ -30,6 +31,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, NNNN being the generation number, written by `scripts/handoff-extract-conversation.py` when the handoff-supervisor replaces an agent-session; the successor is told to read it first, and when the tail leaves earlier turns out, the whole dialog goes beside it as `<seat>-dialog-NNNN-complete.md`.
 - **coverage-type** — the word on an implementation or a test saying what kind of thing it is: `script`, `prompt`, `script-and-prompt`; a test may also be `no-tests` with a reason. Defined in the design-to-main glossary.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a submission to the gate; its design and its own glossary are in `docs/design-to-main/`. Terms that belong to it alone are defined there, not here.
+- **fix-round** — one cycle of a pull request answering review findings, written by a fresh-agent as a commit on top of the frozen head, never an amend (user-ruled 2026-09-08).
 - **fresh-agent** — a minimal-context agent: one that has read only its agent-instructions, the documents selected for it to read, and (recursively) the documents linked from the selected documents.
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links. This project's durable documents, wiki pages, skills and designs, the documents of lasting value, are written for fresh-readers rather than for the user, to enable parallelism and increase reliability.
 - **GHI** — GitHub issue
@@ -39,12 +41,14 @@ Every project-term should be listed here; a term this page does not list is not 
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
 - **initial-agent-instructions** — defined in the agent-instructions entry above: the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent.
 - **key-term** — in a document under cold read, a term that is a project-term or should be one.
+- **link-type** — the word before a titled link saying what it points at: `GHI` for a GitHub issue, `PR` for a pull request. The convention is the "GHI for GHIs" ruling of 2026-09-20; the name is the user's, 2026-09-21.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
 - **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
 - **NC** — this project, NedsChorus.
 - **objection-overruled** — the record of a review objection that the user overruled.
 - **project-term** — a name with a meaning specific to this project, listed in this glossary: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat. A word this glossary does not list is not a project-term.
+- **queue-drain** — the procedure that empties the four queue directories — `docs/agents/queue/`, `docs/issues/queue/`, `docs/nedschorus-wiki/queue/` and `nc-queue/` — and `docs/drafts/`, promoting, archiving or deleting each item; its issue is GHI [Queue drain procedure — the review process that empties wiki/queue, the pair queue and the agent queue](https://github.com/nedschorus/nedschorus/issues/24).
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff; triggered when the agent writes a session-handoff, usually because the Stop hook `scripts/handoff-context-threshold-hook.py` asked it to as context ran low.
 - **retire-seat** — freeing or repurposing an agent-seat's name: stop the handoff-supervisor, archive the session-handoff under `~/.claude/handoffs/retired/`, remove the worktree and seat branch, and date a retirement notice on the seat's brief. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`. Distinct from pausing a seat.
 - **sanity-check-attack** — one stance the /sanity-check instrument takes on a document, run as its own prompt: the cut-attack (what should be deleted), the mechanization-attack (which English instruction should be code), the fresh-eyes-attack (an independent design built from the problem alone).
