@@ -62,6 +62,22 @@ CODE_SOURCE_EXTENSIONS = (".py", ".sh")
 # Tokens that look like paths but are not checkable file references.
 SKIP_MARKERS = ("://", "<", "{", "*", "$", "~", "…")
 
+# A `<placeholder>` in a backtick span stands for a value the reader supplies,
+# not a file, and "<" above already says so. That marker is tested per WORD,
+# though, and check_backtick_paths splits the span on whitespace first, so a
+# placeholder containing a space was split before the marker could fire:
+# `<component's directory>/design-to-main-record/user-rulings.md` became the
+# words "<component's" and "directory>/design-to-main-record/user-rulings.md",
+# and the second carries no "<" left to catch. Five of the 66 standing findings
+# on main 2026-09-20 were this shape, every one of them correct template prose
+# that a reader sorting the backlog would have been told to "fix"
+# (https://github.com/nedschorus/nedschorus/issues/572). Collapsing each
+# placeholder to a single marker-bearing word before the split restores the
+# reach of the rule SKIP_MARKERS already states, and leaves the real paths in
+# the same span checkable: in `scripts/x.py --out <run dir>/y.json`,
+# scripts/x.py is still checked.
+PLACEHOLDER_SPAN = re.compile(r"<[^<>]*>")
+
 # A line saying a file lives in git history references something deliberately
 # absent from the working tree; its paths are not drift.
 HISTORY_MARKERS = ("git history", "git show")
@@ -272,7 +288,8 @@ def check_backtick_paths(line: str, md_path: Path, repo_root: Path):
     for match in BACKTICK_TOKEN.finditer(line):
         token = match.group(1).strip()
         # A command line: first word may be a script, later words flags.
-        words = token.split()
+        # Placeholders collapse first; see PLACEHOLDER_SPAN.
+        words = PLACEHOLDER_SPAN.sub("<placeholder>", token).split()
         for word in words:
             # A name with no directory is not a claim about where the file
             # sits: prose writes `notes.md` or `state-exit.json` for a file
