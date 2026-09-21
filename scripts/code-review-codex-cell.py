@@ -8,7 +8,7 @@ rather than a shell line in one seat's transcript, and so the pins that
 must not drift are pinned:
 
   - model and reasoning effort, explicit (the tier convention of
-    scripts/cold-read-codex-cell.py: good = gpt-5.6-sol at xhigh);
+    scripts/cold-read-codex-cell.py: `deep` = gpt-5.6-sol at xhigh);
   - the sandbox, read-only AT THE PARENT LEVEL -- this machine's Codex
     config defaults to workspace-write, so a reviewer that forgets this
     flag can write (the nested `review` parser rejects --sandbox; parent
@@ -200,7 +200,7 @@ import subprocess
 import sys
 
 # One place to update as models change, matching cold-read-codex-cell.py's
-# good tier (user-picked 2026-08-03; xhigh "OK for codex" same date).
+# `deep` tier (user-picked 2026-08-03; xhigh "OK for codex" same date).
 CODEX_MODEL = "gpt-5.6-sol"
 REASONING_EFFORT = "xhigh"
 REVIEW_TIMEOUT_SECONDS = 1800
