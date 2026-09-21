@@ -56,8 +56,8 @@ The other half of the naming rule sits in the same file's glossary bullet,
 and is quoted here whole for the same reason:
 
 > If you need to coin a new term, a word with a meaning specific to this
-> project, propose it to the user. A hyphenated phrase marks a project-term;
-> do not hyphenate a phrase that is not one.
+> project, propose it to the user. A hyphenated phrase marks a project-term
+> or a system-term; do not hyphenate a phrase that is not one.
 
 One ruling on how far that rule reaches is written outside `CLAUDE.md`, in
 `docs/issues/386-project-term-sweep-rulings-and-open-work.md`, ruling 5,
