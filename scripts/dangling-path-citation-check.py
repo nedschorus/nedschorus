@@ -79,6 +79,29 @@ neither of the shapes a markdown linter reads:
   same reasoning as the 2026-09-17 ruling: it is usually relative to
   something the sentence is discussing.
 
+AND THE SAME SHAPES IN BOTH DIRECTIONS, since 2026-09-21. The forward
+question is "which paths does this line name", asked of a token and nothing
+else, so it needs the two filters above to decide whether a token is a path
+at all. The two questions asked of text rather than of the diff -- what
+still cites a path this change removed, and what the file's own version at
+the merge base already cited -- hold the path already, and are answered by
+repository_paths_a_line_cites, which resolves what a line names instead of
+matching a string. They were not, and the difference was a defect twice
+over: a relative markdown link is a citation the forward direction reports
+and the backward one could not see, and a path named only inside a code
+fence -- which the lint never reads -- was enough raw base text to suppress
+a genuinely new citation of it. Both measured 2026-09-21, each at a genuine
+R100 rename or on two files given a byte-identical new citation.
+
+  WHAT THIS DIRECTION READS THAT THE FORWARD ONE DOES NOT, and why it is not
+  an inconsistency: a backticked path inside a non-Markdown file, and a path
+  with no file extension at all. Neither can be admitted forward -- the
+  first would report every fixture literal in a docstring, the second every
+  word with a slash in it -- and both are plain citations of a file that has
+  moved. Ten backticked ones are live in this repository's non-Markdown
+  files, and three of the launchers this program was written about have no
+  extension.
+
 WHAT "AGAINST THE BASE" MEANS. The merge base of --base and HEAD, resolved
 once and used for all three reads: the changed-line diff, the removed-path
 diff and the base text a forward finding is compared against. The two diffs
@@ -104,23 +127,63 @@ which already carry it, and the base text is read there.
   changed in its citing line scored a delete and an add, and the same
   document with a dozen unrelated paragraphs in it scored 91% and a rename.
 
-THE FIXTURE-CARRYING FILES. This program and its test are the one pair in
-this repository whose subject matter IS dangling paths: every negative case
-names a path deliberately absent, and against a base where those files did
-not exist yet, every one of those lines is new. It reported twenty findings
-on its own pull request. DECLARED_PATH_FIXTURE_FILES names them and the
-FORWARD direction skips them whole.
+THE FIXTURE-CARRYING FILES ARE THE TESTS, by the project's own definition
+of a test and not by a list. A test whose subject is paths names paths that
+are deliberately absent, and against a base where the test did not exist
+yet every one of those lines is new: this program's own test carried
+seventeen such literals and reported every one of them. The FORWARD
+direction skips a file the Test row of
+docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md calls
+a test -- the stem plus "-test" before the extension, or any file in the
+"tests" subdirectory a subsystem with its own directory puts its tests in.
+Both halves earn their place. Measured with this program's own
+plain_path_citations over origin/main on 2026-09-21: 162 absent-path tokens
+in 23 non-Markdown files with no exemption at all, 15 in 9 files once
+"-test.py" is exempt, and 14 in 8 once the "tests" directory is too. The one
+file the second half adds is design-to-main's own test fixture, whose name
+ends in neither "-test.py" nor anything else the first half reads. (The
+reviewing seat measured the same three rows as 172/27, 18/13 and 17/12; the
+rows here filter the two things this program filters, a gitignored path and
+the frozen measured data, and were taken at a different main.)
 
-  THE COST, stated rather than guarded: a genuine forward-dangling citation
-  newly written into either file is skipped too. A path misspelled in this
-  docstring is not reported. The backward direction is not exempted and
-  never should be -- when a path these files cite is moved away, they are
-  reported like any other file, which is what makes the stale reference in
-  a test's own fixtures visible. A case pins that.
+  THE RESIDUAL IS THE COST, stated rather than guarded. Those 14 stand,
+  half of them scripts/md-drift-lint.py's own documented examples, and they
+  are reported only if a change touches the line they sit on. A list of
+  names would have to grow every time a test was written; this does not.
+
+  THIS FILE IS NOT A TEST and is no longer exempt, which the main-checkout
+  measurement above could not see because this file is not on main yet.
+  Measured on this branch 2026-09-21: two lines of this docstring quote the
+  founding defect's own evidence, a path the 2026-09-19 move emptied, and
+  the program reports them on its own pull request. They are quotations and
+  not drift; correcting them would destroy the example.
+
+  FORWARD ONLY, and that asymmetry is principled rather than an omission.
+  The forward direction is where a test's fixture literals live, and they
+  are the author's payload, not the author's mistake. The backward
+  direction is where a test's citation of the module it tests lives, and
+  when that module moves the citation is stale like any other -- it is the
+  case a test file is MOST likely to carry and least likely to have swept,
+  since nothing runs the test's prose. So a test is never exempt backward,
+  and a case pins it. Do not simplify the two into one exemption.
+
+  THE COST OF THE FORWARD HALF: a genuine forward-dangling citation newly
+  written into a test is skipped too, and a path misspelled in this
+  docstring's neighbours is not reported.
 
 WHAT IT DOES NOT DO. It never edits, and it judges nothing but existence.
 A link's text, a citation's revision pinning and an issue's title are the
 wider work of nedschorus#42 and are deliberately absent.
+
+AND IT IS CORRECT ONLY ON A CLEAN TREE. The changed lines come from
+`git diff <merge base>..HEAD`, which reads committed content, while the
+citation text and the existence test read the working tree. With uncommitted
+edits the two disagree: a line number the diff gives can name different text
+in the file, and a path added but not yet committed exists for the existence
+test and not for the diff. Stated rather than guarded, because every caller
+today runs it on a committed head, and a guard that refused a dirty tree
+would refuse the author mid-edit, which is when a check like this is most
+useful to run by hand.
 """
 import argparse
 import importlib.util
@@ -141,23 +204,31 @@ EXIT_BAD_INVOCATION = 2
 # stands. A count is absent when it is 1.
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
-# What may continue a path where one ends. "." is absent deliberately: a
-# citation at the end of a sentence reads "<dir>/gate.py." and the stop is not
-# part of the path, while "<dir>/gate.py.bak" is a different file. So a
-# trailing "." counts as continuation only when a name character follows it;
-# see names_path_at_segment_boundary. The illustrations here are written with
-# a placeholder directory on purpose: a real path in this file's prose is a
-# string the BACKWARD direction can grep, and this file is exempt only
+# What separates one word from the next when a line is read for the paths it
+# SPELLS. The backtick is here and absent from PLAIN_PATH_TOKEN_SEPARATOR
+# below, because those are two different questions: this one is asked of a
+# path already in hand, and a backticked `<dir>/gate.py` in a shell script or
+# a docstring names it. Ten such citations are live in this repository's
+# non-Markdown files, measured 2026-09-21. The illustrations here are written
+# with a placeholder directory on purpose: a real path in this file's prose is
+# a citation the BACKWARD direction resolves, and this file is exempt only
 # forward.
-PATH_SEGMENT_CHARACTER = re.compile(r"[A-Za-z0-9_/~+-]")
+#
+# NEITHER SEPARATOR BREAKS ON A PLACEHOLDER'S OWN BRACKETS, and that is the
+# whole reason carries_a_marker_the_lint_skips can work: a separator that
+# split <dir>/gate.py would leave /gate.py behind, and the marker test would
+# have nothing left to see.
+NAMED_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]`]+")
+PLAIN_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]]+")
 
-# The files whose subject matter is dangling paths, skipped by the FORWARD
-# direction only. See "THE FIXTURE-CARRYING FILES" above for what that costs.
-# Repository-relative, posix spelling.
-DECLARED_PATH_FIXTURE_FILES = (
-    "scripts/dangling-path-citation-check.py",
-    "scripts/dangling-path-citation-check-test.py",
-)
+# What the project calls a test, from the Test row of
+# docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md: the
+# stem plus "-test" before the extension, and a subsystem with its own
+# directory puts its tests in a "tests" subdirectory of it. See "THE
+# FIXTURE-CARRYING FILES" above for why the FORWARD direction skips them and
+# what that costs.
+PROJECT_TEST_FILE_NAME_ENDING = "-test.py"
+PROJECT_TEST_DIRECTORY_NAME = "tests"
 
 
 def fail_bad_invocation(detail: str):
@@ -172,39 +243,100 @@ def fail_bad_invocation(detail: str):
     raise SystemExit(EXIT_BAD_INVOCATION)
 
 
-def names_path_at_segment_boundary(text: str, path: str) -> bool:
-    """True when `text` names `path` as a path in its own right.
+def carries_a_marker_the_lint_skips(token: str, lint) -> bool:
+    """True when the drift lint's own SKIP_MARKERS say this token is not a
+    path: a placeholder in angle brackets or braces, a glob, a shell
+    variable, a home-relative path, an ellipsis, a URL.
 
-    Plain containment answers yes to two wrong questions. A move that only
-    deepens a path -- gate.py into a system's own scripts directory -- leaves
-    the old path as a suffix of the new one, so the backward check reported a
-    correct sweep as a stale citation. And a base holding a longer name
-    suppressed a forward finding about the shorter one it contains. Both ends
-    are anchored, because the first case is a leading boundary and the second
-    a trailing one.
+    A TOKEN THAT CARRIED A PLACEHOLDER IS NOT A CITATION, in either
+    direction. Asked of the whole token and not of what survives splitting
+    it, because the collapse happens first and the resolution after:
+    <dir>/gate.py reduced to /gate.py, and /gate.py folded against the citing
+    file's own directory lands exactly on <dir>/gate.py when the citing file
+    is a SIBLING of the one that moved. Measured 2026-09-21 on the same
+    sentence in two places: reported from a sibling, silent from anywhere
+    else -- and live in this program's own file, whose placeholder
+    illustrations sit beside the scripts they illustrate. The same collapse
+    reached the FORWARD direction once a leading "/" was stripped rather than
+    dropped, so both ends ask this.
 
-    A leading "/" or "./" belongs to the citation, not to a longer path in
-    front of it, so the leading boundary is looked for BEHIND them. The six
-    hook commands in .claude/settings.json are written with one, and so is
-    every launcher that runs a program from the repository root; anchoring on
-    the bare character before the match stopped seeing all of them.
+    The lint applies the same list in looks_like_repo_path, which is why its
+    Markdown side never had either defect. This is that rule, at the two
+    places that do not go through it."""
+    return any(marker in token for marker in lint.SKIP_MARKERS)
+
+
+def citation_tokens_on_line(line: str, citing_path: pathlib.Path, lint):
+    """Every token on this line that is spelled as a path, under the citation
+    shapes the drift lint reads and the rulings it applies to them.
+
+    A markdown link's target, in a Markdown file: the shape that is a citation
+    one way and was invisible the other. `[the target](target.md)` written
+    from a sibling directory holds no repository-relative path at all, so
+    nothing that searches for one can find it -- while the FORWARD direction,
+    through the same lint, already reports "link target does not exist" about
+    exactly that text. A URL, a mail address and a bare fragment are not
+    repository paths, and a target's "#anchor" is not part of the file name;
+    all four are the lint's own rules in check_markdown_links.
+
+    And any word, in a file of any type, that carries a directory separator.
+    A name with no separator is not a claim about where a file sits
+    (user-ruled 2026-09-17) and is dropped here as the lint drops it, except
+    as a link target, where it is relative to the citing document and the
+    lint resolves it. A colon still means `git show REF:path` or a URL, once
+    a trailing line number is off.
+
+    What this does NOT do is decide whether a token names a file at all: no
+    extension test, no test that the first component is a directory of this
+    repository. Those belong to the FORWARD question, "which paths does this
+    line name", where the token is all there is to go on. The callers here
+    ask the other question, "does this line name THIS path", and already hold
+    the path; filtering first would only lose spellings -- an extensionless
+    launcher among them, which is the very kind of file the founding defect
+    was written in.
     """
-    if not path:
-        return False
-    for match in re.finditer(re.escape(path), text):
-        start = match.start()
-        while start and text[start - 1] in "./":
-            start -= 1
-        after = text[match.end():match.end() + 2]
-        if start and PATH_SEGMENT_CHARACTER.match(text[start - 1]):
-            continue
-        if after[:1] == ".":
-            if after[1:2] and PATH_SEGMENT_CHARACTER.match(after[1]):
+    if citing_path.suffix == ".md":
+        for target in lint.MARKDOWN_LINK.findall(line):
+            if "://" in target or target.startswith(("mailto:", "#")):
                 continue
-        elif after[:1] and PATH_SEGMENT_CHARACTER.match(after[0]):
+            bare = lint.without_line_suffix(target.split("#", 1)[0])
+            if bare and ":" not in bare and not carries_a_marker_the_lint_skips(bare, lint):
+                yield bare
+    for token in NAMED_PATH_TOKEN_SEPARATOR.split(line):
+        token = lint.without_line_suffix(token.rstrip(".,;:!?").lstrip("#*-"))
+        if not token or ":" in token or "/" not in token:
             continue
-        return True
-    return False
+        if carries_a_marker_the_lint_skips(token, lint):
+            continue
+        yield token
+
+
+def repository_paths_a_line_cites(line: str, citing_path: pathlib.Path, lint,
+                                  repository_root: pathlib.Path):
+    """The repository-relative paths this line's citations could name.
+
+    THE ONE DEFINITION OF A CITATION for both questions this program asks of
+    text rather than of the diff -- what still cites a path this change
+    removed, and what the file's own version at the merge base already cited.
+    They were two definitions until 2026-09-21: the backward end matched the
+    repository-relative path as a literal string, so a relative link naming
+    the same file was invisible to it, and the base-text end searched raw
+    text, so a path named only inside a code fence -- which the lint never
+    reads -- suppressed a genuinely new citation of it.
+
+    Resolution is the lint's own repo_relative_candidates, the same folding
+    of a token against the repository root and against the citing document's
+    directory that resolve() does, built for paths that are NOT on disk. Both
+    candidates are yielded and the caller compares for equality, which is
+    also what retired the boundary predicate this function replaced: a move
+    that only deepens a path leaves the old one a suffix of the new, and
+    <system>/<dir>/gate.py is simply not equal to <dir>/gate.py. The
+    placeholder spelling is this file's own practice, stated at
+    NAMED_PATH_TOKEN_SEPARATOR: a real path written here is one both
+    directions read.
+    """
+    for token in citation_tokens_on_line(line, citing_path, lint):
+        yield from lint.repo_relative_candidates(token, citing_path, repository_root)
 
 
 # A token in a non-Markdown file is a citation only when it starts with one
@@ -294,11 +426,36 @@ def plain_path_citations(line: str, root_directories: tuple, lint):
     colon dropped every line-numbered citation in a non-Markdown file --
     including the shape this program prints its own findings in. What the
     colon test is there for, `git show REF:path` and a URL, still has a colon
-    once the line number is off and is still dropped."""
-    for token in re.split(r"[\s'\"(){}\[\]<>]+", line):
+    once the line number is off and is still dropped.
+
+    A leading "/" or "./" is part of the spelling and not of the path, and is
+    taken off before the first component is read. token.split("/", 1)[0]
+    yielded "" for the one and "." for the other, neither a directory of this
+    repository, so both were dropped -- and that is how every hook command in
+    .claude/settings.json is written, "$CLAUDE_PROJECT_DIR"/scripts/<name>.py,
+    and how a launcher runs a program from the repository root. The FORWARD
+    direction was blind to the project's own live callers. The drift lint's
+    2026-08-14 ruling is that a leading "/" is repo-root-relative and IS
+    checked; what that ruling holds back, a deploy location such as
+    /usr/local/lib/<name>.py, is held back here by its own first component
+    not being a directory of this repository.
+
+    That strip is also what made a placeholder dangerous here. This split
+    used to break on a placeholder's own brackets, so <dir>/gate.py fell
+    apart and the /gate.py left behind was dropped for having no directory
+    at its head -- silence by accident. Strip the slash and the same
+    fragment becomes gate.py, and <system>/<dir>/gate.py becomes a citation
+    of <dir>/gate.py that nobody wrote -- a sentence that could not be
+    written here without the fix it describes. The brackets are no
+    longer separators and carries_a_marker_the_lint_skips refuses the whole
+    token, which is the drift lint's own rule for its Markdown side."""
+    for token in PLAIN_PATH_TOKEN_SEPARATOR.split(line):
         token = lint.without_line_suffix(token.rstrip(".,;:!?").lstrip("#*-"))
         if not token or ":" in token:
             continue
+        if carries_a_marker_the_lint_skips(token, lint):
+            continue
+        token = token[2:] if token.startswith("./") else token.lstrip("/")
         head = token.split("/", 1)[0]
         if head not in root_directories:
             continue
@@ -319,27 +476,69 @@ def cited_path_of(problem: str) -> str:
     return problem.rsplit(": ", 1)[-1].strip()
 
 
-def base_already_cites(cited: str, base_text: str, lint) -> bool:
-    """True when the file's own version at the merge base already named this
+def paths_the_base_text_cites(base_text: str, base_name: str, lint,
+                              repository_root: pathlib.Path) -> set:
+    """Every repository-relative path the file's version at the merge base
+    cites, read the way the FORWARD direction read the version at HEAD.
+
+    Read as raw text until 2026-09-21, which is not the same question. The
+    lint never reads a line inside a code fence, so a forward finding can
+    never come from one -- but the raw base text holds fenced lines like any
+    other, and a path a base named only inside a ```sh fence silently
+    dropped a genuinely new citation of it written in prose. Measured
+    2026-09-21 on two files given a byte-identical new citation: the one
+    whose base fenced the path was not reported and the other was.
+
+    So a Markdown base is walked the way lint_markdown walks a Markdown file:
+    fenced lines skipped, and a line carrying one of the lint's history or
+    foreign-root markers skipped, because a forward finding cannot come from
+    one of those either. A base of any other type is read line by line with
+    no marker rule, which is what findings_for_file does with such a file at
+    HEAD. The suppression compares like with like at each type."""
+    citing_path = repository_root / base_name
+    walk_as_markdown = citing_path.suffix == ".md"
+    skipped_markers = lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS
+    cited = set()
+    in_code_fence = False
+    for line in base_text.splitlines():
+        if walk_as_markdown:
+            if line.lstrip().startswith("```"):
+                in_code_fence = not in_code_fence
+                continue
+            if in_code_fence or any(marker in line for marker in skipped_markers):
+                continue
+        cited.update(repository_paths_a_line_cites(line, citing_path, lint, repository_root))
+    return cited
+
+
+def base_already_cites(cited: str, base_cited_paths: set, citing_path: pathlib.Path,
+                       lint, repository_root: pathlib.Path) -> bool:
+    """True when the file's own version at the merge base already cited this
     path -- so this change did not introduce the citation.
 
-    Asked as containment until 2026-09-21, which is a different question: a
-    base holding <dir>/page.md.bak answered yes to a citation of
-    <dir>/page.md, and the author's new dangling citation was dropped. A line
-    number is not part of the path, so it comes off before the comparison."""
-    return names_path_at_segment_boundary(base_text, lint.without_line_suffix(cited))
+    Both sides are resolved to repository-relative paths and compared for
+    equality. Asked as containment until 2026-09-21: a base holding
+    <dir>/page.md.bak answered yes to a citation of <dir>/page.md, and the
+    author's new dangling citation was dropped. A line number is not part of
+    the path, so it comes off before the comparison."""
+    candidates = set(lint.repo_relative_candidates(
+        lint.without_line_suffix(cited), citing_path, repository_root))
+    return bool(candidates & base_cited_paths)
 
 
-def is_declared_path_fixture_file(path: pathlib.Path, repository_root: pathlib.Path) -> bool:
-    """True for a file DECLARED_PATH_FIXTURE_FILES names. FORWARD only: the
-    one caller is findings_for_file. Adding it to citations_of_removed_paths
-    would hide a fixture file's stale citation of a path that moved, and a
-    case pins that."""
+def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> bool:
+    """True for a file the project's own Test row calls a test: a name ending
+    in "-test.py", or any file in a "tests" directory.
+
+    FORWARD only: the one caller is findings_for_file. Adding it to
+    citations_of_removed_paths would hide a test's stale citation of a path
+    that moved, and a case pins that."""
     try:
         relative = path.resolve().relative_to(repository_root.resolve())
-    except ValueError:  # a file outside the repository is not declared
+    except ValueError:  # a file outside the repository is not one of these
         return False
-    return relative.as_posix() in DECLARED_PATH_FIXTURE_FILES
+    return (relative.name.endswith(PROJECT_TEST_FILE_NAME_ENDING)
+            or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
 def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: tuple):
@@ -349,7 +548,7 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
         return
     # Forward only, and never from citations_of_removed_paths; the cost of
     # this line is stated in this module's docstring.
-    if is_declared_path_fixture_file(path, REPOSITORY_ROOT):
+    if is_project_test_file(path, REPOSITORY_ROOT):
         return
     if path.suffix == ".md":
         # The drift lint's own walk, so its code-fence tracking, its marker
@@ -416,26 +615,55 @@ def merge_base_names_of_renamed_files(name_status_rows: list) -> dict:
             if len(fields) >= 3 and fields[0].startswith("R")}
 
 
+def files_that_might_name_a_removed_path(removed: list, repository_root: pathlib.Path) -> set:
+    """The tracked files whose text holds the BASE NAME of a path this change
+    removed, which is the widest net a search can cast for the files worth
+    reading in full.
+
+    Searched by base name and not by the repository-relative path, because a
+    relative link to a sibling document holds only the base name -- and a
+    file holding the whole path holds the base name too, so nothing the
+    narrower search reached is lost. This is a filter and not the test: what
+    a candidate file actually cites is decided by reading it.
+
+    git grep -F, fixed strings: a name is not a pattern, and one holding a
+    regex character would otherwise match somewhere else or nowhere. -I
+    leaves binary files out, as they cite nothing."""
+    candidates = set()
+    for gone in removed:
+        base_name = gone.rsplit("/", 1)[-1]
+        if not base_name:
+            continue
+        hits = subprocess.run(
+            ["git", "grep", "-l", "-I", "--no-color", "-F", base_name, "--", "."],
+            cwd=repository_root, capture_output=True, text=True, check=False)
+        candidates.update(row for row in hits.stdout.splitlines() if row)
+    return candidates
+
+
 def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lint) -> list:
     """(citing file, line number, problem) for every tracked file that still
-    names a path this change removed. git grep -F, fixed strings: a path is
-    not a pattern, and a file name holding a regex character would otherwise
-    match somewhere else or nowhere."""
+    cites a path this change removed.
+
+    Each candidate file is read and its citations resolved, rather than its
+    lines matched against the removed path as a literal string. The literal
+    match could only ever see a citation that spells the whole path out, so a
+    markdown link to a moved sibling was invisible to this direction while
+    the FORWARD direction, in the same program and through the same lint,
+    reported the very same text as a broken link."""
+    wanted = set(removed)
     findings = []
-    for gone in removed:
-        hits = subprocess.run(
-            ["git", "grep", "-n", "-I", "--no-color", "-F", gone, "--", "."],
-            cwd=repository_root, capture_output=True, text=True, check=False)
-        for row in hits.stdout.splitlines():
-            citing, _, rest = row.partition(":")
-            number, _, text = rest.partition(":")
-            if not number.isdigit():
-                continue
-            citing_path = repository_root / citing
-            # The frozen measured data records what documents said when they
-            # were measured; a path inside it is history, not a citation.
-            if lint.in_frozen_measured_data(citing_path, repository_root):
-                continue
+    for citing in sorted(files_that_might_name_a_removed_path(removed, repository_root)):
+        citing_path = repository_root / citing
+        # The frozen measured data records what documents said when they were
+        # measured; a path inside it is history, not a citation.
+        if lint.in_frozen_measured_data(citing_path, repository_root):
+            continue
+        try:
+            text = citing_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # a binary or unreadable file cites nothing
+        for number, line in enumerate(text.splitlines(), 1):
             # A line saying a file lives in git history names something
             # deliberately absent from the tree, so a move does not make it
             # stale. The drift lint's own exemption, by its own list, applied
@@ -443,16 +671,13 @@ def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lin
             # type. Fenced content is NOT exempted: a usage example running a
             # script by path does need sweeping when the script moves, and
             # what marks the noise is the history marker, not the fence.
-            if any(marker in text for marker in lint.HISTORY_MARKERS):
+            if any(marker in line for marker in lint.HISTORY_MARKERS):
                 continue
-            # -F matches anywhere in the line, including inside a longer path
-            # that ends with this one -- which is what a move that only
-            # deepens a path leaves behind, so a correct sweep reported
-            # itself as a stale citation.
-            if not names_path_at_segment_boundary(text, gone):
-                continue
-            findings.append((citing, int(number),
-                             f"cites {gone}, which this change removed"))
+            cited = set(repository_paths_a_line_cites(
+                line, citing_path, lint, repository_root))
+            for gone in sorted(cited & wanted):
+                findings.append((citing, number,
+                                 f"cites {gone}, which this change removed"))
     return findings
 
 
@@ -485,7 +710,7 @@ def main(argv=None) -> int:
         path = REPOSITORY_ROOT / name
         if not path.is_file():
             continue  # renamed away or deleted between the diff and now
-        base_text = None
+        base_cited_paths = None
         for line_number, problem in findings_for_file(path, changed[name], lint, root_directories):
             # A citation this change did not introduce is not this change's
             # finding, even on a line it touched. Measured on the gatekeeper
@@ -498,10 +723,13 @@ def main(argv=None) -> int:
             # FROM; asking for it under its HEAD name got nothing back and
             # resurrected every standing citation in it. See "AND AT WHICH
             # NAME" above, which states what this does not cover.
-            if base_text is None:
-                base_text = file_at_merge_base(
-                    merge_base_name_of_renamed_file.get(name, name), merge_base, REPOSITORY_ROOT)
-            if base_already_cites(cited_path_of(problem), base_text, lint):
+            if base_cited_paths is None:
+                base_name = merge_base_name_of_renamed_file.get(name, name)
+                base_cited_paths = paths_the_base_text_cites(
+                    file_at_merge_base(base_name, merge_base, REPOSITORY_ROOT),
+                    base_name, lint, REPOSITORY_ROOT)
+            if base_already_cites(cited_path_of(problem), base_cited_paths,
+                                  path, lint, REPOSITORY_ROOT):
                 continue
             findings.append(f"{name}:{line_number}: {problem}")
     for finding in findings:

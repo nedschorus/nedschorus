@@ -369,23 +369,37 @@ echo hello
     check("a path carrying a line number in a non-Markdown file is checked",
           code == 1 and "scripts/absent-with-a-line-number.py" in out, f"{code} {out!r} {err!r}")
 
-    # --- FORWARD: a file DECLARED_PATH_FIXTURE_FILES names ---------------
-    # Its negative cases name paths that are deliberately absent, so against
-    # a base where the file did not exist yet every one of them is a new
-    # dangling citation and the program reported twenty on its own pull
-    # request. Forward only, and the cost is stated in its docstring.
-    git(root, "checkout", "-q", "-b", "declared-fixture-file", base)
+    # --- FORWARD: a test, by the project's own definition of one ---------
+    # A test whose subject is paths names paths that are deliberately absent,
+    # so against a base where the test did not exist yet every one of them is
+    # a new dangling citation, and this program reported seventeen of its own
+    # test's on its own pull request. Forward only, and the cost is stated in
+    # its docstring. Both halves of the Test row of
+    # docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
+    # are exercised, and neither fixture is a name the two-file list this
+    # replaced would have covered.
+    git(root, "checkout", "-q", "-b", "test-file-by-the-naming-standard", base)
     commit_change(root, "scripts/dangling-path-citation-check-test.py",
                   '#!/usr/bin/env python3\n'
-                  '"""A stand-in for the real test file, at its declared path."""\n'
+                  '"""A stand-in for the real test file, at its own path."""\n'
                   'FIXTURE = "scripts/deliberately-absent-fixture.py"\n')
     code, out, err = run_check(root, base)
-    check("a dangling path written into a declared fixture file is not reported forward",
+    check("a dangling path written into a test file is not reported forward",
           code == 0 and "deliberately-absent-fixture" not in out, f"{code} {out!r} {err!r}")
+    commit_change(root, "scripts/some-other-program-test.py",
+                  'FIXTURE = "scripts/absent-under-another-test-name.py"\n')
+    code, out, err = run_check(root, base)
+    check("a -test.py name the replaced list never held is exempt forward too",
+          "absent-under-another-test-name" not in out, f"{code} {out!r} {err!r}")
+    commit_change(root, "scripts/subsystem/tests/subsystem-test-fixture.py",
+                  'FIXTURE = "scripts/absent-under-a-tests-directory.py"\n')
+    code, out, err = run_check(root, base)
+    check("a file in a tests directory whose name does not end -test.py is exempt forward",
+          "absent-under-a-tests-directory" not in out, f"{code} {out!r} {err!r}")
     commit_change(root, "scripts/carries-the-same-line.py",
                   'FIXTURE = "scripts/deliberately-absent-fixture.py"\n')
     code, out, err = run_check(root, base)
-    check("the same line in an undeclared file is still reported",
+    check("the same line in a file that is not a test is still reported",
           code == 1 and "scripts/carries-the-same-line.py:1:" in out
           and "dangling-path-citation-check-test.py:" not in out, f"{code} {out!r} {err!r}")
 
@@ -412,11 +426,11 @@ echo hello
           code == 1 and "settings-like.json:1:" in out and "runner.sh:2:" in out,
           f"{code} {out!r} {err!r}")
 
-    # --- BACKWARD: the declared fixture file is NOT exempt ---------------
+    # --- BACKWARD: a test file is NOT exempt -----------------------------
     # The pin for the exemption above, and the property that stops it
-    # widening: a fixture file names its own subject, and when that subject
-    # moves the stale reference is a real one. Nothing but this case would
-    # notice the predicate being consulted in citations_of_removed_paths.
+    # widening: a test names its own subject, and when that subject moves the
+    # stale reference is a real one. Nothing but this case would notice the
+    # predicate being consulted in citations_of_removed_paths.
     git(root, "checkout", "-q", "-b", "fixture-file-cites-a-moved-module", base)
     (root / "scripts" / "module-under-test.py").write_text("# the module\n", encoding="utf-8")
     (root / "scripts" / "dangling-path-citation-check-test.py").write_text(
@@ -429,7 +443,7 @@ echo hello
     git(root, "mv", "scripts/module-under-test.py", "nc-systems/moved/module-under-test.py")
     git(root, "commit", "-qm", "move the module, forget the fixture file")
     code, out, err = run_check(root, fixture_base)
-    check("a declared fixture file's stale citation of a moved module is still reported",
+    check("a test file's stale citation of a moved module is still reported",
           code == 1 and "scripts/dangling-path-citation-check-test.py:1: "
           "cites scripts/module-under-test.py, which this change removed" in out,
           f"{code} {out!r} {err!r}")
@@ -503,6 +517,193 @@ echo hello
     check("the rename fixtures read as a rename to git, not as a delete and an add",
           renamed_row.startswith("R") and live_row.startswith("R"),
           f"{renamed_row!r} {live_row!r}")
+
+    # --- BACKWARD: a relative markdown link to a file that moved ---------
+    # The backward direction matched the repository-relative path as a
+    # literal string, and a link written from a sibling directory holds no
+    # repository-relative path at all -- while the FORWARD direction, through
+    # the same lint, reports "link target does not exist" about that very
+    # text. Two documents cite the SAME moved file, one by full path and one
+    # relatively, so the pair holds the old behaviour and the new one in one
+    # fixture. The target is padded so git scores the move a rename rather
+    # than a delete and an add; the backward direction does not care which,
+    # but the fixture should be the shape it says it is.
+    git(root, "checkout", "-q", "-b", "relative-link-backward", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "moving-target.md").write_text(
+        "# the target\n\n" + "An unrelated paragraph, carrying no citation.\n\n" * 12,
+        encoding="utf-8")
+    (root / "docs" / "cites-by-full-path.md").write_text(
+        "The design is `docs/moving-target.md` and stands.\n", encoding="utf-8")
+    (root / "docs" / "cites-relatively.md").write_text(
+        "The design is [the target](moving-target.md) and stands.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a target and two documents citing it")
+    relative_link_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "docs/moving-target.md", "nc-systems/moving-target.md")
+    git(root, "commit", "-qm", "move the target, sweeping neither citation")
+    code, out, err = run_check(root, relative_link_base)
+    check("a relative markdown link to a moved file is reported",
+          code == 1 and "docs/cites-relatively.md:1: cites docs/moving-target.md" in out,
+          f"{code} {out!r} {err!r}")
+    check("the full-path citation of the same move is still reported",
+          "docs/cites-by-full-path.md:1: cites docs/moving-target.md" in out, out)
+
+    # --- BACKWARD: a backticked citation inside a non-Markdown file ------
+    # Not a pin for a fix but a pin against the rework narrowing: the literal
+    # search this replaced saw a path wherever it was written, and ten such
+    # citations are live in this repository's own .py files. The backtick is
+    # a separator in NAMED_PATH_TOKEN_SEPARATOR and in nothing else, so this
+    # is the only case that would notice it going.
+    git(root, "checkout", "-q", "-b", "backticked-in-a-plain-file-backward", base)
+    (root / "scripts" / "quoted-module.py").write_text("# the module\n", encoding="utf-8")
+    (root / "scripts" / "cites-it-in-a-docstring.py").write_text(
+        '"""This follows the write in `scripts/quoted-module.py`, ruled 2026-08-12."""\n',
+        encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a module and a docstring citing it in backticks")
+    backticked_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/quoted-module.py", "nc-systems/quoted-module.py")
+    git(root, "commit", "-qm", "move the module, sweeping nothing")
+    code, out, err = run_check(root, backticked_base)
+    check("a backticked citation in a non-Markdown file is reported when the path moves",
+          code == 1 and "scripts/cites-it-in-a-docstring.py:1: "
+          "cites scripts/quoted-module.py" in out, f"{code} {out!r} {err!r}")
+
+    # --- BACKWARD: a path with no file extension -------------------------
+    # The other half of the same narrowing. The FORWARD direction requires a
+    # known extension to believe a token is a path at all; the backward
+    # direction holds the path already and must not, or a move of any of the
+    # three extensionless launchers -- the very files the founding defect was
+    # written in -- would report nothing.
+    git(root, "checkout", "-q", "-b", "extensionless-path-backward", base)
+    (root / "scripts" / "launcher-that-moves").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    (root / "scripts" / "launcher-that-moves").chmod(0o755)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "launching.md").write_text(
+        "Start a seat with `scripts/launcher-that-moves` on the Mac.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a launcher with no extension and a document citing it")
+    extensionless_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/launcher-that-moves", "nc-systems/launcher-that-moves")
+    git(root, "commit", "-qm", "move the launcher, sweeping nothing")
+    code, out, err = run_check(root, extensionless_base)
+    check("a citation of a moved path with no file extension is reported",
+          code == 1 and "docs/launching.md:1: cites scripts/launcher-that-moves" in out,
+          f"{code} {out!r} {err!r}")
+
+    # --- FORWARD: the suppression reads the base as the lint reads it ----
+    # "Did the base already cite this" was asked of raw text. The lint never
+    # reads a line inside a code fence, so a forward finding can never come
+    # from one -- but a fenced line in the base answered yes anyway and
+    # dropped a genuinely new citation written in prose. The two files get a
+    # byte-identical new line and differ only in where their base named the
+    # path: in a fence, or in prose. The prose one is the control, and it
+    # goes red if the suppression is disabled rather than fixed.
+    git(root, "checkout", "-q", "-b", "fenced-base-does-not-suppress", base)
+    commit_change(root, "docs/fenced-in-the-base.md",
+                  "# a page\n\nHow to run it:\n\n```sh\n"
+                  "python3 scripts/absent-either-way.py --check\n```\n")
+    commit_change(root, "docs/prose-in-the-base.md",
+                  "# a page\n\nIt is run by `scripts/absent-either-way.py` today.\n")
+    fenced_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    newly_written = "\nThe program is `scripts/absent-either-way.py`, newly cited here.\n"
+    for citing in ("docs/fenced-in-the-base.md", "docs/prose-in-the-base.md"):
+        (root / citing).write_text((root / citing).read_text(encoding="utf-8") + newly_written,
+                                   encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "give both files the same new citation")
+    code, out, err = run_check(root, fenced_base)
+    check("a base that named the path only inside a code fence does not suppress it",
+          code == 1 and "docs/fenced-in-the-base.md:" in out, f"{code} {out!r} {err!r}")
+    check("a base that named the path in prose still suppresses it",
+          "docs/prose-in-the-base.md:" not in out, out)
+
+    # --- FORWARD: a citation spelled with a leading or dotted slash ------
+    # token.split("/", 1)[0] is "" for one and "." for the other, neither a
+    # directory of this repository, so both were dropped -- and that is how
+    # every hook command in .claude/settings.json and every launcher that
+    # runs a program from the repository root is written. The fourth line is
+    # the control the drift lint's 2026-08-14 ruling requires: a deploy
+    # location whose first component is not a directory of this repository is
+    # not this repository's business.
+    git(root, "checkout", "-q", "-b", "slash-prefixed-forward", base)
+    commit_change(root, "settings-like-forward.json",
+                  '{"bare": "python3 scripts/absent-when-bare.py",\n'
+                  ' "dotted": "python3 ./scripts/absent-when-dotted.py",\n'
+                  ' "rooted": "python3 /scripts/absent-when-rooted.py",\n'
+                  ' "deploy": "python3 /usr/local/lib/absent-elsewhere.py"}\n')
+    code, out, err = run_check(root, base)
+    check("a citation spelled ./<dir>/... in a non-Markdown file is checked forward",
+          code == 1 and "absent-when-dotted" in out, f"{code} {out!r} {err!r}")
+    check("a citation spelled /<dir>/... in a non-Markdown file is checked forward",
+          "absent-when-rooted" in out, out)
+    check("the same citation spelled bare is still checked forward",
+          "absent-when-bare" in out, out)
+    check("a deploy location outside this repository is still not checked forward",
+          "absent-elsewhere" not in out, out)
+
+    # --- BACKWARD: a placeholder in a SIBLING of the moved file ----------
+    # The collapse happens first and the resolution after. `<dir>/gate.py`
+    # split on its own brackets leaves /gate.py, and /gate.py folded against
+    # the citing file's directory lands exactly on the path that moved --
+    # but only when the citing file is a SIBLING of it, which is why the
+    # same sentence in docs/ was silent and the one in scripts/ was not. The
+    # same text in two places is the whole experiment, and the third file is
+    # a real citation that must survive, so the case cannot be passed by
+    # switching the resolution off.
+    git(root, "checkout", "-q", "-b", "sibling-placeholder-backward", base)
+    (root / "scripts" / "gate.py").write_text("# the gate\n", encoding="utf-8")
+    (root / "scripts" / "illustrates-with-a-placeholder.py").write_text(
+        "# illustrated as `<dir>/gate.py` in this comment\n", encoding="utf-8")
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "illustrates-from-elsewhere.md").write_text(
+        "Illustrated as `<dir>/gate.py` in this page.\n", encoding="utf-8")
+    (root / "scripts" / "cites-it-for-real.py").write_text(
+        "# this follows the write in scripts/gate.py, ruled 2026-08-12\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a gate, two placeholder illustrations and a real citation")
+    placeholder_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/gate.py", "nc-systems/gate.py")
+    git(root, "commit", "-qm", "move the gate, sweeping nothing")
+    code, out, err = run_check(root, placeholder_base)
+    check("a placeholder in a sibling of the moved file is not read as citing it",
+          "illustrates-with-a-placeholder" not in out, f"{code} {out!r} {err!r}")
+    check("the same placeholder text elsewhere is not read as citing it either",
+          "illustrates-from-elsewhere" not in out, out)
+    check("a real citation of the same moved path is still reported",
+          code == 1 and "scripts/cites-it-for-real.py:1: cites scripts/gate.py" in out,
+          f"{code} {out!r} {err!r}")
+
+    # --- FORWARD: the same collapse, once the leading slash comes off ----
+    # This direction was silent by accident: the fragment left behind had no
+    # directory at its head. Stripping a leading "/" gave it one, so the
+    # marker test is what keeps it silent on purpose. The second line is the
+    # control, a real dangling citation on the same file.
+    # The third line is the shape that makes the marker test load-bearing
+    # rather than belt-and-braces: the placeholder is in the MIDDLE, so the
+    # token's first component is a real directory of this repository and its
+    # ending is a real extension, and nothing else would refuse it. Two live
+    # lines of scripts/cold-read-cell-common.py are written exactly so.
+    git(root, "checkout", "-q", "-b", "placeholder-forward", base)
+    commit_change(root, "scripts/illustrates-shapes.py",
+                  "# a program of the shape <system>/scripts/absent-illustration.py\n"
+                  "# and one written {system}/scripts/absent-in-braces.py\n"
+                  "# and a prompt at scripts/prompts/<cell>-absent-in-the-middle.md\n"
+                  "# and a real one at scripts/absent-for-real.py\n")
+    code, out, err = run_check(root, base)
+    check("an angle-bracket placeholder is not read as a forward citation",
+          "absent-illustration" not in out, f"{code} {out!r} {err!r}")
+    check("a brace placeholder is not read as a forward citation",
+          "absent-in-braces" not in out, out)
+    check("a placeholder in the middle of an otherwise real path is not a forward citation",
+          "absent-in-the-middle" not in out, out)
+    check("a real dangling citation on the same file is still reported forward",
+          code == 1 and "absent-for-real" in out, f"{code} {out!r} {err!r}")
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
