@@ -188,6 +188,25 @@ from pathlib import Path
 
 HANDOFF_DIRECTORY = Path.home() / ".claude" / "handoffs"
 
+# The fired marker's suffix, and the only composition of its path. A second
+# program now clears this marker — scripts/post-compaction-session-continues-hook.py,
+# because a compaction keeps the session id and so would otherwise leave the
+# marker standing and retire that session's reincarnation for good. Defining
+# the name here rather than in both is the 2026-09-19 ruling (walk
+# file-naming-and-location-standards-cold-read-findings, item 4: reduce each
+# repeated name to one definition), and the same ruling the supervisor's state
+# and lock suffixes already follow.
+FIRED_MARKER_SUFFIX = "-handoff-asked"
+
+
+def fired_marker_path(session_id: str) -> Path:
+    """Return the marker path written when this session's handoff fires.
+
+    Reads HANDOFF_DIRECTORY at call time, not at import: the suites override
+    that global to keep their writes out of the real handoff directory.
+    """
+    return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
+
 # Set, to the calling script's name, by a caller that reincarnates the session
 # itself; the hook stays silent while it is set. Module docstring.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -598,7 +617,7 @@ def main(argv=None) -> int:
     if used is None or used < arguments.threshold_used_percentage:
         return 0  # nothing measurable yet, or still plenty of room
 
-    fired_marker = HANDOFF_DIRECTORY / f"{session_id}-handoff-asked"
+    fired_marker = fired_marker_path(session_id)
     if fired_marker.exists():
         return 0  # already asked this session; do not nag every turn
 
