@@ -20,16 +20,17 @@ and by the agent.
 
 WHAT ONE RUN DOES. The directory is copied whole to the store under its own
 name by rsync -- over ssh from the Mac, as a local copy on ned-box, the store
-itself being the only difference -- under three rules ruled with the design:
+itself being the only difference -- under four rules, the first three ruled
+with the design:
 
-  1. ADD-ONLY. Files are added and never deleted or replaced, so
-     triage.md, written hours after the reports, joins them on a second
-     run and nothing already there is touched. rsync writes each file whole
-     or not at all (its default temporary-file-and-rename; --inplace is never
-     passed), so a copy interrupted midway is finished by the next run.
-  2. REFUSE ON DIFFERENCE. A file already in the store whose content differs
-     from the local one is refused before anything is copied: the one line
-     names every such file and prints the provenance comment each report
+  1. ADD-ONLY, EVERY FILE BUT triage.md. Files are added and never deleted or
+     replaced, so a report, written once, is what the store keeps for good.
+     rsync writes each file whole or not at all (its default
+     temporary-file-and-rename; --inplace is never passed), so a copy
+     interrupted midway is finished by the next run.
+  2. REFUSE ON DIFFERENCE. An add-only file already in the store whose content
+     differs from the local one is refused before anything is copied: the one
+     line names every such file and prints the provenance comment each report
      opens with, from both copies, and the person renames the local
      directory with a -2 suffix and ships again. Two machines reviewing one document on one day
      produce exactly this, and rsync alone would overwrite the first silently.
@@ -37,6 +38,49 @@ itself being the only difference -- under three rules ruled with the design:
      opening FAILED and exits non-zero; the cold-read-record stays on disk,
      unshipped, for a later run. ssh runs in batch mode with a connect timeout,
      so an automated caller never waits on a prompt.
+  4. triage.md IS REPLACED, AND EACH DISPLACED COPY'S sha256 IS ANNOUNCED
+     (user-ruled 2026-09-20, item 4 of the walk
+     md-skills-seat-open-decisions-2026-09-20). triage.md is the one file in a
+     cold-read-record written twice on purpose: the agent triages the
+     reviewers' findings into it, and it is written again with the user's
+     rulings once the approval-walk closes. Rules 1 and 2 refused that second
+     write. What made the defect visible: the post-walk triage of
+     `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-14-nedschorus-file-naming-and-location-standards-3/`
+     reached the store on 2026-09-20 ONLY because the file had also been
+     renamed dispositions.md -> triage.md on 2026-09-18, so the shipper saw a
+     name it did not hold and a new name is an add; under its old name that
+     shipment would have been refused and five of the user's rulings would
+     never have reached the store at all. So a stored triage.md whose bytes
+     differ is overwritten, and the sha256 of the copy it displaced is
+     announced on its own stderr line: a triage shipped three times leaves a
+     trace of each displaced version rather than one silent overwrite.
+     This is what scripts/walk-files-ship.py already does for a walk's minutes
+     and dispositions -- same digest announcement, same stderr form -- ruled by
+     the user on 2026-09-18 at item 5 of the walk
+     skill-sentences-and-shipper-questions-2026-09-18 and landed in PR
+     "walk-files-ship: a walk's five files reach the log-store's walk/ kind at
+     the walk's close" (https://github.com/nedschorus/nedschorus/pull/501). The
+     point of the 2026-09-20 ruling is that the two shippers stop differing.
+
+     ONLY triage.md, AND ONLY THE RECORD'S OWN. The name is matched as the
+     record directory's own top-level file, never by basename anywhere under
+     it: `target/<repository path>/triage.md` is the frozen cold-read-target's
+     bytes -- the reviewed document itself, which happens to be a triage file
+     -- and it stays add-only like every other file. Nothing else gained a
+     replace path, the reviewer reports above all: they record what was said,
+     and a store that can rewrite them is no longer evidence.
+
+     A DIFFERING ADD-ONLY FILE STILL REFUSES THE WHOLE RECORD, triage.md
+     included, and copies nothing. A report that differs from the stored one
+     says the local directory is a SECOND READ of the document -- the two
+     machines on one day rule 2 was written for -- and that read's triage
+     belongs beside that read's own reports, under the -2 name the refusal
+     asks for. Landing it here would file one read's rulings with another
+     read's reports. scripts/walk-files-ship.py ships a walk's remaining
+     files through such a refusal because a reopened walk's second run exists
+     to deliver the minutes and there is only ever one walk of that name; a
+     record's -2 rename gives the second read a directory of its own, and
+     nothing is lost by waiting for it.
 
 The store's directories are created on first use, and a README.md at the
 store's root is written when absent -- it says what the store is and that
@@ -56,7 +100,9 @@ and how the cold-read-records that predate the store were shipped once.
 OUTPUT. Exactly one line on stdout per cold-read-record -- `shipped:`,
 `REFUSED:` or `FAILED:`, or under --all `skipped:` for an empty directory,
 which is not a cold-read-record -- and, under --all, one summary line after
-them. Everything else is on stderr. Exit 0 when every directory shipped, 2 when
+them. Everything else is on stderr, the REPLACED line rule 4 announces
+included: that line is a trace for whoever reads the store, never the summary a
+caller prints. Exit 0 when every directory shipped, 2 when
 any was refused and none failed, 1 when any failed, 64 for a bad invocation.
 
 THE CITATION NAMES THE HOST ON BOTH MACHINES. On ned-box the copy is local
@@ -104,6 +150,16 @@ PROGRAM = "cold-read-record-ship"
 LOG_STORE_RECORDS_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 LOG_STORE_HOSTNAME = "ned-box"
 DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+
+# The one file in a cold-read-record a later shipment REPLACES in the store,
+# rule 4 above. Held here because this program is the one that compares a
+# record's files by name; it is matched as the record directory's own
+# top-level file, so the frozen cold-read-target's own copy of a file by this
+# name is add-only like the rest of that directory. scripts/cold-read-grid.py
+# names the same file in the prose it hands the agent, which is prose naming a
+# file rather than a second definition of a path a program builds -- the
+# distinction scripts/cold-read-record-names-test.py draws.
+TRIAGE_FILE_REPLACED_IN_THE_STORE = "triage.md"
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 # Seconds rsync waits on a silent connection before giving up.
@@ -223,6 +279,31 @@ def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *ex
     if host:
         command += ["-e", " ".join(SSH_COMMAND)]
     return command + [f"{source}/", destination]
+
+
+def rsync_one_file_command(host, source: pathlib.Path,
+                           target: pathlib.PurePosixPath) -> list:
+    """rsync of ONE file over the store's copy of it: the replace path rule 4
+    describes, which the add-only copy above cannot take (--ignore-existing is
+    what it is for). The source is a file and not a directory, so no trailing
+    slash is appended to either side.
+
+    --ignore-times, because whether to copy was already decided here by
+    comparing sha256 on both sides. rsync's own quick check is size and
+    modification time to the second and it skips a file the two agree on: a
+    triage rewritten to the same length within the second the stored copy
+    carries would be silently not copied, leaving the store's old bytes behind
+    a line saying they had been replaced. Measured on this Mac's openrsync,
+    which skipped exactly that file, by scripts/seat-shared-file-ship.py's
+    `rsync_one_file`, and scripts/walk-files-ship.py passes the flag for the
+    same reason. Never --inplace: rsync writes the file whole or not at all,
+    so an interrupted replacement leaves the store's old copy intact."""
+    destination = f"{host}:{target}" if host else str(target)
+    command = ["rsync", "-a", "--ignore-times", "--timeout",
+               RSYNC_IO_TIMEOUT_SECONDS]
+    if host:
+        command += ["-e", " ".join(SSH_COMMAND)]
+    return command + [str(source), destination]
 
 
 def refresh_store_readme(root) -> None:
@@ -448,6 +529,14 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     differing = sorted(relative for relative, digest in local.items()
                        if relative in in_store and in_store[relative] != digest)
     new_files = sorted(relative for relative in local if relative not in in_store)
+    # Rule 4: the record's own triage.md is replaced rather than refused, so it
+    # leaves `differing` here and the refusal below is about the add-only files
+    # alone. The digest it displaces is kept for the stderr announcement, which
+    # is written only once the copy has landed.
+    displaced_triage_digest = None
+    if TRIAGE_FILE_REPLACED_IN_THE_STORE in differing:
+        differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+        displaced_triage_digest = in_store[TRIAGE_FILE_REPLACED_IN_THE_STORE]
     if differing:
         # The loop only gathers; the one print comes after it, so a
         # cold-read-record with several differing files still gets
@@ -466,19 +555,52 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
               f"and ship again.")
         return EXIT_REFUSED
 
-    if not new_files:
-        print(f"shipped: {name} — nothing new, all files already in {citation}")
+    if not new_files and displaced_triage_digest is None:
+        print(f"shipped: {name} — nothing new, all files already there; "
+              f"record at {citation}")
         return EXIT_SHIPPED
-    transferred = subprocess.run(
-        rsync_command(host, record_dir, store_dir, "--ignore-existing"),
-        capture_output=True, text=True, check=False)
-    if transferred.returncode != 0:
-        reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
-                  else f"rsync exit {transferred.returncode}")
-        print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
-        sys.stderr.write(transferred.stderr)
-        return EXIT_FAILED
-    print(f"shipped: {name} — {len(new_files)} file(s) added to {citation}")
+    if new_files:
+        transferred = subprocess.run(
+            rsync_command(host, record_dir, store_dir, "--ignore-existing"),
+            capture_output=True, text=True, check=False)
+        if transferred.returncode != 0:
+            reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
+                      else f"rsync exit {transferred.returncode}")
+            print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+            sys.stderr.write(transferred.stderr)
+            return EXIT_FAILED
+    if displaced_triage_digest is not None:
+        # The replacement is its own rsync of that one file: the copy above
+        # passes --ignore-existing, which is what keeps every other file
+        # add-only, and a file the store already holds is exactly what it
+        # skips.
+        triage_relative = TRIAGE_FILE_REPLACED_IN_THE_STORE
+        replaced = subprocess.run(
+            rsync_one_file_command(host, record_dir / triage_relative,
+                                   store_dir / triage_relative),
+            capture_output=True, text=True, check=False)
+        if replaced.returncode != 0:
+            reason = ("ned-box unreachable" if replaced.returncode == RSYNC_EXIT_CONNECTION_FAILED
+                      else f"rsync exit {replaced.returncode}")
+            print(f"FAILED: {name} — {reason} while replacing "
+                  f"{triage_relative}; a later run finishes it.")
+            sys.stderr.write(replaced.stderr)
+            return EXIT_FAILED
+        # After the copy has landed and never on stdout, which carries the
+        # summary and the citation. See rule 4 for what this line is for.
+        print(f"{PROGRAM}: REPLACED {triage_relative} in the store — the content "
+              f"it held was sha256 {displaced_triage_digest}, and what is there "
+              f"now is sha256 {local[triage_relative]}.\n"
+              f"{PROGRAM}: if the displaced triage was wanted — a fresh session "
+              f"can hold an older copy than the store's — the store is "
+              f"snapshotted every ten minutes by Timeshift, and the first digest "
+              f"above says which file to look for there.", file=sys.stderr)
+    summary = []
+    if new_files:
+        summary.append(f"{len(new_files)} file(s) added")
+    if displaced_triage_digest is not None:
+        summary.append(f"{TRIAGE_FILE_REPLACED_IN_THE_STORE} replaced")
+    print(f"shipped: {name} — {'; '.join(summary)}; record at {citation}")
     return EXIT_SHIPPED
 
 
@@ -492,6 +614,13 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     store and its own directory in the checkout. It calls this rather than
     holding a second copy, so the two cannot drift on what --all skips or what
     each exit code means.
+
+    RULE 4 REACHES THAT KIND ONLY THROUGH THE NAME triage.md, which a
+    sanity-check record does not use: its twice-written file is
+    finding-dispositions.md, written at the run's close and updated as the
+    findings' status moves, and it stays add-only and refused on difference.
+    That is the same defect rule 4 fixes here, in a second program, and it is
+    a second topic -- the 2026-09-20 ruling names this program's triage.md.
 
     `records_dir` is where --all looks in this checkout; `destination` is the
     (host, path) pair the caller got from destination_for_this_machine, with

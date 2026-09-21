@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for scripts/cold-read-record-ship.py: the three rules, the exits, the
+"""Tests for scripts/cold-read-record-ship.py: the four rules, the exits, the
 one-line stdout, --all, and the shape of the remote invocation.
 
 Two modes, as the script's docstring says. LOCAL: the destination override
 names a scratch directory and the real rsync on this machine does the copy,
-so add-only, refuse-on-difference and the README are exercised for real.
+so add-only, refuse-on-difference, the triage.md replacement and the README
+are exercised for real.
 REMOTE: the override is the ruled scp-form destination and stub `ssh` and
 `rsync` binaries on PATH record what they were asked, so the case reads the
 invocation without a network. Nothing here touches ned-box.
@@ -18,6 +19,7 @@ Run: python3 scripts/cold-read-record-ship-test.py   (exit 0 = all passed)
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -42,6 +44,20 @@ STUB_RECORDER = """#!/usr/bin/env python3
 import json, os, sys
 with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"], "a") as log:
     log.write(json.dumps(sys.argv) + "\\n")
+"""
+
+# A stub `ssh` that records what it was asked as the recorder above does and
+# ANSWERS the inventory call: the script that runs sha256sum gets one line
+# naming triage.md with the digest the environment holds, which is a store
+# that already keeps a triage from before the approval-walk. Every other file
+# is absent from the answer and so is new. Without an answer no remote case
+# ever reaches the replace path, every file there looking new.
+STUB_INVENTORY_ANSWERING_SSH = """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["RECORD_SHIP_TEST_ARGV_LOG"], "a") as log:
+    log.write(json.dumps(sys.argv) + "\\n")
+if "sha256sum" in sys.argv[-1]:
+    print(os.environ["RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST"] + "  ./triage.md")
 """
 
 failures = []
@@ -401,11 +417,139 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     (demo / "a.md").write_text(REPORT_A, encoding="utf-8")
     (demo / "b.md").write_text(REPORT_B, encoding="utf-8")
 
-    (demo / "triage.md").write_text("# triage\n\nrewritten\n", encoding="utf-8")
+    # A differing file with no provenance comment, on a file that is NOT
+    # triage.md: since the 2026-09-20 ruling triage.md is replaced rather than
+    # refused, and this case is about the refusal's text.
+    notes = demo / "notes-with-no-provenance.md"
+    notes.write_text("# notes\n\nas shipped\n", encoding="utf-8")
+    ship(local_destination, str(demo))
+    notes.write_text("# notes\n\nreworded\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
     check("a differing file with no provenance comment says so instead of crashing",
           result.returncode == 2 and "(no provenance comment)" in result.stdout, result.stdout)
-    (demo / "triage.md").write_text("# triage\n\nnone\n", encoding="utf-8")
+    notes.write_text("# notes\n\nas shipped\n", encoding="utf-8")
+
+    # --- Rule 4: the record's triage.md is REPLACED, each displaced copy's
+    # sha256 announced ------------------------------------------------------
+    #
+    # triage.md is the one file in a cold-read-record written twice on purpose:
+    # the agent triages the reviewers' findings into it, then it is written
+    # again with the user's rulings once the approval-walk closes. Add-only
+    # refused that second write. The post-walk triage of the record
+    # 2026-09-14-nedschorus-file-naming-and-location-standards-3 reached the
+    # store on 2026-09-20 only because the file had also been renamed
+    # dispositions.md -> triage.md two days earlier, so the shipper saw a name
+    # it did not hold; under its old name five of the user's rulings would have
+    # been refused (user-ruled 2026-09-20, item 4 of the walk
+    # md-skills-seat-open-decisions-2026-09-20).
+    #
+    # late.md, which the refusal cases left on disk unshipped to prove that a
+    # refused run copies nothing, is removed first so these cases count adds
+    # and replacements and nothing else.
+    (demo / "late.md").unlink()
+    stored_triage = store_root / "cold-read-records" / demo.name / "triage.md"
+    triage_as_first_shipped = stored_triage.read_text(encoding="utf-8")
+    displaced_digest = hashlib.sha256(
+        triage_as_first_shipped.encode("utf-8")).hexdigest()
+    triage_after_the_walk = "# triage\n\nfinding one: applied after the walk.\n"
+    landed_digest = hashlib.sha256(triage_after_the_walk.encode("utf-8")).hexdigest()
+    (demo / "triage.md").write_text(triage_after_the_walk, encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("a triage.md rewritten after the approval-walk replaces the store's "
+          "copy instead of being refused",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and result.stdout.count("\n") == 1
+          and stored_triage.read_text(encoding="utf-8") == triage_after_the_walk,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    check("the one stdout line says the triage was replaced, and the citation "
+          "still names the record in the store",
+          "triage.md replaced" in result.stdout and demo.name in result.stdout,
+          result.stdout)
+    check("the displaced copy's sha256 and the landed one are announced on "
+          "stderr, so a triage shipped three times leaves a trace of each",
+          "REPLACED" in result.stderr and displaced_digest in result.stderr
+          and landed_digest in result.stderr, result.stderr)
+    check("the replacement is announced on stderr and never on the one stdout line",
+          "REPLACED" not in result.stdout, result.stdout)
+
+    stored_report_mtime = stored_a.stat().st_mtime_ns
+    triage_mtime_after_replacement = stored_triage.stat().st_mtime_ns
+    result = ship(local_destination, str(demo))
+    check("a triage.md identical to the store's is not rewritten and nothing "
+          "is announced",
+          result.returncode == 0 and "nothing new" in result.stdout
+          and "REPLACED" not in result.stderr
+          and stored_triage.stat().st_mtime_ns == triage_mtime_after_replacement
+          and stored_a.stat().st_mtime_ns == stored_report_mtime,
+          f"{result.stdout}{result.stderr}")
+
+    # A same-length revision carrying the stored copy's own modification time:
+    # rsync's quick check is size and modification time to the second, and it
+    # skips a file the two agree on -- measured on this Mac's openrsync, where a
+    # 5-byte file with a matching mtime was not copied without --ignore-times.
+    # Without the flag the store would keep its old bytes behind a line saying
+    # they had been replaced. The two revisions must be the same length or the
+    # case stops asking that question, so the case checks that first.
+    same_length_revision = "# triage\n\nfinding one: refused after the walk.\n"
+    check("the two triage revisions are the same length, which is what puts "
+          "rsync's size-and-time check in play",
+          len(same_length_revision) == len(triage_after_the_walk),
+          f"{len(same_length_revision)} vs {len(triage_after_the_walk)}")
+    (demo / "triage.md").write_text(same_length_revision, encoding="utf-8")
+    stored_times = stored_triage.stat()
+    os.utime(demo / "triage.md",
+             ns=(stored_times.st_atime_ns, stored_times.st_mtime_ns))
+    result = ship(local_destination, str(demo))
+    check("a same-length triage.md carrying the stored copy's own modification "
+          "time is still copied, not skipped by rsync's size-and-time check",
+          result.returncode == 0
+          and stored_triage.read_text(encoding="utf-8") == same_length_revision,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    # Rule 2 still governs the rest of the record, and a refused run copies
+    # nothing -- the triage included, however replaceable it is on its own.
+    (demo / "a.md").write_text(
+        "<!-- provenance: runtime=claude model=opus-rerun -->\n# A\n\nfinding one, reworded\n",
+        encoding="utf-8")
+    (demo / "triage.md").write_text("# triage\n\nwritten during a refusal\n",
+                                    encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("a differing report is REFUSED with exit 2 even though the triage "
+          "beside it is replaceable",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and "a.md" in result.stdout, result.stdout)
+    check("the refused run replaced nothing: the store keeps the triage it had "
+          "and says nothing about a replacement",
+          stored_triage.read_text(encoding="utf-8") == same_length_revision
+          and "REPLACED" not in result.stderr,
+          stored_triage.read_text(encoding="utf-8") + result.stderr)
+    (demo / "a.md").write_text(REPORT_A, encoding="utf-8")
+    (demo / "triage.md").write_text(same_length_revision, encoding="utf-8")
+
+    # ONLY THE RECORD'S OWN triage.md. Under target/ lie the frozen
+    # cold-read-target's bytes at its own repository path, so a document named
+    # triage.md that was itself reviewed lives there -- and it is a report's
+    # peer, add-only, never the record's triage.
+    frozen_triage = demo / "target" / "docs" / "triage.md"
+    frozen_triage.parent.mkdir(parents=True, exist_ok=True)
+    frozen_triage.write_text("# the reviewed document\n\nas read\n", encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("the frozen cold-read-target's own triage.md ships as an ordinary "
+          "added file",
+          result.returncode == 0 and "1 file(s) added" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    stored_frozen_triage = (store_root / "cold-read-records" / demo.name
+                            / "target" / "docs" / "triage.md")
+    frozen_triage.write_text("# the reviewed document\n\nedited\n", encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("a triage.md under the frozen cold-read-target is REFUSED, not "
+          "replaced: only the record's own top-level triage.md is replaceable",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and "target/docs/triage.md" in result.stdout
+          and stored_frozen_triage.read_text(encoding="utf-8")
+          == "# the reviewed document\n\nas read\n",
+          f"exit {result.returncode}: {result.stdout}")
+    frozen_triage.write_text("# the reviewed document\n\nas read\n", encoding="utf-8")
 
     # --- Rule 3, fail loudly -------------------------------------------------
     result = ship("nobody@no-such-host.invalid:/tmp/no-store", str(demo))
@@ -513,6 +657,56 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the destination constant in the script is the ruled one",
           f'LOG_STORE_RECORDS_DESTINATION = "{RULED_DESTINATION}"'
           in SHIP.read_text(encoding="utf-8"))
+
+    # --- The REPLACEMENT's remote invocation, read from stubs ------------------
+    # The recorder above answers the inventory with nothing, so every file looks
+    # new to it and the replace path is never reached. This stub `ssh` answers
+    # the inventory call with a triage.md digest that differs from the local
+    # file's, which is a store that already holds a triage from before the
+    # approval-walk.
+    answering_stubs = scratch / "stub-bin-answering-the-inventory"
+    answering_stubs.mkdir()
+    (answering_stubs / "ssh").write_text(STUB_INVENTORY_ANSWERING_SSH, encoding="utf-8")
+    (answering_stubs / "ssh").chmod(0o755)
+    (answering_stubs / "rsync").write_text(STUB_RECORDER, encoding="utf-8")
+    (answering_stubs / "rsync").chmod(0o755)
+    stored_triage_digest = "0" * 64
+    remote_record = make_record(records, "2026-09-20-remote-replace",
+                                {"a.md": REPORT_A,
+                                 "triage.md": "# triage\n\nafter the walk\n"})
+    replace_log = scratch / "argv-replace.jsonl"
+    result = ship(RULED_DESTINATION, str(remote_record), extra_env={
+        "PATH": f"{answering_stubs}{os.pathsep}{os.environ.get('PATH', '')}",
+        "RECORD_SHIP_TEST_ARGV_LOG": str(replace_log),
+        "RECORD_SHIP_TEST_STORED_TRIAGE_DIGEST": stored_triage_digest})
+    replace_calls = [json.loads(line) for line in replace_log.read_text().splitlines()]
+    replace_rsync_calls = [c for c in replace_calls if c[0].endswith("rsync")]
+    single_file_calls = [c for c in replace_rsync_calls
+                         if c[-1].endswith(f"{remote_record.name}/triage.md")]
+    check("remotely a triage.md the store already holds with other bytes is "
+          "shipped, not refused",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and "triage.md replaced" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    check("the replacement is a second rsync of that one file, over batch-mode "
+          "ssh, into the record's own directory in the store",
+          len(replace_rsync_calls) == 2 and len(single_file_calls) == 1
+          and single_file_calls[0][-2] == f"{remote_record.resolve()}/triage.md"
+          and single_file_calls[0][-1]
+          == f"{RULED_DESTINATION}/{remote_record.name}/triage.md"
+          and "ssh -o BatchMode=yes -o ConnectTimeout=10" in single_file_calls[0],
+          str(replace_rsync_calls))
+    check("the replacing rsync passes --ignore-times, rsync's size-and-time "
+          "check being what would skip a same-length revision, and is never "
+          "asked to delete or to write in place",
+          single_file_calls and "--ignore-times" in single_file_calls[0]
+          and not any(flag in single_file_calls[0]
+                      for flag in ("--delete", "--inplace", "--ignore-existing")),
+          str(single_file_calls))
+    check("the digest the store reported for the displaced triage is announced "
+          "on stderr",
+          "REPLACED" in result.stderr and stored_triage_digest in result.stderr,
+          result.stderr)
 
     # --- IN-PROCESS: on ned-box the copy is local, the citation is not ------
     # Loaded in this process so socket.gethostname can be patched; the
