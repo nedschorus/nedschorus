@@ -2,17 +2,16 @@
 """Tests for cold-read-grid.py — what a grid run tells the agent reading it.
 
 HOW A CASE RUNS. Each case builds a throwaway git repository holding a copy
-of the grid, the two cell launchers, the module they share and the prompt
-templates, and runs the grid inside it with stub `claude` and `codex`
-executables first on PATH. Two seams make that work. The grid and the cells
-take their repository root from their own location on disk, so a copy is a
-grid whose record directories and whose `git status` are the scratch tree's
-and never this checkout's. And the stubs are the models: each finds the
-report path in the prompt it was handed — the Claude leg on stdin, the Codex
-leg as an argument — writes a line to it and exits 0, so six cells complete
-in seconds without a model call. A real grid run is six reviews and half an
-hour; these cases are about what the grid says, not about what a reviewer
-finds.
+of the whole scripts/ directory and of the prompt templates, and runs the grid
+inside it with stub `claude` and `codex` executables first on PATH. Two seams
+make that work. The grid and the cells take their repository root from their
+own location on disk, so a copy is a grid whose record directories and whose
+`git status` are the scratch tree's and never this checkout's. And the stubs
+are the models: each finds the report path in the prompt it was handed — the
+Claude leg on stdin, the Codex leg as an argument — writes a line to it and
+exits 0, so six cells complete in seconds without a model call. A real grid
+run is six reviews and half an hour; these cases are about what the grid says,
+not about what a reviewer finds.
 
 WHAT IS PINNED HERE.
 
@@ -51,8 +50,8 @@ WHAT IS PINNED HERE.
     model; the lift machinery stays.
 
   - The read is six cells: the defect-hunt pass on both tiers of both
-    runtimes, and the terminology pass (user-ruled 2026-09-05) on the good
-    tier of both. The terminology cells run at the effort the grid pins,
+    runtimes, and the terminology pass (user-ruled 2026-09-05) on the
+    `deep` tier of both. The terminology cells run at the effort the grid pins,
     which the stub reads off its own command line.
 
   - The model's echoed words are not the cell's status. The cell re-emits its
@@ -136,14 +135,6 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
-GRID_SCRIPT_NAMES = (
-    "cold-read-grid.py",
-    "cold-read-record-names.py",
-    "cold-read-cell-common.py",
-    "cold-read-claude-cell.py",
-    "cold-read-codex-cell.py",
-    "cold-read-record-ship.py",
-)
 # Every run here ships its record to a scratch log-store inside the scratch
 # repository, through the shipper's destination override, so no case reaches
 # ned-box; the store is real, the copy is the real rsync. A case that wants the
@@ -169,7 +160,7 @@ TARGET_RELATIVE_PATH = "docs/drafts/cold-read-grid-test-target.md"
 # nothing and exits 1, which is what sends a cell down its chain to the next
 # model. Naming one model makes a cell fall back; naming a cell's whole chain
 # makes the cell fail outright. Since the second pass, one model serves two
-# cells (Opus is the good Claude cell of both passes), so
+# cells (Opus is the `deep` Claude cell of both passes), so
 # COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT, when set, fails
 # exactly the cells whose report name contains it -- the way to fail one
 # pass's cell and not the other's.
@@ -297,10 +288,11 @@ def git(repository, *arguments):
 
 def build_scratch_repository(scratch, name):
     repository = scratch / name
-    (repository / "scripts").mkdir(parents=True)
-    for script_name in GRID_SCRIPT_NAMES:
-        shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
-        (repository / "scripts" / script_name).chmod(0o755)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
@@ -310,6 +302,11 @@ def build_scratch_repository(scratch, name):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
+    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # 2.55 repacks this repository in the background, and its temporary files
+    # race the deletion of these throwaway checkouts — measured 2026-09-20,
+    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
+    git(repository, "config", "maintenance.auto", "false")
     git(repository, "config", "user.email", "test@test.invalid")
     git(repository, "config", "user.name", "cold-read-grid test")
     git(repository, "add", "-A")
@@ -458,7 +455,7 @@ with tempfile.TemporaryDirectory() as scratch:
               for report in reports),
           [report.name for report in reports
            if "<!-- TARGET CHANGED DURING RUN:" not in report.read_text(encoding="utf-8")])
-    stamped = record_directory / "claude-hunt-good.md"
+    stamped = record_directory / "claude-hunt-deep.md"
     check("the set holds a report named for the cell",
           stamped.is_file(), sorted(path.name for path in record_directory.iterdir()))
     # Read once, and survive an absent file: a name this suite got wrong should
@@ -544,12 +541,12 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A cell fails once and lands on retry --------------------------------
     repository = build_scratch_repository(scratch, "checkout-retry-lands")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-floor.md", "attempts": 1}])})
+        [{"fragment": "claude-hunt-second.md", "attempts": 1}])})
     saved_lines = lines_opening(result, "saved:")
     retrying_lines = lines_opening(result, "RETRYING:")
     check("a first failure prints RETRYING: naming the cell and its cause",
           len(retrying_lines) == 1
-          and retrying_lines[0].startswith("RETRYING: claude-hunt-floor — exit-1 — ")
+          and retrying_lines[0].startswith("RETRYING: claude-hunt-second — exit-1 — ")
           and "first attempt's log kept:" in retrying_lines[0],
           f"stdout was {result.stdout!r}")
     check("the retry lands: six saved, no FAILED line, the all-landed text, exit 0",
@@ -560,7 +557,7 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory = record_directory_of(repository)
     check("the attempt-1 log is kept and the attempt-2 log is deleted with the landed cells'",
           sorted(path.name for path in record_directory.glob("*.stderr.log"))
-          == ["claude-hunt-floor.md.attempt-1.stderr.log"],
+          == ["claude-hunt-second.md.attempt-1.stderr.log"],
           sorted(path.name for path in record_directory.glob("*.stderr.log")))
     check("a set with no absent report carries no INCOMPLETE SET marker",
           markers_in(record_directory, "<!-- INCOMPLETE SET:") == [])
@@ -571,7 +568,7 @@ with tempfile.TemporaryDirectory() as scratch:
     repository = build_scratch_repository(scratch, "checkout-stray-write-on-failed-attempt")
     stray_relative_path = "docs/drafts/cold-read-grid-test-stray.md"
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "codex-hunt-good.md", "attempts": 1,
+        [{"fragment": "codex-hunt-deep.md", "attempts": 1,
           "edit": str(repository / stray_relative_path)}])})
     stray_lines = lines_opening(result, "STRAY WRITE:")
     check("a stray write by a failed first attempt reaches the grid's output",
@@ -587,11 +584,11 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A cell fails both attempts: absent, the some-landed text, the marker -
     repository = build_scratch_repository(scratch, "checkout-one-cell-absent")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-terminology-good.md", "attempts": 2}])})
+        [{"fragment": "claude-terminology-deep.md", "attempts": 2}])})
     failed_lines = lines_opening(result, "FAILED")
     check("RETRYING: then FAILED (exit 1) with the second attempt's cause",
           len(lines_opening(result, "RETRYING:")) == 1 and len(failed_lines) == 1
-          and failed_lines[0].startswith("FAILED (exit 1): claude-terminology-good — exit-1 — ")
+          and failed_lines[0].startswith("FAILED (exit 1): claude-terminology-deep — exit-1 — ")
           and "attempt-2.stderr.log" in failed_lines[0],
           f"stdout was {result.stdout!r}")
     check("five land and the grid exits 1",
@@ -604,8 +601,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and "Stop here" not in result.stdout and "Wait for Opus" not in result.stdout,
           repr(result.stdout))
     check("the absent report is listed with its cause and its attempt-2 log",
-          any(line.startswith("- claude-terminology-good: exit-1 — ")
-              and line.endswith("claude-terminology-good.md.attempt-2.stderr.log)")
+          any(line.startswith("- claude-terminology-deep: exit-1 — ")
+              and line.endswith("claude-terminology-deep.md.attempt-2.stderr.log)")
               for line in result.stdout.splitlines()),
           repr(result.stdout))
     closing_text = " ".join(result.stdout.split())
@@ -619,16 +616,16 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory = record_directory_of(repository)
     check("the INCOMPLETE SET marker is in all six .md files of the record",
           len(markers_in(record_directory, "<!-- INCOMPLETE SET: 1 of 6 reports absent — "
-                                            "claude-terminology-good (exit-1 — ")) == 6,
+                                            "claude-terminology-deep (exit-1 — ")) == 6,
           markers_in(record_directory, "<!-- INCOMPLETE SET:"))
-    stamped = (record_directory / "claude-hunt-good.md").read_text(encoding="utf-8").split("\n")
+    stamped = (record_directory / "claude-hunt-deep.md").read_text(encoding="utf-8").split("\n")
     check("the marker goes after the provenance stamp",
           stamped[0].startswith("<!-- provenance:") and stamped[1].startswith("<!-- INCOMPLETE SET:"),
           repr(stamped[:2]))
     check("both attempts' logs of the absent cell are kept, the landed cells' deleted",
           sorted(path.name for path in record_directory.glob("*.stderr.log"))
-          == ["claude-terminology-good.md.attempt-1.stderr.log",
-              "claude-terminology-good.md.attempt-2.stderr.log"],
+          == ["claude-terminology-deep.md.attempt-1.stderr.log",
+              "claude-terminology-deep.md.attempt-2.stderr.log"],
           sorted(path.name for path in record_directory.glob("*.stderr.log")))
 
     # --- All three Claude cells fail both attempts with the account limit ----
@@ -689,7 +686,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # the limit hit does not stop the agent-binary from being reported down.
     repository = build_scratch_repository(scratch, "checkout-claude-down-after-one-landed")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-floor.md", "attempts": 0},
+        [{"fragment": "claude-hunt-second.md", "attempts": 0},
          {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     check("one landed Claude cell and two absent with the account limit is still claude down",
           lines_opening(result, "AGENT-BINARY DOWN:")
@@ -708,9 +705,9 @@ with tempfile.TemporaryDirectory() as scratch:
           "AGENT-BINARY DOWN:" not in result.stdout and "is down:" not in result.stdout
           and len(lines_opening(result, "- claude-")) == 3, repr(result.stdout))
     check("each absence names model-limit and the model's family",
-          any(line.startswith("- claude-hunt-good: model-limit — Opus (log:")
+          any(line.startswith("- claude-hunt-deep: model-limit — Opus (log:")
               for line in result.stdout.splitlines())
-          and any(line.startswith("- claude-hunt-floor: model-limit — Fable (log:")
+          and any(line.startswith("- claude-hunt-second: model-limit — Fable (log:")
                   for line in result.stdout.splitlines()), repr(result.stdout))
     check("the user is told, one cause per agent-binary and class",
           result.stdout.count("Tell the user: claude model-limit — ") == 1, repr(result.stdout))
@@ -718,7 +715,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- First attempts all account-limit; one retry fails otherwise ---------
     repository = build_scratch_repository(scratch, "checkout-mixed-causes")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-floor.md", "attempts": 2,
+        [{"fragment": "claude-hunt-second.md", "attempts": 2,
           "stdout_by_attempt": {"1": SESSION_LIMIT_LINE, "2": ""}},
          {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     retrying_lines = lines_opening(result, "RETRYING:")
@@ -726,7 +723,7 @@ with tempfile.TemporaryDirectory() as scratch:
           len(retrying_lines) == 3 and all("account-limit" in line for line in retrying_lines),
           repr(retrying_lines))
     check("the retry that failed otherwise is FAILED as exit-1, the others as account-limit",
-          any(line.startswith("FAILED (exit 1): claude-hunt-floor — exit-1 — ")
+          any(line.startswith("FAILED (exit 1): claude-hunt-second — exit-1 — ")
               for line in lines_opening(result, "FAILED"))
           and sum("account-limit" in line for line in lines_opening(result, "FAILED")) == 2,
           repr(lines_opening(result, "FAILED")))
@@ -782,8 +779,8 @@ with tempfile.TemporaryDirectory() as scratch:
           "AGENT-BINARY DOWN:" not in result.stdout, repr(result.stdout))
     record_directory = record_directory_of(repository)
     check("the unstartable attempts' logs hold the start error and are kept",
-          (record_directory / "claude-hunt-good.md.attempt-1.stderr.log").is_file()
-          and "could not start" in (record_directory / "claude-hunt-good.md.attempt-2.stderr.log")
+          (record_directory / "claude-hunt-deep.md.attempt-1.stderr.log").is_file()
+          and "could not start" in (record_directory / "claude-hunt-deep.md.attempt-2.stderr.log")
           .read_text(encoding="utf-8"),
           sorted(path.name for path in record_directory.glob("*.stderr.log")))
 
@@ -803,13 +800,13 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the target-changed text prints, then the absent report",
           "Do not triage this set" in result.stdout
           and result.stdout.index("Do not triage this set")
-          < result.stdout.index("- claude-hunt-floor: exit-1 — "),
+          < result.stdout.index("- claude-hunt-second: exit-1 — "),
           repr(result.stdout))
     check("the changed-target path carries no triage instructions",
           "reports landed in" not in result.stdout and "Read every report in full" not in result.stdout,
           repr(result.stdout))
     record_directory = record_directory_of(repository)
-    marked = (record_directory / "claude-hunt-good.md").read_text(encoding="utf-8").split("\n")
+    marked = (record_directory / "claude-hunt-deep.md").read_text(encoding="utf-8").split("\n")
     check("both markers are written, the target-changed marker first, after the stamp",
           marked[0].startswith("<!-- provenance:")
           and marked[1].startswith("<!-- TARGET CHANGED DURING RUN:")
@@ -822,12 +819,12 @@ with tempfile.TemporaryDirectory() as scratch:
     # line: the cause changes what is reported, never what is decided.
     repository = build_scratch_repository(scratch, "checkout-codex-quotes-limit")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "codex-terminology-good.md", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
+        [{"fragment": "codex-terminology-deep.md", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     repository_plain = build_scratch_repository(scratch, "checkout-codex-plain-failure")
     result_plain = run_grid(repository_plain, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "codex-terminology-good.md", "attempts": 2}])})
+        [{"fragment": "codex-terminology-deep.md", "attempts": 2}])})
     check("a Codex failure whose output starts with the Claude limit text is exit-1",
-          any(line.startswith("FAILED (exit 1): codex-terminology-good — exit-1 — ")
+          any(line.startswith("FAILED (exit 1): codex-terminology-deep — exit-1 — ")
               for line in lines_opening(result, "FAILED"))
           and "account-limit" not in result.stdout and "AGENT-BINARY DOWN:" not in result.stdout,
           repr(result.stdout))
@@ -862,7 +859,7 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory = record_directory_of(repository)
     terminology_stamps = [
         path.read_text(encoding="utf-8").splitlines()[0]
-        for path in sorted(record_directory.glob("*-terminology-good.md"))] if record_directory else []
+        for path in sorted(record_directory.glob("*-terminology-deep.md"))] if record_directory else []
     check("both terminology stamps record effort=max and cell=terminology",
           len(terminology_stamps) == 2
           and all("effort=max" in stamp and "cell=terminology" in stamp
@@ -935,7 +932,7 @@ with tempfile.TemporaryDirectory() as scratch:
     recovered_record_directory_name = (
         grid_record_directories[0].name if grid_record_directories else "")
     check("the RECOVERED line names the cell it belongs to",
-          any(line.startswith("RECOVERED: claude-hunt-good.md")
+          any(line.startswith("RECOVERED: claude-hunt-deep.md")
               for line in recovered_lines),
           f"lifted lines were {recovered_lines!r}")
     check("the recovered reports are back in the directory the grid made",
@@ -1063,7 +1060,7 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {third_result.returncode}; records={records_after_two_days}")
     suffixed_record = repository / "cold-read-records" / "SKILL-some-named-skill-2026-09-16-2"
     check("the files in a suffixed record are bare role names too",
-          (suffixed_record / "claude-hunt-good.md").is_file()
+          (suffixed_record / "claude-hunt-deep.md").is_file()
           and (suffixed_record / "reference-check.md").is_file(),
           sorted(p.name for p in suffixed_record.iterdir()) if suffixed_record.is_dir() else "absent")
 
@@ -1108,7 +1105,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # https://github.com/nedschorus/nedschorus/pull/508#pullrequestreview-5252230189
     repository = build_scratch_repository(scratch, "checkout-incomplete-set-ships-marked")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-terminology-good.md", "attempts": 2}])})
+        [{"fragment": "claude-terminology-deep.md", "attempts": 2}])})
     record_directory = record_directory_of(repository)
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("an incomplete set's run still says record: shipped:",
@@ -1136,7 +1133,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the store's copy equals the record byte for byte, the marker included",
           store_copy.is_dir() and files_under(store_copy) == files_under(record_directory),
           f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
-    stored_report = store_copy / "claude-hunt-good.md"
+    stored_report = store_copy / "claude-hunt-deep.md"
     check("the store's copy of a report carries the INCOMPLETE SET marker",
           stored_report.is_file()
           and "<!-- INCOMPLETE SET:" in stored_report.read_text(encoding="utf-8"),
@@ -1202,8 +1199,8 @@ with tempfile.TemporaryDirectory() as scratch:
         ["reference-check.md"]
         + [f"{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
-           for pass_token, tier in (("hunt", "good"), ("hunt", "floor"),
-                                    ("terminology", "good"))])
+           for pass_token, tier in (("hunt", "deep"), ("hunt", "second"),
+                                    ("terminology", "deep"))])
     check("the set holds the six cells plus the reference-integrity pre-pass",
           written_names == expected_names, written_names)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The supervisor's state and lock file names have one definition each, and
-this test keeps it that way.
+"""The supervisor's state, lock and handoff file names have one definition
+each, and this test keeps it that way.
 
 Five programs need the path of a seat's supervisor state file: the supervisor
 itself, the recovery tool, resupervise-seat.py, the login restart and the
@@ -13,6 +13,22 @@ supervisor_state_path(), supervisor_lock_path() and supervisor_state_paths()
 (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4: reduce each
 repeated name to one definition).
+
+The handoff file's own name joined them on 2026-09-20 (user-ruled that day,
+walk md-skills-seat-open-decisions-2026-09-20, item 2). Four programs need it
+-- the supervisor waits on it, the handoff writer writes it, the recovery tool
+and resupervise-seat.py read it -- and eight sites across the four built it by
+hand, one of them a local `suffix` variable in the writer holding the suffix
+and globbing with it. Missing one site on a rename is silent and reads as the
+opposite of what happened: the supervisor writes <seat>-handoff.md, the
+recovery tool looks for the old name, finds nothing, and reports a seat that
+handed off cleanly as one that died leaving no handoff. HANDOFF_FILE_SUFFIX
+now lives in nc-systems/handoff/handoff-supervisor.py with the other two, and the path
+composed only by its handoff_file_path() and handoff_file_paths(). Item 4
+above did not cover this name: the ruling it carried out named the state file,
+the cold-read-record names and the walk-file endings, and the handoff name was
+recorded on the file-naming wiki page as its own unruled topic until item 2
+ruled it.
 
 This reads each script's syntax tree rather than its lines, after two rounds
 of the earlier line-matching version being wrong in both directions. Matching
@@ -33,12 +49,13 @@ reading lines is worse than either, because the two halves exempt and count
 different things; suffix_definition_assignments() below is now the one
 answer both halves use.
 
-What counts as composing the name, and so fails:
+What counts as composing a name, and so fails -- the same four shapes for
+each of the three names:
 
 - a string that contains the file name, wherever it appears
-- an f-string with either suffix constant in a replacement field
-- either suffix constant on one side of a `+`, or appended with `+=`
-- either suffix constant passed to .format(), positionally or by keyword
+- an f-string with any suffix constant in a replacement field
+- any suffix constant on one side of a `+`, or appended with `+=`
+- any suffix constant passed to .format(), positionally or by keyword
 
 What does not: taking a name apart, as agent_name_from_supervisor_file() does
 with endswith() and len(); a docstring that writes the pattern out for a
@@ -72,13 +89,20 @@ SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
 # programs this suite reads are still under scripts/.
 SUPERVISOR_SCRIPT = REPO_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py"
 # The functions that compose the names, and so the only code allowed to.
+# handoff_file_path is deliberately not named handoff_path: that name is
+# already the SupervisorSettings property, so the helper case below would
+# collect two FunctionDefs under it and the property's body -- one of the eight
+# sites this guard was extended for -- would be exempted as a helper.
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
-                     "supervisor_state_paths")
-# The two file names, as they read on disk.
-SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock")
+                     "supervisor_state_paths", "handoff_file_path",
+                     "handoff_file_paths")
+# The three file names, as they read on disk.
+SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
+                     "-handoff.md")
 # The constants that hold them.
-SUFFIX_CONSTANTS = frozenset(
-    {"SUPERVISOR_STATE_FILE_SUFFIX", "SUPERVISOR_LOCK_FILE_SUFFIX"})
+SUFFIX_CONSTANTS = frozenset({"SUPERVISOR_STATE_FILE_SUFFIX",
+                              "SUPERVISOR_LOCK_FILE_SUFFIX",
+                              "HANDOFF_FILE_SUFFIX"})
 
 failures = []
 
@@ -140,7 +164,7 @@ def docstring_nodes(tree):
 
 
 def suffix_definition_assignments(tree):
-    """Every `SUPERVISOR_*_FILE_SUFFIX = ...` assignment in the module.
+    """Every assignment of a SUFFIX_CONSTANTS name in the module.
 
     Both questions this test asks about a definition are answered from this
     one list: which string is allowed to spell the name out, and which
@@ -236,11 +260,12 @@ for script in production_scripts():
     if defines_the_suffixes:
         defining.append(script.name)
 
-check("no production script composes either file name itself",
+check("no production script composes any of the three file names itself",
       not composing,
       "composed at " + ", ".join(composing) + " -- call "
-      "supervisor_state_path(), supervisor_lock_path() or "
-      "supervisor_state_paths() instead")
+      "supervisor_state_path(), supervisor_lock_path(), "
+      "supervisor_state_paths(), handoff_file_path() or "
+      "handoff_file_paths() instead")
 
 check("every composing helper was found in the syntax tree",
       sorted(helpers_found) == sorted(COMPOSING_HELPERS),

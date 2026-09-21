@@ -105,7 +105,7 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
     check("the line counts the files added", "4 file(s) added" in result.stdout, result.stdout)
     check("the store's root gained the README saying what the store is",
           (store_root / "README.md").is_file()
-          and "walk/" in (store_root / "README.md").read_text(encoding="utf-8"))
+          and "log-store" in (store_root / "README.md").read_text(encoding="utf-8"))
     check("the sibling's files were named on stderr as not shipped",
           f"{sibling}.md" in result.stderr and "not shipped" in result.stderr, result.stderr)
 
@@ -340,10 +340,17 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-") as scratch_name
           destination.copy_host is None and destination.citation_host == "nedlern@ned-box"
           and str(destination.walk_path) == RULED_WALK_PATH, str(destination))
 
-    # --- The README the record shipper writes describes this kind and program --
-    check("the store README names walk/, this program, its five files and the split rule",
-          all(s in module.shipper.STORE_README for s in
-              ("`walk/`", "walk-files-ship.py", "dispositions", "minutes")))
+    # --- The README the record shipper writes is a pointer, not a kind list --
+    # It listed `walk/` and this program's five files until 2026-09-19, and
+    # went stale at every ruling that changed them (user-ruled, walk
+    # file-naming-and-location-standards-cold-read-findings, item 5). What a
+    # walk's files are called is the walk-me-through skill's, and the wiki
+    # page the README points at is what records it.
+    check("the store README points at the wiki page instead of listing the kinds",
+          "nedschorus-file-naming-and-location-standards.md"
+          in module.shipper.STORE_README
+          and "`walk/`" not in module.shipper.STORE_README,
+          module.shipper.STORE_README)
 
 print()
 if failures:

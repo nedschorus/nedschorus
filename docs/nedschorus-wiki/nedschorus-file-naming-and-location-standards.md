@@ -25,8 +25,8 @@ cold-read-record, cold-read-target, cold-read-tier; agent-binary, the installed
 program a cold-read-cell runs its model through, `claude` or `codex`, adopted
 2026-09-18 in place of agent-cli; and the skills /cold-read, /ghi-write,
 /handoff and /walk-me-through. The cold-read-tier values are
-`good` and `floor`; the tier names are ruled misleading and due to change
-(task at the MD-skills agent-seat).
+`deep` and `second`, renamed from `good` and `floor` on the user's ruling of
+2026-09-20 because the old names no longer described the models in them.
 
 A few more words are used here in a sense of this page's own:
 
@@ -136,8 +136,8 @@ tell from a path whether that rule applies. See the last section.
 |---|---|---|---|
 | Cold-read-record directory | `cold-read-records/` | `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a skill, whose stem is always `SKILL` and whose name is its directory's, so `.claude/skills/cold-read/SKILL.md` gets `SKILL-cold-read-<date>`; the document comes first so every read of one document sits together in a listing, and the date is the local date of the machine that ran it. Ruled 2026-09-18, replacing a date-first form; two documents with the same stem in different directories, read on one day, come out as `-2` of each other, and the record's `target/` shows which was which | `scripts/cold-read-record-names.py`, `record_directory_name_for_target` and `record_name_for_target`, under its `RECORDS_DIR`; the four programs that create or find cold-read-records import it |
 | Same directory, on a same-day collision | as above | `-2`, `-3` appended, counting up, no cap in the code; the cold-read-fast-read and the cold-read-grid share this rule, so on one day the first to run takes the bare name and the next takes `-2` | `scripts/cold-read-record-names.py`, `fresh_record_directory`, which every one of those programs calls |
-| Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-record-names.py`, `FROZEN_TARGET_DIRECTORY_NAME`; the path built under it is `frozen_target_path`, which the cold-read-grid and `scripts/cold-read-fast-read.py` still define separately, see the note below |
-| Reviewer report | inside the cold-read-record | `<agent-binary>-<pass token>-<tier>.md`, the pass token being `hunt` for `defect-hunt`; six names are possible, `hunt-good`, `hunt-floor` and `terminology-good` under each of `claude` and `codex`, and an absent cold-read-cell leaves its name absent. The file says which agent ran which pass and nothing else; the directory says which read (user-ruled 2026-09-18, replacing a name that repeated the record's). A report's own name ends in `-good` or `-floor`, never `-report`, so the cold-read-grid does not refuse it | `scripts/cold-read-grid.py`, `cell_report_path`; the set of cold-read-cells is `GRID_CELL_ROSTER` |
+| Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-record-names.py`, `FROZEN_TARGET_DIRECTORY_NAME`, with the path built under it in `frozen_target_path` in the same module, which the cold-read-grid and `scripts/cold-read-fast-read.py` both call. The cold-read-target is resolved before it is made relative, so one document reached by two spellings freezes at one path (user-ruled 2026-09-20) |
+| Reviewer report | inside the cold-read-record | `<agent-binary>-<pass token>-<tier>.md`, the pass token being `hunt` for `defect-hunt`; six names are possible, `hunt-deep`, `hunt-second` and `terminology-deep` under each of `claude` and `codex`, and an absent cold-read-cell leaves its name absent. The file says which agent ran which pass and nothing else; the directory says which read (user-ruled 2026-09-18, replacing a name that repeated the record's). A report's own name ends in `-deep` or `-second`, never `-report`, so the cold-read-grid does not refuse it. The two cold-read-tiers were `good` and `floor` until the user renamed them 2026-09-20 (walk `docs/walk/md-skills-seat-open-decisions-2026-09-20.md`, item 5); cold-read-records already in the log-store keep their old file names, so both spellings are found there | `scripts/cold-read-grid.py`, `cell_report_path`; the set of cold-read-cells is `GRID_CELL_ROSTER` |
 | Reference check | inside the cold-read-record | `reference-check.md` | `scripts/cold-read-grid.py` |
 | A cold-read-cell's stderr | inside the cold-read-record, kept only for an attempt that produced no report: the cold-read-grid deletes the log of an attempt that succeeded | `<report name>.attempt-1.stderr.log` for the first attempt and `.attempt-2.stderr.log` for the retry, since every failed cold-read-cell is retried once (nedschorus#413) | `scripts/cold-read-grid.py` |
 | Triage of the reviewers' findings | inside the cold-read-record | `triage.md` (user-ruled 2026-09-18, replacing `dispositions.md`, which now names a walk's fifth file instead) | `.claude/skills/cold-read/SKILL.md`; spelled again in the cold-read-grid's closing text and in the log-store README |
@@ -146,19 +146,24 @@ tell from a path whether that rule applies. See the last section.
 | Restater-judge run | `cold-read-records/` | `<YYYY-MM-DD>-restater-judge-<restater class>`, the one cold-read-record kind not named for a cold-read-target | `scripts/cold-read-restater-judge-runner.py` |
 | Approval-walk files, four by the approval-walk's close and five for an approval-walk that rules on a cold-read-full-run | `docs/walk/` | `<walk name>-draft.md` first, then `-suggestions.md`, then `<walk name>.md`, then `-minutes.md`, and for a cold-read approval-walk `-dispositions.md` at its close. The approval-walk that rules on a cold-read-full-run is named after that cold-read-record, so its files sit under the record's name (user-ruled 2026-09-18) | `.claude/skills/walk-me-through/SKILL.md` decides the endings, with `.claude/skills/cold-read/SKILL.md` for the fifth file; `WALK_FILE_ROLES` in `scripts/walk-files-ship.py` and the two endings in `scripts/cold-read-fast-read.py` are held to the skill's text by `scripts/walk-file-endings-match-the-skill-test.py` |
 | Next-step file, written by /handoff | `~/.claude/handoffs/` | `<seat name>-next-step-<YYYYMMDD-HHMMSS>.md`, which /handoff gives as the expression `~/.claude/handoffs/$(basename "$PWD")-next-step-$(date +%Y%m%d-%H%M%S).md`, to be run rather than composed; the seat name is the working directory's name, the agent-seat name the handoff-supervisor watches | `.claude/skills/handoff/SKILL.md` step 1; the same name is the default `--agent` of `nc-systems/handoff/handoff-write-and-check-supervisor.py`, `default_agent_name` |
-| The handoff-supervisor's own files | `~/.claude/handoffs/` by default, or the directory its `--handoff-dir` names | `<seat name>-handoff.md`, `<seat name>-handoff-<NNNN>.md`, `<seat name>-dialog-<NNNN>.md` and its `-complete.md` companion, `<seat name>-supervisor.lock`, `<seat name>-supervisor-state.json`. Of the numbered files it keeps the two newest generations of `-handoff-<NNNN>.md` and of `-dialog-<NNNN>.md`, a `-complete.md` companion counting as part of its generation, and deletes the older ones | `nc-systems/handoff/handoff-supervisor.py`: the state and lock names through `supervisor_state_path()` and `supervisor_lock_path()` over `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX`, and the generations through `prune_old_generations` with `GENERATIONS_KEPT`; the dialog files are written by `scripts/handoff-extract-conversation.py`. The handoff file's own name has no constant, see the note below |
+| The handoff-supervisor's own files | `~/.claude/handoffs/` by default, or the directory its `--handoff-dir` names | `<seat name>-handoff.md`, `<seat name>-handoff-<NNNN>.md`, `<seat name>-dialog-<NNNN>.md` and its `-complete.md` companion, `<seat name>-supervisor.lock`, `<seat name>-supervisor-state.json`. Of the numbered files it keeps the two newest generations of `-handoff-<NNNN>.md` and of `-dialog-<NNNN>.md`, a `-complete.md` companion counting as part of its generation, and deletes the older ones | `nc-systems/handoff/handoff-supervisor.py`: the state and lock names through `supervisor_state_path()` and `supervisor_lock_path()` over `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX`, and the generations through `prune_old_generations` with `GENERATIONS_KEPT`; the dialog files are written by `scripts/handoff-extract-conversation.py`; the handoff file's own name through `handoff_file_path()` and `handoff_file_paths()` over `HANDOFF_FILE_SUFFIX` |
 | Retired session-handoff, moved there by hand when an agent-seat is retired | `~/.claude/handoffs/retired/`, created if needed | `<seat name>-handoff-<YYYY-MM-DD>.md`; if that name exists, `-2`, `-3` before `.md`, never onto an existing archive | `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`, "Pausing and retiring a seat", step 2 |
 
-**One definition each, and the guards that hold them there.** Three sets of
-repeated names were reduced to one definition apiece on 2026-09-19
-(user-ruled), each with a test that a second definition does not come back:
+**One definition each, and the guards that hold them there.** Four sets of
+repeated names were reduced to one definition apiece, three on 2026-09-19 and
+the handoff file's on 2026-09-20 (user-ruled on both days), each with a test
+that a second definition does not come back:
 
 - What a cold-read-record is called lives in
   `scripts/cold-read-record-names.py`, a module and nothing else, imported by
   the four programs that create or find cold-read-records. Seven places had
   carried their own `RECORDS_DIR`, `FROZEN_TARGET_DIRECTORY_NAME`, or copies
   of the naming and same-day-collision rules. The copies had a stated reason
-  — that a program cannot be imported — and a module answers it. Guard:
+  — that a program cannot be imported — and a module answers it. The path
+  built under the frozen copy's directory, `frozen_target_path`, moved into
+  the same module on 2026-09-20 (user-ruled): it was defined in each
+  launcher and the two disagreed over whether to resolve the
+  cold-read-target first, and the resolving version was kept. Guard:
   `scripts/cold-read-record-names-test.py`.
 - The supervisor's state and lock file names are
   `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX` in
@@ -166,6 +171,15 @@ repeated names were reduced to one definition apiece on 2026-09-19
   and `supervisor_lock_path()`. Eleven production sites across five scripts
   had built those names by hand, two of them inside the file that defines the
   constants. Guard: `scripts/supervisor-file-names-defined-once-test.py`.
+- The handoff file's name is `HANDOFF_FILE_SUFFIX` in
+  `nc-systems/handoff/handoff-supervisor.py`, reached through `handoff_file_path()` for one
+  seat's and `handoff_file_paths()` for every seat's in a directory. Eight
+  production sites across four scripts had built it by hand, one of them a
+  local `suffix` variable that also globbed with it. Guard: the same
+  `scripts/supervisor-file-names-defined-once-test.py`, which covers all three
+  of the supervisor's names. The helper is `handoff_file_path`, not
+  `handoff_path`: that name is already the `SupervisorSettings` property the
+  supervisor reads the path through.
 - The approval-walk files' endings are decided by
   `.claude/skills/walk-me-through/SKILL.md`. Prose cannot be imported, so the
   tie-break is a test rather than a constant, and it runs one way only: a
@@ -173,24 +187,12 @@ repeated names were reduced to one definition apiece on 2026-09-19
   may name an ending no program builds yet. Guard:
   `scripts/walk-file-endings-match-the-skill-test.py`.
 
-**What is still written more than once.** The handoff file's own name has no
-shared constant: eight places in four scripts compose it, one as a local
-`suffix` variable in `nc-systems/handoff/handoff-write-and-check-supervisor.py` and
-seven as spelled-out literals in that script,
-`nc-systems/handoff/handoff-supervisor.py`, `scripts/recover-crashed-seats.py` and
-`scripts/resupervise-seat.py`. It is the same defect the supervisor's state
-file had, and it is not ruled on yet. The frozen copy's directory name is one
-constant now, but the path built under it is not: `frozen_target_path` is
-defined in the cold-read-grid and again in `scripts/cold-read-fast-read.py`,
-and the two differ — the cold-read-grid resolves the cold-read-target before
-making it relative and the cold-read-fast-read does not, so a cold-read-target
-reached through a symlink freezes to two different paths. The glossary
-restates two file names in prose, `docs/agents/<seat>-instructions.md` under
-seat-brief and `~/.claude/handoffs/<seat>-handoff.md` under session-handoff.
-Apart from the two frozen-path copies, the writings in each set agree today,
-and nothing keeps them agreeing; none is the authority over the others, which
-is the defect. `RECORDS_DIR` is
-also a two-part name a grep confuses with `RECORDS_DIRECTORY_NAME` in
+**What is still written more than once.** The glossary restates two file names
+in prose, `docs/agents/<seat>-instructions.md` under seat-brief and
+`~/.claude/handoffs/<seat>-handoff.md` under session-handoff. The writings in
+each set agree today, and nothing keeps them agreeing; none is the authority
+over the others, which is the defect. `RECORDS_DIR` is also a two-part name a
+grep confuses with `RECORDS_DIRECTORY_NAME` in
 `scripts/sanity-check-attacks.py`, a different instrument's constant.
 
 Each of those guards carries a list of what it does not catch. That list is
@@ -298,7 +300,5 @@ decision for the user, tracked at the MD-skills agent-seat.
   `.claude/skills/cold-read/SKILL.md`, should be recognized by directory, by
   suffix, or by both, and where that list then lives so the skill's prose and
   the cold-read-grid's code do not each carry a copy.
-- What the cold-read-tiers are called: `good` and `floor` no longer describe
-  the models in them, and the rename is a decision for the user.
 - Whether kept cold-read-records, and `docs/walk/`, need a retention limit
   as they accumulate; until ruled, everything is kept.

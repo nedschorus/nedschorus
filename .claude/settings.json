@@ -12,6 +12,17 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/post-compaction-session-continues-hook.py"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

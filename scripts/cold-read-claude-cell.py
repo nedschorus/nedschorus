@@ -9,9 +9,9 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  scripts/cold-read-claude-cell.py --cell restate --tier floor \\
+  scripts/cold-read-claude-cell.py --cell restate --tier second \\
       --target docs/drafts/foo.md \\
-      --report cold-read-records/foo-2026-01-01/claude-restate-floor.md
+      --report cold-read-records/foo-2026-01-01/claude-restate-second.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -46,20 +46,23 @@ _common_spec.loader.exec_module(common)
 PROGRAM = "cold-read-claude-cell"
 
 # cold-read-tier -> the Claude models to try, in order. One place to update
-# as models change. User-picked (good = Opus-class, floor = Fable-class,
-# ruled 2026-09-04; the good cold-read-tier was Opus-class until 2026-08-17,
+# as models change. User-picked (`deep` = Opus-class, `second` = Fable-class,
+# ruled 2026-09-04; the `deep` cold-read-tier was Opus-class until 2026-08-17,
 # Fable-class from then until the 2026-08-25 ruling below, and Opus-class
-# since; the floor was Sonnet-class from 2026-08-25 until the 2026-09-04
+# since; `second` was Sonnet-class from 2026-08-25 until the 2026-09-04
 # ruling); the opus id verified against live subagent transcripts 2026-08-04,
 # the fable-5-1 id by the 2026-09-03 campaign's smoke run (its provenance stamp
 # carried the requested model and effort, no fallback).
 #
-# WHY THE FLOOR IS FABLE, NOT SONNET (user-ruled 2026-09-04). Sonnet was cut
-# as a reviewer in the 2026-08-29 walk-reviewer model trial ("cut as reviewer
+# WHY THE `second` COLD-READ-TIER IS FABLE, NOT SONNET (user-ruled
+# 2026-09-04). This tier was called `floor` until the user renamed it on
+# 2026-09-20; the rename's provenance is written once, at TIER_CHOICES in
+# scripts/cold-read-cell-common.py. Sonnet was cut as a reviewer in the
+# 2026-08-29 walk-reviewer model trial ("cut as reviewer
 # (bottom of every ranking)", METHOD.md of that trial under
 # ~/agents/MD-skills/cold-read-records/2026-08-29-walk-reviewer-model-trial/;
 # its REPORT.md measured `sonnet defect-hunt` reproducing 0.14 of its own
-# previous run's findings). The floor pin here was never revisited after that
+# previous run's findings). The pin here was never revisited after that
 # cut, so the cold-read-grid kept launching a cold-read-cell the trial
 # had retired. The 2026-09-03 tier-roster campaign (REPORT.md under
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
@@ -71,43 +74,43 @@ PROGRAM = "cold-read-claude-cell"
 # under sol-max's 1339 s), and beats fable at high by +63 net unique-and-real
 # findings, positive on all six targets ("Step-rule tally, ALL SIX TARGETS";
 # "Aggregate over all six targets"). Fable does not beat opus-max on any
-# target, so it is the floor, not the good cold-read-tier ("THE ANSWERS"
-# section 2). "claude-fable-5" is obsolete (user, 2026-09-04: "fable 5 is now
+# target, so it is the `second` cold-read-tier, not the `deep` one ("THE
+# ANSWERS" section 2). "claude-fable-5" is obsolete (user, 2026-09-04: "fable 5 is now
 # obsolete. 5.1 is current"); the campaign measured claude-fable-5-1.
 #
 # When the account's Fable limit is hit (2026-08-23; four cold-read-cells
-# on 2026-09-03) the floor cold-read-cell has no further model to try: it
+# on 2026-09-03) the `second` cold-read-cell has no further model to try: it
 # fails with the cause model-limit, the cold-read-grid retries it once and,
 # when the retry fails too, lists the report as absent in its closing text
 # and exits 1 with the set valid and incomplete (user-ruled 2026-09-04: "If
 # fable is not available, just note that and continue"; 2026-09-11: no
 # cell is special, nedschorus#413). A Sonnet fallback would make the cold-read-cell count
-# come out while running a retired reviewer under a floor-tier stamp, which
+# come out while running a retired reviewer under a `second`-tier stamp, which
 # the user ruled worse than a visible failure (2026-08-25: "I just don't
 # want it to fail silently").
 #
-# WHY OPUS LEADS THE GOOD COLD-READ-TIER (user-ruled 2026-08-25: "If opus
+# WHY OPUS LEADS THE `deep` COLD-READ-TIER (user-ruled 2026-08-25: "If opus
 # is better, we should switch to that."). Measured that day by running the
-# good-tier Claude slot both ways over the same documents: Opus produced 44
+# `deep`-tier Claude slot both ways over the same documents: Opus produced 44
 # findings against Fable's 24 on one document, and 38 against 21 on the other.
 # Whole-run coverage was unchanged — the other seven cold-read-cells found what
 # they found either way — so what the swap buys is depth in this one slot, not
 # a wider cold-read-cell roster.
 #
-# WHY THE GOOD COLD-READ-TIER HAS NO FALLBACK (user-ruled 2026-09-04: "opus
+# WHY THE `deep` COLD-READ-TIER HAS NO FALLBACK (user-ruled 2026-09-04: "opus
 # falling back to fable is not valid. If opus fails we stop working and wait
-# for it to come back"). From 2026-08-23 to 2026-09-04 the good cold-read-tier
-# was a chain, Opus then Fable, so the Fable credit exhaustion of 2026-08-23
-# (two cold-read-cells of eight lost) would not degrade a cold-read-full-run
-# into a manual per-cell rerun. The 2026-09-04 ruling reverses that trade:
-# an Opus outage is a reason to stop the read, not to run it on a different
-# model, because a review stamped as the good cold-read-tier must be the
-# good cold-read-tier's model. What happens next is no longer Opus's own
-# case (user-ruled 2026-09-11, nedschorus#413: "why is opus special? I
-# don't think it should be"): the cold-read-grid retries the cell once on
-# the same model, reports the report absent like any other, and when every
-# Claude cell is absent for one agent-binary-wide cause says once that the
-# agent-binary is down (scripts/cold-read-grid.py).
+# for it to come back"). From 2026-08-23 to 2026-09-04 the `deep`
+# cold-read-tier was a chain, Opus then Fable, so the Fable credit exhaustion
+# of 2026-08-23 (two cold-read-cells of eight lost) would not degrade a
+# cold-read-full-run into a manual per-cell rerun. The 2026-09-04 ruling
+# reverses that trade: an Opus outage is a reason to stop the read, not to run
+# it on a different model, because a review stamped as the `deep`
+# cold-read-tier must be the `deep` cold-read-tier's model. What happens next
+# is no longer Opus's own case (user-ruled 2026-09-11, nedschorus#413: "why is
+# opus special? I don't think it should be"): the cold-read-grid retries the
+# cell once on the same model, reports the report absent like any other, and
+# when every Claude cell is absent for one agent-binary-wide cause says once
+# that the agent-binary is down (scripts/cold-read-grid.py).
 #
 # Every cold-read-tier on both runtimes is therefore a single-entry chain. The
 # tuple shape and the shared chain loop in scripts/cold-read-cell-common.py
@@ -117,8 +120,8 @@ PROGRAM = "cold-read-claude-cell"
 # line and the stamp's `fallback_from=` field stay for the same reason; no
 # pinned chain can produce them today.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
-    "good": ("claude-opus-5",),
-    "floor": ("claude-fable-5-1",),
+    "deep": ("claude-opus-5",),
+    "second": ("claude-fable-5-1",),
 }
 
 # cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's
@@ -130,7 +133,7 @@ TIER_TO_CLAUDE_MODEL_CHAIN = {
 # targets, positive on every target, with the cold-read-cell's worst-target
 # recall rising 0.56 -> 0.72 and no precision cost (0.18 against 0.20 pooled);
 # fable at max beat fable at high by +63, positive on every target. Time
-# roughly doubles (opus mean 757 -> 1047 s) and stays under the Codex good
+# roughly doubles (opus mean 757 -> 1047 s) and stays under the Codex `deep`
 # cold-read-cell's. Recalibrating is the user's call, here.
 #
 # REAFFIRMED 2026-09-15 against the union, which is the number that decides a
@@ -141,12 +144,12 @@ TIER_TO_CLAUDE_MODEL_CHAIN = {
 # worst-target recall against opus at high, and it contributes 34 findings
 # no other cold-read-cell in the grid found, more than twice any other
 # cold-read-cell. Fable at max is worth 6, and contributes 14. Both stay
-# at max. The Codex good cold-read-tier went the other way on the same
+# at max. The Codex `deep` cold-read-tier went the other way on the same
 # analysis; its own comment says why. The analysis is in the log-store at
 # nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
 TIER_TO_REASONING_EFFORT = {
-    "good": "max",
-    "floor": "max",
+    "deep": "max",
+    "second": "max",
 }
 
 # The reviewer reads the cold-read-target and writes one file: its report.

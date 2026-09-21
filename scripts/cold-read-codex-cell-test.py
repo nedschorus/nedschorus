@@ -142,7 +142,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # --- The cell's own refusals ------------------------------------------
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "good",
+                      "--cell", "restate", "--tier", "deep",
                       "--target", str(scratch / "no-such-document.md"))
     check("a --target that is not a file exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -156,7 +156,7 @@ with tempfile.TemporaryDirectory() as scratch:
     existing_directory = scratch / "a-directory-as-report"
     existing_directory.mkdir()
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, existing_directory,
-                      "--cell", "restate", "--tier", "good", "--target", str(target))
+                      "--cell", "restate", "--tier", "deep", "--target", str(target))
     check("a --report naming an existing directory exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("a --report naming an existing directory says so on stderr",
@@ -171,7 +171,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "usage:" in result.stderr, repr(result.stderr))
 
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "good",
+                      "--cell", "restate", "--tier", "deep",
                       "--target", str(target), "--no-such-flag")
     check("an unrecognized option exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -185,7 +185,7 @@ with tempfile.TemporaryDirectory() as scratch:
     for codex_exit_code in (2, 7):
         report.unlink(missing_ok=True)
         result = run_cell(stubs, stub_codex_exits(codex_exit_code), report,
-                          "--cell", "restate", "--tier", "good", "--target", str(target))
+                          "--cell", "restate", "--tier", "deep", "--target", str(target))
         check(f"a codex that exits {codex_exit_code} leaves the cell exiting 1",
               result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
         check(f"a codex that exits {codex_exit_code} is reported, not thrown",
@@ -218,7 +218,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(classified))
     report.unlink(missing_ok=True)
     result = run_cell(stubs, stub_codex_exits(1, CODEX_LOGGED_OUT_LINE), report,
-                      "--cell", "restate", "--tier", "good", "--target", str(target))
+                      "--cell", "restate", "--tier", "deep", "--target", str(target))
     check("a codex that prints the captured 401 line leaves the cell exiting 1",
           result.returncode == 1 and not report.exists(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -233,7 +233,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # door, before codex runs.
     report.unlink(missing_ok=True)
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "terminology-v9", "--tier", "good",
+                      "--cell", "terminology-v9", "--tier", "deep",
                       "--target", str(target))
     check("a --cell outside the list without --prompt-file exits 64",
           result.returncode == 64 and not report.exists(),
@@ -247,7 +247,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # report proves codex was never run.
     report.unlink(missing_ok=True)
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "good", "--target", str(target),
+                      "--cell", "restate", "--tier", "deep", "--target", str(target),
                       "--prompt-file", str(scratch / "no-such-draft-prompt.md"))
     check("a --prompt-file naming no file exits 64",
           result.returncode == 64, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -265,7 +265,7 @@ with tempfile.TemporaryDirectory() as scratch:
                             encoding="utf-8")
     report.unlink(missing_ok=True)
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "good", "--target", str(target),
+                      "--cell", "restate", "--tier", "deep", "--target", str(target),
                       "--prompt-file", str(draft_prompt))
     check("a cell given a --prompt-file that exists exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -278,7 +278,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- The successful path, which must keep working ----------------------
     report.unlink(missing_ok=True)
     result = run_cell(stubs, STUB_CODEX_WRITES_REPORT, report,
-                      "--cell", "restate", "--tier", "good", "--target", str(target))
+                      "--cell", "restate", "--tier", "deep", "--target", str(target))
     check("a cell whose codex succeeds exits 0",
           result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
     report_text = report.read_text(encoding="utf-8") if report.is_file() else ""

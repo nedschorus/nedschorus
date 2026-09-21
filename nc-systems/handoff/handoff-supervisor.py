@@ -156,6 +156,11 @@ NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+WRITTEN_BY_SESSION_FIELD = "written-by-session"
+# What the writer stamps when the retiring session has no
+# CLAUDE_CODE_SESSION_ID to name (handoff-write-and-check-supervisor.py,
+# write_handoff_file): a placeholder, never a session id.
+WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # Appended to sync_working_branch_with_main's one-line result in the ignition
 # prompt. The wording is the user's; only the sync line it follows is computed.
@@ -177,6 +182,58 @@ BRANCH_STATE_INSTRUCTION = (
     "merges them; a changes-requested one gets a fix round from a fresh agent "
     "— never extend a head you've already announced."
 )
+
+# The pointer at the script that composed the prompt, carried by every set of
+# initial agent instructions build_ignition_prompt writes. The wording is the
+# user's, ruled 2026-08-30 on a rendered mock of the prompt, in his second
+# round. It lived inline in build_ignition_prompt's `lines` list until it was
+# hoisted here: an equality pin can only hold a constant, and text composed at
+# a call site lands outside every pin the test file has.
+SUPERVISOR_POINTER_SENTENCE = (
+    "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
+    "watches this seat and composed this prompt — read it if you need to "
+    "investigate the handoff mechanism."
+)
+
+# The orphaned-subagent duty, narrowed 2026-08-29, softened to "may need" in
+# the user's second round (ruled 2026-08-30 on the same rendered mock): the
+# writer records only subagents still working at the reincarnation, so every
+# entry here is one the reincarnation killed mid-job. Re-commission rather than
+# resume, because a dead subagent cannot be resumed by id across a
+# reincarnation: probed 2026-08-29, SendMessage to a predecessor's subagent id
+# returns "No transcript found" (the resolver is session-scoped) even though
+# the transcript survives on disk at
+# <predecessor-session-dir>/subagents/agent-<id>.jsonl.
+# `agent-<id>.jsonl` stays a literal pattern: each entry names its own id, so
+# the successor substitutes per entry.
+#
+# A template rather than a plain string, because the sentence takes three
+# insertions the caller computes — the count, the joined roster, and the
+# directory the transcripts survive in. Hoisted here for the same reason as
+# SUPERVISOR_POINTER_SENTENCE: only a constant can be pinned by equality.
+ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
+    "The session you are replacing had {subagent_count} subagent(s) still working when it ended: "
+    "{joined_roster}. You may need to re-commission similar agents. If you need more "
+    "context, the dead agents' full transcripts are at "
+    "{transcript_directory}/subagents/agent-<id>.jsonl."
+)
+
+
+# The two tail sentences of build_ignition_prompt, hoisted for the same reason
+# as the two above: only a constant can be pinned by equality. Until 2026-09-21
+# each was reached by a containment check alone -- `"unterminated" in prompt`
+# and `"continue from where that dialog ends" in prompt` -- so a sentence
+# appended to either was invisible. Same class as the two branch-state call
+# sites closed in pull request [the ignition prompt's sentences are constants,
+# and both branch-state call sites are pinned whole]
+# (https://github.com/nedschorus/nedschorus/pull/590). Each carries its own
+# leading space, because each is concatenated onto a preamble that does not
+# end in one.
+UNTERMINATED_NEXT_STEP_BLOCK_NOTE = (
+    " NOTE: this handoff's verbatim next-step block was unterminated, so what "
+    "follows is the collapsed one-line form and may have lost structure."
+)
+NO_NEXT_STEP_TAIL_SENTENCE = " Then continue from where that dialog ends."
 
 
 def parse_handoff_file(handoff_path: Path) -> dict:
@@ -291,6 +348,12 @@ def agent_exit_record_from_supervisor_state(state: dict):
 
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
 SUPERVISOR_LOCK_FILE_SUFFIX = "-supervisor.lock"
+# The session-handoff a seat writes and its supervisor waits on, named after the
+# agent like the two above. Composed only by handoff_file_path() and
+# handoff_file_paths() below. agent_name_from_supervisor_file does NOT take this
+# suffix apart: a handoff file is not a supervisor file, and the seat name it
+# would return is already in hand wherever a handoff path is built.
+HANDOFF_FILE_SUFFIX = "-handoff.md"
 # This script's own name, as it appears in a running supervisor's command line.
 SUPERVISOR_SCRIPT_FILE_NAME = "handoff-supervisor.py"
 
@@ -345,6 +408,60 @@ def supervisor_state_paths(handoff_directory: Path) -> list:
     if not directory.is_dir():
         return []
     return sorted(directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}"))
+
+
+def handoff_file_path(handoff_directory: Path, agent: str) -> Path:
+    """Where `agent`'s session-handoff lives under `handoff_directory`.
+
+    The one place the handoff file's name is composed. Four programs need this
+    path -- this supervisor, which waits on it; the handoff writer, which writes
+    it; the recovery tool and resupervise-seat.py, which read it -- and until
+    2026-09-20 each built it from its own f-string: eight sites across the four,
+    one of them a local `suffix` variable in the writer. A rename that missed one
+    left that program composing the old name, and the failure is silent in the
+    worst direction: the supervisor writes <seat>-handoff.md, the recovery tool
+    looks for something else, finds nothing, and reports a seat that handed off
+    cleanly as one that died leaving no handoff.
+
+    User-ruled 2026-09-20, item 2 of the walk
+    md-skills-seat-open-decisions-2026-09-20. The eight sites were measured on
+    main at 986bc31 on 2026-09-19 and re-measured unchanged on 2026-09-20,
+    excluding test files -- whose literals are the assertion -- and three prose
+    mentions in handoff-write-and-check-supervisor.py's docstrings. PR "The
+    supervisor's state and lock file names are defined once"
+    (nedschorus/nedschorus#545), which gave the state and lock files their
+    constants and the guard beside them, left this name out because the ruling
+    it carried out (item 4 of the walk
+    file-naming-and-location-standards-cold-read-findings, 2026-09-19) named the
+    supervisor state file, the cold-read-record names and the walk-file endings.
+    The handoff name was measured while that work was carried out and recorded
+    on docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md as
+    its own unruled topic.
+
+    Named handoff_file_path, not the walk's handoff_path, because handoff_path is
+    already the SupervisorSettings property below, a parameter of
+    parse_handoff_file and wait_for_handoff, and a local in three other scripts.
+    A module-level function of that name is also a second FunctionDef named
+    handoff_path in this file, and the guard collects its composing helpers by
+    that name: it would find two, fail its own helper case, and exempt the
+    property's body from the check that watches it.
+    """
+    return Path(handoff_directory) / f"{agent}{HANDOFF_FILE_SUFFIX}"
+
+
+def handoff_file_paths(handoff_directory: Path) -> list:
+    """Every seat's session-handoff under `handoff_directory`, sorted.
+
+    The handoff writer reads them all to find the name a seat working in this
+    very directory already hands off under, and it used to glob the suffix from a
+    local copy of it. A search pattern spells the name out as surely as a path
+    does, as supervisor_state_paths above says, so it belongs here with the rest.
+    Pair it with HANDOFF_FILE_SUFFIX to get each seat's name back.
+    """
+    directory = Path(handoff_directory)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob(f"*{HANDOFF_FILE_SUFFIX}"))
 
 
 def read_process_command_line(process_id: int):
@@ -755,8 +872,9 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     rule (see written_at_wariness_sentence) — the open-walks duty, the
     pointer at this script, the branch-state line, the malformed-block note
     when the verbatim block was damaged, and the next step — plus, only when
-    the handoff recorded subagents still working at the reincarnation, the roster
-    sentence below. Every boilerplate sentence is the user's, ruled
+    the handoff recorded subagents still working at the reincarnation, the
+    roster sentence (ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE). Every
+    boilerplate sentence is the user's, ruled
     2026-08-30 on a rendered mock of the prompt. Queue status does not
     ride it (the user expired that 2026-08-12 ruling on 2026-08-29); the
     supervisor prints it to its own console instead. The task-count check
@@ -788,41 +906,28 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
         "This handoff should list what items or walks are open. Display them "
         "to the user, and continue them when you get a chance.",
-        "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
-        "watches this seat and composed this prompt — read it if you need to "
-        "investigate the handoff mechanism.",
+        SUPERVISOR_POINTER_SENTENCE,
     ]
     if branch_sync_report:
         lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
-        # The orphaned-subagent duty, narrowed 2026-08-29, softened to "may
-        # need" in the user's second round (ruled 2026-08-30): the writer
-        # records only subagents still working at the reincarnation, so every entry
-        # here is one the reincarnation killed mid-job. Re-commission rather than
-        # resume, because a dead subagent cannot be resumed by id across a
-        # reincarnation: probed 2026-08-29, SendMessage to a predecessor's subagent
-        # id returns "No transcript found" (the resolver is session-scoped)
-        # even though the transcript survives on disk at
-        # <predecessor-session-dir>/subagents/agent-<id>.jsonl.
-        # `agent-<id>.jsonl` stays a literal pattern: each entry names its
-        # own id, so the successor substitutes per entry.
+        # The sentence and the reasoning behind its wording live with
+        # ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE; only the three
+        # insertions are computed here.
         transcript_directory = (predecessor_session_directory
                                 if predecessor_session_directory
                                 else "<predecessor-session-dir>")
-        lines.append(
-            f"The session you are replacing had {len(roster)} subagent(s) still working when it ended: "
-            + "; ".join(roster)
-            + ". You may need to re-commission similar agents. If you need more "
-            "context, the dead agents' full transcripts are at "
-            f"{transcript_directory}/subagents/agent-<id>.jsonl."
-        )
+        lines.append(ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE.format(
+            subagent_count=len(roster),
+            joined_roster="; ".join(roster),
+            transcript_directory=transcript_directory,
+        ))
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
-        preamble += (" NOTE: this handoff's verbatim next-step block was unterminated, so what "
-                     "follows is the collapsed one-line form and may have lost structure.")
+        preamble += UNTERMINATED_NEXT_STEP_BLOCK_NOTE
     if not next_step:
-        return preamble + " Then continue from where that dialog ends."
+        return preamble + NO_NEXT_STEP_TAIL_SENTENCE
     # The next step keeps its own line breaks: it is handed to the successor as
     # one argv element, so newlines survive delivery. Joining it into the
     # preamble would flatten exactly what the block form exists to preserve.
@@ -1303,7 +1408,9 @@ class SupervisorSettings:
 
     @property
     def handoff_path(self) -> Path:
-        return self.handoff_directory / f"{self.agent}-handoff.md"
+        # The module function, not this property: a method body never resolves a
+        # bare name in its own class namespace.
+        return handoff_file_path(self.handoff_directory, self.agent)
 
     @property
     def state_path(self) -> Path:
@@ -1327,7 +1434,47 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     yet a prompt: the caller composes it at the launch, with the branch sync
     run there, so the branch-state line the successor reads names its own
     launch.
+
+    The retiring session is the one that WROTE the handoff, not the one this
+    supervisor launched, whenever the handoff says which it was. Both callers
+    pass the id from the supervisor's state file, which records the session
+    the supervisor started; the writer stamps written-by-session from
+    CLAUDE_CODE_SESSION_ID inside the session actually retiring
+    (handoff-write-and-check-supervisor.py, write_handoff_file). The two
+    diverge when a session the supervisor did not launch takes over the
+    worktree mid-life: the adoption path (AdoptedSession,
+    --adopt-session-id) runs at supervisor startup only, so nothing updates
+    the state file afterwards.
+
+    That happened at the MD-skills seat on 2026-09-20/21. The state file held
+    session ac2b8ebe-b95f-4599-a30e-aed1d554cef3, which ENDED at 22:00Z; a
+    session the supervisor had not launched started in the same worktree two
+    minutes later and ran as the seat from 22:02Z to 00:56Z, writing
+    generation 27's handoff with written-by-session:
+    145a31fd-d1eb-4ea6-9463-70b5c9f9c9d9. The extract handed to the successor,
+    MD-skills-dialog-0027.md, therefore carried ac2b8ebe's final turns and
+    none of the work 145a31fd had done, and nothing in the handoff or the
+    console said so.
+
+    The fallback is the tracked id, which is all there ever was: handoffs
+    older than the field do not carry it, and a session with no
+    CLAUDE_CODE_SESSION_ID writes the literal WRITTEN_BY_SESSION_UNKNOWN_VALUE
+    rather than an id. Preferring the handoff's id once, here, also corrects
+    preseed_tasks and the predecessor session directory below, which read the
+    same id. No tasks were lost on 2026-09-20: the launchers pin a per-seat
+    store (~/.claude/tasks/nedschorus-<seat>-tasks/), so preseed_tasks copied
+    nothing and had nothing to get wrong. The un-pinned path is keyed by
+    session id and would have pre-seeded the wrong session's tasks.
     """
+    handoff_written_by_session = handoff_fields.get(WRITTEN_BY_SESSION_FIELD, "")
+    if (handoff_written_by_session
+            and handoff_written_by_session != WRITTEN_BY_SESSION_UNKNOWN_VALUE
+            and handoff_written_by_session != retiring_session_id):
+        print(f"handoff-supervisor: the handoff names session "
+              f"{handoff_written_by_session} as its writer, not the tracked "
+              f"{retiring_session_id}; carrying over the writer's dialog and tasks")
+        retiring_session_id = handoff_written_by_session
+
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
     if not extracted:

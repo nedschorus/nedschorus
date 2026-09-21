@@ -52,6 +52,34 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def nothing_is_appended_to(prompt, tail, expected_rest_of_prompt):
+    """`tail` is in `prompt`, and what follows it is EXACTLY
+    `expected_rest_of_prompt` -- through to the end of the prompt.
+
+    A plain `tail in prompt` passes when text is APPENDED to the pinned
+    sentence, which is how three of these pins went blind: each was named
+    "exactly" while an extra sentence bolted onto the end of the real one was
+    invisible (swept 2026-09-20).
+
+    The first repair listed the sentences that may legitimately follow and
+    accepted any rest STARTING with one of them. That bounded the beginning of
+    what follows and never its end, so the defect survived in the shape it was
+    written to catch: " NOTE: Resume each one by its id." appended to the
+    orphaned-subagent roster sentence left all 228 cases green, and resume-by-id
+    is the exact instruction that sentence exists to keep out of a successor's
+    prompt -- a dead subagent cannot be resumed by id across a reincarnation
+    (probed 2026-08-29). Reviewed 2026-09-21.
+
+    So the rest is pinned whole. build_ignition_prompt's segments are
+    conditional in production, but each case's own fixture decides every one of
+    them, so what follows the pinned sentence is fully determined and can be
+    spelled out to the last character. A fixture that gains a branch sync, a
+    roster, an unterminated verbatim block, or a different next step must extend
+    `expected_rest_of_prompt` with the segment it adds -- never reopen the tail.
+    """
+    return tail in prompt and prompt.split(tail, 1)[1] == expected_rest_of_prompt
+
+
 def run_offline_cases(workspace: Path):
     # --- Handoff parsing --------------------------------------------------
     handoff_path = workspace / "agent-handoff.md"
@@ -764,8 +792,24 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     truncated_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), truncated_fields)
     check("an unterminated block falls back to the collapsed next-step",
           "the collapsed instruction survives" in truncated_prompt, repr(truncated_prompt))
-    check("an unterminated block tells the successor what happened",
-          "unterminated" in truncated_prompt, repr(truncated_prompt))
+    # Bounded at BOTH ends. `"unterminated" in prompt` was the whole guard
+    # until 2026-09-21, so a sentence appended to the note was invisible: the
+    # note is composed inline onto the preamble and nothing pinned what
+    # followed it. This fixture has a next step and no sync report or roster,
+    # so what follows the note is fully determined.
+    check("an unterminated block tells the successor what happened, and nothing is appended to it",
+          truncated_prompt.split(
+              " NOTE: this handoff's verbatim next-step block was unterminated, so what "
+              "follows is the collapsed one-line form and may have lost structure.", 1
+          )[1:] == ["\n\nThen take the next step:\nthe collapsed instruction survives"],
+          repr(truncated_prompt))
+    # The note itself, word for word, held as the module constant it now lives
+    # in, so the wording keeps a guard no change of fixture can take away.
+    check("the unterminated-block note is word for word what the prompt carries",
+          supervisor.UNTERMINATED_NEXT_STEP_BLOCK_NOTE == (
+              " NOTE: this handoff's verbatim next-step block was unterminated, so what "
+              "follows is the collapsed one-line form and may have lost structure."),
+          repr(supervisor.UNTERMINATED_NEXT_STEP_BLOCK_NOTE))
 
     # A trailing double space is a markdown hard break: the one function whose
     # purpose is carrying text unaltered must not strip it (PR #108 review).
@@ -878,11 +922,27 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # The pointer at the supervisor itself (user-ruled 2026-08-30, second
     # round), after the open-walks duty. Exact text; absent before.
     check("ignition points at the supervisor that composed it, exactly",
-          "continue them when you get a chance. This session was launched by "
-          "nc-systems/handoff/handoff-supervisor.py, which watches this seat and composed "
-          "this prompt — read it if you need to investigate the handoff "
-          "mechanism." in prompt,
+          nothing_is_appended_to(
+              prompt,
+              "continue them when you get a chance. This session was launched by "
+              "nc-systems/handoff/handoff-supervisor.py, which watches this seat and composed "
+              "this prompt — read it if you need to investigate the handoff "
+              "mechanism.",
+              # This fixture passes no sync report and no roster, and its
+              # verbatim block is not unterminated, so the pointer sentence is
+              # the last of the preamble and only the next step follows it.
+              "\n\nThen take the next step:\nfinish the supervisor"),
           prompt[:800])
+    # The sentence itself, word for word, held as the module constant it now
+    # lives in. The pin above carries it into one composed prompt; this one
+    # holds the constant, so the wording keeps a guard of its own that no
+    # change of fixture can quietly take away.
+    check("the supervisor-pointer sentence is word for word what the user ruled",
+          supervisor.SUPERVISOR_POINTER_SENTENCE == (
+              "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
+              "watches this seat and composed this prompt — read it if you need "
+              "to investigate the handoff mechanism."),
+          repr(supervisor.SUPERVISOR_POINTER_SENTENCE))
     # The branch-state line (user-ruled 2026-08-30, second round): the sync's
     # own one-line result, then the static instruction. Called through
     # try/except so this case FAILS cleanly against a supervisor whose
@@ -898,17 +958,73 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("ignition carries the branch sync's own one-line result",
           "branch sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
           synced_prompt[:900])
-    check("the branch-state instruction follows the sync result, exactly",
-          "branch sync: fixture-branch is 3 commit(s) behind main — If this "
-          "branch has never been pushed, rebase it onto origin/main before your "
-          "first substantive action and rerun the tests for what you touched. "
-          "If it is pushed, leave it as it is, and start new work on a branch "
-          "from origin/main. If this seat has "
-          "open pull requests, check their state with `gh`: merge-lane reviews "
-          "and merges them; a changes-requested one gets a fix round from a "
-          "fresh agent — never extend a head you've already announced."
-          in synced_prompt,
-          synced_prompt[:1100])
+    # The constant itself, word for word. The three checks below carry it into
+    # the prompt but each is containment, so until 2026-09-20 an extra sentence
+    # bolted onto the end of BRANCH_STATE_INSTRUCTION was invisible to all of
+    # them. This is the sentence every reincarnated seat reads about its own
+    # branch: the wording it replaced had a seat merge main into a branch under
+    # review thirty seconds after reading it (2026-09-15), against the ruling
+    # of 2026-09-14 that working branches never take merges from main, and the
+    # user replaced it word for word on 2026-09-16. Drift here is unruled
+    # instruction that seats act on at once.
+    check("the branch-state instruction is word for word what the user ruled",
+          supervisor.BRANCH_STATE_INSTRUCTION == (
+              " \u2014 If this branch has never been pushed, rebase it onto origin/main "
+              "before your first substantive action and rerun the tests for what you "
+              "touched. If it is pushed, leave it as it is, and start new work on a "
+              "branch from origin/main. If this seat has "
+              "open pull requests, check their state with `gh`: merge-lane reviews and "
+              "merges them; a changes-requested one gets a fix round from a fresh agent "
+              "\u2014 never extend a head you've already announced."),
+          repr(supervisor.BRANCH_STATE_INSTRUCTION))
+    # This fixture passes no roster and its verbatim block is not
+    # unterminated, so the branch-state segment ends the preamble and only the
+    # next step follows it. Pinned as a tail rather than by containment: the
+    # instruction is a constant, but the segment is COMPOSED at the call site
+    # (`lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)`), and text
+    # appended there lands outside the constant's equality pin -- measured
+    # 2026-09-21, " If unclear, rebase onto origin/main anyway." appended at
+    # that call site left both suites fully green.
+    expected_rest_after_the_branch_state_line = (
+        "\n\nThen take the next step:\nfinish the supervisor")
+    check("the branch-state instruction follows the sync result, exactly, and nothing is appended at the call site",
+          nothing_is_appended_to(
+              synced_prompt,
+              "branch sync: fixture-branch is 3 commit(s) behind main — If this "
+              "branch has never been pushed, rebase it onto origin/main before your "
+              "first substantive action and rerun the tests for what you touched. "
+              "If it is pushed, leave it as it is, and start new work on a branch "
+              "from origin/main. If this seat has "
+              "open pull requests, check their state with `gh`: merge-lane reviews "
+              "and merges them; a changes-requested one gets a fix round from a "
+              "fresh agent — never extend a head you've already announced.",
+              expected_rest_after_the_branch_state_line),
+          "rest after the pinned line: "
+          + repr(synced_prompt.split("already announced.", 1)[-1])
+          + "; expected: " + repr(expected_rest_after_the_branch_state_line))
+    # The supervisor's other ignition shape composes the same instruction at a
+    # second call site (`BootRecoveryIgnitionPlan.compose`), and nothing pinned
+    # what that one produced: measured 2026-09-21, the same appended sentence
+    # there left handoff-supervisor-test at 234 PASS / 0 FAIL and
+    # recover-crashed-seats-test at 345 passed / 0 failed. The whole prompt is
+    # pinned, so an append anywhere in it -- inside the constant or after it --
+    # fails here.
+    boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+        "finish the supervisor").compose(
+            "branch sync: fixture-branch is 3 commit(s) behind main")
+    check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
+          boot_recovery_prompt == (
+              "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
+              "session's dialog extract is unavailable; this next-step and the "
+              "repository are your whole context.) branch sync: fixture-branch is 3 "
+              "commit(s) behind main — If this branch has never been pushed, rebase "
+              "it onto origin/main before your first substantive action and rerun the "
+              "tests for what you touched. If it is pushed, leave it as it is, and "
+              "start new work on a branch from origin/main. If this seat has open "
+              "pull requests, check their state with `gh`: merge-lane reviews and "
+              "merges them; a changes-requested one gets a fix round from a fresh "
+              "agent — never extend a head you've already announced."),
+          repr(boot_recovery_prompt))
     # The branch-state half of that instruction, pinned as its own exact line
     # (user-ruled 2026-09-16, "y", item 1 of nedschorus#418, verbatim). It
     # replaced the 2026-08-31 catch-up sentence, which a seat read as "merge
@@ -951,7 +1067,15 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           str([field.name for field in dataclasses.fields(supervisor.DialogIgnitionPlan)]))
     check("ignition carries the next step", "finish the supervisor" in prompt, prompt)
     prompt_without_step = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent})
-    check("ignition survives a missing next-step", "continue from where that dialog ends" in prompt_without_step)
+    # Bounded at the END, which containment alone never was: this sentence
+    # closes the prompt, so anything appended to it would have been invisible
+    # to `"continue from where that dialog ends" in prompt`.
+    check("ignition survives a missing next-step, and that sentence ends the prompt",
+          prompt_without_step.endswith(" Then continue from where that dialog ends."),
+          repr(prompt_without_step))
+    check("the no-next-step tail is word for word what the prompt carries",
+          supervisor.NO_NEXT_STEP_TAIL_SENTENCE == " Then continue from where that dialog ends.",
+          repr(supervisor.NO_NEXT_STEP_TAIL_SENTENCE))
     # The queue-status line was CUT from the prompt (user-ruled 2026-08-29,
     # expiring his 2026-08-12 #32 ruling: "Also useless is the reminder there
     # are files in the queues. Thats what queues are for."). The cut is
@@ -2096,10 +2220,27 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     # agent on the job; the dead one's full transcript is at ... if its
     # state matters. A dead subagent cannot be resumed by id."
     check("ignition says the successor may need to re-commission similar agents, exactly",
-          ". You may need to re-commission similar agents. If you need more "
-          "context, the dead agents' full transcripts are at "
-          f"{predecessor_directory}/subagents/agent-<id>.jsonl." in prompt,
+          nothing_is_appended_to(
+              prompt,
+              ". You may need to re-commission similar agents. If you need more "
+              "context, the dead agents' full transcripts are at "
+              f"{predecessor_directory}/subagents/agent-<id>.jsonl.",
+              # The roster sentence is the last of the preamble, and this
+              # fixture's verbatim block is not unterminated, so only the next
+              # step follows it.
+              "\n\nThen take the next step:\nmerge the queue"),
           prompt)
+    # The sentence itself, word for word, as the module template it now lives
+    # in. Three insertions the caller computes -- the count, the joined
+    # roster, and the directory the dead agents' transcripts survive in -- so
+    # the pin holds the template with its placeholders spelled out.
+    check("the orphaned-subagent roster sentence is word for word what the user ruled",
+          supervisor.ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE == (
+              "The session you are replacing had {subagent_count} subagent(s) still "
+              "working when it ended: {joined_roster}. You may need to re-commission "
+              "similar agents. If you need more context, the dead agents' full "
+              "transcripts are at {transcript_directory}/subagents/agent-<id>.jsonl."),
+          repr(supervisor.ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE))
     check("the first-round roster wording is gone",
           "Re-commission each" not in prompt and "if its state matters" not in prompt
           and "cannot be resumed by id" not in prompt, prompt)
@@ -2251,6 +2392,135 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           "keep composing" in prompt, prompt)
 
 
+def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str):
+    """carry_over_to_successor reads the retiring session's id off the handoff.
+
+    Both callers pass the id from the supervisor's state file, which names the
+    session this supervisor launched; the handoff's own written-by-session
+    names the session that wrote it. The divergent case below FAILS against
+    code that trusts the state file: it extracts, pre-seeds and cites the
+    launched session instead of the writer. The two fallback cases — field
+    absent (an older handoff) and field "unknown" (a session with no
+    CLAUDE_CODE_SESSION_ID) — pass either way; they are here so the
+    preference cannot be turned into a requirement.
+
+    The task store is keyed by session id only when the launchers' pin is
+    absent, so the pin is popped for the duration: with it set, preseed_tasks
+    returns 0 without reading any store and the task assertions would prove
+    nothing.
+    """
+    home = workspace / "retiring-session-id-from-the-handoff"
+    tasks_root = home / "tasks"
+
+    def carry_over(case_name: str, written_by_session_line: str,
+                   tracked_session_id: str, handoff_session_id: str):
+        """One carry_over_to_successor run, with the extractor recording its id.
+
+        Seeds a task record under BOTH candidate session ids, with the id in
+        the record, so the copy that reaches the successor names the store it
+        came from rather than merely existing.
+        """
+        case_home = home / case_name
+        handoff_directory = case_home / "handoffs"
+        handoff_directory.mkdir(parents=True)
+        working_directory = case_home / "seat"
+        working_directory.mkdir(parents=True)
+        for store_session_id in (tracked_session_id, handoff_session_id):
+            store = tasks_root / store_session_id
+            store.mkdir(parents=True, exist_ok=True)
+            (store / "1.json").write_text(
+                json.dumps({"task": f"a task of {store_session_id}"}), encoding="utf-8")
+        settings = supervisor.SupervisorSettings(
+            agent="carrier", working_directory=working_directory,
+            handoff_directory=handoff_directory, agent_command="true", first_prompt="")
+        settings.handoff_path.write_text(
+            "written-at: " + recent + "\n"
+            "next-step: keep carrying\n"
+            "restart-counter: 4\n"
+            + written_by_session_line,
+            encoding="utf-8")
+        handoff_fields = supervisor.parse_handoff_file(settings.handoff_path)
+
+        extracted_from = []
+
+        def recording_extract_dialog(session_id, extract_working_directory, output_path):
+            extracted_from.append(session_id)
+            output_path.write_text(f"the dialog of {session_id}\n", encoding="utf-8")
+            return True
+
+        original_extract_dialog = supervisor.extract_dialog
+        original_tasks_root = supervisor.TASKS_ROOT
+        original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+        console = io.StringIO()
+        try:
+            supervisor.extract_dialog = recording_extract_dialog
+            supervisor.TASKS_ROOT = tasks_root
+            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+            with contextlib.redirect_stdout(console):
+                successor_id, plan = supervisor.carry_over_to_successor(
+                    settings, tracked_session_id, handoff_fields, generation=5)
+        finally:
+            supervisor.extract_dialog = original_extract_dialog
+            supervisor.TASKS_ROOT = original_tasks_root
+            if original_pin is None:
+                os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+            else:
+                os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
+
+        carried_task = tasks_root / successor_id / "1.json"
+        return SimpleNamespace(
+            extracted_from=extracted_from,
+            successor_id=successor_id,
+            plan=plan,
+            printed=console.getvalue(),
+            carried_task=(carried_task.read_text(encoding="utf-8")
+                          if carried_task.is_file() else ""),
+            predecessor_session_directory_for=lambda session_id: (
+                supervisor.project_directory_for_working_directory(working_directory)
+                / session_id),
+        )
+
+    # --- The handoff's writer is not the session the supervisor launched ---
+    launched = "ac2b8ebe-the-session-the-supervisor-launched"
+    writer = "145a31fd-the-session-that-wrote-the-handoff"
+    diverged = carry_over("diverged", f"written-by-session: {writer}\n", launched, writer)
+    check("the dialog is extracted from the session that wrote the handoff",
+          diverged.extracted_from == [writer], str(diverged.extracted_from))
+    check("the plan names the writing session's directory, not the launched one's",
+          diverged.plan is not None
+          and diverged.plan.predecessor_session_directory
+          == diverged.predecessor_session_directory_for(writer),
+          str(diverged.plan and diverged.plan.predecessor_session_directory))
+    check("the successor is pre-seeded from the writing session's task store",
+          writer in diverged.carried_task, diverged.carried_task)
+    check("the console names both ids when the handoff's writer is not the tracked session",
+          writer in diverged.printed and launched in diverged.printed, diverged.printed)
+
+    # --- Fallbacks: nothing to prefer, so the tracked id stands -----------
+    absent = carry_over("absent", "", "0000-tracked-with-no-field", "0000-unused-by-this-case")
+    check("a handoff without the field falls back to the tracked session",
+          absent.extracted_from == ["0000-tracked-with-no-field"], str(absent.extracted_from))
+    check("the fallback plan names the tracked session's directory",
+          absent.plan is not None
+          and absent.plan.predecessor_session_directory
+          == absent.predecessor_session_directory_for("0000-tracked-with-no-field"),
+          str(absent.plan and absent.plan.predecessor_session_directory))
+    check("the fallback pre-seeds from the tracked session's task store",
+          "0000-tracked-with-no-field" in absent.carried_task, absent.carried_task)
+
+    unknown = carry_over("unknown", "written-by-session: unknown\n",
+                         "0000-tracked-under-unknown", "0000-also-unused")
+    check("a handoff whose writer is `unknown` falls back to the tracked session",
+          unknown.extracted_from == ["0000-tracked-under-unknown"], str(unknown.extracted_from))
+    check("the `unknown` fallback plan names the tracked session's directory",
+          unknown.plan is not None
+          and unknown.plan.predecessor_session_directory
+          == unknown.predecessor_session_directory_for("0000-tracked-under-unknown"),
+          str(unknown.plan and unknown.plan.predecessor_session_directory))
+    check("the `unknown` fallback pre-seeds from the tracked session's task store",
+          "0000-tracked-under-unknown" in unknown.carried_task, unknown.carried_task)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
@@ -2271,6 +2541,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
     run_spawned_subagent_roster_cases(Path(temporary_directory), recent_timestamp)
     run_recycle_prompt_composition_cases(Path(temporary_directory), recent_timestamp)
+    run_retiring_session_id_from_the_handoff_cases(Path(temporary_directory), recent_timestamp)
 
 # --- The depths this system's move depends on (added 2026-09-20) ----------
 # When main-gatekeeper moved into nc-systems/, its suite kept a

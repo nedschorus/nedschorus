@@ -32,10 +32,10 @@ cold-read-fast-read runs on Gemini 3.8 Flash at MEDIUM, replacing gpt-5.6-terra
 at low. The measurements: about 100-110 s per document (single runs on a
 658-word skill and a 1,967-word walk draft); on the ghi-write candidate defect
 list, medium found 42% of the rows against 19% at low, and medium and high hit
-the same rows. It is the one cold-read-tier this launcher pins. The good and
-floor cold-read-tiers stay on the Claude and Codex launchers, and this launcher
-refuses them (exit 64 from argparse) rather than running a Gemini model under a
-stamp that names a cold-read-tier the roster never measured it on.
+the same rows. It is the one cold-read-tier this launcher pins. The `deep` and
+`second` cold-read-tiers stay on the Claude and Codex launchers, and this
+launcher refuses them (exit 64 from argparse) rather than running a Gemini
+model under a stamp that names a cold-read-tier the roster never measured it on.
 
 THE INVOCATION, as measured working in the 2026-09-04 campaign
 (cold-read-records/2026-09-03-cold-read-tier-roster-campaign/tools/

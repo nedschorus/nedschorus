@@ -4,17 +4,52 @@
 Run: python3 scripts/md-drift-lint-test.py
 """
 
-import importlib.util
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 
-_spec = importlib.util.spec_from_file_location("md_drift_lint", LINT_SCRIPT)
-lint = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(lint)
+# The lint is loaded by compiling its source below rather than through
+# importlib, so Python's bytecode cache is never consulted for it, and
+# sys.dont_write_bytecode keeps one from being written either. The two cover
+# different halves of the same hazard and both are needed.
+#
+# Mutation testing this lint -- change PLACEHOLDER_SPAN, rerun, read which
+# case fails -- is how its exclusions are checked, and a stale .pyc makes it
+# report a clean, plausible, entirely wrong table. Python decides a cached
+# .pyc is current by (mtime, size) at one-second resolution, so two mutations
+# of the SAME byte length written inside one second are indistinguishable to
+# it and the second run executes the first's bytecode. The two mutations that
+# pin PLACEHOLDER_SPAN's exclusions, `(?![!])` and `(?![?])`, are the same
+# length as each other -- seven characters each -- which is exactly that case.
+# It collides in EITHER direction, onto whichever case's bytecode landed
+# first, so the wrong table does not look broken.
+#
+# Do not look for a __pycache__ to decide whether this is happening. Where the
+# cache lands is interpreter-dependent on this Mac, and both interpreters are
+# swept: under Apple's 3.9.6 sys.pycache_prefix puts it beneath
+# ~/Library/Caches and nothing appears beside the script, while under
+# Homebrew's 3.13.15 the prefix is None and scripts/__pycache__ appears.
+#
+# sys.dont_write_bytecode is not sufficient on its own, which is why the load
+# below avoids importlib: it suppresses WRITING a .pyc, not READING one, so a
+# cache left by an earlier run without it is still consulted and still wins.
+# Measured by giving a second mutation the first's mtime with `touch -r` at
+# equal size -- the run reported the FIRST mutation's failing case with the
+# knob in place. Compiling here removes the read half; the knob stays so that
+# a later change back to importlib does not silently reopen the write half.
+#
+# scripts/launch-claude-pre-trust-step-test.py sets the same knob through the
+# environment, for an unrelated reason.
+sys.dont_write_bytecode = True
+
+lint = types.ModuleType("md_drift_lint")
+lint.__file__ = str(LINT_SCRIPT)   # md-drift-lint.py derives REPO_ROOT from it
+exec(compile(LINT_SCRIPT.read_text(encoding="utf-8"), str(LINT_SCRIPT), "exec"),
+     lint.__dict__)
 
 failures = []
 
@@ -196,6 +231,79 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a line-numbered citation into nedsmessenger is not checked",
           problems_for("verified at `adapter/adapter.py:379` in "
                        "`~/Projects/nedsmessenger`", root) == [])
+
+    # --- A <placeholder> inside a backtick span (added 2026-09-20) ---------
+    # "<" is a SKIP_MARKER, but the marker is tested per word and the span was
+    # split on whitespace first, so a placeholder containing a space lost its
+    # "<" to the split and its tail was checked as a real path. Five standing
+    # findings on main were this. The first case is the repository's own text,
+    # from docs/design-to-main/design-to-main-state-machine-design.md:521.
+    findings = problems_for(
+        "| `<component's directory>/design-to-main-record/user-rulings.md` | every ruling |",
+        root)
+    check("a placeholder containing a space is not checked as a path",
+          findings == [], str(findings))
+    check("a placeholder with no space is still not checked",
+          problems_for("writes `<seat>/state.json` on exit", root) == [])
+    # The collapse must not swallow the rest of the span: a real path beside a
+    # placeholder is still the document's claim about this repository.
+    findings = problems_for(
+        "run `scripts/long-gone.py --out <run dir>/report.json`", root)
+    check("a missing path beside a placeholder is still reported",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+    # --threshold because the flag check is anchored at this same first word
+    # and real-script.py declares only that one; --out would fire it.
+    check("an existing path beside a placeholder passes",
+          problems_for("run `scripts/real-script.py --threshold <run dir>/r.json`",
+                       root) == [])
+    # This case's comment used to claim it pinned a ">" with no "<" opening it,
+    # which its input never contained. Corrected 2026-09-20; the shapes that
+    # comment gestured at are pinned for real below.
+    findings = problems_for("redirect into `scripts/long-gone.py`", root)
+    check("a path with no placeholder anywhere is unaffected",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+    # The collapse must reject anything that is not a placeholder. Angle
+    # brackets that do not hug their content are a shell redirect, and a span
+    # opening "<!" is an HTML comment; both carry real paths, and the first
+    # version of the pattern swallowed them silently.
+    findings = problems_for("run `cat < docs/long-gone.py > scripts/other.py`", root)
+    check("a path inside a shell redirect is still checked",
+          findings == ["path does not exist: docs/long-gone.py",
+                       "path does not exist: scripts/other.py"], str(findings))
+    findings = problems_for("see `<!-- see docs/long-gone.py -->`", root)
+    check("a path inside a backticked HTML comment is still checked",
+          findings == ["path does not exist: docs/long-gone.py"], str(findings))
+    # "<?" opens a processing instruction -- the other shape this exclusion
+    # still rejects, now that "/" has come out -- and nothing failed on it
+    # until now: the whole suite passed against a copy of the lint reduced to
+    # `(?![!])`. Found in review of the pull request that removed "/",
+    # 2026-09-20. Unlike "/", this exclusion is load-bearing: without it the
+    # span collapses and the path is lost, in `<?xml ... ?>`,
+    # `<?xml-stylesheet ... ?>` and `<?php ... ?>` alike.
+    findings = problems_for("see `<?xml see docs/long-gone.py ?>`", root)
+    check("a path inside a backticked processing instruction is still checked",
+          findings == ["path does not exist: docs/long-gone.py"], str(findings))
+    # The span is NOT collapsed, which is this case's subject: under the first
+    # version of the pattern both paths vanished together. What each word then
+    # meets is the older SKIP_MARKERS rule, unchanged by this change and older
+    # than it: "<docs/long-gone.py" carries a "<" and is skipped, while
+    # ">scripts/other.py" is checked and reported with the ">" still glued on.
+    # Pinned as it really behaves, so a later widening of the pattern -- which
+    # would take both words back out of the check -- fails here.
+    findings = problems_for("run `<docs/long-gone.py >scripts/other.py`", root)
+    check("a closing bracket that does not hug its content is not a placeholder",
+          len(findings) == 1 and "scripts/other.py" in findings[0], str(findings))
+    # This case replaces one that asserted `</section>` reports nothing. That
+    # was true whether or not the pattern excluded "/", so it could not fail
+    # on its own subject -- the defect this suite exists to prevent, found in
+    # review 2026-09-20. A closing-tag-SHAPED placeholder distinguishes them:
+    # with "/" excluded the span does not collapse and its tail is reported as
+    # the nonexistent path "clone>/docs/long-gone.py".
+    findings = problems_for("clone at `</path to clone>/docs/long-gone.py`", root)
+    check("a closing-tag-shaped placeholder is a placeholder, not a path",
+          findings == [], str(findings))
+    check("a plain closing tag still reports nothing",
+          problems_for("the `</section>` marker", root) == [])
 
     # --- Numbers quoted from code -----------------------------------------
     check("a backtick number found in the named code file passes",

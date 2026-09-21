@@ -58,7 +58,7 @@ for a file of its report's own name before it declares failure
 takes a file from a directory the instrument built
 (`instrument_built_record_directory`: one holding `target/` or
 `reference-check.md`). The files inside a cold-read-record are bare cell
-names since 2026-09-18 -- every run's `codex-hunt-floor.md` is called that --
+names since 2026-09-18 -- every run's `codex-hunt-second.md` is called that --
 so a same-named report in another run's real record is never taken; only a
 directory a model invented can supply the near miss.
 It threw away the runtime's stderr on every successful run, which is the only
@@ -149,13 +149,36 @@ CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # subset its own tier map names, and its --tier accepts only that
 # subset (see `build_argument_parser`): `fast` (user-ruled 2026-09-07:
 # gemini-3.8-flash at medium, replacing gpt-5.6-terra at low) is pinned by
-# scripts/cold-read-agy-cell.py alone, and `good` and `floor` by the Claude
+# scripts/cold-read-agy-cell.py alone, and `deep` and `second` by the Claude
 # and Codex launchers alone, so no launcher can be asked for a cold-read-tier
 # it has no model for.
 # `judge` is absent for the same reason `restater-judge` is absent from
 # CELL_CHOICES: the judge has one ruled configuration, so its cold-read-cell
 # stamps tier=judge as a constant and takes no --tier at all.
-TIER_CHOICES = ["good", "floor", "fast"]
+#
+# THESE TWO TIERS WERE `good` AND `floor` UNTIL 2026-09-20, when the user
+# ruled the rename (walk docs/walk/md-skills-seat-open-decisions-2026-09-20,
+# item 5). He had raised it himself on 2026-09-14, HIS WORDS: "this seems odd
+# - Fable defect-hunt floor - the floor is supposed to be the dumbest model,
+# right?" He was reading the name correctly and the name was wrong. The slot
+# held Sonnet, cut as a reviewer for reproducing 0.14 of its own previous
+# run's findings, so "floor" was coined for a genuinely weak model and Fable
+# 5.1 inherited the label when it took the slot. What the two tiers mean now
+# is what the names say: `deep` is the deepest model for this job (Opus on
+# the Claude leg, sol on the Codex leg), and `second` is an additive second
+# cell that beats it on no target and still contributes unique findings --
+# the 2026-09-03 tier-roster campaign found Fable beats Opus on nothing, and
+# adding it lifted pair coverage 0.83 -> 0.89 at no extra wall clock (the
+# figures and their citations are in scripts/cold-read-claude-cell.py, beside
+# the pins they justify). Nothing ran wrong under the old names; the name
+# misled a reader, and it had misled him.
+# COLD-READ-RECORDS ALREADY IN THE LOG-STORE KEEP THEIR OLD FILENAMES --
+# nothing there is rewritten -- so both spellings coexist in the store for a
+# long time, which he accepted as the price of renaming at all. A citation of
+# a record written before 2026-09-20 therefore still reads `-good` or
+# `-floor`, and the ones in this repository's comments are left as they were
+# written.
+TIER_CHOICES = ["deep", "second", "fast"]
 
 # What --cell may be when --prompt-file is given (user-ruled 2026-09-05): a
 # free label, because a draft prompt is by definition not yet a named pass,
@@ -680,8 +703,8 @@ def recover_near_miss_report(
 
     WHY THIS LOOKS THROUGH THE WHOLE TREE, AND WHAT IT MUST NOT TAKE. The
     files inside a cold-read-record are bare cell names -- every run's Codex
-    defect-hunt cold-read-cell on the floor cold-read-tier writes
-    `codex-hunt-floor.md` (user-ruled 2026-09-18: the directory carries the
+    defect-hunt cold-read-cell on the `second` cold-read-tier writes
+    `codex-hunt-second.md` (user-ruled 2026-09-18: the directory carries the
     record's name, the files say only which agent ran which attack). So two
     cold-read-full-runs going at once in one checkout each hold a file of
     that name, and a search by name alone would let a cold-read-cell of the
