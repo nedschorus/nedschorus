@@ -8,8 +8,8 @@ WHAT IS PINNED HERE.
     gemini-3.8-flash-medium at effort medium (the 2026-09-07 ruling after
     measurements, superseding low), and the stamp says so, with
     runtime=agy. The other tiers are refused by this launcher before agy
-    runs: it pins no model for them, and a Gemini review under a good- or
-    floor-tier stamp would be a tier the roster never measured it on.
+    runs: it pins no model for them, and a Gemini review under a `deep`- or
+    `second`-tier stamp would be a tier the roster never measured it on.
 
   - The invocation is the one measured working in the 2026-09-04 campaign:
     --add-dir <repo> (or AGENTS.md does not load), --dangerously-skip-permissions
@@ -228,7 +228,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(received_prompt[:300]))
 
     # --- The other tiers are refused before agy runs ----------------------
-    for other_tier in ("good", "floor"):
+    for other_tier in ("deep", "second"):
         repository = build_scratch_repository(scratch)
         report = report_path_for(repository, f"tier-{other_tier}")
         result = run_agy_cell(

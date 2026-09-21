@@ -2,8 +2,8 @@
 """Run a cold-read-full-run against a cold-read-target.
 
 One invocation = one review: six cold-read-cells launched in parallel -- the
-defect-hunt pass in four ({good, floor} x {claude, codex}) and the
-terminology pass in two (good x {claude, codex}) -- every report saved
+defect-hunt pass in four ({deep, second} x {claude, codex}) and the
+terminology pass in two (deep x {claude, codex}) -- every report saved
 into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
 (a -2, -3 suffix for a second read of the document that day), progress and next-step
@@ -114,24 +114,24 @@ CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # what is cut is only this default roster.
 #
 # The terminology pass was added 2026-09-05 (user-ruled that day): the
-# cold-read-target's terms against five criteria, on the good
+# cold-read-target's terms against five criteria, on the `deep`
 # cold-read-tier of both runtimes only, at max effort on both. Measured
 # on the final prompt by the cold-read-research seat (REPORT.md under
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
 # section "Addendum 2026-09-04 late"; on that machine only and not committed,
 # which is why the numbers are inline here): opus-max flagged 20/15/28
 # terms on three targets and sol-max 44/41/49; no cheaper cold-read-cell
-# added a criterion-1 catch, so no floor cold-read-cell runs for this pass;
+# added a criterion-1 catch, so no `second` cold-read-cell runs for this pass;
 # wall clock 16-20 min per cold-read-cell, inside the defect-hunt strong
 # cold-read-cells' 18-23. The effort is passed to the launchers explicitly
-# rather than left to their tier maps, which happen to pin max for the good
+# rather than left to their tier maps, which happen to pin max for the `deep`
 # cold-read-tier today: a later change to either map would otherwise move this
 # pass silently. The defect-hunt cold-read-cells carry no override, so their
 # pins stay the launchers' own.
 GRID_CELL_ROSTER = (
-    ("defect-hunt", "good", None),
-    ("defect-hunt", "floor", None),
-    ("terminology", "good", "max"),
+    ("defect-hunt", "deep", None),
+    ("defect-hunt", "second", None),
+    ("terminology", "deep", "max"),
 )
 
 # Documents this instrument refuses to review, keyed on the genre suffix its
@@ -422,7 +422,7 @@ def mark_every_report(record_dir: pathlib.Path, marker: str) -> None:
 
 
 def incomplete_set_marker(absent: dict, launched: int) -> str:
-    """`<!-- INCOMPLETE SET: 2 of 6 reports absent — claude-hunt-good
+    """`<!-- INCOMPLETE SET: 2 of 6 reports absent — claude-hunt-deep
     (account-limit — resets 8:50pm (America/Los_Angeles)), ... -->`."""
     named = ", ".join(f"{report.cell_name} ({report.cause_class}"
                       f"{cell_common.CAUSE_SEPARATOR}{report.detail})"
@@ -441,7 +441,7 @@ def cell_report_path(
     item 5); the directory says which read. From 2026-09-15 to 2026-09-18
     every file carried the record's name as a prefix, added on 2026-08-25
     because two cold-read-full-runs going at once in one checkout each held a
-    `codex-hunt-floor.md`, and a cold-read-cell of the first run that wrote
+    `codex-hunt-second.md`, and a cold-read-cell of the first run that wrote
     nothing could have the second run's correctly placed report recovered as
     its own. That case is now met where it arises, in the cold-read-cell's
     near-miss recovery (scripts/cold-read-cell-common.py,
@@ -500,7 +500,7 @@ class RunOutcome(typing.NamedTuple):
 
 
 def cell_name_of(report_path: pathlib.Path) -> str:
-    """`claude-hunt-good` from `.../claude-hunt-good.md`: the agent-binary, pass
+    """`claude-hunt-deep` from `.../claude-hunt-deep.md`: the agent-binary, pass
     token and tier the report's file name is, which is how the grid's own
     lines name a cold-read-cell."""
     return report_path.stem
