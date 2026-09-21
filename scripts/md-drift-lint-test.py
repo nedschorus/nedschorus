@@ -197,6 +197,36 @@ with tempfile.TemporaryDirectory() as workspace:
           problems_for("verified at `adapter/adapter.py:379` in "
                        "`~/Projects/nedsmessenger`", root) == [])
 
+    # --- A <placeholder> inside a backtick span (added 2026-09-20) ---------
+    # "<" is a SKIP_MARKER, but the marker is tested per word and the span was
+    # split on whitespace first, so a placeholder containing a space lost its
+    # "<" to the split and its tail was checked as a real path. Five standing
+    # findings on main were this. The first case is the repository's own text,
+    # from docs/design-to-main/design-to-main-state-machine-design.md:521.
+    findings = problems_for(
+        "| `<component's directory>/design-to-main-record/user-rulings.md` | every ruling |",
+        root)
+    check("a placeholder containing a space is not checked as a path",
+          findings == [], str(findings))
+    check("a placeholder with no space is still not checked",
+          problems_for("writes `<seat>/state.json` on exit", root) == [])
+    # The collapse must not swallow the rest of the span: a real path beside a
+    # placeholder is still the document's claim about this repository.
+    findings = problems_for(
+        "run `scripts/long-gone.py --out <run dir>/report.json`", root)
+    check("a missing path beside a placeholder is still reported",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+    # --threshold because the flag check is anchored at this same first word
+    # and real-script.py declares only that one; --out would fire it.
+    check("an existing path beside a placeholder passes",
+          problems_for("run `scripts/real-script.py --threshold <run dir>/r.json`",
+                       root) == [])
+    # A ">" with no "<" opening it is not a placeholder, so the path after it
+    # is an ordinary claim and stays checked.
+    findings = problems_for("redirect into `scripts/long-gone.py`", root)
+    check("a path with no placeholder anywhere is unaffected",
+          findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+
     # --- Numbers quoted from code -----------------------------------------
     check("a backtick number found in the named code file passes",
           problems_for("the floor is `2500` in `scripts/real-script.py`", root) == [])
