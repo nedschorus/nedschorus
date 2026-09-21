@@ -323,9 +323,14 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           bullet_start in ship_text and bullet_start in record_text)
     ship_bullet = ship_text.split(bullet_start, 1)[1].split('"""', 1)[0]
     record_bullet = record_text.split(bullet_start, 1)[1].split("\n\n", 1)[0]
+    # .strip() alone: this compared with .rstrip('\\n') until 2026-09-20, which
+    # is the two-character string backslash-n, so it chewed trailing "n" and
+    # "\\" characters off both copies rather than newlines. Two bullets ending
+    # "run" and "runn" compared equal -- a byte-for-byte guard quietly made
+    # blind to a one-character drift. .strip() already removes the surrounding
+    # whitespace the rstrip was reaching for.
     check("the two copies of the bullet are the same text",
-          ship_bullet.strip().rstrip('\\n').strip()
-          == record_bullet.strip().rstrip('\\n').strip(),
+          ship_bullet.strip() == record_bullet.strip(),
           f"{ship_bullet!r}\n      {record_bullet!r}")
 
     # --- REMOTE mode: read the invocation without a network ----------------

@@ -72,7 +72,13 @@ SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
 # The functions that compose the names, and so the only code allowed to.
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths")
-# The two file names, as they read on disk.
+# The two file names, as they read on disk. This is a copy, so it is checked
+# against the supervisor's own constants below: until 2026-09-20 it was not,
+# and a copy nothing anchors is a needle that goes stale at exactly the moment
+# it matters. Rename the constants and this tuple still hunts the OLD name --
+# it finds nothing, a fresh hand-built copy of the NEW name passes, and the
+# eleven-sites defect this guard exists to prevent comes back invisible. The
+# guard would go on printing PASS until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock")
 # The constants that hold them.
 SUFFIX_CONSTANTS = frozenset(
@@ -150,6 +156,23 @@ def suffix_definition_assignments(tree):
             and any(isinstance(target, ast.Name)
                     and target.id in SUFFIX_CONSTANTS
                     for target in node.targets)]
+
+
+def defined_suffix_values(tree):
+    """The strings the suffix constants are actually assigned, from the tree.
+
+    Read rather than restated, so SPELLED_OUT_NAMES above cannot drift from
+    what handoff-supervisor.py says. A definition written any of the ways
+    suffix_definition_assignments() accepts is read here the same way, and a
+    definition whose value is not a plain string literal is returned as None
+    so the check below fails loudly rather than skipping it.
+    """
+    values = []
+    for node in suffix_definition_assignments(tree):
+        value = node.value
+        values.append(value.value if isinstance(value, ast.Constant)
+                      and isinstance(value.value, str) else None)
+    return values
 
 
 def exempt_lines_and_helpers(tree, path):
@@ -232,6 +255,15 @@ check("no production script composes either file name itself",
       "composed at " + ", ".join(composing) + " -- call "
       "supervisor_state_path(), supervisor_lock_path() or "
       "supervisor_state_paths() instead")
+
+check("the names this guard hunts are the supervisor's own, not a stale copy",
+      sorted(defined_suffix_values(ast.parse(
+          SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
+          filename=str(SUPERVISOR_SCRIPT)))) == sorted(SPELLED_OUT_NAMES),
+      f"{SUPERVISOR_SCRIPT.name} defines "
+      f"{sorted(defined_suffix_values(ast.parse(SUPERVISOR_SCRIPT.read_text(encoding='utf-8'))))}, "
+      f"but SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)}; a rename "
+      f"must be mirrored here, or this guard hunts a name nothing uses")
 
 check("every composing helper was found in the syntax tree",
       sorted(helpers_found) == sorted(COMPOSING_HELPERS),
