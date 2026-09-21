@@ -679,16 +679,57 @@ echo hello
           code == 1 and "scripts/cites-it-for-real.py:1: cites scripts/gate.py" in out,
           f"{code} {out!r} {err!r}")
 
+    # --- BACKWARD: a ".." that collapses the placeholder away ------------
+    # The round-3 commit, "dangling-path-citation-check: one definition of a
+    # citation, at both ends", said this direction's marker consult pins
+    # nothing: a token carrying a placeholder cannot equal a real removed
+    # path however it resolves. The measurement under that was sound and the
+    # inference on top of it was not, because resolution runs BEFORE the
+    # comparison. repo_relative_candidates folds the token with normpath, so
+    # a ".." eats the component holding the placeholder and equality is
+    # asked about a clean token: `<dir>/../gate.py` written from the moved
+    # file's own directory normalises to the path that moved. The subject
+    # reddens when either consult goes -- the markdown-link arm's, and the
+    # general token loop's in citation_tokens_on_line.
+    # The second file is a real citation that must survive, so the case
+    # cannot be passed by switching the backward direction off. The third is
+    # the argument rather than decoration: the SAME placeholder with no
+    # "..", which stays silent even with both consults removed, because
+    # nothing collapses and what it resolves to equals nothing. Round 3's
+    # reasoning was right for that shape and wrong only about "..".
+    git(root, "checkout", "-q", "-b", "dot-dot-collapsed-placeholder-backward", base)
+    (root / "scripts" / "gate.py").write_text("# the gate\n", encoding="utf-8")
+    (root / "scripts" / "links-through-a-placeholder-and-dot-dot.md").write_text(
+        "See [the gate](<dir>/../gate.py) for the rule.\n", encoding="utf-8")
+    (root / "scripts" / "links-through-a-placeholder-alone.md").write_text(
+        "See [the gate](<dir>/gate.py) for the rule.\n", encoding="utf-8")
+    (root / "scripts" / "cites-the-gate-by-its-real-path.py").write_text(
+        "# this follows the write in scripts/gate.py, ruled 2026-08-12\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a gate, two placeholder links and a real citation")
+    collapsed_placeholder_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/gate.py", "nc-systems/gate.py")
+    git(root, "commit", "-qm", "move the gate, sweeping nothing")
+    code, out, err = run_check(root, collapsed_placeholder_base)
+    check('a placeholder a ".." collapses away is not read as citing the moved file',
+          "links-through-a-placeholder-and-dot-dot" not in out, f"{code} {out!r} {err!r}")
+    check('the same placeholder with no ".." is not read as citing it either',
+          "links-through-a-placeholder-alone" not in out, out)
+    check("a real citation of the collapsing link's moved path is still reported",
+          code == 1 and "scripts/cites-the-gate-by-its-real-path.py:1: "
+          "cites scripts/gate.py" in out, f"{code} {out!r} {err!r}")
+
     # --- FORWARD: the same collapse, once the leading slash comes off ----
     # This direction was silent by accident: the fragment left behind had no
     # directory at its head. Stripping a leading "/" gave it one, so the
     # marker test is what keeps it silent on purpose. The second line is the
     # control, a real dangling citation on the same file.
     # The third line is the shape that makes the marker test load-bearing
-    # rather than belt-and-braces: the placeholder is in the MIDDLE, so the
-    # token's first component is a real directory of this repository and its
-    # ending is a real extension, and nothing else would refuse it. Two live
-    # lines of scripts/cold-read-cell-common.py are written exactly so.
+    # FORWARD: the placeholder is in the MIDDLE, so the token's first
+    # component is a real directory of this repository and its ending is a
+    # real extension, and nothing else would refuse it. Two live lines of
+    # scripts/cold-read-cell-common.py are written exactly so.
     git(root, "checkout", "-q", "-b", "placeholder-forward", base)
     commit_change(root, "scripts/illustrates-shapes.py",
                   "# a program of the shape <system>/scripts/absent-illustration.py\n"

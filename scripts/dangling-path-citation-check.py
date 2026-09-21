@@ -260,6 +260,18 @@ def carries_a_marker_the_lint_skips(token: str, lint) -> bool:
     reached the FORWARD direction once a leading "/" was stripped rather than
     dropped, so both ends ask this.
 
+    WHY BOTH ENDS STILL ASK IT, once the brackets stopped being separators.
+    That fix ended the collapse that happens while a line is SPLIT; it
+    cannot end the one that happens after, in resolution.
+    repo_relative_candidates folds a whole token with os.path.normpath, and
+    a ".." in the token eats the component holding the placeholder -- so
+    equality is never asked about a marker-bearing token, it is asked about
+    what that token resolved to. A link spelled <dir>/../gate.py from the
+    moved file's own directory resolves to the moved file itself, and
+    without this consult would be reported as a citation nobody wrote. Each
+    end is pinned by its own case: forward, a placeholder in the MIDDLE of
+    an otherwise real path; backward, the ".." that folds one away.
+
     The lint applies the same list in looks_like_repo_path, which is why its
     Markdown side never had either defect. This is that rule, at the two
     places that do not go through it."""
