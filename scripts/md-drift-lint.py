@@ -75,8 +75,22 @@ SKIP_MARKERS = ("://", "<", "{", "*", "$", "~", "…")
 # placeholder to a single marker-bearing word before the split restores the
 # reach of the rule SKIP_MARKERS already states, and leaves the real paths in
 # the same span checkable: in `scripts/x.py --out <run dir>/y.json`,
-# scripts/x.py is still checked.
-PLACEHOLDER_SPAN = re.compile(r"<[^<>]*>")
+# scripts/x.py is still checked, and so is a path inside a redirect or an
+# HTML comment.
+# A placeholder's angle brackets hug their content: `<component's directory>`.
+# The first version of this pattern was `<[^<>]*>`, which matched any pair of
+# angle brackets and so swallowed two shapes that carry real paths (found in
+# review of the pull request that added it, 2026-09-20):
+#
+#     `cat < docs/missing.md > scripts/out.py`   a shell redirect
+#     `<!-- see docs/ghost.md -->`               an HTML comment
+#
+# Both stopped being checked, silently, which is the failure this lint exists
+# to prevent. Requiring a non-space immediately inside each bracket rejects the
+# redirect, and rejecting a leading "!", "/" or "?" rejects a comment, a
+# closing tag and a processing instruction. `<docs/x.md >docs/y.md` is rejected
+# by the same non-space rule at the closing bracket.
+PLACEHOLDER_SPAN = re.compile(r"<(?![!/?])[^\s<>](?:[^<>]*[^\s<>])?>")
 
 # A line saying a file lives in git history references something deliberately
 # absent from the working tree; its paths are not drift.
