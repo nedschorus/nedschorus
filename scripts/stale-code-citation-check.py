@@ -193,8 +193,31 @@ compared as a date, so a code change on the stamp's own day does not fire.
 A design stamped the day its code moved is the normal case for a document
 written alongside the change, and reporting it would fire on every design
 landing with its own code.
+
+A STAMP THAT IS NO DAY ON THE CALENDAR IS REPORTED, NEVER OBEYED. The stamp
+is read twice, for its shape and then for its day: ISO_DATE admits
+`design-as-of: 2026-09-31`, and September has thirty days. A stamp like that
+is not merely unusable, it is silently permissive, because the comparison is
+lexical and an impossible date sorts above every real one: the document
+measured exit 0 with empty output -- no citation finding and no bad-stamp
+finding -- where the same document stamped 2026-05-01 reports both. An
+off-by-one in a hand-typed date field is an ordinary typo, so the impossible
+date goes to the bad-stamp finding that was already here rather than to
+silence, and the whole document is never exempted without a word.
+
+WHEN A CHANGED PATH MOVED IS ASKED PER PATH. In CHANGED PATHS mode a
+committed path moved when this change's newest commit was made, and reading
+that from the commit rather than from the clock makes a replay of an old
+change report what it reported then. A path edited but not committed, and an
+untracked one, moved TODAY: no commit holds them, so HEAD's date is not
+theirs and under-states the move. The under-estimate is not academic. With
+HEAD's date at or before a document's stamp, an uncommitted edit to a file
+the document cites by line number reported nothing at all, while the same
+edit committed reported both the citation and the status rider -- the same
+path, seen by the same sweep, differing only in the date it was given.
 """
 import argparse
+import datetime
 import importlib.util
 import pathlib
 import re
@@ -214,8 +237,9 @@ DESIGN_AS_OF_FIELD = DESIGN_AS_OF_NAME + ":"
 STATUS_FIELD = STATUS_NAME + ":"
 FRONTMATTER_FENCE = "---"
 
-# A date, and nothing looser: the stamp is compared as a date and a stamp that
-# is not one cannot be compared at all.
+# The SHAPE of a date, and nothing looser: the stamp is compared as a date and
+# a stamp that is not one cannot be compared at all. The shape is half the
+# question; stamp_is_a_calendar_date asks the other half.
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # "line 375", "lines 428-432", "lines 428 - 432". An en dash because the
@@ -293,6 +317,27 @@ def frontmatter_field(text: str, field: str):
         if line.startswith(field):
             return number, line[len(field):].strip()
     return None
+
+
+def stamp_is_a_calendar_date(stamp: str) -> bool:
+    """Whether the stamp names a day that exists, not merely a date-shaped string.
+
+    Both halves are asked. The shape alone admits 2026-09-31, which then sorts
+    above every real date and exempts its whole document from the comparison.
+    The standard library's parser alone admits other ISO 8601 spellings from
+    Python 3.11 on, a week date among them, which no git date compares
+    against. The calendar asked is the standard library's rather than a second
+    copy of md-drift-lint's impossible-date rule: that rule scans a prose line
+    for date tokens and reports each one, while the value here is already
+    isolated and its finding is the bad-stamp finding below.
+    """
+    if not ISO_DATE.match(stamp):
+        return False
+    try:
+        datetime.date.fromisoformat(stamp)
+    except ValueError:
+        return False
+    return True
 
 
 def code_file_marks(line: str, document: pathlib.Path,
@@ -447,19 +492,33 @@ def base_resolves(base: str, repository_root: pathlib.Path) -> bool:
     return completed.returncode == 0
 
 
-def changed_code_paths(base: str, repository_root: pathlib.Path, lint) -> list:
-    """The code paths this change touches, committed and not yet committed.
+def changed_code_paths(base: str, repository_root: pathlib.Path, lint) -> dict:
+    """{code path: the date its change lands} for the paths this change touches.
 
     Three dots against the base, so a base that has moved on since the branch
     was cut does not put its own commits into this change's diff.
+
+    The date is per path, because the three arms land on different days. A
+    committed path moved when this change's newest commit was made, and
+    reading that from the commit rather than from the clock makes a replay of
+    an old change report what it reported then. A path edited but not
+    committed, and an untracked one, moved today: no commit holds them, so
+    HEAD's date is not theirs and dating them by it misses the edit whenever
+    HEAD is no newer than a document's stamp. The later arms overwrite, so a
+    path committed here and edited again since is dated today.
     """
-    names = set()
-    for arguments in (["diff", "--name-only", f"{base}...HEAD"],
-                      ["diff", "--name-only", "HEAD"],
-                      ["ls-files", "--others", "--exclude-standard"]):
-        names.update(git_output(arguments, repository_root).split())
-    return sorted(name for name in names
-                  if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS)
+    head_commit_date = git_output(["log", "-1", "--format=%cs"],
+                                  repository_root).strip()
+    today = datetime.date.today().isoformat()
+    moved_on_by_path = {}
+    for arguments, moved_on in (
+            (["diff", "--name-only", f"{base}...HEAD"], head_commit_date),
+            (["diff", "--name-only", "HEAD"], today),
+            (["ls-files", "--others", "--exclude-standard"], today)):
+        for name in git_output(arguments, repository_root).split():
+            if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
+                moved_on_by_path[name] = moved_on
+    return moved_on_by_path
 
 
 def status_means_built(status: str) -> bool:
@@ -482,20 +541,21 @@ def status_means_built(status: str) -> bool:
 
 
 def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
-                          lint, wanted_paths=None, moved_on=None):
+                          lint, wanted_paths=None, moved_on_by_path=None):
     """(line number, problem) per finding, and the count of pinned citations.
 
     wanted_paths limits the cited files considered, which is CHANGED PATHS
-    mode. moved_on, when given, is the date the change lands and replaces
-    git's history as the answer to "when did this file move": the change is
-    not committed yet, so its own date is the only one there is.
+    mode. moved_on_by_path, when given, is that mode's date per changed path
+    and replaces git's history as the answer to "when did this file move":
+    this change is what moved the code, and its uncommitted paths have no
+    history to answer with at all. Its keys are the wanted paths.
     """
     text = document.read_text(encoding="utf-8")
     stamp_field = frontmatter_field(text, DESIGN_AS_OF_FIELD)
     if stamp_field is None:
         return [], 0
     stamp_line, stamp = stamp_field
-    if not ISO_DATE.match(stamp):
+    if not stamp_is_a_calendar_date(stamp):
         # Raised in DOCUMENT mode only. In CHANGED PATHS mode the sweep reads
         # every stamped document in the tree, and a broken stamp in one the
         # change never touched is not that change's finding -- reporting it
@@ -506,8 +566,8 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             return [], 0
         return [(stamp_line,
                  f"{DESIGN_AS_OF_NAME} is {stamp!r}, which is not a date: "
-                 f"write it as YYYY-MM-DD, so a cited file's history can be "
-                 f"compared against it")], 0
+                 f"write a day the calendar has, as YYYY-MM-DD, so a cited "
+                 f"file's history can be compared against it")], 0
 
     pinned = pinned_line_ranges(text, repository_root)
     findings = []
@@ -520,8 +580,8 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
             continue  # outside this repository; its history is not ours to read
         if wanted_paths is not None and relative not in wanted_paths:
             continue
-        changed = moved_on if moved_on is not None else last_change_date(
-            relative, repository_root)
+        changed = (moved_on_by_path[relative] if moved_on_by_path is not None
+                   else last_change_date(relative, repository_root))
         if not changed or changed <= stamp:
             continue
         if any(low <= number <= high for low, high in pinned):
@@ -594,20 +654,18 @@ def main(argv=None) -> int:
                   f"{arguments.base!r} names no commit. Fetch it, or name "
                   f"origin/main.", file=sys.stderr)
             return EXIT_BAD_INVOCATION
+        # The date each changed path moved on, not git's history of each
+        # path: this change is what moved the code, and asking history instead
+        # would answer for the base rather than for this change. See
+        # changed_code_paths for why a committed path and an uncommitted one
+        # are dated differently.
         changed = changed_code_paths(arguments.base, REPOSITORY_ROOT, lint)
-        # The date of the change's newest commit, not git's history of each
-        # path: the change is what moved the code, and asking history instead
-        # would answer for the base rather than for this change. Reading it
-        # from the commit rather than from the clock also makes a replay of an
-        # old change report what it reported then.
-        change_date = git_output(["log", "-1", "--format=%cs"],
-                                 REPOSITORY_ROOT).strip()
         wanted = set(changed)
         for document in stamped_documents(REPOSITORY_ROOT, lint) if changed else []:
             relative = document.relative_to(REPOSITORY_ROOT)
             problems, pinned = findings_for_document(
                 document, REPOSITORY_ROOT, lint, wanted_paths=wanted,
-                moved_on=change_date)
+                moved_on_by_path=changed)
             pinned_total += pinned
             for number, problem in sorted(problems):
                 print(f"{relative}:{number}: {problem}")

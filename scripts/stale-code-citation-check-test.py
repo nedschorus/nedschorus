@@ -304,6 +304,35 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a stamp that is not a date is reported as one",
           code == 1 and "is not a date" in out, f"{code} {out}")
 
+    # A SHAPE IS NOT A CALENDAR, and getting this wrong is silent. September
+    # has thirty days, so 2026-09-31 passes a shape test and then sorts above
+    # every real date: the whole document is exempted from the check, with no
+    # citation finding and no bad-stamp finding to say so. An off-by-one in a
+    # hand-typed date field is an ordinary typo.
+    write_document(root, "docs/impossible-day.md",
+                   document(stamp="2026-09-31",
+                            body="See `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/impossible-day.md")
+    check("a date-shaped stamp naming no day on the calendar is reported as no date",
+          code == 1 and "is not a date" in out, f"{code} {out}")
+
+    write_document(root, "docs/impossible-month.md",
+                   document(stamp="2026-13-01",
+                            body="See `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/impossible-month.md")
+    check("a stamp naming a month no year has is reported as no date",
+          code == 1 and "is not a date" in out, f"{code} {out}")
+
+    # ... and the other way: the real last day of a short month is a stamp,
+    # and its citations are compared against it as ever.
+    write_document(root, "docs/short-month.md",
+                   document(stamp="2026-02-28",
+                            body="See `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/short-month.md")
+    check("a real day at the end of a short month is a stamp, not a bad one",
+          code == 1 and "is not a date" not in out
+          and "scripts/moved.py changed 2026-06-01" in out, f"{code} {out}")
+
     # ... but not to the author of a code change who never touched it.
     base = git(root, "rev-parse", "HEAD")
     write_code(root, "scripts/elsewhere.py", CODE, date="2026-06-02")
@@ -453,6 +482,44 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "--base", base)
     check("changed-paths mode counts an uncommitted edit as a changed path",
           "scripts/untouched.py changed" in out and "lines 30-34" in out, out)
+
+
+# --- What date a changed path moved on ------------------------------------
+# HEAD is dated BEFORE the document's stamp here, which is what tells the two
+# arms apart: a committed path keeps HEAD's date and is not stale, while an
+# uncommitted edit lands today and is. The suite's other uncommitted case has
+# HEAD newer than the stamp, so it passes whichever date the path is given and
+# proves nothing about this. Today is later than every date written here and
+# the stamp is in the past, so the clock cannot make the case ambiguous.
+with tempfile.TemporaryDirectory() as workspace:
+    root = new_repository(workspace)
+    write_code(root, "scripts/committed.py", CODE, date="2026-04-01")
+    write_code(root, "scripts/uncommitted.py", CODE, date="2026-04-01")
+    write_document(root, "docs/design.md", document(
+        body="The test is `scripts/uncommitted.py` lines 20-24, and the marker "
+             "is `scripts/committed.py` lines 30-34."), date="2026-04-02")
+    base = git(root, "rev-parse", "HEAD")
+    write_code(root, "scripts/committed.py", CODE + "a committed line\n",
+               date="2026-04-03")
+    (root / "scripts" / "uncommitted.py").write_text(CODE + "edited\n",
+                                                     encoding="utf-8")
+
+    code, out, err = run(root, "--base", base)
+    check("an uncommitted edit is dated today, not by a HEAD older than the stamp",
+          code == 1 and "scripts/uncommitted.py changed" in out
+          and "lines 20-24" in out, f"{code} {out} {err}")
+    check("a path committed before the stamp keeps its commit's date and is not stale",
+          "scripts/committed.py" not in out, out)
+    check("the status rider rides on an uncommitted edit's finding too",
+          "say in status whether the code has landed" in out, out)
+
+    # An untracked code file is the same case with no commit at all behind it.
+    (root / "scripts" / "untracked.py").write_text(CODE, encoding="utf-8")
+    write_document(root, "docs/untracked-citation.md", document(
+        body="The stub is `scripts/untracked.py` lines 20-24."), date="2026-04-02")
+    code, out, err = run(root, "--base", base)
+    check("an untracked code file's citation is dated today too",
+          code == 1 and "scripts/untracked.py changed" in out, f"{code} {out}")
 
 
 # --- Invocation and frozen data -------------------------------------------
