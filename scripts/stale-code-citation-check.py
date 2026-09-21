@@ -205,16 +205,36 @@ off-by-one in a hand-typed date field is an ordinary typo, so the impossible
 date goes to the bad-stamp finding that was already here rather than to
 silence, and the whole document is never exempted without a word.
 
+In CHANGED PATHS mode that finding is raised for a document that cites at
+least one of the change's paths, and for no other, so in-scope-ness is settled
+BEFORE the stamp is judged. Reporting every broken stamp the sweep passes
+would fail a pull request on prose its author never opened; reporting none of
+them, which is what this first shipped with, keeps the exemption the bad stamp
+buys and hands it to the author's own work. Measured against a change that
+edits one code file and touches no document: a document stamped 2026-01-01 and
+citing that file by line number reports its stale citation, the same document
+stamped 2026-09-31 reports nothing at all and exits 0, and a bystander citing
+only untouched code is silent in both runs. The middle row is the one this
+rule moves, and what it was hiding is a citation into code the author is
+changing in that very pull request.
+
 WHEN A CHANGED PATH MOVED IS ASKED PER PATH. In CHANGED PATHS mode a
-committed path moved when this change's newest commit was made, and reading
-that from the commit rather than from the clock makes a replay of an old
-change report what it reported then. A path edited but not committed, and an
-untracked one, moved TODAY: no commit holds them, so HEAD's date is not
-theirs and under-states the move. The under-estimate is not academic. With
-HEAD's date at or before a document's stamp, an uncommitted edit to a file
-the document cites by line number reported nothing at all, while the same
-edit committed reported both the citation and the status rider -- the same
-path, seen by the same sweep, differing only in the date it was given.
+committed path moved when the newest commit of this change TOUCHING THAT PATH
+was made, and reading that from the commit rather than from the clock makes a
+replay of an old change report what it reported then. Dating every committed
+path by the change's newest commit instead, which is what this first shipped
+with, reports a path that moved before the document's stamp: measured with
+scripts/early.py committed 2026-09-05, scripts/late.py committed 2026-09-20
+and a document stamped 2026-09-10 citing both, the early path was reported
+though nothing about it moved after the stamp. A branch carrying more than one
+commit is the ordinary case, so that is the ordinary case too. A path edited
+but not committed, and an untracked one, moved TODAY: no commit holds them, so
+HEAD's date is not theirs and under-states the move. The under-estimate is not
+academic. With HEAD's date at or before a document's stamp, an uncommitted
+edit to a file the document cites by line number reported nothing at all,
+while the same edit committed reported both the citation and the status rider
+-- the same path, seen by the same sweep, differing only in the date it was
+given.
 """
 import argparse
 import datetime
@@ -492,32 +512,54 @@ def base_resolves(base: str, repository_root: pathlib.Path) -> bool:
     return completed.returncode == 0
 
 
+def newest_commit_date_in_range(relative: str, base: str,
+                                repository_root: pathlib.Path) -> str:
+    """The date of the newest commit of this change touching this path, or "".
+
+    Two dots where the diff takes three: the diff wants the tree the branch was
+    cut from, while the commits wanted here are the ones this change adds, and
+    `git log base...HEAD` is the symmetric difference, which would answer with
+    a commit from the base's side.
+    """
+    return git_output(["log", "-1", "--format=%cs", f"{base}..HEAD", "--", relative],
+                      repository_root).strip()
+
+
 def changed_code_paths(base: str, repository_root: pathlib.Path, lint) -> dict:
     """{code path: the date its change lands} for the paths this change touches.
 
     Three dots against the base, so a base that has moved on since the branch
     was cut does not put its own commits into this change's diff.
 
-    The date is per path, because the three arms land on different days. A
-    committed path moved when this change's newest commit was made, and
-    reading that from the commit rather than from the clock makes a replay of
-    an old change report what it reported then. A path edited but not
+    The date is per path, because the paths land on different days. A committed
+    path moved when the newest commit of this change that touches THAT PATH was
+    made, and reading that from the commit rather than from the clock makes a
+    replay of an old change report what it reported then. A path edited but not
     committed, and an untracked one, moved today: no commit holds them, so
     HEAD's date is not theirs and dating them by it misses the edit whenever
     HEAD is no newer than a document's stamp. The later arms overwrite, so a
     path committed here and edited again since is dated today.
+
+    HEAD's date is the fallback for a committed path the range names no commit
+    for, because git_output returns "" for a command that failed and an empty
+    date compares as no move at all: a fallback is never silent (project
+    ruling), the same reason base_resolves asks before the diff.
     """
     head_commit_date = git_output(["log", "-1", "--format=%cs"],
                                   repository_root).strip()
     today = datetime.date.today().isoformat()
     moved_on_by_path = {}
-    for arguments, moved_on in (
-            (["diff", "--name-only", f"{base}...HEAD"], head_commit_date),
-            (["diff", "--name-only", "HEAD"], today),
-            (["ls-files", "--others", "--exclude-standard"], today)):
+    for name in git_output(["diff", "--name-only", f"{base}...HEAD"],
+                           repository_root).split():
+        if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
+            moved_on_by_path[name] = (
+                newest_commit_date_in_range(name, base, repository_root)
+                or head_commit_date)
+    for arguments in (["diff", "--name-only", "HEAD"],
+                      ["ls-files", "--others", "--exclude-standard"]):
         for name in git_output(arguments, repository_root).split():
             if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS:
-                moved_on_by_path[name] = moved_on
+                moved_on_by_path[name] = today
     return moved_on_by_path
 
 
@@ -540,29 +582,60 @@ def status_means_built(status: str) -> bool:
     return False
 
 
+def repository_relative_name(found: pathlib.Path, repository_root: pathlib.Path):
+    """A cited file's path relative to this repository, or None if it is outside.
+
+    A file outside this repository has a history that is not ours to read, and
+    a path that cannot be named relative to the root cannot be matched against
+    a changed path either.
+    """
+    try:
+        return str(found.resolve().relative_to(repository_root.resolve()))
+    except ValueError:
+        return None
+
+
 def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
                           lint, wanted_paths=None, moved_on_by_path=None):
     """(line number, problem) per finding, and the count of pinned citations.
 
     wanted_paths limits the cited files considered, which is CHANGED PATHS
-    mode. moved_on_by_path, when given, is that mode's date per changed path
-    and replaces git's history as the answer to "when did this file move":
-    this change is what moved the code, and its uncommitted paths have no
-    history to answer with at all. Its keys are the wanted paths.
+    mode. It also decides whether this document is in that change's scope at
+    all, which is asked before the stamp is judged: see A STAMP THAT IS NO DAY
+    ON THE CALENDAR in the docstring. moved_on_by_path, when given, is that
+    mode's date per changed path and replaces git's history as the answer to
+    "when did this file move": this change is what moved the code, and its
+    uncommitted paths have no history to answer with at all. Its keys are the
+    wanted paths.
     """
     text = document.read_text(encoding="utf-8")
     stamp_field = frontmatter_field(text, DESIGN_AS_OF_FIELD)
     if stamp_field is None:
         return [], 0
     stamp_line, stamp = stamp_field
+
+    # The citations are read before the stamp is judged, because in CHANGED
+    # PATHS mode whether this document is in scope IS the question "does it
+    # cite a path this change touched", and the bad-stamp finding below is
+    # raised only for a document that is.
+    citations = [(number, repository_relative_name(found, repository_root),
+                  first, last)
+                 for number, found, first, last, _written
+                 in line_number_citations(document, repository_root, lint)]
+    cites_a_wanted_path = wanted_paths is None or any(
+        relative in wanted_paths
+        for _number, relative, _first, _last in citations)
+
     if not stamp_is_a_calendar_date(stamp):
-        # Raised in DOCUMENT mode only. In CHANGED PATHS mode the sweep reads
-        # every stamped document in the tree, and a broken stamp in one the
-        # change never touched is not that change's finding -- reporting it
-        # would fail a pull request on prose its author never wrote, which is
-        # the failure scripts/dangling-path-citation-check.py measured at 62
-        # dangling citations on main.
-        if wanted_paths is not None:
+        # In CHANGED PATHS mode the sweep reads every stamped document in the
+        # tree, and a broken stamp in one that cites nothing this change
+        # touched is not that change's finding -- reporting it would fail a
+        # pull request on prose its author never wrote, which is the failure
+        # scripts/dangling-path-citation-check.py measured at 62 dangling
+        # citations on main. A document that DOES cite a changed path is
+        # reported: the stamp is what makes that citation uncheckable, and the
+        # citation is into code this change is moving.
+        if not cites_a_wanted_path:
             return [], 0
         return [(stamp_line,
                  f"{DESIGN_AS_OF_NAME} is {stamp!r}, which is not a date: "
@@ -572,11 +645,8 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
     pinned = pinned_line_ranges(text, repository_root)
     findings = []
     pinned_count = 0
-    for number, found, first, last, written in line_number_citations(
-            document, repository_root, lint):
-        try:
-            relative = str(found.resolve().relative_to(repository_root.resolve()))
-        except ValueError:
+    for number, relative, first, last in citations:
+        if relative is None:
             continue  # outside this repository; its history is not ours to read
         if wanted_paths is not None and relative not in wanted_paths:
             continue

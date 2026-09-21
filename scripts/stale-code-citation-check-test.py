@@ -522,6 +522,70 @@ with tempfile.TemporaryDirectory() as workspace:
           code == 1 and "scripts/untracked.py changed" in out, f"{code} {out}")
 
 
+# --- Each committed path carries its own newest commit's date --------------
+# A branch with more than one commit is the ordinary case, and dating every
+# committed path by the change's newest commit reports a path that moved
+# BEFORE the stamp -- a finding about code this change did not move after the
+# stamp at all. The stamp sits between the two commits, which is what tells a
+# date per path from one date for the branch.
+with tempfile.TemporaryDirectory() as workspace:
+    root = new_repository(workspace)
+    write_code(root, "scripts/early.py", CODE, date="2026-04-01")
+    write_code(root, "scripts/late.py", CODE, date="2026-04-01")
+    write_document(root, "docs/design.md", document(
+        stamp="2026-09-10",
+        body="The early one is `scripts/early.py` lines 20-24, and the late one "
+             "is `scripts/late.py` lines 30-34."), date="2026-04-02")
+    base = git(root, "rev-parse", "HEAD")
+    write_code(root, "scripts/early.py", CODE + "an early line\n", date="2026-09-05")
+    write_code(root, "scripts/late.py", CODE + "a late line\n", date="2026-09-20")
+
+    # The fixture's own shape, asserted before its result is read: a case that
+    # reached the right symptom by the wrong mechanism would prove nothing.
+    early_commit_date = git(root, "log", "-1", "--format=%cs", "--", "scripts/early.py")
+    head_commit_date = git(root, "log", "-1", "--format=%cs")
+    check("the fixture commits the two paths on either side of the stamp",
+          early_commit_date == "2026-09-05" and head_commit_date == "2026-09-20",
+          f"early.py {early_commit_date}, HEAD {head_commit_date}, stamp 2026-09-10")
+
+    code, out, err = run(root, "--base", base)
+    check("each committed path is dated by its own newest commit in this change",
+          code == 1 and "scripts/late.py changed 2026-09-20" in out
+          and "scripts/early.py" not in out,
+          f"{code} early.py {early_commit_date} HEAD {head_commit_date} {out} {err}")
+
+
+# --- A broken stamp in changed-paths mode is this change's finding or none --
+# An impossible date sorts above every real one, so the document it stamps is
+# exempted from the comparison entirely. In this mode that hid a stale citation
+# into code the change is moving, because the exemption was taken before
+# in-scope-ness was known. Two impossible dates rather than one repeated: the
+# rule keys on a day the calendar does not have, not on one bad value.
+with tempfile.TemporaryDirectory() as workspace:
+    root = new_repository(workspace)
+    write_code(root, "scripts/subject.py", CODE, date="2026-04-01")
+    write_code(root, "scripts/untouched.py", CODE, date="2026-04-01")
+    write_document(root, "docs/subject.md", document(
+        stamp="2026-09-31",
+        body="The test is `scripts/subject.py` lines 20-24."), date="2026-04-02")
+    write_document(root, "docs/bystander.md", document(
+        stamp="2026-02-30",
+        body="The marker is `scripts/untouched.py` lines 30-34."), date="2026-04-02")
+    base = git(root, "rev-parse", "HEAD")
+    write_code(root, "scripts/subject.py", CODE + "a new line\n", date="2026-09-20")
+
+    code, out, err = run(root, "--base", base)
+    check("changed-paths mode reports a broken stamp on a document citing a changed path",
+          code == 1 and "docs/subject.md:3: " in out and "is not a date" in out,
+          f"{code} {out} {err}")
+    # Counted, not merely absent: at one finding the rule fired on the subject
+    # and stopped there, which a run silent on both would also satisfy and a
+    # run reporting both would not.
+    check("changed-paths mode leaves a broken stamp on a document citing nothing changed alone",
+          "1 finding(s)" in err and "docs/bystander.md" not in out,
+          f"{code} {out} {err}")
+
+
 # --- Invocation and frozen data -------------------------------------------
 with tempfile.TemporaryDirectory() as workspace:
     root = new_repository(workspace)
