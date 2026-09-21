@@ -116,10 +116,15 @@ NEVER_PUSHED_ADVICE = (
     "your work and run `git rebase origin/main` — the Stop hook rebases a never-pushed "
     "branch only when the tree is clean — then rerun the tests for what you touched."
 )
+# The conflict clause is the user's ruling of 2026-09-21; the rationale is in
+# checkout-freshness-catch-up.py beside LEAVE_IT_ADVICE, whose wording this
+# tracks. A commit on top cannot clear a conflict, so advice offering only
+# that move dead-ends an agent that hits one.
 PUSHED_ADVICE = (
-    "This branch is pushed, so its review may be running: do not rebase, merge or "
-    "amend it. A fix for this topic is a new commit on top, and your next topic "
-    "starts with `git checkout -b <name> origin/main`."
+    "This branch is pushed, so its review may be running: do not rebase or "
+    "amend it. A fix for this topic is a new commit on top; a conflict with "
+    "main is cleared by one hand-made merge of origin/main, announced. Your "
+    "next topic starts with `git checkout -b <name> origin/main`."
 )
 
 

@@ -341,8 +341,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "  scripts your tests run against (1): scripts/advance-three.py\n"
           in agent_text(result), agent_text(result))
     check("and told to leave it and start the next topic from main",
-          "Do not rebase, merge or amend it" in agent_text(result)
+          "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
+    # The one move a pushed branch has when a commit on top cannot clear the
+    # conflict (user-ruled 2026-09-21). Without this the advice offers only
+    # the commit on top, which leaves a conflicting branch with no legal move.
+    check("and told the one route out of a conflict, since a commit on top cannot clear one",
+          "CONFLICTING" in agent_text(result)
+          and "merge origin/main into it by hand, once" in agent_text(result),
+          agent_text(result))
     check("the pushed-branch note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
@@ -406,7 +413,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     git(["push", "-q", "origin", "flip"], flip)
     pushed_now = run_catch_up(["--cwd", str(flip)])
     check("pushing a never-pushed branch re-tells once, with the advice flipped",
-          "Do not rebase, merge or amend it" in agent_text(pushed_now), agent_text(pushed_now))
+          "Do not rebase or amend it" in agent_text(pushed_now), agent_text(pushed_now))
 
     # Detached HEAD: its own advice, never moved.
     detached = tmp / "detached-worktree"

@@ -109,10 +109,22 @@ REBASE_ADVICE = (
     "rebase stops on a conflict, `git rebase --abort` puts everything back; then "
     "resolve it by hand or stay behind, which costs nothing at merge."
 )
+# The conflict sentence below is the user's ruling of 2026-09-21. The advice
+# had offered exactly one move on a pushed branch -- a commit on top -- and
+# that move cannot clear a conflict: GitHub decides a pull request conflicting
+# from the merge base, which a commit on top never moves. Measured on PR 570
+# that day, a commit carrying the whole hand resolution left the branch still
+# CONFLICTING. An agent following this advice to the letter had no legal move
+# and either stopped to ask or merged anyway; three merges of main landed on
+# pushed branches after the 2026-09-14 ruling for exactly that reason. The
+# automatic catch-up merge that ruling removed stays removed: this one is the
+# author's, deliberate, once, and announced.
 LEAVE_IT_ADVICE = (
-    "This branch is pushed, so its review may be running. Do not rebase, merge "
-    "or amend it. A fix for this topic is a new commit on top, pushed once. "
-    "Start your next topic with `git checkout -b <name> origin/main`."
+    "This branch is pushed, so its review may be running. Do not rebase or "
+    "amend it. A fix for this topic is a new commit on top, pushed once. If "
+    "`gh pr view` reports its pull request CONFLICTING, merge origin/main into "
+    "it by hand, once, and name the files you resolved when you announce the "
+    "new head. Start your next topic with `git checkout -b <name> origin/main`."
 )
 DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
 UNKNOWN_ADVICE = ("Your head state could not be determined (git did not run); nothing was "
@@ -377,7 +389,7 @@ def head_state(checkout: Path, branch: str):
     head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
     if remote.stdout.strip() == head:
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
-                          "new commit on top, never an amend or a merge)")
+                          "new commit on top, never an amend or a rebase)")
     local = run_git(["rev-list", "--count", f"origin/{branch}..HEAD"], checkout, timeout=30)
     count = local.stdout.strip() if local.returncode == 0 else "some"
     if count == "0":

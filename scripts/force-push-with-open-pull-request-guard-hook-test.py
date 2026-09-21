@@ -185,9 +185,23 @@ check("D5 'stop rather than reverse' is the refusal's SECOND line",
       and "stop" in lines[1] and "message merge-lane" in lines[1]
       and "ListAgents" in lines[1],
       lines[1] if len(lines) > 1 else reason)
+# Pinned to the remedy's OWN line, not to the whole refusal. Containment over
+# the whole text stopped meaning anything on 2026-09-21, when the conflict
+# sentence below added a second "without --force": measured that day, deleting
+# it from this line left the old whole-text check green.
 check("the refusal teaches the remedy: a new commit on top, pushed without --force",
-      reason and "new commit on top" in reason and "without --force" in reason,
-      reason)
+      len(lines) > 2 and lines[2].startswith("Otherwise, put your change")
+      and "new commit on top" in lines[2] and "without --force" in lines[2],
+      lines[2] if len(lines) > 2 else reason)
+# A commit on top cannot clear a conflict with main, so a refusal offering
+# only that move dead-ends an agent whose branch conflicts (user-ruled
+# 2026-09-21). This line used to promise the commit on top covered "any fix
+# for a conflict with main", which held only when the resolution happened to
+# equal main's version.
+check("the refusal names the one route out of a conflict with main",
+      len(lines) > 3 and lines[3].startswith("A conflict with main is the exception")
+      and "merge origin/main into the branch by hand, once" in lines[3],
+      lines[3] if len(lines) > 3 else reason)
 check("the refusal names the escape hatch",
       reason and guard.ESCAPE_HATCH_ASSIGNMENT in reason, reason)
 # The incident's own shape: the agent had ALREADY rebased locally, so a plain

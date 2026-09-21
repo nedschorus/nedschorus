@@ -959,13 +959,17 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # review thirty seconds after reading it (2026-09-15), against the ruling
     # of 2026-09-14 that working branches never take merges from main, and the
     # user replaced it word for word on 2026-09-16. Drift here is unruled
-    # instruction that seats act on at once.
+    # instruction that seats act on at once. The CONFLICTING sentence is his
+    # too (2026-09-21): "leave it as it is" alone dead-ends a seat whose pull
+    # request conflicts, because a commit on top cannot clear a conflict.
     check("the branch-state instruction is word for word what the user ruled",
           supervisor.BRANCH_STATE_INSTRUCTION == (
               " \u2014 If this branch has never been pushed, rebase it onto origin/main "
               "before your first substantive action and rerun the tests for what you "
               "touched. If it is pushed, leave it as it is, and start new work on a "
-              "branch from origin/main. If this seat has "
+              "branch from origin/main. If `gh pr view` reports its pull request "
+              "CONFLICTING, merge origin/main into it by hand, once, and announce the "
+              "new head. If this seat has "
               "open pull requests, check their state with `gh`: merge-lane reviews and "
               "merges them; a changes-requested one gets a fix round from a fresh agent "
               "\u2014 never extend a head you've already announced."),
@@ -987,7 +991,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "branch has never been pushed, rebase it onto origin/main before your "
               "first substantive action and rerun the tests for what you touched. "
               "If it is pushed, leave it as it is, and start new work on a branch "
-              "from origin/main. If this seat has "
+              "from origin/main. If `gh pr view` reports its pull request "
+              "CONFLICTING, merge origin/main into it by hand, once, and announce "
+              "the new head. If this seat has "
               "open pull requests, check their state with `gh`: merge-lane reviews "
               "and merges them; a changes-requested one gets a fix round from a "
               "fresh agent — never extend a head you've already announced.",
@@ -1013,7 +1019,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "commit(s) behind main — If this branch has never been pushed, rebase "
               "it onto origin/main before your first substantive action and rerun the "
               "tests for what you touched. If it is pushed, leave it as it is, and "
-              "start new work on a branch from origin/main. If this seat has open "
+              "start new work on a branch from origin/main. If `gh pr view` reports "
+              "its pull request CONFLICTING, merge origin/main into it by hand, "
+              "once, and announce the new head. If this seat has open "
               "pull requests, check their state with `gh`: merge-lane reviews and "
               "merges them; a changes-requested one gets a fix round from a fresh "
               "agent — never extend a head you've already announced."),
@@ -1894,7 +1902,9 @@ def run_boot_ignition_case(workspace: Path):
           " — If this branch has never been pushed, rebase it onto origin/main "
           "before your first substantive action and rerun the tests for what "
           "you touched. If it is pushed, leave it as it is, and start new work "
-          "on a branch from origin/main. If this seat has open pull requests, "
+          "on a branch from origin/main. If `gh pr view` reports its pull "
+          "request CONFLICTING, merge origin/main into it by hand, once, and "
+          "announce the new head. If this seat has open pull requests, "
           "check their state with `gh`: merge-lane reviews and merges them; a "
           "changes-requested one gets a fix round from a fresh agent — never "
           "extend a head you've already announced."
