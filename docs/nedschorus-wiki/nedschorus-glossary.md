@@ -55,8 +55,8 @@ Every project-term should be listed here; a term this page does not list is not 
 - **sanity-check-cell** — one fresh agent running one sanity-check-attack with `claude` or with `codex`; a run is six, the three attacks with `claude` and the three with `codex`.
 - **sanity-check-record** — the directory one /sanity-check run leaves behind, `sanity-check-records/<date>-<target-stem>/`, holding its reports; kept as a log.
 - **sanity-check-request** — the file the requesting agent writes for the fresh-eyes-attack: a problem statement plus off-limits and read-first lists, passed to the runner as `--problem-statement`.
-- **seat-branch** — the long-lived git branch of one agent-seat, named for the seat, that the handoff-supervisor's launcher creates; its agent-sessions work on topic-branches cut from main.
 - **SDLC-term** — a standard software-engineering term the user has directed the project to use in place of a coined one; listed in `docs/nedschorus-wiki/nedschorus-sdlc-terms.md`.
+- **seat-branch** — the long-lived git branch of one agent-seat, named for the seat, that the handoff-supervisor's launcher creates; its agent-sessions work on topic-branches cut from main.
 - **seat-brief** — `docs/agents/<seat>-instructions.md`, what an agent-seat's occupant reads to learn its job. Seat-briefs vary in shape; read yours for what it says.
 - **session-handoff** — the act of transferring the key context and state of one agent-session to the next, and the file that carries it, `~/.claude/handoffs/<seat>-handoff.md`, on the seat's machine only and never committed.
 - **soft-block** — a hook refusal the agent can override by including a reason why the override is needed.  Usually accompanied by additional context given to teach the agent the desired behavior.  
@@ -64,5 +64,5 @@ Every project-term should be listed here; a term this page does not list is not 
 - **topic-branch** — a branch cut from current main for one change, PR'd when its tests pass; not a seat-branch.
 - **user-block** — a hook refusal that can only be cleared by the user.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
-- **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of a walk.
 - **walked-approval** — the user's approval given item by item through a /walk-me-through walk, not one yes to a bundle; recorded by quoting his words into `.walk-approved` at the root of the session's own checkout, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves.
+- **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of a walk.
