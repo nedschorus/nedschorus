@@ -2303,6 +2303,135 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           "keep composing" in prompt, prompt)
 
 
+def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str):
+    """carry_over_to_successor reads the retiring session's id off the handoff.
+
+    Both callers pass the id from the supervisor's state file, which names the
+    session this supervisor launched; the handoff's own written-by-session
+    names the session that wrote it. The divergent case below FAILS against
+    code that trusts the state file: it extracts, pre-seeds and cites the
+    launched session instead of the writer. The two fallback cases — field
+    absent (an older handoff) and field "unknown" (a session with no
+    CLAUDE_CODE_SESSION_ID) — pass either way; they are here so the
+    preference cannot be turned into a requirement.
+
+    The task store is keyed by session id only when the launchers' pin is
+    absent, so the pin is popped for the duration: with it set, preseed_tasks
+    returns 0 without reading any store and the task assertions would prove
+    nothing.
+    """
+    home = workspace / "retiring-session-id-from-the-handoff"
+    tasks_root = home / "tasks"
+
+    def carry_over(case_name: str, written_by_session_line: str,
+                   tracked_session_id: str, handoff_session_id: str):
+        """One carry_over_to_successor run, with the extractor recording its id.
+
+        Seeds a task record under BOTH candidate session ids, with the id in
+        the record, so the copy that reaches the successor names the store it
+        came from rather than merely existing.
+        """
+        case_home = home / case_name
+        handoff_directory = case_home / "handoffs"
+        handoff_directory.mkdir(parents=True)
+        working_directory = case_home / "seat"
+        working_directory.mkdir(parents=True)
+        for store_session_id in (tracked_session_id, handoff_session_id):
+            store = tasks_root / store_session_id
+            store.mkdir(parents=True, exist_ok=True)
+            (store / "1.json").write_text(
+                json.dumps({"task": f"a task of {store_session_id}"}), encoding="utf-8")
+        settings = supervisor.SupervisorSettings(
+            agent="carrier", working_directory=working_directory,
+            handoff_directory=handoff_directory, agent_command="true", first_prompt="")
+        settings.handoff_path.write_text(
+            "written-at: " + recent + "\n"
+            "next-step: keep carrying\n"
+            "restart-counter: 4\n"
+            + written_by_session_line,
+            encoding="utf-8")
+        handoff_fields = supervisor.parse_handoff_file(settings.handoff_path)
+
+        extracted_from = []
+
+        def recording_extract_dialog(session_id, extract_working_directory, output_path):
+            extracted_from.append(session_id)
+            output_path.write_text(f"the dialog of {session_id}\n", encoding="utf-8")
+            return True
+
+        original_extract_dialog = supervisor.extract_dialog
+        original_tasks_root = supervisor.TASKS_ROOT
+        original_pin = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
+        console = io.StringIO()
+        try:
+            supervisor.extract_dialog = recording_extract_dialog
+            supervisor.TASKS_ROOT = tasks_root
+            os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+            with contextlib.redirect_stdout(console):
+                successor_id, plan = supervisor.carry_over_to_successor(
+                    settings, tracked_session_id, handoff_fields, generation=5)
+        finally:
+            supervisor.extract_dialog = original_extract_dialog
+            supervisor.TASKS_ROOT = original_tasks_root
+            if original_pin is None:
+                os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
+            else:
+                os.environ["CLAUDE_CODE_TASK_LIST_ID"] = original_pin
+
+        carried_task = tasks_root / successor_id / "1.json"
+        return SimpleNamespace(
+            extracted_from=extracted_from,
+            successor_id=successor_id,
+            plan=plan,
+            printed=console.getvalue(),
+            carried_task=(carried_task.read_text(encoding="utf-8")
+                          if carried_task.is_file() else ""),
+            predecessor_session_directory_for=lambda session_id: (
+                supervisor.project_directory_for_working_directory(working_directory)
+                / session_id),
+        )
+
+    # --- The handoff's writer is not the session the supervisor launched ---
+    launched = "ac2b8ebe-the-session-the-supervisor-launched"
+    writer = "145a31fd-the-session-that-wrote-the-handoff"
+    diverged = carry_over("diverged", f"written-by-session: {writer}\n", launched, writer)
+    check("the dialog is extracted from the session that wrote the handoff",
+          diverged.extracted_from == [writer], str(diverged.extracted_from))
+    check("the plan names the writing session's directory, not the launched one's",
+          diverged.plan is not None
+          and diverged.plan.predecessor_session_directory
+          == diverged.predecessor_session_directory_for(writer),
+          str(diverged.plan and diverged.plan.predecessor_session_directory))
+    check("the successor is pre-seeded from the writing session's task store",
+          writer in diverged.carried_task, diverged.carried_task)
+    check("the console names both ids when the handoff's writer is not the tracked session",
+          writer in diverged.printed and launched in diverged.printed, diverged.printed)
+
+    # --- Fallbacks: nothing to prefer, so the tracked id stands -----------
+    absent = carry_over("absent", "", "0000-tracked-with-no-field", "0000-unused-by-this-case")
+    check("a handoff without the field falls back to the tracked session",
+          absent.extracted_from == ["0000-tracked-with-no-field"], str(absent.extracted_from))
+    check("the fallback plan names the tracked session's directory",
+          absent.plan is not None
+          and absent.plan.predecessor_session_directory
+          == absent.predecessor_session_directory_for("0000-tracked-with-no-field"),
+          str(absent.plan and absent.plan.predecessor_session_directory))
+    check("the fallback pre-seeds from the tracked session's task store",
+          "0000-tracked-with-no-field" in absent.carried_task, absent.carried_task)
+
+    unknown = carry_over("unknown", "written-by-session: unknown\n",
+                         "0000-tracked-under-unknown", "0000-also-unused")
+    check("a handoff whose writer is `unknown` falls back to the tracked session",
+          unknown.extracted_from == ["0000-tracked-under-unknown"], str(unknown.extracted_from))
+    check("the `unknown` fallback plan names the tracked session's directory",
+          unknown.plan is not None
+          and unknown.plan.predecessor_session_directory
+          == unknown.predecessor_session_directory_for("0000-tracked-under-unknown"),
+          str(unknown.plan and unknown.plan.predecessor_session_directory))
+    check("the `unknown` fallback pre-seeds from the tracked session's task store",
+          "0000-tracked-under-unknown" in unknown.carried_task, unknown.carried_task)
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     recent_timestamp = run_offline_cases(Path(temporary_directory))
     run_branch_sync_cases(Path(temporary_directory))
@@ -2323,6 +2452,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_launch_and_retention_cases(Path(temporary_directory), recent_timestamp)
     run_spawned_subagent_roster_cases(Path(temporary_directory), recent_timestamp)
     run_recycle_prompt_composition_cases(Path(temporary_directory), recent_timestamp)
+    run_retiring_session_id_from_the_handoff_cases(Path(temporary_directory), recent_timestamp)
 
 if "--canary" in sys.argv:
     print("\n-- live pre-seed canaries (launching real sessions) --")
