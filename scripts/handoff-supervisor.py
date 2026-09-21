@@ -120,6 +120,11 @@ NEXT_STEP_BLOCK_OPENING_MARKER = "<<END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_TERMINATOR = "END-OF-NEXT-STEP"
 NEXT_STEP_BLOCK_UNTERMINATED_FIELD = "next-step-verbatim-unterminated"
 SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
+WRITTEN_BY_SESSION_FIELD = "written-by-session"
+# What the writer stamps when the retiring session has no
+# CLAUDE_CODE_SESSION_ID to name (handoff-write-and-check-supervisor.py,
+# write_handoff_file): a placeholder, never a session id.
+WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 # Appended to sync_working_branch_with_main's one-line result in the ignition
 # prompt. The wording is the user's; only the sync line it follows is computed.
@@ -1291,7 +1296,47 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
     yet a prompt: the caller composes it at the launch, with the branch sync
     run there, so the branch-state line the successor reads names its own
     launch.
+
+    The retiring session is the one that WROTE the handoff, not the one this
+    supervisor launched, whenever the handoff says which it was. Both callers
+    pass the id from the supervisor's state file, which records the session
+    the supervisor started; the writer stamps written-by-session from
+    CLAUDE_CODE_SESSION_ID inside the session actually retiring
+    (handoff-write-and-check-supervisor.py, write_handoff_file). The two
+    diverge when a session the supervisor did not launch takes over the
+    worktree mid-life: the adoption path (AdoptedSession,
+    --adopt-session-id) runs at supervisor startup only, so nothing updates
+    the state file afterwards.
+
+    That happened at the MD-skills seat on 2026-09-20/21. The state file held
+    session ac2b8ebe-b95f-4599-a30e-aed1d554cef3, which ENDED at 22:00Z; a
+    session the supervisor had not launched started in the same worktree two
+    minutes later and ran as the seat from 22:02Z to 00:56Z, writing
+    generation 27's handoff with written-by-session:
+    145a31fd-d1eb-4ea6-9463-70b5c9f9c9d9. The extract handed to the successor,
+    MD-skills-dialog-0027.md, therefore carried ac2b8ebe's final turns and
+    none of the work 145a31fd had done, and nothing in the handoff or the
+    console said so.
+
+    The fallback is the tracked id, which is all there ever was: handoffs
+    older than the field do not carry it, and a session with no
+    CLAUDE_CODE_SESSION_ID writes the literal WRITTEN_BY_SESSION_UNKNOWN_VALUE
+    rather than an id. Preferring the handoff's id once, here, also corrects
+    preseed_tasks and the predecessor session directory below, which read the
+    same id. No tasks were lost on 2026-09-20: the launchers pin a per-seat
+    store (~/.claude/tasks/nedschorus-<seat>-tasks/), so preseed_tasks copied
+    nothing and had nothing to get wrong. The un-pinned path is keyed by
+    session id and would have pre-seeded the wrong session's tasks.
     """
+    handoff_written_by_session = handoff_fields.get(WRITTEN_BY_SESSION_FIELD, "")
+    if (handoff_written_by_session
+            and handoff_written_by_session != WRITTEN_BY_SESSION_UNKNOWN_VALUE
+            and handoff_written_by_session != retiring_session_id):
+        print(f"handoff-supervisor: the handoff names session "
+              f"{handoff_written_by_session} as its writer, not the tracked "
+              f"{retiring_session_id}; carrying over the writer's dialog and tasks")
+        retiring_session_id = handoff_written_by_session
+
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
     if not extracted:
