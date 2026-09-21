@@ -23,4 +23,7 @@ including the user.
   entire (designs and GHI-MDs included), `nc-queue/`, walk minutes, and provenance
   or recovery citations anywhere. Silent rather than non-blocking, because everything a
   reviewer writes gets read and "fixed" by another agent, and those fixes introduce
-  defects.
+  defects. A citation written as a command is silent as prose and reviewable as a
+  fact: its wording, its placement and whether it is needed are silent; whether it
+  resolves is a blocking finding that states the command and what it returned.
+  Check one by running it, and run only commands that read.
