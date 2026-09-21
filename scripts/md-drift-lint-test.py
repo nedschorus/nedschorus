@@ -221,11 +221,35 @@ with tempfile.TemporaryDirectory() as workspace:
     check("an existing path beside a placeholder passes",
           problems_for("run `scripts/real-script.py --threshold <run dir>/r.json`",
                        root) == [])
-    # A ">" with no "<" opening it is not a placeholder, so the path after it
-    # is an ordinary claim and stays checked.
+    # This case's comment used to claim it pinned a ">" with no "<" opening it,
+    # which its input never contained. Corrected 2026-09-20; the shapes that
+    # comment gestured at are pinned for real below.
     findings = problems_for("redirect into `scripts/long-gone.py`", root)
     check("a path with no placeholder anywhere is unaffected",
           findings == ["path does not exist: scripts/long-gone.py"], str(findings))
+    # The collapse must reject anything that is not a placeholder. Angle
+    # brackets that do not hug their content are a shell redirect, and a span
+    # opening "<!" is an HTML comment; both carry real paths, and the first
+    # version of the pattern swallowed them silently.
+    findings = problems_for("run `cat < docs/long-gone.py > scripts/other.py`", root)
+    check("a path inside a shell redirect is still checked",
+          findings == ["path does not exist: docs/long-gone.py",
+                       "path does not exist: scripts/other.py"], str(findings))
+    findings = problems_for("see `<!-- see docs/long-gone.py -->`", root)
+    check("a path inside a backticked HTML comment is still checked",
+          findings == ["path does not exist: docs/long-gone.py"], str(findings))
+    # The span is NOT collapsed, which is this case's subject: under the first
+    # version of the pattern both paths vanished together. What each word then
+    # meets is the older SKIP_MARKERS rule, unchanged by this change and older
+    # than it: "<docs/long-gone.py" carries a "<" and is skipped, while
+    # ">scripts/other.py" is checked and reported with the ">" still glued on.
+    # Pinned as it really behaves, so a later widening of the pattern -- which
+    # would take both words back out of the check -- fails here.
+    findings = problems_for("run `<docs/long-gone.py >scripts/other.py`", root)
+    check("a closing bracket that does not hug its content is not a placeholder",
+          len(findings) == 1 and "scripts/other.py" in findings[0], str(findings))
+    check("a closing tag is not a placeholder, and reports nothing of its own",
+          problems_for("the `</section>` marker", root) == [])
 
     # --- Numbers quoted from code -----------------------------------------
     check("a backtick number found in the named code file passes",
