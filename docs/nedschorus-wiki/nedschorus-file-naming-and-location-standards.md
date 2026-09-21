@@ -136,7 +136,7 @@ tell from a path whether that rule applies. See the last section.
 |---|---|---|---|
 | Cold-read-record directory | `cold-read-records/` | `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a skill, whose stem is always `SKILL` and whose name is its directory's, so `.claude/skills/cold-read/SKILL.md` gets `SKILL-cold-read-<date>`; the document comes first so every read of one document sits together in a listing, and the date is the local date of the machine that ran it. Ruled 2026-09-18, replacing a date-first form; two documents with the same stem in different directories, read on one day, come out as `-2` of each other, and the record's `target/` shows which was which | `scripts/cold-read-record-names.py`, `record_directory_name_for_target` and `record_name_for_target`, under its `RECORDS_DIR`; the four programs that create or find cold-read-records import it |
 | Same directory, on a same-day collision | as above | `-2`, `-3` appended, counting up, no cap in the code; the cold-read-fast-read and the cold-read-grid share this rule, so on one day the first to run takes the bare name and the next takes `-2` | `scripts/cold-read-record-names.py`, `fresh_record_directory`, which every one of those programs calls |
-| Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-record-names.py`, `FROZEN_TARGET_DIRECTORY_NAME`; the path built under it is `frozen_target_path`, which the cold-read-grid and `scripts/cold-read-fast-read.py` still define separately, see the note below |
+| Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-record-names.py`, `FROZEN_TARGET_DIRECTORY_NAME`, with the path built under it in `frozen_target_path` in the same module, which the cold-read-grid and `scripts/cold-read-fast-read.py` both call. The cold-read-target is resolved before it is made relative, so one document reached by two spellings freezes at one path (user-ruled 2026-09-20) |
 | Reviewer report | inside the cold-read-record | `<agent-binary>-<pass token>-<tier>.md`, the pass token being `hunt` for `defect-hunt`; six names are possible, `hunt-good`, `hunt-floor` and `terminology-good` under each of `claude` and `codex`, and an absent cold-read-cell leaves its name absent. The file says which agent ran which pass and nothing else; the directory says which read (user-ruled 2026-09-18, replacing a name that repeated the record's). A report's own name ends in `-good` or `-floor`, never `-report`, so the cold-read-grid does not refuse it | `scripts/cold-read-grid.py`, `cell_report_path`; the set of cold-read-cells is `GRID_CELL_ROSTER` |
 | Reference check | inside the cold-read-record | `reference-check.md` | `scripts/cold-read-grid.py` |
 | A cold-read-cell's stderr | inside the cold-read-record, kept only for an attempt that produced no report: the cold-read-grid deletes the log of an attempt that succeeded | `<report name>.attempt-1.stderr.log` for the first attempt and `.attempt-2.stderr.log` for the retry, since every failed cold-read-cell is retried once (nedschorus#413) | `scripts/cold-read-grid.py` |
@@ -158,7 +158,11 @@ repeated names were reduced to one definition apiece on 2026-09-19
   the four programs that create or find cold-read-records. Seven places had
   carried their own `RECORDS_DIR`, `FROZEN_TARGET_DIRECTORY_NAME`, or copies
   of the naming and same-day-collision rules. The copies had a stated reason
-  — that a program cannot be imported — and a module answers it. Guard:
+  — that a program cannot be imported — and a module answers it. The path
+  built under the frozen copy's directory, `frozen_target_path`, moved into
+  the same module on 2026-09-20 (user-ruled): it was defined in each
+  launcher and the two disagreed over whether to resolve the
+  cold-read-target first, and the resolving version was kept. Guard:
   `scripts/cold-read-record-names-test.py`.
 - The supervisor's state and lock file names are
   `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX` in
@@ -179,15 +183,10 @@ shared constant: eight places in four scripts compose it, one as a local
 seven as spelled-out literals in that script,
 `scripts/handoff-supervisor.py`, `scripts/recover-crashed-seats.py` and
 `scripts/resupervise-seat.py`. It is the same defect the supervisor's state
-file had, and it is not ruled on yet. The frozen copy's directory name is one
-constant now, but the path built under it is not: `frozen_target_path` is
-defined in the cold-read-grid and again in `scripts/cold-read-fast-read.py`,
-and the two differ — the cold-read-grid resolves the cold-read-target before
-making it relative and the cold-read-fast-read does not, so a cold-read-target
-reached through a symlink freezes to two different paths. The glossary
+file had, and it is not ruled on yet. The glossary
 restates two file names in prose, `docs/agents/<seat>-instructions.md` under
 seat-brief and `~/.claude/handoffs/<seat>-handoff.md` under session-handoff.
-Apart from the two frozen-path copies, the writings in each set agree today,
+The writings in each set agree today,
 and nothing keeps them agreeing; none is the authority over the others, which
 is the defect. `RECORDS_DIR` is
 also a two-part name a grep confuses with `RECORDS_DIRECTORY_NAME` in
