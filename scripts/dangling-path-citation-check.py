@@ -47,12 +47,12 @@ catches it, by asking what still cites each path the change removed.
 
 WHY THE DIFF AND NOT THE WHOLE TREE. Main carries dangling citations that
 are nobody's defect: 62 on 2026-09-20, several of them forward references
-to programs the project has decided to build and has not built, such as
-scripts/ghi-issue-write.py under nedschorus#46 and quality/runs.jsonl from
-the toolchain plan. A check over whole files would fail every pull request
-on prose its author never touched. So a finding is reported only when its
-line is one the change added or altered, the rule
-scripts/md-drift-lint.py's caller applies by hand today.
+to work the project has decided to do and has not done, such as
+quality/runs.jsonl from the toolchain plan, absent from main on 2026-09-21.
+A check over whole files would fail every pull request on prose its author
+never touched. So a finding is reported only when its line is one the change
+added or altered, the rule scripts/md-drift-lint.py's caller applies by hand
+today.
 
 WHY THE CHANGE'S OWN TREE AND NOT MAIN. A change that adds a file and cites
 it in the same commit is correct. Existence is therefore tested in the
@@ -85,6 +85,24 @@ diff and the base text a forward finding is compared against. The two diffs
 were already three-dot and the text read was the base TIP, so on a branch
 behind main the suppression below consulted a file version the branch never
 saw, and the author's own new dangling citation went unreported.
+
+AND AT WHICH NAME. A RENAMED file's own version stands at the merge base
+under the name the change renamed it from, not under the name it now has.
+Asked for under its HEAD name, git returned nothing, the suppression below
+answered "the base did not cite this" about every path in the file, and a
+rename plus an edit to any line resurrected that line's standing dangling
+citations as findings against the author. Latent in the very move this
+program was built from, the 2026-09-19 gatekeeper move being a rename and an
+edit. So the old name is read from the rename rows of the removed-path diff,
+which already carry it, and the base text is read there.
+
+  THE LIMIT, stated rather than guarded: git decides what a rename is by
+  similarity, and a move that also rewrites most of the file is a delete and
+  an add, carrying no old name for this to read. Such a file's standing
+  citations are still reported. Where that threshold falls is git's own
+  business: measured 2026-09-21, one five-line document moved with a word
+  changed in its citing line scored a delete and an add, and the same
+  document with a dozen unrelated paragraphs in it scored 91% and a rename.
 
 THE FIXTURE-CARRYING FILES. This program and its test are the one pair in
 this repository whose subject matter IS dangling paths: every negative case
@@ -355,26 +373,47 @@ def findings_for_file(path: pathlib.Path, changed: set, lint, root_directories: 
                 yield line_number, f"path does not exist: {token}"
 
 
-def paths_this_change_removed(merge_base: str, repository_root: pathlib.Path) -> list:
-    """The repository paths that existed at the merge base and do not exist
-    now: a deletion, or a rename's old name. Read from --name-status rather
-    than from the tree, so a file moved and a file deleted are one case."""
+def name_status_rows_against_merge_base(merge_base: str, repository_root: pathlib.Path) -> list:
+    """The rows of `git diff --name-status` against the merge base, each split
+    into its tab-separated fields, and dropped when it carries no path.
+
+    Read once, because two questions are asked of the same output: which paths
+    this change removed, and which of the files it now has stood under another
+    name at the merge base. A rename row carries both names, and is the only
+    place the second question is answered."""
     names = subprocess.run(
         ["git", "diff", "--name-status", "--no-color", "--no-ext-diff", f"{merge_base}..HEAD"],
         cwd=repository_root, capture_output=True, text=True, check=False)
     if names.returncode != 0:
         fail_bad_invocation(f"git diff --name-status against {merge_base} failed: "
                             f"{names.stderr.strip() or names.returncode}")
+    return [fields for fields in (row.split("\t") for row in names.stdout.splitlines())
+            if len(fields) >= 2]
+
+
+def paths_this_change_removed(name_status_rows: list, repository_root: pathlib.Path) -> list:
+    """The repository paths that existed at the merge base and do not exist
+    now: a deletion, or a rename's old name. Read from --name-status rather
+    than from the tree, so a file moved and a file deleted are one case."""
     removed = []
-    for row in names.stdout.splitlines():
-        fields = row.split("\t")
-        if len(fields) < 2:
-            continue
+    for fields in name_status_rows:
         status, old = fields[0], fields[1]
         if status.startswith("D") or status.startswith("R"):
             if not (repository_root / old).exists():
                 removed.append(old)
     return removed
+
+
+def merge_base_names_of_renamed_files(name_status_rows: list) -> dict:
+    """{a path as this change leaves it: the name it stood under at the merge
+    base}, for every file this change renamed.
+
+    Only a rename row carries an old name. A move git scores below its
+    similarity threshold is a delete and an add rather than a rename, carries
+    no old name, and is absent here; so is a file this change merely edited,
+    whose two names are the same one."""
+    return {fields[2]: fields[1] for fields in name_status_rows
+            if len(fields) >= 3 and fields[0].startswith("R")}
 
 
 def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lint) -> list:
@@ -436,7 +475,9 @@ def main(argv=None) -> int:
         changed = {name: lines for name, lines in changed.items() if name in wanted}
 
     findings = []
-    removed = paths_this_change_removed(merge_base, REPOSITORY_ROOT)
+    name_status_rows = name_status_rows_against_merge_base(merge_base, REPOSITORY_ROOT)
+    removed = paths_this_change_removed(name_status_rows, REPOSITORY_ROOT)
+    merge_base_name_of_renamed_file = merge_base_names_of_renamed_files(name_status_rows)
     for citing, line_number, problem in citations_of_removed_paths(
             removed, REPOSITORY_ROOT, lint):
         findings.append(f"{citing}:{line_number}: {problem}")
@@ -452,9 +493,14 @@ def main(argv=None) -> int:
             # also carried an unrelated forward reference to a test the
             # project has not built, and reporting that would have been a
             # false alarm for its author. This is the comparison the caller
-            # of scripts/md-drift-lint.py makes by hand.
+            # of scripts/md-drift-lint.py makes by hand. A renamed file's own
+            # version stands at the merge base under the name it was renamed
+            # FROM; asking for it under its HEAD name got nothing back and
+            # resurrected every standing citation in it. See "AND AT WHICH
+            # NAME" above, which states what this does not cover.
             if base_text is None:
-                base_text = file_at_merge_base(name, merge_base, REPOSITORY_ROOT)
+                base_text = file_at_merge_base(
+                    merge_base_name_of_renamed_file.get(name, name), merge_base, REPOSITORY_ROOT)
             if base_already_cites(cited_path_of(problem), base_text, lint):
                 continue
             findings.append(f"{name}:{line_number}: {problem}")

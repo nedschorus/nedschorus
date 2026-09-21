@@ -434,6 +434,76 @@ echo hello
           "cites scripts/module-under-test.py, which this change removed" in out,
           f"{code} {out!r} {err!r}")
 
+    # --- FORWARD: a RENAMED file's base text, read at the name it had -----
+    # The suppression asked git for the base text under the path as it stands
+    # at HEAD. A rename destination was not at the merge base under that
+    # name, so nothing came back, "the base already cited this" answered no,
+    # and a rename plus an edit to any line reported that line's standing
+    # dangling citations as newly written by the author -- which is the shape
+    # of the 2026-09-19 move this program was built from.
+    #
+    # The fixture is padded with unrelated paragraphs deliberately: git
+    # decides what a rename is by similarity, a small document can score
+    # under the threshold, and a move it scores that way is a delete and an
+    # add, which carries no old name and is a different shape than these
+    # cases name. The last case here holds the padding to its job.
+    rename_filler = "".join(
+        f"An unrelated paragraph, number {number}, carrying no citation at all.\n\n"
+        for number in range(1, 13))
+    page_with_a_standing_citation = (
+        "# a page\n\nThe old plan is recorded in `scripts/never-built-at-all.py` and "
+        "stands.\n\n" + rename_filler)
+    same_citation_edited = (
+        "# a page\n\nThe old plan is recorded in `scripts/never-built-at-all.py` and "
+        "STILL stands.\n\n" + rename_filler)
+
+    git(root, "checkout", "-q", "-b", "fork-point-for-the-rename-cases", base)
+    commit_change(root, "docs/page-that-moves.md", page_with_a_standing_citation)
+    rename_base = git(root, "rev-parse", "HEAD").stdout.strip()
+
+    git(root, "checkout", "-q", "-b", "renames-and-edits-a-citing-line", rename_base)
+    git(root, "mv", "docs/page-that-moves.md", "docs/page-after-the-move.md")
+    commit_change(root, "docs/page-after-the-move.md", same_citation_edited)
+    renamed_row = git(root, "diff", "--name-status", f"{rename_base}..HEAD").stdout.strip()
+    code, out, err = run_check(root, rename_base)
+    check("a rename does not resurrect the file's standing dangling citation",
+          code == 0 and "never-built-at-all" not in out, f"{code} {out!r} {err!r}")
+
+    # The control, differing only by the rename: the same edit to the same
+    # line of the same file. It was quiet before and must stay quiet, or the
+    # case above could be passed by disabling the suppression altogether.
+    git(root, "checkout", "-q", "-b", "edits-the-same-line-without-renaming", rename_base)
+    commit_change(root, "docs/page-that-moves.md", same_citation_edited)
+    code, out, err = run_check(root, rename_base)
+    check("the same edit without a rename is still not reported",
+          code == 0 and "never-built-at-all" not in out, f"{code} {out!r} {err!r}")
+
+    # And the live one, which is what stops the case above being passed by
+    # skipping a renamed file whole: a citation the author writes onto a
+    # touched line of a renamed file is still reported. Only the new path is
+    # asserted -- the standing one is the first case's subject, and asserting
+    # its absence here would make this case red without the fix too.
+    git(root, "checkout", "-q", "-b", "renames-and-writes-a-new-citation", rename_base)
+    git(root, "mv", "docs/page-that-moves.md", "docs/page-after-the-move.md")
+    commit_change(root, "docs/page-after-the-move.md",
+                  "# a page\n\nThe old plan is recorded in `scripts/never-built-at-all.py` "
+                  "and now also in `scripts/written-today-and-absent.py`.\n\n" + rename_filler)
+    live_row = git(root, "diff", "--name-status", f"{rename_base}..HEAD").stdout.strip()
+    code, out, err = run_check(root, rename_base)
+    check("a citation newly written on a touched line of a renamed file is still reported",
+          code == 1 and "scripts/written-today-and-absent.py" in out, f"{code} {out!r} {err!r}")
+
+    # The fixture's own precondition. The three cases above are about the R
+    # rows of --name-status, and under a delete-and-add pair the live one
+    # would pass vacuously, everything in the file being reported. Where
+    # git's threshold falls is git's business and not this suite's: measured
+    # 2026-09-21, a five-line document whose changed word sits early in its
+    # citing line is scored a delete and an add. So the shape is asserted
+    # here rather than assumed of the text above.
+    check("the rename fixtures read as a rename to git, not as a delete and an add",
+          renamed_row.startswith("R") and live_row.startswith("R"),
+          f"{renamed_row!r} {live_row!r}")
+
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
     sys.exit(1)
