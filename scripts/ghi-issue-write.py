@@ -113,7 +113,9 @@ its name wherever it sits — and does four things:
                 docs/issues/ and into its system's directory is removed
                 from where main still holds it, in the same commit, or the
                 merge leaves the document at two paths and step 5 links it
-                twice.
+                twice. That removal is a deletion of main's copy, so it is
+                refused on the same conflict the landing is, and it is made
+                only where main holds the file under the same name.
   4. Title      when the edit CHANGED the file's first heading, and the
                 issue has one paired file.
   5. Link       the body to the paired files on main, as create's step 5
@@ -129,6 +131,13 @@ when the heading did change — issue 3 has six files with six headings, and
 nothing in the pairing says which one names it — and the tool says so
 rather than guessing.
 
+The change is measured against the document as main holds it before the
+edit, which on a moved file is main's copy at the path it moved from.
+Measured against the author's path instead, a moved file's heading never
+looks changed — main has nothing there to compare with on the first run,
+and by the rerun after the merge main's copy is the changed file itself —
+so a moved file's title would follow a heading change never.
+
 THE CONFLICT THIS REFUSES ON IS THE FILE'S, NOT THE BODY'S. The user ruled
 on 2026-09-08 that a GHI edit checks for conflicts and refuses rather than
 merges; scripts/ghi-issue-body-edit.py is that ruling built, for the world
@@ -141,6 +150,27 @@ from, which is the base record they read — taken from git rather than asked
 for as a flag, since git already holds it. They differ, and another seat
 changed the file since: the tool prints that diff and writes nothing. No
 retry, no lock, no merge, as the ruling says.
+
+A MOVE PUTS TWO PATHS UNDER THAT CHECK. The author's path is where the file
+lands; the moved-from path is where main's copy is deleted. Main holds
+nothing at the author's path on a move, so that comparison passes on two
+Nones and says nothing at all about the deletion. Checking only it turned
+the duplicate that a missing removal used to leave into a discard of
+another seat's work: measured against a real repository on 2026-09-21,
+reviewing PR [Build the GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596),
+a run whose author moved a file while another seat changed it at the old
+path exited 0, opened a pull request, and left the other seat's line
+nowhere in the branch it pushed. Both paths are compared now, and either
+one's conflict refuses the run before anything is pushed.
+
+A MOVE THAT ALSO RENAMED IS REPORTED, NOT GUESSED AT. The moved-from path
+is found by the file's name, which a move keeps and a rename does not.
+There is no second rule to fall back on: a file the author renamed and a
+new second document for the same issue are the same state on main — no
+copy at this path, other files of the issue present — and this verb is how
+both arrive. A tool that deleted on suspicion would delete a file nobody
+moved, which is the discard the check above exists to stop. So the run says
+what main still holds and lands the file; the author lands the removal.
 
 THE ORDER MATTERS FOR RESUMING. Main's copy is compared to the author's
 BEFORE the conflict check runs, because once the pull request merges the
@@ -179,10 +209,11 @@ Exit codes:
       create wants it unpaired or unpaired when edit wants it paired, or a
       path this tool does not write
   65  refused by adjudication as too similar to an open issue
-  66  refused: the file changed on main since the caller's checkout started
-      from it, so landing would discard that change (edit)
+  66  refused: the file, or the path a move takes it from, changed on main
+      since the caller's checkout started from it, so landing would discard
+      that change (edit)
 
-The 66 refusal is the one deny path here that does not end with the
+The 66 refusals are the deny paths here that do not end with the
 reconsider line, deliberately. A conflict is not a judgment to think
 again about: another seat's change is sitting on main, and the way past it
 is to fold that change in, which the refusal says and shows. The marker
@@ -754,15 +785,50 @@ def validate_edit(path: Path, repository_root: Path):
     return text, title, int(numbered.group(1)), relative
 
 
-def refuse_on_conflict(relative: str, on_main, repository_root: Path,
-                       runner, report):
+def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
+                     repository_root: Path, runner) -> Refused:
+    """The 66 refusal, with the change it would have discarded shown under
+    it. Both conflicts are built here so their instruction lines cannot
+    drift apart: the opening names which path conflicted and what this run
+    would have done to it, and the three lines under it are what clears
+    either one.
+
+    No reconsider line, on either: see the module docstring's last
+    paragraph."""
+    difference = runner(
+        ["git", "diff", revision, "origin/main", "--", relative],
+        cwd=str(repository_root), check=False)
+    return Refused(
+        f"{opening}\n\n"
+        "Bring your checkout up to date with main: fetch, then merge or "
+        "rebase onto origin/main.\n"
+        f"{fold}\n"
+        "Run this command again.\n\n"
+        "The change you would have discarded:\n"
+        f"{(difference.stdout or '').strip()}", 66)
+
+
+def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
+                       repository_root: Path, runner, report):
     """The 2026-09-08 conflict ruling applied to the file rather than the
     body (module docstring, THE CONFLICT THIS REFUSES ON). The base record
     is taken from git instead of asked for as a flag: the version the
     author's checkout started from is what they read.
 
-    Main's copy is passed in rather than read again, so every comparison a
-    run makes is against one reading of main."""
+    Main's copies are passed in rather than read again, so every comparison
+    a run makes is against one reading of main.
+
+    TWO PATHS CAN CONFLICT ON A MOVE, NOT ONE. A move lands the file at the
+    author's path and removes main's copy at the path it moved from, so the
+    other seat's change can be sitting at either. Main holds nothing at the
+    author's path on a move, which makes the first comparison pass on two
+    Nones, and the removal is then the whole of what the run does to that
+    other seat's work: it deletes it, exit 0, saying only that it moved the
+    content. Reproduced against a real repository on 2026-09-21, reviewing
+    PR [Build the GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596):
+    the branch that run pushed did not hold the other seat's line at all. So
+    the check covers the path the `git rm` names, or it does not cover the
+    move."""
     located = runner(["git", "merge-base", "HEAD", "origin/main"],
                      cwd=str(repository_root), check=False)
     revision = (located.stdout or "").strip()
@@ -773,21 +839,23 @@ def refuse_on_conflict(relative: str, on_main, repository_root: Path,
         report("conflict check skipped: this checkout has no merge base "
                "with origin/main")
         return
-    started_from = blob_at(revision, relative, repository_root, runner)
-    if started_from == on_main:
+    if blob_at(revision, relative, repository_root, runner) != on_main:
+        raise conflict_refusal(
+            f"Refused: {relative} changed on main since your checkout "
+            "started from it, and landing your copy would discard that "
+            "change.",
+            "Fold your edit into main's copy of the file.",
+            relative, revision, repository_root, runner)
+    if moved_from is None:
         return
-    difference = runner(
-        ["git", "diff", revision, "origin/main", "--", relative],
-        cwd=str(repository_root), check=False)
-    raise Refused(
-        f"Refused: {relative} changed on main since your checkout started "
-        "from it, and landing your copy would discard that change.\n\n"
-        "Bring your checkout up to date with main: fetch, then merge or "
-        "rebase onto origin/main.\n"
-        "Fold your edit into main's copy of the file.\n"
-        "Run this command again.\n\n"
-        "The change you would have discarded:\n"
-        f"{(difference.stdout or '').strip()}", 66)
+    if blob_at(revision, moved_from, repository_root,
+               runner) != moved_from_on_main:
+        raise conflict_refusal(
+            f"Refused: landing your move removes {moved_from} from main, "
+            "and main's copy there changed since your checkout started "
+            "from it, so removing it would discard that change.",
+            "Fold that change into the file you moved.",
+            moved_from, revision, repository_root, runner)
 
 
 def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
@@ -832,17 +900,54 @@ def moved_from_path_on_main(number: int, relative: str,
                  if path != relative and Path(path).name == name), None)
 
 
+def report_no_moved_from_match(number: int, relative: str, paths, report):
+    """Said when main holds files for this issue but none at the author's
+    path and none by that name. A move that also RENAMED looks exactly like
+    this: `moved_from_path_on_main` matches on the file's name, so a rename
+    — or a rename with no move at all, inside docs/issues/ — misses that
+    match, nothing is staged for removal, and the document lands at two
+    paths that step 5 then links twice.
+
+    REPORTED RATHER THAN GUARDED, and the choice is forced rather than
+    cautious. This verb is also how a genuinely new SECOND document reaches
+    an issue that already has one, and from main's tree the two states are
+    the same: no copy at this path, other files of the issue present. A
+    refusal would block the legitimate one. Nothing on main says which of an
+    issue's files a new path was renamed from, so a tool that picked one to
+    delete would be guessing, which is what the conflict check exists to
+    stop. Being wrong the reported way costs a document at two paths —
+    visible in the body, fixable by a commit. Being wrong the guessing way
+    costs another seat's file.
+
+    The title is left alone for the same reason: with no predecessor named,
+    nothing says the heading changed."""
+    report(f"main holds no copy of {relative}, and no file of issue "
+           f"{number} on main carries that name, so nothing is removed and "
+           "this lands as a file main does not have.")
+    report(f"issue {number}'s files on main: " + ", ".join(paths) +
+           ". If you renamed this file as well as moving it, main keeps the "
+           "old copy and the body will link the document twice; land the "
+           "removal of the old path yourself.")
+
+
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
-              on_main, repository_root: Path, runner, report) -> bool:
+              on_main, moved_from, moved_from_on_main, repository_root: Path,
+              runner, report) -> bool:
     """Step 3. Returns True when a pull request is waiting on this edit.
 
     Main's copy is compared to the author's before the conflict check is
     made, which is what makes the rerun after a merge work: see the module
-    docstring, THE ORDER MATTERS FOR RESUMING."""
+    docstring, THE ORDER MATTERS FOR RESUMING.
+
+    `moved_from` is the path main still holds this document at when the
+    author moved it, and `moved_from_on_main` is main's copy there. Both are
+    resolved by the caller, which needs the same copy for the title: one
+    reading of main serves every comparison the run makes."""
     if on_main == staged:
         report(f"step 3 already done: main's copy of {relative} is this file")
         return False
-    refuse_on_conflict(relative, on_main, repository_root, runner, report)
+    refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
+                       repository_root, runner, report)
 
     branch = f"ghi-{number}-edit-{pairing_key(staged)}"
     on_remote = runner(["git", "ls-remote", "--heads", "origin", branch],
@@ -883,12 +988,8 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         # file into its system's directory and main still holds it where it
         # was: leaving that behind would put the same document at two paths
         # the moment this merges, and paired_paths would then link it twice.
-        # Asked only when main has nothing at the author's path — where it
-        # does, this is an edit in place and a same-named file elsewhere is
-        # another document.
-        moved_from = (moved_from_path_on_main(number, relative,
-                                              repository_root, runner)
-                      if on_main is None else None)
+        # Refused above when main's copy there has moved on, because this
+        # line is a deletion of it.
         if moved_from:
             runner(["git", "rm", "--quiet", moved_from], cwd=str(worktree))
             report(f"removing {moved_from}: its content moves to {relative}")
@@ -918,7 +1019,8 @@ def read_issue(repo: str, number: int, runner):
     return json.loads(current.stdout or "{}")
 
 
-def sync_title_on_heading_change(repo: str, number: int, on_main, title: str,
+def sync_title_on_heading_change(repo: str, number: int,
+                                 document_before_this_edit, title: str,
                                  paths, issue, runner, report):
     """Step 4. The design's trigger is a CHANGE — "when the edit changes the
     file's first heading" — not a mismatch between the issue's title and the
@@ -931,8 +1033,18 @@ def sync_title_on_heading_change(repo: str, number: int, on_main, title: str,
     heading did change: issue 3 has six files with six headings, and nothing
     in the pairing says which of them names the issue. The design's sentence
     was written for the common shape it also states — most issues carry one
-    file."""
-    if on_main is None or first_heading(on_main) == title:
+    file.
+
+    WHAT THE CHANGE IS MEASURED AGAINST is the document as main holds it
+    before this edit, which on a moved file is main's copy at the path it
+    moved from. Passed in for that reason rather than read from the author's
+    path here: main holds nothing at the author's path on a move, so a
+    comparison against that finds no heading to have changed — not on the
+    first run, and not on any rerun either, since once the move merges the
+    heading on main is the changed one. A moved file's title would follow a
+    heading change never."""
+    if (document_before_this_edit is None
+            or first_heading(document_before_this_edit) == title):
         return
     if len(paths) > 1:
         report(f"the heading changed, but issue {number} has {len(paths)} "
@@ -979,6 +1091,21 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     on_main = blob_at("origin/main", relative, repository_root, runner)
+    paths = paired_paths(number, repository_root, runner)
+    # Where main still holds this document when the author moved it, and
+    # main's copy there. Asked only when main has nothing at the author's
+    # path — where it does, this is an edit in place and a same-named file
+    # elsewhere is another document. Resolved here rather than inside a
+    # step, because step 3 deletes that path and step 4 measures the
+    # heading change against that copy: one reading of main, two users.
+    moved_from = (moved_from_path_on_main(number, relative, repository_root,
+                                          runner)
+                  if on_main is None else None)
+    moved_from_on_main = (
+        blob_at("origin/main", moved_from, repository_root, runner)
+        if moved_from else None)
+    if on_main is None and moved_from is None and paths:
+        report_no_moved_from_match(number, relative, paths, report)
     if on_main != staged:
         # Nothing new to land is nothing new to adjudicate, so a rerun that
         # only finishes steps 4 and 5 costs no model call — the same reason
@@ -986,12 +1113,18 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         adjudicate(repo, title, text, repository_root, runner, report,
                    exclude_issue=number)
     pending = land_edit(repo, number, title, relative, staged, on_main,
-                        repository_root, runner, report)
+                        moved_from, moved_from_on_main, repository_root,
+                        runner, report)
 
-    paths = paired_paths(number, repository_root, runner)
     issue = read_issue(repo, number, runner)
-    sync_title_on_heading_change(repo, number, on_main, title, paths, issue,
-                                 runner, report)
+    # The document as main holds it before this edit, which is the author's
+    # path where main has one and the path the file moved from where it
+    # does not. Step 5 is not given this: it links what main holds AT the
+    # author's path, and a moved file is not there until its merge.
+    document_before_this_edit = (on_main if on_main is not None
+                                 else moved_from_on_main)
+    sync_title_on_heading_change(repo, number, document_before_this_edit,
+                                 title, paths, issue, runner, report)
     finished = relink_body_from_main(repo, number, relative, on_main, paths,
                                      issue, runner, report)
     if pending:

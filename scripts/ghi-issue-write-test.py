@@ -24,6 +24,13 @@ below. So each state a case encodes was produced once against a real
 repository, with a bare remote and `gh` stubbed, before being written down:
 filed, merged, head branch deleted, source moved, pushed without a pull
 request, and a destination holding a file that is not this one.
+
+The edit verb's move states were produced the same way on 2026-09-21: a
+file moved into its system's directory while another seat landed a change
+at the path it moved from, a move that also renamed the file, and a move
+whose first heading changed. The first of those was run through the tool
+itself, which pushed a branch whose tree did not hold the other seat's line
+at all — the deletion the conflict check now refuses.
 """
 
 import contextlib
@@ -527,6 +534,17 @@ MOVED_RELATIVE = f"nc-systems/statusline/{EDIT_NAME}"
 EDIT_TITLE = "A statusline that drops its branch name"
 BASE_REVISION = "basesha1234"
 
+# The same file moved AND renamed, which is what makes main's copy of it
+# unfindable: the moved-from path is matched by the file's name.
+RENAMED_NAME = "570-statusline-contract.md"
+RENAMED_RELATIVE = f"nc-systems/statusline/{RENAMED_NAME}"
+
+# The same file moved with its first heading changed, and main's copy at
+# the old path as another seat left it.
+MOVED_HEADING_TITLE = "A statusline that keeps its branch name"
+MOVED_HEADING_TEXT = FILE_TEXT.replace(EDIT_TITLE, MOVED_HEADING_TITLE)
+OTHER_SEAT_TEXT = FILE_TEXT + "\nAnother seat measured this on 2026-09-21.\n"
+
 
 def paired(scratch: Path, name=EDIT_NAME, text=FILE_TEXT,
            directory="docs/issues"):
@@ -713,12 +731,23 @@ def run_edit_cases(scratch: Path):
     # the moment it merges — after which paired_paths returns both and step
     # 5 links the same document twice.
 
+    # 128 is what git answers for a path that is not in the tree asked of,
+    # measured; the older cases above say 1, which blob_at reads the same
+    # way — it asks only whether the call succeeded.
     moved_source = paired(scratch, directory="nc-systems/statusline")
     moved = Recorder({
-        f"git show origin/main:{MOVED_RELATIVE}": Completed("", returncode=1),
+        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+                                                            returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
-            "", returncode=1),
+            "", returncode=128),
+        # Main's copy at the path the file moved from, and the copy the
+        # author's checkout started from: the same, so nobody else changed
+        # it and the removal is this author's to make. Answered rather than
+        # left to the recorder's default, which is an empty file that
+        # succeeded — a state main is never in for a file it holds.
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
@@ -738,6 +767,14 @@ def run_edit_cases(scratch: Path):
           "move, is left where it is",
           not ran_with(moved, "git rm", "570-test-design.md"),
           str(moved.calls))
+    check("and the path the removal names is read on main and at the "
+          "author's base before any of it, the removal being a deletion",
+          moved.ran(f"git show origin/main:{EDIT_RELATIVE}")
+          and moved.ran(f"git show {BASE_REVISION}:{EDIT_RELATIVE}")
+          and moved.commands().index(f"git show {BASE_REVISION}:"
+                                     f"{EDIT_RELATIVE}")
+          < moved.commands().index("git worktree add"),
+          str(moved.commands()))
 
     # A same-named copy in the other directory, while this run's own file
     # is where main has it, is not a move: it is an edit in place, and that
@@ -757,6 +794,90 @@ def run_edit_cases(scratch: Path):
     check("an edit in place removes no copy of itself from elsewhere on "
           "main, however that copy got there",
           not in_place.ran("git rm"), str(in_place.commands()))
+
+    # --- A move that also RENAMED the file -------------------------------
+    # The moved-from path is found by the file's name, so a rename misses
+    # that match. It is reported rather than guarded: a renamed file and a
+    # new second document for the issue are the same state on main, and
+    # this verb is how both arrive, so a refusal would block the legitimate
+    # one and a deletion on suspicion would delete a file nobody moved.
+
+    renamed_source = paired(scratch, name=RENAMED_NAME,
+                            directory="nc-systems/statusline")
+    renamed = Recorder({
+        f"git show origin/main:{RENAMED_RELATIVE}": Completed(
+            "", returncode=128),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{RENAMED_RELATIVE}": Completed(
+            "", returncode=128),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    said = []
+    tool.edit(renamed_source, REPO, scratch, renamed, said.append)
+    check("a move that also renamed the file removes nothing, nothing on "
+          "main saying which file it was renamed from",
+          not renamed.ran("git rm"), str(renamed.commands()))
+    check("and the run says so, naming what main still holds, instead of "
+          "landing the second copy in silence",
+          any(EDIT_RELATIVE in line for line in said)
+          and any("renamed this file" in line for line in said), str(said))
+    check("and it still lands the author's file rather than refusing it",
+          ran_with(renamed, "git add", RENAMED_RELATIVE)
+          and renamed.ran("gh pr create"), str(renamed.commands()))
+
+    # --- A heading changed on a file the author also moved ---------------
+    # Main holds nothing at the author's path on a move, so a comparison
+    # against that path finds no heading to have changed — not on this run,
+    # and not on the rerun after the merge either, by which time main's copy
+    # is the changed file. The comparison is against main's copy at the path
+    # the file moved from.
+
+    moved_heading_source = paired(scratch, directory="nc-systems/statusline",
+                                  text=MOVED_HEADING_TEXT)
+    moved_heading = Recorder({
+        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+                                                            returncode=128),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
+            "", returncode=128),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(moved_heading_source, REPO, scratch, moved_heading, quiet)
+    check("a heading changed on a file the author moved still reaches the "
+          "issue's title",
+          ran_with(moved_heading, "gh issue edit", "--title",
+                   MOVED_HEADING_TITLE), str(moved_heading.commands()))
+    check("and the move itself lands as a move, removing main's copy",
+          ran_with(moved_heading, "git rm", EDIT_RELATIVE),
+          str(moved_heading.commands()))
+
+    moved_same_heading = Recorder({
+        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+                                                            returncode=128),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
+            "", returncode=128),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("A title nobody derived", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
+              scratch, moved_same_heading, quiet)
+    check("while a move that left the heading alone renames nothing, "
+          "however far the issue's title is from that heading",
+          not ran_with(moved_same_heading, "gh issue edit", "--title"),
+          str(moved_same_heading.commands()))
 
     # --- The conflict the 2026-09-08 ruling is about ---------------------
 
@@ -788,6 +909,62 @@ def run_edit_cases(scratch: Path):
           and not conflicted.ran("gh pr create")
           and not conflicted.ran("gh issue edit"),
           str(conflicted.commands()))
+
+    # A move puts a second path under the same ruling: the author's path is
+    # where the file lands, the moved-from path is where main's copy is
+    # deleted. Main holds nothing at the author's path on a move, so that
+    # comparison passes on two Nones and says nothing about the deletion.
+    # Produced against a real repository, which is where this was measured:
+    # the author moved the file while another seat landed a change at the
+    # old path, and the run exited 0 having pushed a branch whose tree did
+    # not hold the other seat's line at all.
+
+    moved_conflict = Recorder({
+        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+                                                            returncode=128),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
+            "", returncode=128),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(OTHER_SEAT_TEXT),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git diff": Completed(
+            "@@ -5,3 +5,5 @@\n Body.\n+\n"
+            "+Another seat measured this on 2026-09-21.\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    try:
+        tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
+                  scratch, moved_conflict, quiet)
+        check("a move whose old path another seat changed is refused", False,
+              "it proceeded")
+    except tool.Refused as refusal:
+        check("a move whose old path another seat changed is refused",
+              refusal.code == 66, f"code {refusal.code}")
+        check("and the refusal names the path whose copy it would have "
+              "deleted, which is not the path the caller named",
+              EDIT_RELATIVE in str(refusal)
+              and "removes" in str(refusal), str(refusal)[:200])
+        check("and shows the change that deletion would have discarded",
+              "+Another seat measured this on 2026-09-21." in str(refusal),
+              str(refusal)[:300])
+        check("and tells the caller to bring the checkout up to date and "
+              "fold the change into the file they moved",
+              "merge or rebase onto origin/main" in str(refusal)
+              and "Fold that change into the file you moved" in str(refusal),
+              str(refusal)[:400])
+        check("and does not promise the marker can pass it either",
+              tool.RECONSIDER_LINE not in str(refusal), str(refusal)[:400])
+    check("and the deletion it refuses is never staged: no worktree, no "
+          "removal, no push, no pull request",
+          not moved_conflict.ran("git worktree add")
+          and not moved_conflict.ran("git rm")
+          and not moved_conflict.ran("git push")
+          and not moved_conflict.ran("gh pr create")
+          and not moved_conflict.ran("gh issue edit"),
+          str(moved_conflict.commands()))
 
     # --- Resuming after the pull request merged --------------------------
     # The author's own landed change is a difference between the merge base
