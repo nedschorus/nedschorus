@@ -166,6 +166,41 @@ BRANCH_STATE_INSTRUCTION = (
     "— never extend a head you've already announced."
 )
 
+# The pointer at the script that composed the prompt, carried by every set of
+# initial agent instructions build_ignition_prompt writes. The wording is the
+# user's, ruled 2026-08-30 on a rendered mock of the prompt, in his second
+# round. It lived inline in build_ignition_prompt's `lines` list until it was
+# hoisted here: an equality pin can only hold a constant, and text composed at
+# a call site lands outside every pin the test file has.
+SUPERVISOR_POINTER_SENTENCE = (
+    "This session was launched by scripts/handoff-supervisor.py, which "
+    "watches this seat and composed this prompt — read it if you need to "
+    "investigate the handoff mechanism."
+)
+
+# The orphaned-subagent duty, narrowed 2026-08-29, softened to "may need" in
+# the user's second round (ruled 2026-08-30 on the same rendered mock): the
+# writer records only subagents still working at the reincarnation, so every
+# entry here is one the reincarnation killed mid-job. Re-commission rather than
+# resume, because a dead subagent cannot be resumed by id across a
+# reincarnation: probed 2026-08-29, SendMessage to a predecessor's subagent id
+# returns "No transcript found" (the resolver is session-scoped) even though
+# the transcript survives on disk at
+# <predecessor-session-dir>/subagents/agent-<id>.jsonl.
+# `agent-<id>.jsonl` stays a literal pattern: each entry names its own id, so
+# the successor substitutes per entry.
+#
+# A template rather than a plain string, because the sentence takes three
+# insertions the caller computes — the count, the joined roster, and the
+# directory the transcripts survive in. Hoisted here for the same reason as
+# SUPERVISOR_POINTER_SENTENCE: only a constant can be pinned by equality.
+ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
+    "The session you are replacing had {subagent_count} subagent(s) still working when it ended: "
+    "{joined_roster}. You may need to re-commission similar agents. If you need more "
+    "context, the dead agents' full transcripts are at "
+    "{transcript_directory}/subagents/agent-<id>.jsonl."
+)
+
 
 def parse_handoff_file(handoff_path: Path) -> dict:
     """Read the agent-written handoff into a dict of its `key: value` lines.
@@ -803,8 +838,9 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     rule (see written_at_wariness_sentence) — the open-walks duty, the
     pointer at this script, the branch-state line, the malformed-block note
     when the verbatim block was damaged, and the next step — plus, only when
-    the handoff recorded subagents still working at the reincarnation, the roster
-    sentence below. Every boilerplate sentence is the user's, ruled
+    the handoff recorded subagents still working at the reincarnation, the
+    roster sentence (ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE). Every
+    boilerplate sentence is the user's, ruled
     2026-08-30 on a rendered mock of the prompt. Queue status does not
     ride it (the user expired that 2026-08-12 ruling on 2026-08-29); the
     supervisor prints it to its own console instead. The task-count check
@@ -836,35 +872,23 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
         "This handoff should list what items or walks are open. Display them "
         "to the user, and continue them when you get a chance.",
-        "This session was launched by scripts/handoff-supervisor.py, which "
-        "watches this seat and composed this prompt — read it if you need to "
-        "investigate the handoff mechanism.",
+        SUPERVISOR_POINTER_SENTENCE,
     ]
     if branch_sync_report:
         lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)
     roster = spawned_subagent_roster_from(handoff_fields)
     if roster:
-        # The orphaned-subagent duty, narrowed 2026-08-29, softened to "may
-        # need" in the user's second round (ruled 2026-08-30): the writer
-        # records only subagents still working at the reincarnation, so every entry
-        # here is one the reincarnation killed mid-job. Re-commission rather than
-        # resume, because a dead subagent cannot be resumed by id across a
-        # reincarnation: probed 2026-08-29, SendMessage to a predecessor's subagent
-        # id returns "No transcript found" (the resolver is session-scoped)
-        # even though the transcript survives on disk at
-        # <predecessor-session-dir>/subagents/agent-<id>.jsonl.
-        # `agent-<id>.jsonl` stays a literal pattern: each entry names its
-        # own id, so the successor substitutes per entry.
+        # The sentence and the reasoning behind its wording live with
+        # ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE; only the three
+        # insertions are computed here.
         transcript_directory = (predecessor_session_directory
                                 if predecessor_session_directory
                                 else "<predecessor-session-dir>")
-        lines.append(
-            f"The session you are replacing had {len(roster)} subagent(s) still working when it ended: "
-            + "; ".join(roster)
-            + ". You may need to re-commission similar agents. If you need more "
-            "context, the dead agents' full transcripts are at "
-            f"{transcript_directory}/subagents/agent-<id>.jsonl."
-        )
+        lines.append(ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE.format(
+            subagent_count=len(roster),
+            joined_roster="; ".join(roster),
+            transcript_directory=transcript_directory,
+        ))
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
         preamble += (" NOTE: this handoff's verbatim next-step block was unterminated, so what "
