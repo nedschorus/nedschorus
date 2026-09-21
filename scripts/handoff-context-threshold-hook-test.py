@@ -4,19 +4,46 @@
 The hook reads the session's used-context share from its transcript, so every
 case drives it with a transcript file, exactly as the harness does.
 
+Every case runs under a HOME of this suite's own, so the markers the hook
+writes land in a directory this suite made and never in the real
+~/.claude/handoffs. HOME is what decides that directory, because the hook
+computes HANDOFF_DIRECTORY from Path.home() at import -- so the redirect
+happens before the hook module is loaded below, and it reaches the subprocess
+cases too, which inherit this environment through run_hook. The sibling suite
+post-compaction-session-continues-hook-test.py is the pattern followed here.
+
+MEASURED 2026-09-21, before the redirect existed: two runs of this suite at
+once both went red, on 3 attempts of 3, with 3 to 9 cases failing and a
+different set each time. The probe session ids below are fixed strings, so
+concurrent runs shared one namespace in one real directory and each deleted
+the other's markers out from under the other's assertions. The reviewer of
+"systemd unit installer: --remove reports a failed disable or reload and exits
+1" had already recorded this suite creating the real ~/.claude/handoffs on a
+fresh machine; that is the same defect seen from its quiet side.
+
 Run: python3 scripts/handoff-context-threshold-hook-test.py
 """
 
+import atexit
 import contextlib
 import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# The suite's own HOME; the module docstring says why. LAUNCH_HOME is captured
+# before the redirect, because the first case pins that the hook's directory is
+# this suite's own and not the one the suite was started under.
+LAUNCH_HOME = Path.home()
+SUITE_HOME = Path(tempfile.mkdtemp(prefix="handoff-threshold-hook-test-home-"))
+os.environ["HOME"] = str(SUITE_HOME)
+atexit.register(lambda: shutil.rmtree(SUITE_HOME, ignore_errors=True))
 
 HOOK_SCRIPT = Path(__file__).with_name("handoff-context-threshold-hook.py")
 
@@ -253,6 +280,18 @@ def bash_stdout_record_mentioning_the_marker():
 
 
 with tempfile.TemporaryDirectory() as workspace:
+    # --- The suite's own handoff directory -------------------------------
+    # Fails if the redirect above is removed: without it HANDOFF_DIRECTORY is
+    # the real ~/.claude/handoffs, which is under the launch HOME. The
+    # subprocess half needs no case of its own -- every marker case below
+    # asserts a path under SUITE_HOME, so a subprocess that did not inherit
+    # this environment would fail those instead.
+    check("the hook's handoff directory is this suite's own, not the real one",
+          SUITE_HOME in hook.HANDOFF_DIRECTORY.parents
+          and LAUNCH_HOME not in hook.HANDOFF_DIRECTORY.parents,
+          f"HANDOFF_DIRECTORY={hook.HANDOFF_DIRECTORY}, "
+          f"suite HOME={SUITE_HOME}, launch HOME={LAUNCH_HOME}")
+
     # --- The window table -------------------------------------------------
     check("window lookup knows the million-token models",
           hook.context_window_for("claude-fable-5") == 1_000_000
