@@ -165,6 +165,53 @@ def placeholder_body(key: str) -> str:
             "file and it will continue from where it stopped.")
 
 
+ISSUE_FRONTMATTER_KEY = "issue"
+
+
+def issue_frontmatter_line(repo: str, number: int, title: str) -> str:
+    """The issue this file is paired with, written the way CLAUDE.md says to
+    cite one: its type word — the key — then its title, as a link. Never a
+    bare number."""
+    return (f"{ISSUE_FRONTMATTER_KEY}: [{title}]"
+            f"(https://github.com/{repo}/issues/{number})")
+
+
+def with_issue_frontmatter(text: str, repo: str, number: int,
+                           title: str) -> str:
+    """Set the file's `issue:` frontmatter line, adding a frontmatter block
+    if it has none.
+
+    The author writes the file before its issue exists, so the file cannot
+    name its issue at the moment it is written and nothing later fills it in;
+    measured 2026-09-20, every dated frontmatter field in the corpus was
+    older than its file's last change, because a field a person must remember
+    to update is a field that drifts. So this one is derived and rewritten on
+    every run rather than authored once, which is the same reason the body is
+    a computed list of links.
+
+    Only this key is touched. `status:`, `form:` and the rest say things git
+    and GitHub cannot, and they stay exactly as their author wrote them."""
+    line = issue_frontmatter_line(repo, number, title)
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return "---\n" + line + "\n---\n\n" + text
+    closing = None
+    for position in range(1, len(lines)):
+        if lines[position].strip() == "---":
+            closing = position
+            break
+    if closing is None:
+        # An unterminated block: prepend rather than guess where it ends.
+        return "---\n" + line + "\n---\n\n" + text
+    for position in range(1, closing):
+        if lines[position].startswith(f"{ISSUE_FRONTMATTER_KEY}:"):
+            lines[position] = line
+            break
+    else:
+        lines.insert(1, line)
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
 def links_body(repo: str, paths) -> str:
     """The body under link-only: one link per paired file, in filename order,
     and nothing else. Derived at every write, so nobody curates it and it
@@ -304,12 +351,25 @@ def land_file(repo: str, number: int, title: str, source: Path,
                 str(worktree), "origin/main"], cwd=str(repository_root))
         target = worktree / destination
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        target.write_text(
+            with_issue_frontmatter(source.read_text(encoding="utf-8"), repo,
+                                   number, title),
+            encoding="utf-8")
         runner(["git", "add", destination], cwd=str(worktree))
+        # A move, not a copy. When the source is already tracked on main —
+        # a queue file, typically — leaving it behind would put the same
+        # document at two paths the moment this merges, which is the
+        # duplication link-only exists to prevent.
+        tracked = source_path_on_main(source, repository_root, runner)
+        if tracked and tracked != destination:
+            runner(["git", "rm", "--quiet", tracked], cwd=str(worktree))
+            report(f"removing {tracked}: its content moves to {destination}")
         message = (f"GHI-MD for issue {number}: {title}\n\n"
                    f"Filed by scripts/ghi-issue-write.py from {source.name}. "
                    "The issue's body becomes the links to this file and its "
-                   "siblings once this lands.\n")
+                   "siblings once this lands. The file's `issue:` "
+                   "frontmatter line is written by the tool, not by its "
+                   "author, who had no issue number when they wrote it.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
         runner(["git", "push", "--quiet", "-u", "origin", branch],
                cwd=str(worktree))
@@ -329,6 +389,18 @@ def land_file(repo: str, number: int, title: str, source: Path,
                cwd=str(repository_root), check=False)
         shutil.rmtree(worktree_parent, ignore_errors=True)
     return destination
+
+
+def source_path_on_main(source: Path, repository_root: Path, runner):
+    """The source's path inside the repository, if origin/main tracks it.
+    Returns None for a file that is new, or outside the checkout."""
+    try:
+        relative = source.resolve().relative_to(repository_root.resolve())
+    except ValueError:
+        return None
+    listed = runner(["git", "ls-tree", "-r", "--name-only", "origin/main",
+                     str(relative)], cwd=str(repository_root), check=False)
+    return str(relative) if (listed.stdout or "").strip() else None
 
 
 def paired_paths(number: int, repository_root: Path, runner):

@@ -178,6 +178,100 @@ def run_cases(scratch: Path):
     check("the worktree is removed even though the run succeeded",
           recorder.ran("git worktree remove"), str(recorder.commands()))
 
+    # --- The issue line the tool writes into the file's frontmatter ------
+    # The author writes the file before the issue exists, so the file cannot
+    # name its issue when written. The tool derives the line instead, which
+    # is why none of these cases asks an author to have got it right.
+
+    line = tool.issue_frontmatter_line(REPO, 570, "A title")
+    check("the issue line cites by title and link, never a bare number",
+          line == "issue: [A title](https://github.com/nedschorus/nedschorus/issues/570)",
+          repr(line))
+
+    for case_name, source_text, expectation in [
+            ("a file with frontmatter gains the line and keeps its own keys",
+             "---\nstatus: draft\n---\n\n# T\n",
+             lambda out: line in out and "status: draft" in out),
+            ("a file with no frontmatter gains a block",
+             "# T\n\nBody.\n",
+             lambda out: out.startswith("---\n" + line) and "# T" in out),
+            ("an existing issue line is replaced, not duplicated",
+             "---\nissue: [old](https://example.invalid/1)\nstatus: d\n---\n\n# T\n",
+             lambda out: out.count("issue:") == 1 and line in out
+             and "example.invalid" not in out),
+            ("an unterminated block is not mistaken for frontmatter",
+             "---\nstatus: draft\n\n# T\n",
+             lambda out: out.startswith("---\n" + line) and "# T" in out)]:
+        produced = tool.with_issue_frontmatter(source_text, REPO, 570, "A title")
+        check(case_name, expectation(produced), repr(produced[:120]))
+        check(f"  and running it again changes nothing ({case_name[:28]})",
+              tool.with_issue_frontmatter(produced, REPO, 570, "A title")
+              == produced)
+
+    class Reader(Recorder):
+        """Reads the file the tool staged, at the moment it stages it: the
+        throwaway worktree is gone by the time the run returns."""
+
+        def __init__(self, answers, worktree_holder):
+            super().__init__(answers)
+            self.staged = None
+            self.holder = worktree_holder
+
+        def __call__(self, arguments, timeout=None, cwd=None, check=True):
+            if arguments[:2] == ["git", "add"] and cwd:
+                candidate = Path(cwd) / arguments[2]
+                if candidate.is_file():
+                    self.staged = candidate.read_text(encoding="utf-8")
+            return super().__call__(arguments, timeout, cwd, check)
+
+    source = written(scratch, "for-frontmatter.md")
+    reader = Reader({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git ls-remote": Completed(""),
+        "git ls-tree -r --name-only origin/main docs/issues/": Completed(
+            "docs/issues/570-a.md\n"),
+        "gh pr create": Completed("pr\n"),
+    }, None)
+    tool.create(source, REPO, scratch, reader, quiet)
+    check("the file that lands carries the issue line the tool derived",
+          reader.staged is not None
+          and tool.issue_frontmatter_line(REPO, 570,
+                                          "A statusline that drops its branch name")
+          in reader.staged,
+          repr((reader.staged or "")[:140]))
+    check("and the author's own text is untouched beneath it",
+          reader.staged is not None and "status: draft" in reader.staged
+          and "Body." in reader.staged, repr((reader.staged or "")[:140]))
+
+    # --- Step 4 is a move, not a copy -------------------------------------
+
+    tracked = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git ls-remote": Completed(""),
+        "git ls-tree -r --name-only origin/main docs/issues/": Completed(""),
+        "git ls-tree": Completed("for-frontmatter.md\n"),
+        "gh pr create": Completed("pr\n"),
+    })
+    tool.create(source, REPO, scratch, tracked, quiet)
+    check("a source already on main is removed in the same commit",
+          tracked.ran("git rm"), str(tracked.commands()))
+
+    untracked = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git ls-remote": Completed(""),
+        "git ls-tree": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    tool.create(source, REPO, scratch, untracked, quiet)
+    check("a source that is not on main is not removed",
+          not untracked.ran("git rm"), str(untracked.commands()))
+
     # --- Resuming: the property the design promises -----------------------
 
     key = tool.pairing_key(FILE_TEXT)
