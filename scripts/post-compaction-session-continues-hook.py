@@ -60,6 +60,14 @@ imports that rather than carrying a second classifier that would drift from
 it. Dropping tool results is also what makes the tail scrubbed: a token value
 could only appear in a result that echoed one.
 
+THE TAIL HAS A CEILING AS WELL AS A FLOOR, and the ceiling belongs to this
+hook alone. The extractor's floor is right for the handoff FILE, which a
+person reads on disk and can skim; it is wrong for an injection into a context
+window, which is the one resource a compaction just spent itself to free.
+MAXIMUM_INJECTED_TAIL_WORDS below carries the measurement and the arithmetic.
+scripts/handoff-extract-conversation.py is deliberately left alone: its other
+callers write files, not context.
+
 The injected text is instruction and nothing else (user-ruled 2026-09-18). Its
 reasons are here, where maintainers read them.
 """
@@ -118,6 +126,25 @@ CONTINUE_INSTRUCTION_LINES = (
 )
 
 TAIL_HEADING = "Recovered tail of this session's own dialog, oldest first:"
+
+# The ceiling on the dialog this hook injects, in words. The extractor's floor
+# underneath it is MINIMUM_DIALOG_WORDS = 1000: it selects a tail clearing 1000
+# words and then walks back to the nearest earlier USER turn, and NOTHING
+# bounds that second walk. MEASURED at the commit this one sits on, HOME
+# redirected to a temporary directory: a transcript of one user prompt followed
+# by 300 agent turns injected 40,062 words, 271 KiB -- roughly 50,000 tokens
+# handed straight back to a session that had just compacted to free context.
+# That shape is not exotic, it is the shape that CAUSES a compaction: a long
+# agentic stretch with no user turn in it. The same transcript with user turns
+# interleaved injected 1,088 words, which is the floor rule working as intended.
+#
+# 3000 is three times the floor: a tail always clears its 1000 words and keeps
+# 2000 more as headroom for the walk back to a user prompt, while the whole
+# injection stays near 4,000 tokens -- a fiftieth of a 200k window, and a
+# thirteenth of what the measurement above hands back. The floor's own note
+# records which way the asymmetry runs: a starved session re-reads the
+# transcript it is pointed at once, a fat one taxes every compaction.
+MAXIMUM_INJECTED_TAIL_WORDS = 3000
 
 
 def hook_payload_from_stdin() -> dict:
@@ -189,9 +216,47 @@ def recovered_tail(transcript_path_text: str) -> str:
         return ""
     try:
         selected, _start_index = extract.select_tail_clearing_floor(turns)
+        selected = turns_within_injected_tail_ceiling(selected)
     except Exception:
         return ""
     return render_turns(selected)
+
+
+def turn_words(turn) -> int:
+    """Return one turn's word count, counted the way the extractor counts."""
+    return len((turn.get("text") or "").split())
+
+
+def turns_within_injected_tail_ceiling(
+        turns, maximum_words: int = MAXIMUM_INJECTED_TAIL_WORDS):
+    """Return the widest contiguous run of whole turns that fits the ceiling.
+
+    The run ends at the newest turn that fits the ceiling on its own, and is
+    filled backwards -- newest first, because the work a continuing session
+    resumes is the work it did last. Whole turns only: a turn cut in half
+    would hand the session half a sentence and no way to tell it was cut.
+
+    A turn wider than the whole ceiling can never fit, so the fill steps over
+    it and takes the dialog behind it, which is what the record-aware tail
+    exists to do -- stopping there would leave a session whose last act was
+    writing a long document inline with no tail at all, the very answer a
+    byte tail would have given. A run of them leaves the tail empty, and an
+    empty tail is a case the injected instructions already name.
+    """
+    end = len(turns)
+    while end > 0 and turn_words(turns[end - 1]) > maximum_words:
+        end -= 1
+
+    start = end
+    remaining = maximum_words
+    while start > 0:
+        words = turn_words(turns[start - 1])
+        if words > remaining:
+            break
+        remaining -= words
+        start -= 1
+
+    return turns[start:end]
 
 
 def render_turns(turns) -> str:

@@ -234,6 +234,120 @@ with tempfile.TemporaryDirectory() as workspace:
           result.returncode == 0 and context is not None
           and "measurable dialog words" in context,
           f"code {result.returncode}, stdout {result.stdout[:200]}")
+    check("the oversized final record itself is not injected",
+          context is not None and "TOOLDUMP" not in context,
+          "a record wider than the whole ceiling was injected anyway")
+
+    # ---- the ceiling on the injected tail ---------------------------------
+
+    # The floor the extractor clears is 1000 words, and the walk back to the
+    # nearest earlier USER turn that follows it is unbounded: a transcript
+    # with one prompt and a long agentic stretch behind it has no earlier user
+    # turn to stop at, so the tail is the whole stretch. Measured at the
+    # commit this one sits on: 40,062 words, 271 KiB, injected into a session
+    # that had just compacted to free context. That shape is the one that
+    # CAUSES a compaction, so the hook's worst case was its primary case.
+
+    def dialog_words_of(tail_text):
+        """Count a rendered tail's dialog words, not its per-turn headings.
+
+        render_turns writes "## User" or "## Agent" above each turn; those two
+        words per turn are rendering, not dialog, and the ceiling does not
+        count them. No transcript built here puts that string in its text, so
+        subtracting them is exact.
+        """
+        headings = tail_text.count("## User") + tail_text.count("## Agent")
+        return len(tail_text.split()) - 2 * headings
+
+    # Both numbers this section measures against come from the extractor
+    # itself -- its floor here, its own selection further down -- so neither
+    # is a remembered constant that can drift when the extractor changes.
+    extractor = hook.sibling_module(hook.EXTRACT_SCRIPT, "handoff_extract_conversation")
+
+    def tail_of(context_text):
+        """Return the rendered tail out of an injected context, or ""."""
+        if context_text is None or hook.TAIL_HEADING not in context_text:
+            return ""
+        return context_text.split(hook.TAIL_HEADING, 1)[1].strip()
+
+    agentic_stretch = workspace / "one-prompt-then-a-long-stretch.jsonl"
+    agentic_lines = [user_record(
+        "the one prompt that started the run " + "planning words " * 40)]
+    for turn in range(300):
+        agentic_lines.append(assistant_record(
+            f"agent turn {turn} " + "tool driven narration words " * 32))
+    agentic_stretch.write_text("\n".join(agentic_lines) + "\n", encoding="utf-8")
+
+    result = run_hook({"session_id": "s-stretch", "source": "compact",
+                       "transcript_path": str(agentic_stretch)}, home)
+    context = injected_context_of(result)
+    stretch_tail = tail_of(context)
+    check("one prompt and a long agentic stretch inject a tail under the ceiling",
+          result.returncode == 0 and stretch_tail
+          and dialog_words_of(stretch_tail) <= hook.MAXIMUM_INJECTED_TAIL_WORDS,
+          f"code {result.returncode}, tail words {dialog_words_of(stretch_tail)}"
+          f" against a ceiling of {hook.MAXIMUM_INJECTED_TAIL_WORDS}")
+    check("the trimmed tail keeps the most recent turn",
+          "agent turn 299 " in stretch_tail,
+          "the newest turn was trimmed away")
+    check("the trimmed tail drops the oldest turns",
+          "agent turn 0 " not in stretch_tail
+          and "the one prompt that started the run" not in stretch_tail,
+          "the oldest turns survived a tail that should have been trimmed")
+    check("the trimmed tail still clears the extractor's word floor",
+          dialog_words_of(stretch_tail) >= extractor.MINIMUM_DIALOG_WORDS,
+          f"tail words {dialog_words_of(stretch_tail)}, under the"
+          f" {extractor.MINIMUM_DIALOG_WORDS}-word floor")
+
+    # The ceiling must do nothing at all to a selection that already fits: the
+    # floor rule is correct, and this only bounds it. The comparison is against
+    # the extractor's own selection rather than a remembered number, so it
+    # cannot drift when the floor changes.
+    untrimmed_turns, _skipped = extractor.read_dialog_turns(ordinary)
+    untrimmed_selection, _index = extractor.select_tail_clearing_floor(untrimmed_turns)
+    result = run_hook({"session_id": "s-under-ceiling", "source": "compact",
+                       "transcript_path": str(ordinary)}, home)
+    check("a floor selection already under the ceiling is injected untrimmed",
+          tail_of(injected_context_of(result))
+          == hook.render_turns(untrimmed_selection).strip(),
+          "the ceiling trimmed a selection that already fitted")
+
+    # ---- the ceiling's own edges, called directly -------------------------
+
+    def turn_of(name, words, voice="assistant"):
+        return {"voice": voice, "text": f"{name} " + "word " * (words - 1)}
+
+    trailing_dump = [turn_of("older", 30), turn_of("newer", 30),
+                     turn_of("dump", 500)]
+    check("the ceiling steps over a final turn wider than the whole ceiling",
+          hook.turns_within_injected_tail_ceiling(trailing_dump, 100)
+          == trailing_dump[0:2],
+          "a turn that can never fit cost the dialog behind it")
+
+    middle_dump = [turn_of("oldest", 10), turn_of("dump", 500),
+                   turn_of("newer", 30), turn_of("newest", 30)]
+    check("an oversized turn earlier in the run stops the fill, leaving no gap",
+          hook.turns_within_injected_tail_ceiling(middle_dump, 100)
+          == middle_dump[2:4],
+          "the fill jumped an oversized turn and left a gap in the dialog")
+
+    check("a run of nothing but oversized turns leaves no tail at all",
+          hook.turns_within_injected_tail_ceiling(
+              [turn_of("dump-one", 500), turn_of("dump-two", 500)], 100) == [],
+          "an oversized turn was injected because it was the only one")
+
+    boundary = [turn_of("too-far-back", 60), turn_of("fits", 50),
+                turn_of("newest", 40)]
+    check("the fill stops at the ceiling rather than crossing it",
+          hook.turns_within_injected_tail_ceiling(boundary, 100) == boundary[1:3],
+          "the fill crossed the ceiling to take one more turn")
+
+    under_ceiling = [turn_of("first", 10), turn_of("second", 20)]
+    kept = hook.turns_within_injected_tail_ceiling(under_ceiling, 100)
+    check("a run already under the ceiling is returned whole and untruncated",
+          len(kept) == len(under_ceiling)
+          and all(kept[i] is under_ceiling[i] for i in range(len(kept))),
+          f"{len(kept)} of {len(under_ceiling)} turns returned, or a turn was rebuilt")
 
     # ---- the emitted shape -----------------------------------------------
 
@@ -323,6 +437,17 @@ with tempfile.TemporaryDirectory() as workspace:
     # the same reason.
     def raise_instead(*_arguments, **_keywords):
         raise RuntimeError("a collaborator failed in a way nothing anticipated")
+
+    original_ceiling = hook.turns_within_injected_tail_ceiling
+    try:
+        hook.turns_within_injected_tail_ceiling = raise_instead
+        tail = hook.recovered_tail(str(ordinary))
+        check("a ceiling that fails costs the tail, not the instruction",
+              tail == "" and hook.TAIL_HEADING not in hook.injected_context(tail)
+              and hook.CONTINUE_INSTRUCTION_LINES[0] in hook.injected_context(tail),
+              f"the recovered tail was {tail[:120]!r}")
+    finally:
+        hook.turns_within_injected_tail_ceiling = original_ceiling
 
     original_injected_context = hook.injected_context
     original_payload_reader = hook.hook_payload_from_stdin
