@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for scripts/ghi-issue-write.py, the GHI write tool's create verb.
+"""Tests for scripts/ghi-issue-write.py, the GHI write tool's create and
+edit verbs.
 
 Run: python3 scripts/ghi-issue-write-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -27,6 +28,7 @@ request, and a destination holding a file that is not this one.
 
 import contextlib
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -511,10 +513,382 @@ def run_cases(scratch: Path):
               str(nothing_written.commands()))
 
 
+# --- The edit verb ------------------------------------------------------
+#
+# Same fake-subprocess method as the create cases: each case asserts what
+# the tool WOULD run. Edit adds two commands create never makes — `git
+# merge-base` and `git show`, which are how the conflict check reads the
+# version the author's checkout started from and the version main holds —
+# so several cases are about which of those ran, and in which order.
+
+EDIT_NAME = "570-a-statusline-that-drops-its-branch-name.md"
+EDIT_RELATIVE = f"docs/issues/{EDIT_NAME}"
+EDIT_TITLE = "A statusline that drops its branch name"
+BASE_REVISION = "basesha1234"
+
+
+def paired(scratch: Path, name=EDIT_NAME, text=FILE_TEXT,
+           directory="docs/issues"):
+    """A file where a paired file lives, which is where edit insists on
+    finding one."""
+    holder = scratch / directory
+    holder.mkdir(parents=True, exist_ok=True)
+    target = holder / name
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+def staged_form(number=570, title=EDIT_TITLE, text=FILE_TEXT):
+    """What the tool lands: the author's file with the issue line it
+    derives. Every comparison the edit verb makes is against this, not
+    against the author's text, or a file whose only difference was the line
+    the tool itself writes would land over and over."""
+    return tool.with_issue_frontmatter(text, REPO, number, title)
+
+
+def issue_json(title, body):
+    return Completed(json.dumps({"title": title, "body": body}))
+
+
+def ran_with(recorder, *fragments):
+    return any(all(fragment in " ".join(call) for fragment in fragments)
+               for call in recorder.calls)
+
+
+def run_edit_cases(scratch: Path):
+    ask = scratch / "scripts" / "ghi-info-ask.py"
+    ask.parent.mkdir(parents=True, exist_ok=True)
+    ask.write_text("# stands in for the real one; never executed\n")
+
+    staged = staged_form()
+    one_link = tool.links_body(REPO, [EDIT_RELATIVE])
+
+    # --- Where a paired file may be, and what makes it paired ------------
+
+    check("a paired file under docs/issues/ is where it belongs",
+          tool.writable_relative_path(EDIT_RELATIVE))
+    check("so is one under its system's own directory",
+          tool.writable_relative_path(
+              "nc-systems/main-gatekeeper/570-contract.md"))
+    check("a file loose in the system tree is not",
+          not tool.writable_relative_path("nc-systems/570-contract.md"))
+    check("and neither is one somewhere else entirely",
+          not tool.writable_relative_path("docs/drafts/570-contract.md"))
+
+    text, title, number, relative = tool.validate_edit(
+        paired(scratch), scratch)
+    check("the issue number comes from the file's name",
+          number == 570 and relative == EDIT_RELATIVE and title == EDIT_TITLE,
+          f"{number} {relative} {title!r}")
+
+    check("a paired file in its system's directory validates too",
+          tool.validate_edit(
+              paired(scratch, name="570-contract.md",
+                     directory="nc-systems/statusline"), scratch)[2] == 570)
+
+    for case_name, target in [
+            ("a file not named for an issue is refused",
+             paired(scratch, name="notes.md")),
+            ("a paired file outside the writable paths is refused",
+             paired(scratch, directory="docs/drafts")),
+            ("a paired file with no heading is refused",
+             paired(scratch, name="571-no-heading.md", text="no heading\n")),
+            ("a missing file is refused", scratch / "docs" / "absent.md")]:
+        try:
+            tool.validate_edit(target, scratch)
+            check(case_name, False, "it was accepted")
+        except tool.Refused as refusal:
+            check(case_name, refusal.code == 64, f"code {refusal.code}")
+
+    # --- Which bodies this tool may overwrite ----------------------------
+
+    check("a link list is a body the tool wrote", tool.is_derived_body(one_link))
+    check("so is the placeholder create leaves between its steps",
+          tool.is_derived_body(tool.placeholder_body(tool.pairing_key(FILE_TEXT))))
+    check("an empty body is not prose to protect", tool.is_derived_body(""))
+    check("prose is not a body the tool wrote",
+          not tool.is_derived_body("This issue is about the statusline.\n"))
+    check("and neither is a link list with a sentence added to it",
+          not tool.is_derived_body(one_link + "\nAlso see the design.\n"))
+    check("a body is compared without the newline gh adds to it",
+          tool.normalized("a\r\nb\n\n") == "a\nb")
+
+    # --- The body reaches files that moved into their system's directory -
+
+    listing = Recorder({"git ls-tree": Completed(
+        "docs/issues/570-design.md\n"
+        "nc-systems/statusline/570-contract.md\n"
+        "docs/issues/5700-unrelated.md\n"
+        "docs/issues/571-another.md\n")})
+    check("the file set spans docs/issues/ and the system directories",
+          tool.paired_paths(570, scratch, listing)
+          == ["docs/issues/570-design.md",
+              "nc-systems/statusline/570-contract.md"],
+          str(tool.paired_paths(570, scratch, listing)))
+    check("and git is asked for both of them, not just the one",
+          ran_with(listing, "git ls-tree", "docs/issues/", "nc-systems/"),
+          str(listing.calls))
+
+    # --- The happy path: the file differs from main, so it lands ---------
+
+    source = paired(scratch)
+    landing = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    edited_number, finished = tool.edit(source, REPO, scratch, landing, quiet)
+    check("the edit lands the file on a pull request of its own",
+          edited_number == 570 and landing.ran("git worktree add")
+          and landing.ran("gh pr create"), str(landing.commands()))
+    check("an edit never files an issue",
+          not landing.ran("gh issue create"), str(landing.commands()))
+    check("the branch is named for this edit's content, not for the issue "
+          "alone",
+          ran_with(landing, "gh pr create", f"ghi-570-edit-{tool.pairing_key(staged)}"),
+          str(landing.commands()))
+    check("main is fetched before anything is compared against it",
+          landing.commands().index("git fetch origin")
+          < landing.commands().index(f"git show origin/main:{EDIT_RELATIVE}"),
+          str(landing.commands()))
+    check("the run is unfinished while its pull request waits", not finished)
+    check("a heading the edit did change renames the issue",
+          ran_with(landing, "gh issue edit", "--title", EDIT_TITLE),
+          str(landing.commands()))
+    check("the worktree is removed even though the run succeeded",
+          landing.ran("git worktree remove"), str(landing.commands()))
+    check("the question to ghi-info says which issue to leave out",
+          ran_with(landing, "ghi-info-ask.py", "edit of issue #570",
+                   "leave that issue out"), "the ask carried no exclusion")
+
+    class Reader(Recorder):
+        """Reads the file the tool staged at the moment it stages it: the
+        throwaway worktree is gone by the time the run returns."""
+
+        def __init__(self, answers):
+            super().__init__(answers)
+            self.staged = None
+
+        def __call__(self, arguments, timeout=None, cwd=None, check=True):
+            if arguments[:2] == ["git", "add"] and cwd:
+                candidate = Path(cwd) / arguments[2]
+                if candidate.is_file():
+                    self.staged = candidate.read_text(encoding="utf-8")
+            return super().__call__(arguments, timeout, cwd, check)
+
+    reader = Reader({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(source, REPO, scratch, reader, quiet)
+    check("the file that lands is the author's, at its own path, carrying "
+          "the issue line",
+          reader.staged == staged, repr((reader.staged or "")[:140]))
+
+    # --- The conflict the 2026-09-08 ruling is about ---------------------
+
+    conflicted = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Theirs\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git diff": Completed("@@\n-# Older\n+# Theirs\n"),
+        "git ls-remote": Completed(""),
+    })
+    try:
+        tool.edit(source, REPO, scratch, conflicted, quiet)
+        check("a file that moved on main refuses the edit", False,
+              "it proceeded")
+    except tool.Refused as refusal:
+        check("a file that moved on main refuses the edit",
+              refusal.code == 66, f"code {refusal.code}")
+        check("and the refusal shows the change it would have discarded",
+              "+# Theirs" in str(refusal), str(refusal)[:200])
+        check("and tells the caller to bring the checkout up to date, "
+              "which is what actually clears it",
+              "merge or rebase onto origin/main" in str(refusal),
+              str(refusal)[:300])
+        check("and does not promise the marker can pass it, which it "
+              "cannot — adjudication consumes the marker first",
+              tool.RECONSIDER_LINE not in str(refusal), str(refusal)[:300])
+    check("a refused edit writes nothing at all",
+          not conflicted.ran("git worktree add")
+          and not conflicted.ran("gh pr create")
+          and not conflicted.ran("gh issue edit"),
+          str(conflicted.commands()))
+
+    # --- Resuming after the pull request merged --------------------------
+    # The author's own landed change is a difference between the merge base
+    # and main, so a conflict check made first would refuse them their own
+    # edit. Main's copy is compared to theirs before any of that.
+
+    resumed = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "gh issue view": issue_json("Stale title", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    done, wrongly_refused = False, None
+    try:
+        _, done = tool.edit(source, REPO, scratch, resumed, quiet)
+    except tool.Refused as refusal:
+        wrongly_refused = refusal
+    check("a rerun after the merge is not refused as a conflict with itself",
+          wrongly_refused is None and done
+          and not resumed.ran("git merge-base"),
+          f"refused: {str(wrongly_refused)[:120]}" if wrongly_refused
+          else str(resumed.commands()))
+    check("and it opens no second pull request",
+          not resumed.ran("git worktree add")
+          and not resumed.ran("gh pr create"), str(resumed.commands()))
+    check("a heading the edit did not change leaves the title alone, "
+          "however far the title is from it",
+          not ran_with(resumed, "gh issue edit", "--title"),
+          str(resumed.commands()))
+    check("and the rerun does not spend a model call asking ghi-info again",
+          not resumed.ran(ASK), str(resumed.commands()))
+
+    # --- The pull request is already open --------------------------------
+
+    waiting = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    _, still_waiting = tool.edit(source, REPO, scratch, waiting, quiet)
+    check("a branch already on the remote is not pushed a second time",
+          not waiting.ran("git worktree add")
+          and not waiting.ran("gh pr create"), str(waiting.commands()))
+    check("and the run says it is not finished", not still_waiting)
+
+    # --- The body is rewritten only when the file set changed ------------
+
+    unchanged = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(source, REPO, scratch, unchanged, quiet)
+    check("a body that already lists the files is left alone",
+          not ran_with(unchanged, "gh issue edit", "--body"),
+          str(unchanged.commands()))
+    check("and so is a title that already matches",
+          not ran_with(unchanged, "gh issue edit", "--title"),
+          str(unchanged.commands()))
+
+    added = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + "\nnc-systems/statusline/570-contract.md\n"),
+    })
+    tool.edit(source, REPO, scratch, added, quiet)
+    check("a file added to the issue is relinked into the body",
+          ran_with(added, "gh issue edit", "--body", "570-contract.md",
+                   EDIT_NAME), str(added.commands()))
+
+    several = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("An issue with several documents",
+                                    one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+    })
+    tool.edit(source, REPO, scratch, several, quiet)
+    check("an issue with several paired files is not renamed after one of "
+          "them, even when that one's heading changed",
+          not ran_with(several, "gh issue edit", "--title"),
+          str(several.commands()))
+
+    # --- A body nobody has migrated yet ----------------------------------
+
+    prose = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        "gh issue view": issue_json(
+            EDIT_TITLE, "The statusline drops its branch name after a "
+                        "rebase. Reproduced twice."),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    prose_refusal, prose_finished = None, False
+    try:
+        _, prose_finished = tool.edit(source, REPO, scratch, prose, quiet)
+    except tool.Refused as refusal:
+        prose_refusal = refusal
+    check("an unmigrated prose body is left as it stands, not overwritten",
+          not ran_with(prose, "gh issue edit", "--body"),
+          str(prose.commands()))
+    check("and not refused either, since every paired issue on main is in "
+          "that state and a refusal would shut the verb out of all of them",
+          prose_refusal is None and prose_finished,
+          f"refused: {str(prose_refusal)[:120]}" if prose_refusal
+          else "the run did not report itself finished")
+
+    # --- The file is not on main at all ----------------------------------
+
+    absent = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("", returncode=1),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    _, not_yet = tool.edit(source, REPO, scratch, absent, quiet)
+    check("a file that is not on main lands, and the issue waits for it",
+          absent.ran("gh pr create") and not not_yet
+          and not absent.ran("gh issue edit"), str(absent.commands()))
+
+    # --- Adjudication, in the shape the design gives for an edit ---------
+
+    refusing = Recorder({ASK: Completed("verdict: too-similar #13\n")})
+    try:
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, refusing, quiet,
+                        exclude_issue=570)
+        check("a too-similar verdict refuses an edit too", False,
+              "it proceeded")
+    except tool.Refused as refusal:
+        check("a too-similar verdict refuses an edit too",
+              refusal.code == 65 and "#13 already covers this ground"
+              in str(refusal), str(refusal)[:160])
+        check("and an edit's refusal says what becomes of the issue being "
+              "edited",
+              "#570, the issue you were editing" in str(refusal)
+              and "Superseded-by: #13" in str(refusal), str(refusal))
+
+    creating = Recorder({ASK: Completed("verdict: too-similar #13\n")})
+    try:
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, creating, quiet)
+        check("a create's refusal carries no such paragraph", False,
+              "it proceeded")
+    except tool.Refused as refusal:
+        check("a create's refusal carries no such paragraph",
+              "Superseded-by" not in str(refusal), str(refusal))
+
+
 def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
         run_cases(Path(name))
+    # A checkout of its own: the reconsidered marker lives at the root of
+    # one and is consumed by the write it passes, so two groups sharing a
+    # directory would share that.
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
+        run_edit_cases(Path(name))
     print()
     if failures:
         print(f"{len(failures)} case(s) failed")
