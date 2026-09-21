@@ -12,6 +12,28 @@ from pathlib import Path
 
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 
+# Mutation testing this lint reads the WRONG code without this line, and says
+# so with a clean, plausible, entirely wrong table. Python decides a cached
+# .pyc is current by (mtime, size) at one-second resolution, so two mutations
+# of the SAME byte length written to LINT_SCRIPT inside one second are
+# indistinguishable to it and the second run executes the first's bytecode.
+# The two mutations that pin PLACEHOLDER_SPAN's exclusions, `(?![!])` and
+# `(?![?])`, are both five characters, which is exactly that case. On this
+# Mac sys.pycache_prefix puts the cache under ~/Library/Caches rather than
+# beside the script, so no __pycache__ appears here and the staleness is
+# invisible to anyone looking for one.
+#
+# It cost the merge-lane seat and its commissioned reviewer a wrong answer
+# each, independently, while reviewing the pull request that added the
+# processing-instruction case (2026-09-20). Measured here: a reproduction
+# running both mutations back to back collided on 10 of 10 attempts without
+# this line and 0 of 10 with it. scripts/launch-claude-pre-trust-step-test.py
+# sets the same knob through the environment, for an unrelated reason.
+#
+# A fresh worktree per mutation also works, because the cache path mirrors
+# the source path. This line means no one has to remember that.
+sys.dont_write_bytecode = True
+
 _spec = importlib.util.spec_from_file_location("md_drift_lint", LINT_SCRIPT)
 lint = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lint)
