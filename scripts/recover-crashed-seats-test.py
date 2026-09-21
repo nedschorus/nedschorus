@@ -635,7 +635,7 @@ with tempfile.TemporaryDirectory() as temporary:
     patch("tmux_session_alive_anywhere", lambda name: (False, ""))
     state_path = workspace.handoffs / f"{workspace.name}-supervisor-state.json"
     state_path.write_text(json.dumps({
-        "session_id": "x", "generation": 1,
+        "launched_session_id": "x", "generation": 1,
         "last_poll_at": datetime.now(timezone.utc).isoformat(),
     }), encoding="utf-8")
     verdict, detail = workspace.assess()
@@ -1330,7 +1330,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "# Handoff\nrestart-counter: 16\nnext-step: continue\n", encoding="utf-8")
     (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
         json.dumps({"consumed_counter": 16,
-                    "session_id": "successor-hit-session-limit",
+                    "launched_session_id": "successor-hit-session-limit",
                     "generation": 16}), encoding="utf-8")
     write_transcript(workspace.project_directory(), "handed-off-parent",
                      "older real work", age_seconds=7200, records=8)
@@ -2705,7 +2705,7 @@ with tempfile.TemporaryDirectory() as temporary:
     def record_an_agent_exit(workspace, exit_code):
         state_path = workspace.handoffs / f"{workspace.name}-supervisor-state.json"
         recovery.supervisor.record_agent_exit_in_supervisor_state(
-            state_path, {"consumed_counter": None, "session_id": "resume-me",
+            state_path, {"consumed_counter": None, "launched_session_id": "resume-me",
                          "generation": 3}, exit_code)
         return recovery.supervisor.read_supervisor_state(state_path)[
             recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
@@ -2737,7 +2737,7 @@ with tempfile.TemporaryDirectory() as temporary:
     capture_launches(workspace)
     write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
     (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
-        json.dumps({"consumed_counter": None, "session_id": "resume-me", "generation": 3}),
+        json.dumps({"consumed_counter": None, "launched_session_id": "resume-me", "generation": 3}),
         encoding="utf-8")
     verdict, detail = workspace.assess()
     check("EXIT RECORD: a seat with no exit record is still resumed",
@@ -3158,7 +3158,7 @@ with tempfile.TemporaryDirectory() as temporary:
             f"resume-{name}", "real work", records=4)
         recovery.supervisor.record_agent_exit_in_supervisor_state(
             workspace.handoffs / f"{name}-supervisor-state.json",
-            {"consumed_counter": None, "session_id": f"resume-{name}", "generation": 3},
+            {"consumed_counter": None, "launched_session_id": f"resume-{name}", "generation": 3},
             exit_code)
     all_dead()
     capture_launches(workspace)

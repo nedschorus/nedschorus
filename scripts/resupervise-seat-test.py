@@ -97,7 +97,7 @@ def run_already_consumed_case(workspace: Path):
     asked to be retired.
     """
     write_handoff(workspace, "consumed", counter=4)
-    write_state(workspace, "consumed", {"consumed_counter": 4, "session_id": "s"})
+    write_state(workspace, "consumed", {"consumed_counter": 4, "launched_session_id": "s"})
     result = run_resupervise(workspace, "consumed", "--dry-run")
     check("an already-consumed handoff refuses",
           result.returncode == 1, result.stdout + result.stderr)
@@ -125,7 +125,7 @@ def run_live_supervisor_case(workspace: Path):
     supervisor_module = load_supervisor()
     write_handoff(workspace, "watched", counter=1)
     supervisor_module.stamp_heartbeat(
-        workspace / "watched-supervisor-state.json", {"session_id": "s"}
+        workspace / "watched-supervisor-state.json", {"launched_session_id": "s"}
     )
     stub_directory = workspace / "looks-like-a-supervisor"
     stub_directory.mkdir(parents=True, exist_ok=True)
@@ -179,7 +179,7 @@ def run_stale_heartbeat_case(workspace: Path):
     write_handoff(workspace, "stale", counter=2)
     write_state(workspace, "stale", {
         "consumed_counter": 1,
-        "session_id": "s",
+        "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     result = run_resupervise(workspace, "stale", "--dry-run")
@@ -306,7 +306,7 @@ def run_end_to_end_case(workspace: Path):
     session = "resupervise-seat-test-seat"
     write_handoff(workspace, session, counter=9)
     write_state(workspace, session, {
-        "consumed_counter": 8, "session_id": "s",
+        "consumed_counter": 8, "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     created = subprocess.run(
@@ -367,7 +367,7 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
     session = "resupervise-seat-test-own-server"
     write_handoff(workspace, session, counter=9)
     write_state(workspace, session, {
-        "consumed_counter": 8, "session_id": "s",
+        "consumed_counter": 8, "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     created = subprocess.run(
