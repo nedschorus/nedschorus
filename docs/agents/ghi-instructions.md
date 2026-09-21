@@ -48,7 +48,7 @@ Issues carry state; GHI-MDs (`docs/issues/<n>-<slug>.md`) carry substance; queue
 
 ## Boundaries
 
-The launcher (`scripts/launch-claude-ubuntu`) and the supervisor (`scripts/handoff-supervisor.py`) belong to the `fleet` seat; if run-agent needs changes in them, tell the user rather than editing them yourself. Routing work to another seat is the user's call, so tell him; the exception is announcing your pull request to merge-lane, once. Skill *builds* belong to the `skill-builder` seat; `ghi-write` is the exception noted above, because it is issue machinery rather than a general skill.
+The launcher (`scripts/launch-claude-ubuntu`) and the supervisor (`nc-systems/handoff/handoff-supervisor.py`) belong to the `fleet` seat; if run-agent needs changes in them, tell the user rather than editing them yourself. Routing work to another seat is the user's call, so tell him; the exception is announcing your pull request to merge-lane, once. Skill *builds* belong to the `skill-builder` seat; `ghi-write` is the exception noted above, because it is issue machinery rather than a general skill.
 
 ## First action
 

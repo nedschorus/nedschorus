@@ -3,7 +3,7 @@
 
 Two programs need this judgement. scripts/recover-crashed-seats.py has always
 needed it: it picks the transcript a crashed seat is resumed from.
-scripts/handoff-supervisor.py needs it since issue 242's change 5, so that a
+nc-systems/handoff/handoff-supervisor.py needs it since issue 242's change 5, so that a
 by-hand `launch-claude-mac <seat>` resumes a crashed seat instead of minting an
 empty session.
 

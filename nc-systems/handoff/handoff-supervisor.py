@@ -2,7 +2,7 @@
 """Run one agent session and reincarnate it when it writes a handoff.
 
 The handoff system's supervisor (specification:
-docs/cross-project/fast-handoff-design.md). One supervisor per agent, run in
+nc-systems/handoff/handoff-design.md). One supervisor per agent, run in
 that agent's console. It owns the whole reincarnation cycle because an agent
 cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
 trips the safety classifier.
@@ -63,9 +63,18 @@ from typing import Optional
 # two programs cannot call one seat's transcripts two different things (issue
 # 242's change 5). The convention — importlib for a module whose filename has
 # hyphens — is scripts/cold-read-cell-common.py's.
+# This file sits at nc-systems/handoff/, so the repository root is two
+# directories up; parents[2] names that depth once instead of chaining .parent
+# three times. Every path below that leaves this system is derived from it,
+# because a sibling lookup is what breaks when a system moves: before the move
+# to nc-systems/handoff/ the three paths below were with_name() calls that
+# happened to be right only while this file lived in scripts/.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
+
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    Path(__file__).with_name("seat-transcript-worth-resuming.py"))
+    SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -83,7 +92,10 @@ RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
-EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+# The extractor stays in scripts/ until every live supervisor runs from this
+# directory: a supervisor resolves this path at import, so a running one
+# would lose it the moment the file moved. It joins this system in step 2.
+EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
@@ -97,7 +109,7 @@ GENERATIONS_KEPT = 2
 # resupervise-seat.py, so putting it in the launchers would leave a recovered
 # seat silently running without it. One place, every path.
 DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "docs" / "agents"
+    REPOSITORY_ROOT / "docs" / "agents"
     / "seat-session-appended-system-prompt.md"
 )
 
@@ -178,7 +190,7 @@ BRANCH_STATE_INSTRUCTION = (
 # hoisted here: an equality pin can only hold a constant, and text composed at
 # a call site lands outside every pin the test file has.
 SUPERVISOR_POINTER_SENTENCE = (
-    "This session was launched by scripts/handoff-supervisor.py, which "
+    "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
     "watches this seat and composed this prompt — read it if you need to "
     "investigate the handoff mechanism."
 )
@@ -230,7 +242,7 @@ def parse_handoff_file(handoff_path: Path) -> dict:
     One field may span lines: `next-step-verbatim`, whose value is the opening
     marker followed by the successor's instruction verbatim, ended by a line
     that is exactly the terminator (R20; format in
-    docs/cross-project/fast-handoff-design.md). The writer appends that block
+    nc-systems/handoff/handoff-design.md). The writer appends that block
     last, after every computed field, so the lines inside it cannot shadow a
     real field — first occurrence still wins, and the real fields came first.
 

@@ -8,7 +8,7 @@ handoff writer. Until 2026-09-19 each built the name from its own f-string --
 eleven sites across the five, plus a second copy of the suffix constant in
 scripts/restart-live-seats-at-login.py -- so a rename had eleven places to
 find and nothing that failed when it missed one. The suffixes now live in
-scripts/handoff-supervisor.py alone, and the path is composed only by its
+nc-systems/handoff/handoff-supervisor.py alone, and the path is composed only by its
 supervisor_state_path(), supervisor_lock_path() and supervisor_state_paths()
 (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4: reduce each
@@ -23,12 +23,26 @@ and globbing with it. Missing one site on a rename is silent and reads as the
 opposite of what happened: the supervisor writes <seat>-handoff.md, the
 recovery tool looks for the old name, finds nothing, and reports a seat that
 handed off cleanly as one that died leaving no handoff. HANDOFF_FILE_SUFFIX
-now lives in scripts/handoff-supervisor.py with the other two, and the path is
-composed only by its handoff_file_path() and handoff_file_paths(). Item 4
-above did not cover this name: the ruling it carried out named the state file,
-the cold-read-record names and the walk-file endings, and the handoff name was
-recorded on the file-naming wiki page as its own unruled topic until item 2
-ruled it.
+now lives in nc-systems/handoff/handoff-supervisor.py with the other two, and
+the path is composed only by its handoff_file_path() and
+handoff_file_paths(). Item 4 above did not cover this name: the ruling it
+carried out named the state file, the cold-read-record names and the
+walk-file endings, and the handoff name was recorded on the file-naming wiki
+page as its own unruled topic until item 2 ruled it.
+
+The supervisor and the writer both left scripts/ for nc-systems/handoff/ on
+2026-09-20. The first version of that change named the supervisor explicitly
+beside the scripts/ glob and left the writer out, which is the silent pass
+production_scripts() warns about below: the writer stopped being parsed, and
+its three cases went on passing by finding nothing in a file they no longer
+read (finding 2 of the review of pull request [The handoff system moves into
+nc-systems/handoff/, except what a live seat holds]
+(https://github.com/nedschorus/nedschorus/pull/578), 2026-09-21; measured
+that day -- a hand-built name added to the writer failed nothing). The set
+of scripts read is derived from the layout now, and
+PROGRAMS_THAT_NEED_THESE_FILE_NAMES fails loudly when a program this suite
+exists to watch is not among them -- a hand-added entry per move is the same
+defect waiting for the third move.
 
 This reads each script's syntax tree rather than its lines, after two rounds
 of the earlier line-matching version being wrong in both directions. Matching
@@ -85,7 +99,25 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
-SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
+# Production code lives in two places since nc-systems/ was made: scripts/,
+# and one directory per system. Tests sit a level deeper, in
+# nc-systems/<system>/tests/, so the system glob reaches production code only.
+NC_SYSTEMS_DIRECTORY = REPO_ROOT / "nc-systems"
+# The supervisor and the writer moved into nc-systems/handoff/ on 2026-09-20.
+# The supervisor is still named here because it is the one file allowed to
+# define the suffixes and to compose the paths, which two cases below ask
+# about by name; which files are READ is derived, not named.
+SUPERVISOR_SCRIPT = NC_SYSTEMS_DIRECTORY / "handoff" / "handoff-supervisor.py"
+# The programs that need these names, by file name, wherever they live. The
+# docstring above names them: the supervisor, the recovery tool,
+# resupervise-seat.py, the login restart and the handoff writer. A program
+# that is moved somewhere this suite does not read fails the membership case
+# rather than quietly dropping out of every other one.
+PROGRAMS_THAT_NEED_THESE_FILE_NAMES = ("handoff-supervisor.py",
+                                       "handoff-write-and-check-supervisor.py",
+                                       "recover-crashed-seats.py",
+                                       "resupervise-seat.py",
+                                       "restart-live-seats-at-login.py")
 # The functions that compose the names, and so the only code allowed to.
 # handoff_file_path is deliberately not named handoff_path: that name is
 # already the SupervisorSettings property, so the helper case below would
@@ -114,8 +146,19 @@ def check(case_name, condition, detail=""):
 
 
 def production_scripts():
-    """Every script a seat runs -- test files excluded."""
-    return sorted(path for path in SCRIPTS_DIRECTORY.glob("*.py")
+    """Every script a seat runs -- test files excluded.
+
+    Derived from the layout, both places production code lives, rather than
+    globbing scripts/ and naming each moved file after it. A named file is
+    only ever as current as the last move someone remembered it in, and
+    forgetting one is silent here in the worst way: the cases below all take
+    the form "nothing in these files composes a name", so a file that stops
+    being read stops being able to fail them. That is what happened to the
+    writer for the length of one review round.
+    """
+    found = (list(SCRIPTS_DIRECTORY.glob("*.py"))
+             + list(NC_SYSTEMS_DIRECTORY.glob("*/*.py")))
+    return sorted(path for path in found
                   if not path.name.endswith("-test.py"))
 
 
@@ -241,15 +284,28 @@ def composing_sites(path):
     return sites, helpers, bool(definitions)
 
 
+scripts_read = production_scripts()
 composing = []
 helpers_found = []
 defining = []
-for script in production_scripts():
+for script in scripts_read:
     sites, helpers, defines_the_suffixes = composing_sites(script)
     composing.extend(sites)
     helpers_found.extend(helpers)
     if defines_the_suffixes:
         defining.append(script.name)
+
+# Asked first, because it is the question every case below assumes an answer
+# to. Each of them reports what it found in the scripts that were read; none
+# of them can say anything about a script that was not.
+names_read = {script.name for script in scripts_read}
+programs_not_read = [name for name in PROGRAMS_THAT_NEED_THESE_FILE_NAMES
+                     if name not in names_read]
+check("every program that needs these names is among the scripts read",
+      not programs_not_read,
+      f"{programs_not_read} not found under scripts/ or nc-systems/*/ -- a "
+      f"program this suite exists to watch has moved somewhere it does not "
+      f"read, and the cases below now pass on it by finding nothing")
 
 check("no production script composes any of the three file names itself",
       not composing,

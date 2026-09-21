@@ -278,7 +278,8 @@ def main() -> int:
         check("default root: the supervisor script rides the box's own $HOME",
               result["supervisor_argv"]
               and result["supervisor_argv"][0]
-              == f"{harness.home}/Projects/nedschorus/scripts/handoff-supervisor.py",
+              == (f"{harness.home}/Projects/nedschorus"
+                  "/nc-systems/handoff/handoff-supervisor.py"),
               result["supervisor_argv"])
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for handoff-supervisor.py.
 
-Run: python3 scripts/handoff-supervisor-test.py
+Run: python3 nc-systems/handoff/tests/handoff-supervisor-test.py
 Add --canary to also run the two live task-preseed canaries, which launch
 real headless sessions. Pre-seed rides undocumented harness state; an
 upgrade breaking it shows up as a successor finding its predecessor's tasks
@@ -28,7 +28,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-SCRIPT_PATH = Path(__file__).with_name("handoff-supervisor.py")
+# This suite sits at nc-systems/handoff/tests/, so the system it tests is one
+# directory up and the repository root is three. SYSTEM_DIRECTORY and
+# REPOSITORY_ROOT name those depths once each; a with_name() lookup here
+# would resolve inside tests/ and find nothing.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
+
+SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-supervisor.py"
 
 _spec = importlib.util.spec_from_file_location("handoff_supervisor", SCRIPT_PATH)
 supervisor = importlib.util.module_from_spec(_spec)
@@ -729,7 +736,7 @@ def run_lock_cases(workspace: Path):
 def run_multi_line_next_step_cases(workspace: Path, recent: str):
     """R20's reader half: a verbatim block is parsed, preferred, and survives.
 
-    Format in docs/cross-project/fast-handoff-design.md. The block is the last
+    Format in nc-systems/handoff/handoff-design.md. The block is the last
     thing in the file and its lines are taken verbatim; an unterminated block
     is a damaged handoff and falls back to the collapsed line rather than
     handing over a partial instruction.
@@ -850,7 +857,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
           "do the old thing" in legacy_prompt, repr(legacy_prompt))
 
     # End to end: what the writer wrote is what the reader hands over.
-    writer_script = Path(__file__).with_name("handoff-write-and-check-supervisor.py")
+    writer_script = SYSTEM_DIRECTORY / "handoff-write-and-check-supervisor.py"
     original = ("FIRST ACTION: read the anchor.\n"
                 "\n"
                 "THEN: present item 3, and keep the indentation:\n"
@@ -918,7 +925,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           nothing_is_appended_to(
               prompt,
               "continue them when you get a chance. This session was launched by "
-              "scripts/handoff-supervisor.py, which watches this seat and composed "
+              "nc-systems/handoff/handoff-supervisor.py, which watches this seat and composed "
               "this prompt — read it if you need to investigate the handoff "
               "mechanism.",
               # This fixture passes no sync report and no roster, and its
@@ -932,7 +939,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # change of fixture can quietly take away.
     check("the supervisor-pointer sentence is word for word what the user ruled",
           supervisor.SUPERVISOR_POINTER_SENTENCE == (
-              "This session was launched by scripts/handoff-supervisor.py, which "
+              "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
               "watches this seat and composed this prompt — read it if you need "
               "to investigate the handoff mechanism."),
           repr(supervisor.SUPERVISOR_POINTER_SENTENCE))
@@ -2535,6 +2542,32 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_spawned_subagent_roster_cases(Path(temporary_directory), recent_timestamp)
     run_recycle_prompt_composition_cases(Path(temporary_directory), recent_timestamp)
     run_retiring_session_id_from_the_handoff_cases(Path(temporary_directory), recent_timestamp)
+
+# --- The depths this system's move depends on (added 2026-09-20) ----------
+# When main-gatekeeper moved into nc-systems/, its suite kept a
+# `SCRIPT_PATH.parent.parent` that had meant the repository root from scripts/
+# and silently began naming nc-systems/ instead. Nothing failed, so nothing
+# said so. These cases pin every depth this system resolves across, in both
+# the suite and the code, so the same slip here fails out loud.
+check("the suite's REPOSITORY_ROOT is the repository, not nc-systems/",
+      (REPOSITORY_ROOT / "scripts").is_dir() and (REPOSITORY_ROOT / ".git").exists(),
+      str(REPOSITORY_ROOT))
+check("the suite's SYSTEM_DIRECTORY holds the script it tests",
+      SCRIPT_PATH.is_file(), str(SCRIPT_PATH))
+check("the supervisor's own REPOSITORY_ROOT is the repository",
+      (supervisor.REPOSITORY_ROOT / "scripts").is_dir(),
+      str(supervisor.REPOSITORY_ROOT))
+# The two files that deliberately did NOT move in step 1: a running supervisor
+# resolves them at import, so they stay in scripts/ until every live supervisor
+# runs from nc-systems/handoff/.
+check("the extractor the supervisor points at is on disk where it stays",
+      supervisor.EXTRACTOR_PATH.is_file(), str(supervisor.EXTRACTOR_PATH))
+check("the extractor is still under scripts/, not inside this system",
+      supervisor.EXTRACTOR_PATH.parent.name == "scripts",
+      str(supervisor.EXTRACTOR_PATH))
+check("the appended-system-prompt default resolves under docs/agents",
+      supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH.is_file(),
+      str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH))
 
 if "--canary" in sys.argv:
     print("\n-- live pre-seed canaries (launching real sessions) --")
