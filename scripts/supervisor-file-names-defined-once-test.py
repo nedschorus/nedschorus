@@ -94,7 +94,14 @@ SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths", "handoff_file_path",
                      "handoff_file_paths")
-# The three file names, as they read on disk.
+# The three file names, as they read on disk. This is a copy, so the last
+# check below reads the same three out of handoff-supervisor.py and compares.
+# Until 2026-09-21 nothing did, and a copy nothing anchors goes stale at
+# exactly the moment it matters: rename a constant's value and this tuple
+# still hunts the OLD spelling, finds nothing, and a fresh hand-built copy of
+# the NEW one passes every case. The eleven-sites defect this guard exists to
+# prevent would come back invisible, and the guard would go on printing PASS
+# until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
                      "-handoff.md")
 # The constants that hold them.
@@ -174,6 +181,26 @@ def suffix_definition_assignments(tree):
             and any(isinstance(target, ast.Name)
                     and target.id in SUFFIX_CONSTANTS
                     for target in node.targets)]
+
+
+def defined_suffix_values(tree):
+    """The strings the suffix constants are actually assigned, from the tree.
+
+    Read rather than restated, so SPELLED_OUT_NAMES cannot drift from what
+    handoff-supervisor.py says. A definition written any of the ways
+    suffix_definition_assignments() accepts is read here the same way, and a
+    definition whose value is not a plain string literal comes back as None,
+    which the check below counts and names rather than comparing: sorting a
+    list holding None against a list of strings raises TypeError, so the
+    comparison must not be reached at all.
+    """
+    values = []
+    for node in suffix_definition_assignments(tree):
+        value = node.value
+        values.append(value.value
+                      if isinstance(value, ast.Constant)
+                      and isinstance(value.value, str) else None)
+    return values
 
 
 def exempt_lines_and_helpers(tree, path):
@@ -263,6 +290,27 @@ check("every composing helper was found in the syntax tree",
       f"found {sorted(helpers_found)} in {SUPERVISOR_SCRIPT.name}, expected "
       f"{sorted(COMPOSING_HELPERS)}; a helper that is renamed must be renamed "
       f"in COMPOSING_HELPERS here, or its body stops being checked")
+
+supervisor_defined_names = defined_suffix_values(
+    ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
+              filename=str(SUPERVISOR_SCRIPT)))
+
+unreadable_definitions = supervisor_defined_names.count(None)
+readable_definitions = sorted(value for value in supervisor_defined_names
+                              if value is not None)
+
+check("the names this guard hunts are the supervisor's own, not a stale copy",
+      # Short-circuits before the comparison: sorting a list that holds None
+      # against a list of strings raises TypeError instead of failing a case.
+      not unreadable_definitions
+      and readable_definitions == sorted(SPELLED_OUT_NAMES),
+      f"{SUPERVISOR_SCRIPT.name} defines {readable_definitions}"
+      + (f", and {unreadable_definitions} more whose value is not a plain "
+         f"string literal, which this guard cannot read -- write the value as "
+         f"a plain string literal" if unreadable_definitions else "")
+      + f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
+        f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
+        f"uses")
 
 check("the suffix constants are defined in one script",
       defining == [SUPERVISOR_SCRIPT.name],
