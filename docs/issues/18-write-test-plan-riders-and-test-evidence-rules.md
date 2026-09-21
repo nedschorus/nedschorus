@@ -51,6 +51,24 @@ Running a path against a stand-in counts as executing it. A stand-in is whatever
 
 This fits the 2026-09-02 fixture rule rather than loosening it. A fixture captured from a sandbox must still say so, because it proves what the sandbox does, not what the real system does. The new ruling says that evidence is enough to ship; it does not let anyone present it as evidence about the real system.
 
+## 2026-09-21: a mutation run against uncommitted work measures pristine code
+
+The 2026-09-02 research pass above found that **mutation testing would have praised the bad test**, because killing a mutant proves a test is sensitive to change rather than that its baseline is true. This is a second way the same instrument reports a green it has not earned, and it is mechanical rather than conceptual.
+
+The loop that mutation testing is usually run as: apply a mutation to the file under test, run the suite, expect red, then revert with `git checkout -- <file>` and go on to the next mutation. `git checkout --` restores the file **as of the last commit**. So when the fix being exercised is still uncommitted, the first revert discards the fix along with the mutation, and every mutation after the first runs against pristine code.
+
+Measured on 2026-09-21, building pull request [The ignition prompt's tail sentences are constants, and a note that claimed coverage it did not have](https://github.com/nedschorus/nedschorus/pull/591). Four mutations were planned. The first ran against the real change and failed correctly, two cases named. Its revert then removed the change. Mutations two, three and four ran against the file as `origin/main` had it.
+
+What makes it dangerous is the failure mode, not the mistake. A mutation run against code that does not contain the guard should report a **pass**, and a pass is what the loop is reading for when it says "this one was not caught". Here it surfaced only because the change added module constants the test file referenced by name, so the suite raised `AttributeError` and crashed instead of passing. A change that added no new name — a bounded comparison, a corrected literal, a narrowed condition — would have produced three clean greens and a mutation table that was false in good faith.
+
+The rule, and it costs nothing:
+
+- **Commit the change before mutating it.** Then `git checkout --` restores the change rather than deleting it, and every revert is unambiguous.
+- **Assert the mutation applied.** A string replacement that silently matches nothing produces the same clean green as a guard that failed to fire. The run should fail loudly when the text it meant to change was not there.
+- **Run an unmutated control in the same loop**, after the mutations rather than only before, and state its count. A control that passes at the end proves the tree was restored; a control stated only at the start proves nothing about what the loop did to the file.
+
+This is rider 1 turned on the test harness itself. A mutation loop that cannot report a failure it would detect — because the file it is mutating is not the file under test — proves nothing, exactly as a test copied from its implementation proves nothing.
+
 ## Evidence of record
 
 - Six-agent source read: `nc-queue/archived/2026-07-22-candidate-skill-source-evidence.md` (this skill's section)
