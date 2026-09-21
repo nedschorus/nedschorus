@@ -248,7 +248,16 @@ with tempfile.TemporaryDirectory() as workspace:
     findings = problems_for("run `<docs/long-gone.py >scripts/other.py`", root)
     check("a closing bracket that does not hug its content is not a placeholder",
           len(findings) == 1 and "scripts/other.py" in findings[0], str(findings))
-    check("a closing tag is not a placeholder, and reports nothing of its own",
+    # This case replaces one that asserted `</section>` reports nothing. That
+    # was true whether or not the pattern excluded "/", so it could not fail
+    # on its own subject -- the defect this suite exists to prevent, found in
+    # review 2026-09-20. A closing-tag-SHAPED placeholder distinguishes them:
+    # with "/" excluded the span does not collapse and its tail is reported as
+    # the nonexistent path "clone>/docs/long-gone.py".
+    findings = problems_for("clone at `</path to clone>/docs/long-gone.py`", root)
+    check("a closing-tag-shaped placeholder is a placeholder, not a path",
+          findings == [], str(findings))
+    check("a plain closing tag still reports nothing",
           problems_for("the `</section>` marker", root) == [])
 
     # --- Numbers quoted from code -----------------------------------------
