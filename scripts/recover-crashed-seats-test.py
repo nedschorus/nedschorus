@@ -20,7 +20,6 @@ import importlib.util
 import io
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -338,21 +337,14 @@ RESUME_PROMPT_AFTER_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
 # The handoff-supervisor's default when it resumes a session and no first
 # prompt was given (handoff-supervisor.py, the resume_session_id branch).
 # A different sentence from the one above: the supervisor says "the previous
-# session", this tool says "your previous session". Asserted against the
-# supervisor's source at F8, because nothing asserted it until 2026-09-20
-# and its opening is what EMPTY_SUCCESSOR_MARKERS recognises.
+# session", this tool says "your previous session". Compared for EQUALITY at
+# P3-4 against the prompt the supervisor actually hands its launch, because
+# nothing asserted it until 2026-09-20 and its opening is what
+# EMPTY_SUCCESSOR_MARKERS recognises.
 SUPERVISOR_DEFAULT_RESUME_PROMPT = (
     "This session was resumed by crash recovery (nedschorus#120): the previous session "
     "ended without writing a handoff. Re-verify in-flight state before trusting it, "
     "then continue the work underway.")
-
-
-def joined_string_literals(source):
-    """`source` with Python's implicit string-literal concatenation collapsed,
-    so a sentence a program wraps across several lines can be matched whole.
-    The assertions that use it pin the words, not the line breaks: rewrapping
-    handoff-supervisor.py must not fail a test that is about its wording."""
-    return re.sub(r'"\s*\n\s*"', "", source)
 
 
 def supervisor_first_turn_for_a_by_hand_command(command, workspace):
@@ -996,27 +988,6 @@ with tempfile.TemporaryDirectory() as temporary:
     check("F8: the reincarnation opener is not a skip marker (2026-09-10 reboot)",
           recovery.REINCARNATION_OPENER_MARKER not in recovery.EMPTY_SUCCESSOR_MARKERS,
           recovery.EMPTY_SUCCESSOR_MARKERS)
-    # F8: the supervisor's default resume prompt, which no suite asserted until
-    # 2026-09-20 (found by merge-lane-e2). It matters because its opening is an
-    # EMPTY_SUCCESSOR_MARKERS entry: reword it and a supervisor-resumed
-    # successor that never worked stops being recognised as workless, so
-    # recovery passes it over for its retired parent — the failure of the
-    # 2026-09-10 Mac reboot (nedschorus#116, comment of 2026-09-11). The
-    # supervisor builds it inline rather than from a constant, so it is matched
-    # against the source with the line wrapping collapsed.
-    supervisor_prompts = joined_string_literals(source)
-    check("F8: the supervisor's default resume prompt is verbatim in handoff-supervisor.py",
-          SUPERVISOR_DEFAULT_RESUME_PROMPT in supervisor_prompts,
-          "supervisor default resume prompt changed, or its wrapping defeated the match")
-    check("F8: the supervisor's default resume prompt carries a skip marker",
-          any(marker in SUPERVISOR_DEFAULT_RESUME_PROMPT
-              for marker in recovery.EMPTY_SUCCESSOR_MARKERS),
-          (SUPERVISOR_DEFAULT_RESUME_PROMPT, recovery.EMPTY_SUCCESSOR_MARKERS))
-    check("F8: the supervisor's default resume prompt says the session ended, "
-          "never that it died (ruled 2026-09-19)",
-          "ended without writing a handoff" in SUPERVISOR_DEFAULT_RESUME_PROMPT
-          and "died" not in SUPERVISOR_DEFAULT_RESUME_PROMPT,
-          SUPERVISOR_DEFAULT_RESUME_PROMPT)
 
     # Q2: an unparseable handoff counter refuses with both paths named.
     workspace = Workspace(root / "r7")
@@ -1267,6 +1238,32 @@ with tempfile.TemporaryDirectory() as temporary:
           and "resumed by crash recovery" in launched_prompts[0][0]
           and "No handoff exists yet" not in launched_prompts[0][0],
           launched_prompts)
+    # P3-4: and that default is pinned word for word, which no suite did until
+    # 2026-09-20 (found by merge-lane-e2). It matters because its opening is an
+    # EMPTY_SUCCESSOR_MARKERS entry: reword it and a supervisor-resumed
+    # successor that never worked stops being recognised as workless, so
+    # recovery passes it over for its retired parent — the failure of the
+    # 2026-09-10 Mac reboot (nedschorus#116, comment of 2026-09-11). Pinned
+    # against the prompt the probe caught the supervisor handing its launch —
+    # not against handoff-supervisor.py's source, and never against the
+    # constant these compare to, which would assert the test against itself.
+    # Equality with what the program produced is the form of this assertion
+    # that a reword and an addition to the prompt both fail.
+    launched_prompt = launched_prompts[0][0] if launched_prompts else None
+    check("P3-4: the supervisor's default resume prompt is verbatim what it launches",
+          launched_prompt == SUPERVISOR_DEFAULT_RESUME_PROMPT,
+          launched_prompt)
+    check("P3-4: the supervisor's default resume prompt carries a skip marker",
+          launched_prompt is not None
+          and any(marker in launched_prompt
+                  for marker in recovery.EMPTY_SUCCESSOR_MARKERS),
+          (launched_prompt, recovery.EMPTY_SUCCESSOR_MARKERS))
+    check("P3-4: the supervisor's default resume prompt says the session ended, "
+          "never that it died (ruled 2026-09-19)",
+          launched_prompt is not None
+          and "ended without writing a handoff" in launched_prompt
+          and "died" not in launched_prompt,
+          launched_prompt)
 
     # --- PR #131 review round 4 --------------------------------------------
 
