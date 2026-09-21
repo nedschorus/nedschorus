@@ -142,12 +142,12 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     # As in the record shipper's suite: --all looks beside the script itself, so
     # the case runs a copy of it from a scratch repository.
     scratch_repo = scratch / "repo"
-    (scratch_repo / "scripts").mkdir(parents=True)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, scratch_repo / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_ship = scratch_repo / "scripts" / SHIP.name
-    shutil.copy(SHIP, scratch_ship)
-    for script_name in ("cold-read-record-ship.py", "cold-read-record-names.py"):
-        shutil.copy(SCRIPTS_DIR / script_name,
-                    scratch_repo / "scripts" / script_name)
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",
                        {"cut-claude.md": CUT_REPORT})

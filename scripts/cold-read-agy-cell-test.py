@@ -52,11 +52,6 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
-CELL_SCRIPT_NAMES = (
-    "cold-read-record-names.py",
-    "cold-read-cell-common.py",
-    "cold-read-agy-cell.py",
-)
 TARGET_RELATIVE_PATH = "docs/drafts/cold-read-agy-cell-test-target.md"
 
 # The phrases the launcher and the shared module print, spelled out here
@@ -129,9 +124,11 @@ def build_scratch_repository(scratch):
     repository = scratch / "scratch-checkout"
     if repository.exists():
         shutil.rmtree(repository)
-    (repository / "scripts").mkdir(parents=True)
-    for script_name in CELL_SCRIPT_NAMES:
-        shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
@@ -141,6 +138,11 @@ def build_scratch_repository(scratch):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
+    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # 2.55 repacks this repository in the background, and its temporary files
+    # race the deletion of these throwaway checkouts — measured 2026-09-20,
+    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
+    git(repository, "config", "maintenance.auto", "false")
     git(repository, "config", "user.email", "test@test.invalid")
     git(repository, "config", "user.name", "cold-read-agy-cell test")
     git(repository, "add", "-A")

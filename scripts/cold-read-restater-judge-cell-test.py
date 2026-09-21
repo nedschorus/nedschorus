@@ -56,12 +56,6 @@ import tempfile
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
-CELL_SCRIPT_NAMES = (
-    "cold-read-record-names.py",
-    "cold-read-cell-common.py",
-    "cold-read-claude-cell.py",
-    "cold-read-restater-judge-cell.py",
-)
 
 # The phrase the shared module prints when a chain falls back, spelled out
 # here rather than imported so a reworded line fails here rather than passing
@@ -163,15 +157,22 @@ def build_scratch_repository(scratch):
     repository = scratch / "scratch-checkout"
     if repository.exists():
         shutil.rmtree(repository)
-    (repository / "scripts").mkdir(parents=True)
-    for script_name in CELL_SCRIPT_NAMES:
-        shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     for relative_path, text in CASE_FILE_CONTENTS.items():
         path = repository / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     git(repository, "init", "-b", "main")
+    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # 2.55 repacks this repository in the background, and its temporary files
+    # race the deletion of these throwaway checkouts — measured 2026-09-20,
+    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
+    git(repository, "config", "maintenance.auto", "false")
     git(repository, "config", "user.email", "test@test.invalid")
     git(repository, "config", "user.name", "cold-read-restater-judge-cell test")
     git(repository, "add", "-A")

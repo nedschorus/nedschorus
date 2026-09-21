@@ -155,12 +155,6 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
-CELL_SCRIPT_NAMES = (
-    "cold-read-record-names.py",
-    "cold-read-cell-common.py",
-    "cold-read-claude-cell.py",
-    "cold-read-codex-cell.py",
-)
 
 # The document each case reviews, and the one a reviewer would edit by
 # accident: it is committed first, then modified without being committed, so
@@ -319,10 +313,11 @@ def build_scratch_repository(scratch):
     its own path. A copy is the only way to point that at a scratch tree.
     """
     repository = scratch / "scratch-checkout"
-    (repository / "scripts").mkdir(parents=True)
-    for script_name in CELL_SCRIPT_NAMES:
-        shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
-        (repository / "scripts" / script_name).chmod(0o755)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
@@ -334,6 +329,11 @@ def build_scratch_repository(scratch):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
+    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # 2.55 repacks this repository in the background, and its temporary files
+    # race the deletion of these throwaway checkouts — measured 2026-09-20,
+    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
+    git(repository, "config", "maintenance.auto", "false")
     git(repository, "config", "user.email", "test@test.invalid")
     git(repository, "config", "user.name", "cold-read-cell-common test")
     git(repository, "add", "-A")
