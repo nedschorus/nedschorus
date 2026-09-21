@@ -202,7 +202,7 @@ ISSUE_FRONTMATTER_KEY = "issue"
 
 def issue_frontmatter_line(repo: str, number: int, title: str) -> str:
     """The issue this file is paired with, written the way CLAUDE.md says to
-    cite one: its type word — the key — then its title, as a link. Never a
+    cite one: its link-type — the key — then its title, as a link. Never a
     bare number."""
     return (f"{ISSUE_FRONTMATTER_KEY}: [{title}]"
             f"(https://github.com/{repo}/issues/{number})")
