@@ -186,6 +186,12 @@ echo hello
     code, out, err = run_check(root, "no-such-ref")
     check("an unresolvable base fails loudly rather than reporting clean",
           code != 0 and "no-such-ref" in (out + err), f"{code} {out!r} {err!r}")
+    # The exit code the docstring promises, and the one that distinguishes a
+    # failed run from a dirty one. SystemExit carrying a string exits 1, the
+    # findings code, so this is a separate case from the one above: that one
+    # passed throughout while a caller reading the code was told "findings".
+    check("a bad invocation exits 2, not the findings code",
+          code == 2, f"{code} {out!r} {err!r}")
 
     # --- BACKWARD: a path this change removed, still cited elsewhere ----
     # The real defect of 2026-09-19. The citing file is not part of the
@@ -244,6 +250,189 @@ echo hello
     code, out, err = run_check(root, base)
     check("a deleted file is not read for citations",
           code == 0, f"{code} {out!r} {err!r}")
+
+    # --- the base a branch is BEHIND: the merge base, not the base tip ---
+    # The two diffs were three-dot, from the merge base, while the base text
+    # a forward finding was compared against came from `git show <base>:`,
+    # the base TIP. When the base moves on and its new content happens to
+    # name the same path, the branch's own new dangling citation was
+    # suppressed against a file version the branch never saw, and the run
+    # reported clean.
+    git(root, "checkout", "-q", "-b", "fork-point-for-drift", base)
+    commit_change(root, "docs/note.md", "# note\n\nNothing cited here yet.\n")
+    drift_fork = git(root, "rev-parse", "HEAD").stdout.strip()
+    git(root, "checkout", "-q", "-b", "drifted-base", drift_fork)
+    commit_change(root, "docs/note.md",
+                  "# note\n\nNothing cited here yet.\n\nSee `docs/ghost.md` for the plan.\n")
+    git(root, "checkout", "-q", "-b", "behind-its-base", drift_fork)
+    commit_change(root, "docs/note.md",
+                  "# note\n\nNothing cited here yet.\n\nThe author adds `docs/ghost.md` here.\n")
+    code, out, err = run_check(root, "drifted-base")
+    check("a branch behind its base still reports its own new dangling citation",
+          code == 1 and "docs/ghost.md" in out, f"{code} {out!r} {err!r}")
+
+    # --- the base already cites it, asked as a path and not a substring --
+    # "is this citation one the change did not introduce" was asked as
+    # `cited in base_text`, so a base naming a LONGER path that ends with
+    # this one answered yes and the new citation went unreported.
+    git(root, "checkout", "-q", "-b", "longer-path-in-the-base", base)
+    commit_change(root, "docs/backup.md",
+                  "# backup\n\nThe backup lives at `docs/page.md.bak`, which nobody reads.\n")
+    longer_path_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    commit_change(root, "docs/backup.md",
+                  "# backup\n\nThe backup lives at `docs/page.md.bak`, which nobody reads.\n"
+                  "\nThe page itself is `docs/page.md`.\n")
+    code, out, err = run_check(root, longer_path_base)
+    check("a longer path in the base does not suppress a new citation of the shorter one",
+          code == 1 and any(line.endswith(": path does not exist: docs/page.md")
+                            for line in out.splitlines()), f"{code} {out!r} {err!r}")
+
+    # --- an added line whose own text begins "++ " ----------------------
+    # It renders as "+++ ..." and was read as a file header, so `current`
+    # became a path that does not exist and every later hunk of the real
+    # file went there instead, unread.
+    git(root, "checkout", "-q", "-b", "added-line-that-looks-like-a-header", base)
+    commit_change(root, "docs/plus.md", "# doc\n\nfiller\n\nfiller\n\ntail\n")
+    plus_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    commit_change(root, "docs/plus.md",
+                  "# doc\n\n++ a line whose own text begins with two plus signs\n\nfiller\n"
+                  "\nfiller\n\ntail\n\nIt cites `scripts/absent-after-the-plus.py` here.\n")
+    code, out, err = run_check(root, plus_base)
+    check("an added line beginning '++ ' does not hide the file's later hunks",
+          code == 1 and "scripts/absent-after-the-plus.py" in out, f"{code} {out!r} {err!r}")
+
+    # --- a move that only deepens a path, swept correctly ---------------
+    # git grep -F matched the old path INSIDE its own replacement, so the
+    # backward check reported a correct sweep as a stale citation.
+    git(root, "checkout", "-q", "-b", "deepening-move", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "scripts" / "swept-tool.py").write_text("# the tool\n", encoding="utf-8")
+    (root / "docs" / "uses.md").write_text("Run `scripts/swept-tool.py` to do the thing.\n",
+                                           encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a tool and a usage line")
+    deepening_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems" / "thing" / "scripts").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/swept-tool.py", "nc-systems/thing/scripts/swept-tool.py")
+    (root / "docs" / "uses.md").write_text(
+        "Run `nc-systems/thing/scripts/swept-tool.py` to do the thing.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "move the tool deeper and sweep its citation")
+    code, out, err = run_check(root, deepening_base)
+    check("a move that only deepens a path is not reported against its own correct sweep",
+          code == 0, f"{code} {out!r} {err!r}")
+
+    # --- BACKWARD: the drift lint's history exemption applies here too ---
+    git(root, "checkout", "-q", "-b", "history-marker-backward", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "scripts" / "gone-to-history.py").write_text("# soon to go\n", encoding="utf-8")
+    (root / "docs" / "history-note.md").write_text(
+        "Its last version is reachable with `git show` at scripts/gone-to-history.py.\n",
+        encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a program and a note about its history")
+    history_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    git(root, "rm", "-q", "scripts/gone-to-history.py")
+    git(root, "commit", "-qm", "remove the program")
+    code, out, err = run_check(root, history_base)
+    check("a line naming git history is not reported by the backward check",
+          code == 0 and "gone-to-history" not in out, f"{code} {out!r} {err!r}")
+
+    # --- BACKWARD: a fenced usage example is NOT exempt ------------------
+    # The pin for the line above. Fenced content is not blanket-exempt: a
+    # usage example that runs a script by path genuinely needs sweeping when
+    # the script moves. What names the noise is the history marker.
+    git(root, "checkout", "-q", "-b", "fenced-usage-backward", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "scripts" / "fenced-tool.py").write_text("# the tool\n", encoding="utf-8")
+    (root / "docs" / "usage.md").write_text(
+        "# usage\n\n```\npython3 scripts/fenced-tool.py --check\n```\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a tool and a fenced usage example")
+    fenced_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    git(root, "rm", "-q", "scripts/fenced-tool.py")
+    git(root, "commit", "-qm", "remove the tool, sweeping nothing")
+    code, out, err = run_check(root, fenced_base)
+    check("a fenced usage example of a removed script is still reported",
+          code == 1 and "cites scripts/fenced-tool.py" in out, f"{code} {out!r} {err!r}")
+
+    # --- a path carrying a line number in a non-Markdown file ------------
+    # `":" in token` dropped it, though this program prints its own findings
+    # in exactly that shape. The colon test still drops `git show REF:path`
+    # and a URL, which the cases above hold.
+    git(root, "checkout", "-q", "-b", "line-numbered-plain-citation", base)
+    commit_change(root, "scripts/cites-with-a-line-number", """#!/bin/sh
+# the shape is at scripts/absent-with-a-line-number.py:42, worth reading
+echo hello
+""", executable=True)
+    code, out, err = run_check(root, base)
+    check("a path carrying a line number in a non-Markdown file is checked",
+          code == 1 and "scripts/absent-with-a-line-number.py" in out, f"{code} {out!r} {err!r}")
+
+    # --- FORWARD: a file DECLARED_PATH_FIXTURE_FILES names ---------------
+    # Its negative cases name paths that are deliberately absent, so against
+    # a base where the file did not exist yet every one of them is a new
+    # dangling citation and the program reported twenty on its own pull
+    # request. Forward only, and the cost is stated in its docstring.
+    git(root, "checkout", "-q", "-b", "declared-fixture-file", base)
+    commit_change(root, "scripts/dangling-path-citation-check-test.py",
+                  '#!/usr/bin/env python3\n'
+                  '"""A stand-in for the real test file, at its declared path."""\n'
+                  'FIXTURE = "scripts/deliberately-absent-fixture.py"\n')
+    code, out, err = run_check(root, base)
+    check("a dangling path written into a declared fixture file is not reported forward",
+          code == 0 and "deliberately-absent-fixture" not in out, f"{code} {out!r} {err!r}")
+    commit_change(root, "scripts/carries-the-same-line.py",
+                  'FIXTURE = "scripts/deliberately-absent-fixture.py"\n')
+    code, out, err = run_check(root, base)
+    check("the same line in an undeclared file is still reported",
+          code == 1 and "scripts/carries-the-same-line.py:1:" in out
+          and "dangling-path-citation-check-test.py:" not in out, f"{code} {out!r} {err!r}")
+
+    # --- BACKWARD: a citation carrying a leading or dotted slash --------
+    # The six hook commands in .claude/settings.json are written
+    # `"$CLAUDE_PROJECT_DIR"/scripts/<name>.py`, and a launcher runs a
+    # program as ./scripts/<name>.py. The leading boundary is looked for
+    # behind the slashes, so a move still reaches both; anchoring on the bare
+    # character before the match saw neither.
+    git(root, "checkout", "-q", "-b", "slash-prefixed-backward", base)
+    (root / "scripts" / "hooked-tool.py").write_text("# the hook's program\n", encoding="utf-8")
+    (root / "settings-like.json").write_text(
+        '{"command": "python3 \\"$PROJECT_DIR\\"/scripts/hooked-tool.py"}\n', encoding="utf-8")
+    (root / "runner.sh").write_text("#!/bin/sh\npython3 ./scripts/hooked-tool.py\n",
+                                    encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a program and two slash-prefixed callers")
+    slash_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/hooked-tool.py", "nc-systems/hooked-tool.py")
+    git(root, "commit", "-qm", "move the program, sweeping neither caller")
+    code, out, err = run_check(root, slash_base)
+    check("a citation prefixed with / or ./ is still reported when the path moves",
+          code == 1 and "settings-like.json:1:" in out and "runner.sh:2:" in out,
+          f"{code} {out!r} {err!r}")
+
+    # --- BACKWARD: the declared fixture file is NOT exempt ---------------
+    # The pin for the exemption above, and the property that stops it
+    # widening: a fixture file names its own subject, and when that subject
+    # moves the stale reference is a real one. Nothing but this case would
+    # notice the predicate being consulted in citations_of_removed_paths.
+    git(root, "checkout", "-q", "-b", "fixture-file-cites-a-moved-module", base)
+    (root / "scripts" / "module-under-test.py").write_text("# the module\n", encoding="utf-8")
+    (root / "scripts" / "dangling-path-citation-check-test.py").write_text(
+        'CHECK_SCRIPT = "scripts/module-under-test.py"\n'
+        'FIXTURE = "scripts/deliberately-absent-fixture.py"\n', encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a module and a fixture file naming it")
+    fixture_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems" / "moved").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/module-under-test.py", "nc-systems/moved/module-under-test.py")
+    git(root, "commit", "-qm", "move the module, forget the fixture file")
+    code, out, err = run_check(root, fixture_base)
+    check("a declared fixture file's stale citation of a moved module is still reported",
+          code == 1 and "scripts/dangling-path-citation-check-test.py:1: "
+          "cites scripts/module-under-test.py, which this change removed" in out,
+          f"{code} {out!r} {err!r}")
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
