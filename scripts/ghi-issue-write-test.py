@@ -15,8 +15,18 @@ The git parts of step 4 are exercised against the recorder too rather than a
 throwaway repository. The reason is that step 4's promise is not "git works"
 — it is "this sequence of commands, in this order, and not twice". A real
 repository would test git and hide the ordering.
+
+What that leaves to the author: a recorder answers whatever the case tells
+it to, including a state no real run could be in, and a case built on one
+passes without exercising anything. It happened here — see the happy path
+below. So each state a case encodes was produced once against a real
+repository, with a bare remote and `gh` stubbed, before being written down:
+filed, merged, head branch deleted, source moved, pushed without a pull
+request, and a destination holding a file that is not this one.
 """
 
+import contextlib
+import io
 import sys
 from pathlib import Path
 
@@ -145,38 +155,90 @@ def run_cases(scratch: Path):
         check("a file already named for an issue is refused",
               refusal.code == 64, f"code {refusal.code}")
 
-    # --- The happy path: one issue, one branch, one body -----------------
+    # --- The happy path, which takes two runs ---------------------------
+    # One run cannot both find its file on main and have something to
+    # commit, and until 2026-09-21 this case answered `git ls-tree` with the
+    # file already on main AND let `git commit` succeed. Nothing after the
+    # merge was exercised, and two deaths there went uncaught. So the happy
+    # path is two runs: the first files and opens the pull request, the
+    # second is the rerun after merge-lane merges and deletes the branch.
 
     source = written(scratch)
-    recorder = Recorder({
+    KEY = tool.pairing_key(FILE_TEXT)
+    TITLE = "A statusline that drops its branch name"
+    STAGED = tool.with_issue_frontmatter(FILE_TEXT, REPO, 570, TITLE)
+    LANDED = "docs/issues/570-a-statusline-that-drops-its-branch-name.md"
+    PLACEHOLDER = ('[{"number": 570, "title": "t", "body": "in progress '
+                   + KEY + '"}]')
+
+    first = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
-        "git ls-tree": Completed(
-            "docs/issues/570-a-statusline-that-drops-its-branch-name.md\n"),
+        "git ls-tree": Completed(""),
         "gh pr create": Completed("https://github.com/x/y/pull/9\n"),
     })
-    number, finished = tool.create(source, REPO, scratch, recorder, quiet)
+    number, finished = tool.create(source, REPO, scratch, first, quiet)
     check("the issue is filed once and its number is read from gh's output",
-          number == 570 and recorder.count("gh issue create") == 1,
-          f"number {number}, {recorder.count('gh issue create')} create call(s)")
-    check("the run finishes when the file is on main", finished)
+          number == 570 and first.count("gh issue create") == 1,
+          f"number {number}, {first.count('gh issue create')} create call(s)")
+    check("the first run stops short of the body, its file not being on main",
+          finished is False and not first.ran("gh issue edit"),
+          str(first.commands()))
     check("the title comes from the file, not the caller",
-          any("A statusline that drops its branch name" in " ".join(call)
-              for call in recorder.calls if call[:3] == ["gh", "issue", "create"]))
-    check("the body written at the end is the link, not the placeholder",
-          any(call[:3] == ["gh", "issue", "edit"]
-              and "blob/main/docs/issues/570-" in " ".join(call)
-              and tool.PAIRING_KEY_PREFIX not in " ".join(call)
-              for call in recorder.calls),
-          str(recorder.commands()))
+          any(TITLE in " ".join(call) for call in first.calls
+              if call[:3] == ["gh", "issue", "create"]))
     check("main is fetched before the commit is made",
-          recorder.commands().index("git fetch origin")
-          < recorder.commands().index("git worktree add"),
-          str(recorder.commands()))
+          first.commands().index("git fetch origin")
+          < first.commands().index("git worktree add"),
+          str(first.commands()))
+    check("the worktree is detached, so the run makes no branch to leave",
+          first.ran("git worktree add --quiet --detach")
+          and not any("-b" in call for call in first.calls
+                      if call[:3] == ["git", "worktree", "add"]),
+          str(first.calls))
+    check("and the push names the branch as a refspec instead",
+          first.ran("git push --quiet origin "
+                    "HEAD:refs/heads/ghi-570-a-statusline"),
+          str(first.commands()))
     check("the worktree is removed even though the run succeeded",
-          recorder.ran("git worktree remove"), str(recorder.commands()))
+          first.ran("git worktree remove"), str(first.commands()))
+
+    second = Recorder({
+        "gh issue list": Completed(PLACEHOLDER),
+        "git show": Completed(STAGED),
+        "git ls-tree": Completed(LANDED + "\n"),
+    })
+    number, finished = tool.create(source, REPO, scratch, second, quiet)
+    check("the rerun after the merge writes the body the first run could not",
+          number == 570 and finished is True
+          and any(call[:3] == ["gh", "issue", "edit"]
+                  and "blob/main/docs/issues/570-" in " ".join(call)
+                  and tool.PAIRING_KEY_PREFIX not in " ".join(call)
+                  for call in second.calls),
+          str(second.commands()))
+    check("and it files no second issue",
+          second.count("gh issue create") == 0, str(second.commands()))
+    check("the rerun asks main, not the branch, so a deleted head branch "
+          "stops nothing",
+          not second.ran("git ls-remote")
+          and not second.ran("git worktree add")
+          and not second.ran("git commit")
+          and not second.ran("gh pr create"), str(second.commands()))
+
+    stale = Recorder({
+        "gh issue list": Completed(PLACEHOLDER),
+        "git show": Completed("---\nissue: [x](https://example.invalid/1)\n"
+                              "---\n\n# Someone else's file\n"),
+        "git ls-remote": Completed(""),
+        "git ls-tree": Completed(LANDED + "\n"),
+        "gh pr create": Completed("pr\n"),
+    })
+    tool.create(source, REPO, scratch, stale, quiet)
+    check("a different file at the destination is not mistaken for this one",
+          stale.ran("git worktree add"), str(stale.commands()))
 
     # --- The issue line the tool writes into the file's frontmatter ------
     # The author writes the file before the issue exists, so the file cannot
@@ -229,6 +291,7 @@ def run_cases(scratch: Path):
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree -r --name-only origin/main docs/issues/": Completed(
             "docs/issues/570-a.md\n"),
@@ -251,6 +314,7 @@ def run_cases(scratch: Path):
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree -r --name-only origin/main docs/issues/": Completed(""),
         "git ls-tree": Completed("for-frontmatter.md\n"),
@@ -264,6 +328,7 @@ def run_cases(scratch: Path):
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -274,10 +339,9 @@ def run_cases(scratch: Path):
 
     # --- Resuming: the property the design promises -----------------------
 
-    key = tool.pairing_key(FILE_TEXT)
     resumed = Recorder({
-        "gh issue list": Completed(
-            '[{"number": 570, "title": "t", "body": "placeholder ' + key + '"}]'),
+        "gh issue list": Completed(PLACEHOLDER),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree": Completed("docs/issues/570-a.md\n"),
         "gh pr create": Completed("pr\n"),
@@ -289,23 +353,45 @@ def run_cases(scratch: Path):
           not resumed.ran(ASK), str(resumed.commands()))
 
     open_branch = Recorder({
-        "gh issue list": Completed(
-            '[{"number": 570, "title": "t", "body": "x ' + key + '"}]'),
+        "gh issue list": Completed(PLACEHOLDER),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed("abc123\trefs/heads/ghi-570-a\n"),
+        "gh pr list": Completed(
+            '[{"number": 9, "title": "GHI-MD for issue 570", '
+            '"url": "https://github.com/x/y/pull/9"}]'),
         "git ls-tree": Completed(""),
     })
     tool.create(source, REPO, scratch, open_branch, quiet)
-    check("a branch already on the remote is not pushed a second time",
+    check("a branch whose pull request is open is not pushed a second time",
           not open_branch.ran("git worktree add")
           and not open_branch.ran("gh pr create"),
           str(open_branch.commands()))
     check("and while its file is not on main the body keeps its placeholder",
           not open_branch.ran("gh issue edit"), str(open_branch.commands()))
 
+    # A push that succeeded and a `gh pr create` that then failed leaves
+    # this state. Reported as a pull request waiting for merge-lane, it
+    # would be reported that way forever, because nothing else opens one.
+    pushed_only = Recorder({
+        "gh issue list": Completed(PLACEHOLDER),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed("abc123\trefs/heads/ghi-570-a\n"),
+        "gh pr list": Completed("[]"),
+        "git ls-tree": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+    })
+    tool.create(source, REPO, scratch, pushed_only, quiet)
+    check("a branch pushed without a pull request gets one on the rerun",
+          pushed_only.ran("gh pr create"), str(pushed_only.commands()))
+    check("and nothing is committed or pushed over it to get there",
+          not pushed_only.ran("git worktree add")
+          and not pushed_only.ran("git push"), str(pushed_only.commands()))
+
     unlanded = Recorder({
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/571\n"),
+        "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         "git ls-tree": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -314,6 +400,62 @@ def run_cases(scratch: Path):
     check("a body is never linked to a file that is not on main",
           done is False and not unlanded.ran("gh issue edit"),
           str(unlanded.commands()))
+
+    # --- After the merge, when filing moved the source --------------------
+    # Step 4 moves a source that was already tracked on main, so the merge
+    # takes that path off main and the author's pull takes it off disk. The
+    # file that exists then is the landed one, and it is the entry point.
+
+    landed = written(scratch, "570-a-statusline-that-drops-its-branch-name.md",
+                     STAGED)
+    moved = Recorder({
+        "gh issue view": Completed('{"body": "in progress ' + KEY + '"}'),
+        "git ls-tree": Completed(LANDED + "\n"),
+    })
+    number, finished = tool.create(landed, REPO, scratch, moved, quiet)
+    check("the landed file finishes the run its moved source cannot",
+          number == 570 and finished is True and moved.ran("gh issue edit"),
+          str(moved.commands()))
+    check("and that entry files nothing and lands nothing",
+          moved.count("gh issue create") == 0
+          and not moved.ran("git worktree add")
+          and not moved.ran("gh pr create"), str(moved.commands()))
+
+    filed_already = Recorder({
+        "gh issue view": Completed(
+            '{"body": "- [570-a.md](https://github.com/x/y/blob/main/x.md)"}'),
+    })
+    try:
+        tool.create(landed, REPO, scratch, filed_already, quiet)
+        check("a paired file whose filing finished is still refused", False,
+              "it was accepted")
+    except tool.Refused as refusal:
+        check("a paired file whose filing finished is still refused",
+              refusal.code == 64 and not filed_already.ran("gh issue edit"),
+              f"code {refusal.code}, {filed_already.commands()}")
+
+    # The move takes the source's directory too when it held nothing else,
+    # and git asked from a directory that is gone raises rather than
+    # answering. Driven through main(), which is where the checkout is
+    # looked for; it reaches neither git nor gh.
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        code = tool.main(["create", str(scratch / "gone" / "statusline.md"),
+                          "--repo", REPO])
+    check("a source whose directory the move took is refused, not a crash",
+          code == 64 and "no such file" in complaint.getvalue(),
+          f"code {code}, {complaint.getvalue()!r}")
+
+    absent = Recorder({"gh issue view": Completed('{"body": "x ghipairff"}')})
+    try:
+        tool.create(scratch / "999-not-on-disk.md", REPO, scratch, absent,
+                    quiet)
+        check("a paired path with no file is refused for the file", False,
+              "it was accepted")
+    except tool.Refused as refusal:
+        check("a paired path with no file is refused for the file",
+              refusal.code == 64 and not absent.ran("gh issue view"),
+              f"code {refusal.code}, {absent.commands()}")
 
     # --- Adjudication: refuses, fails open, and the reconsider marker -----
 

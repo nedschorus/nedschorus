@@ -18,8 +18,8 @@ alongside it, which is the accepted cooperative posture the design states.
 
 THE SEQUENCE, and what makes each step safe to run twice:
 
-  1. Validate   the file exists, opens with a heading, and is not already at
-                a paired path.
+  1. Validate   the file exists, opens with a heading, and is not already
+                paired with an issue whose filing finished.
   2. Adjudicate ask ghi-info whether an open issue already covers this.
                 Fail-open: unreachable means the write proceeds.
   3. File       gh issue create, title from the file's first heading, body a
@@ -45,10 +45,37 @@ which is not immediate: a rerun seconds after a failure must still find the
 issue, and `gh issue list --json body` answers from the API rather than the
 index.
 
-Step 4 is idempotent through its branch name, which is derived from the
-issue number and slug rather than generated: if that branch is already on
-the remote, its pull request is open and waiting for merge-lane, and the
-rerun says so instead of opening a second one.
+WHAT A RERUN TESTS, and why it is not the branch. Step 4 asks first
+whether main's copy of the destination is already the file this run would
+land, and stops there when it is. It asks about the branch only after that.
+The order is the whole of it: a merged pull request's head branch is deleted
+here seconds after the merge, so a branch test finds nothing exactly when
+the work is most finished, and the run walks into `git worktree add` and
+`git commit` with nothing to commit (reviewed 2026-09-21, on PR [Build the
+GHI write tool's create verb](https://github.com/nedschorus/nedschorus/pull/569),
+where both deaths were reproduced against a real repository). A branch says
+whether this run's work is in flight; main says whether it is done, and done
+is what a rerun needs to know.
+
+The branch test that remains answers a different question — is a pull
+request open on it — and it asks GitHub rather than assuming: a run whose
+push succeeded and whose `gh pr create` then failed leaves a branch with no
+pull request, and every rerun after that would otherwise report one waiting
+forever. Finding none, the rerun opens it.
+
+The worktree is cut with --detach and the push names the branch as a
+refspec, so nothing is created in the filing checkout that could outlive the
+run: a branch made with `git worktree add -b` survives `git worktree
+remove --force`, and the next run's add then fails on the name.
+
+AFTER THE MERGE, WHAT TO RERUN ON. Step 4 is a move when the source is
+already tracked on main, so the merge takes the source path off main and the
+author's pull takes it off disk; a rerun on that path has nothing to read.
+So a paired file — one whose name carries an issue number — is accepted as
+the resume entry point when that issue's body is still a placeholder, and
+the run finishes at step 5. When the body is no longer a placeholder the
+filing is done, and the refusal at step 1 stands: changing a paired file is
+the edit verb's work.
 
 WHERE THE GIT WORK HAPPENS. In a throwaway worktree cut from a just-fetched
 origin/main, removed afterwards. The user ruled this on 2026-09-20, in place
@@ -63,6 +90,10 @@ separate branches and separate pull requests, so nothing collides.
 Usage:
   ghi-issue-write.py create <path-to-ghi-md> [--repo OWNER/NAME]
                      [--dry-run]
+
+A rerun after the merge is given the file that still exists: the source
+where filing left it alone, its landed copy under docs/issues/ where filing
+moved it. The run that stops at step 4 names that path in its last line.
 
 The author gives the file its cold read before calling this (user-ruled
 2026-09-20). This program does not check that one happened: the design puts
@@ -162,7 +193,8 @@ def placeholder_body(key: str) -> str:
     return (f"Filing in progress, pairing key {key}. This body becomes the "
             "links to this issue's files once they land on main. If it still "
             "reads this way, rerun `scripts/ghi-issue-write.py create` on the "
-            "file and it will continue from where it stopped.")
+            "file and it will continue from where it stopped. If that file is "
+            f"gone, rerun it on this issue's file under {PAIRED_DIRECTORY}/.")
 
 
 ISSUE_FRONTMATTER_KEY = "issue"
@@ -225,6 +257,25 @@ def links_body(repo: str, paths) -> str:
 
 # --- The steps ----------------------------------------------------------
 
+def paired_issue_number(path: Path):
+    """The issue number a paired file carries in its name, or None for a file
+    that is not paired. A paired file carries the number wherever it sits, so
+    this does not look at the directory."""
+    match = re.match(r"^(\d+)-", path.name)
+    return int(match.group(1)) if match else None
+
+
+def issue_body_carries_pairing_key(repo: str, number: int, runner) -> bool:
+    """Whether this issue's body is still the placeholder a create wrote,
+    which is what tells a rerun on a paired file that the filing stopped
+    partway rather than finished. Read from the API for the same reason the
+    resume scan is: a rerun seconds after a failure must see the write."""
+    viewed = runner(["gh", "issue", "view", str(number), "--repo", repo,
+                     "--json", "body"])
+    body = (json.loads(viewed.stdout or "{}") or {}).get("body") or ""
+    return PAIRING_KEY_PREFIX in body
+
+
 def validate(path: Path):
     """Step 1. Refuses rather than guesses: a file with no heading has no
     title to generate, and a file already at a paired path belongs to an
@@ -240,7 +291,7 @@ def validate(path: Path):
             f"{path} has no heading, so there is no title to generate from "
             "it. The issue's title is the file's first heading, after any "
             "frontmatter (user-ruled 2026-09-16).", 64)
-    if re.match(r"^\d+-", path.name):
+    if paired_issue_number(path) is not None:
         raise Refused(
             f"{path} is already named for an issue, so that issue exists. A "
             "paired file carries its issue's number wherever it sits, so this "
@@ -324,37 +375,92 @@ def file_issue(repo: str, title: str, key: str, runner, report) -> int:
     return int(match.group(1))
 
 
+def blob_at(revision: str, relative: str, repository_root: Path, runner):
+    """The file's content at a revision, or None where it is not there."""
+    completed = runner(["git", "show", f"{revision}:{relative}"],
+                       cwd=str(repository_root), check=False)
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def existing_pull_request_for_branch(repo: str, branch: str, runner):
+    """The open pull request whose head is this branch, or None. Asked of
+    GitHub rather than inferred from the branch being on the remote, which
+    is true of a push whose `gh pr create` then failed."""
+    listed = runner(["gh", "pr", "list", "--repo", repo, "--head", branch,
+                     "--state", "open", "--json", "number,title,url"],
+                    check=False)
+    if listed.returncode != 0:
+        return None
+    entries = json.loads(listed.stdout or "[]") or []
+    return entries[0] if entries else None
+
+
+def create_pull_request_for_branch(repo: str, branch: str, number: int,
+                                   title: str, cwd: Path, runner, report):
+    """Open the pull request that carries this issue's file to main. Called
+    from the worktree on the ordinary path, and from the filing checkout when
+    a rerun finds the branch pushed with no pull request on it."""
+    body = (f"The GHI-MD for issue #{number}, filed by "
+            "`scripts/ghi-issue-write.py`.\n\nUnder link-only that "
+            "issue's body is the links to its files, so this file has to "
+            "be on main before the body can point at it. Prose under "
+            "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
+            "rule.\n")
+    created = runner(
+        ["gh", "pr", "create", "--repo", repo, "--base", "main",
+         "--head", branch, "--title", f"GHI-MD for issue {number}: {title}",
+         "--body", body], cwd=str(cwd))
+    report((created.stdout or "").strip())
+
+
 def land_file(repo: str, number: int, title: str, source: Path,
               repository_root: Path, runner, report) -> str:
     """Step 4, in a throwaway worktree cut from a just-fetched origin/main,
     so the commit is never made against stale or dirty disk.
 
-    Idempotent through the branch name rather than through a record: the name
-    is derived from the issue, so a branch already on the remote means the
-    pull request is open and waiting, and a rerun says so."""
+    Safe to run twice through main's copy of the destination, compared with
+    what this run would land before any branch is looked at: see the module
+    docstring, WHAT A RERUN TESTS."""
     branch = f"ghi-{number}-{slug(title)}"
     destination = f"{PAIRED_DIRECTORY}/{number}-{slug(title)}.md"
+    staged = with_issue_frontmatter(source.read_text(encoding="utf-8"), repo,
+                                    number, title)
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
+    if blob_at("origin/main", destination, repository_root, runner) == staged:
+        report(f"step 4 already done: main's copy of {destination} is this "
+               "file")
+        return destination
+
     on_remote = runner(
         ["git", "ls-remote", "--heads", "origin", branch],
         cwd=str(repository_root))
     if (on_remote.stdout or "").strip():
-        report(f"step 4 already done: branch {branch} is on the remote and "
-               "its pull request is waiting for merge-lane")
+        waiting = existing_pull_request_for_branch(repo, branch, runner)
+        if waiting:
+            report(f"step 4 already done: pull request "
+                   f"[{waiting.get('title')}]({waiting.get('url')}) is "
+                   "waiting for merge-lane")
+        else:
+            report(f"branch {branch} is on the remote with no pull request "
+                   "open on it, so an earlier run stopped between its push "
+                   "and its pull request")
+            create_pull_request_for_branch(repo, branch, number, title,
+                                           repository_root, runner, report)
         return destination
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
     try:
-        runner(["git", "worktree", "add", "--quiet", "-b", branch,
+        # --detach, and the push names the branch as a refspec, so this run
+        # creates nothing in the filing checkout: a branch made with -b
+        # outlives `git worktree remove --force` and the next run's add
+        # fails on the name.
+        runner(["git", "worktree", "add", "--quiet", "--detach",
                 str(worktree), "origin/main"], cwd=str(repository_root))
         target = worktree / destination
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            with_issue_frontmatter(source.read_text(encoding="utf-8"), repo,
-                                   number, title),
-            encoding="utf-8")
+        target.write_text(staged, encoding="utf-8")
         runner(["git", "add", destination], cwd=str(worktree))
         # A move, not a copy. When the source is already tracked on main —
         # a queue file, typically — leaving it behind would put the same
@@ -371,19 +477,10 @@ def land_file(repo: str, number: int, title: str, source: Path,
                    "frontmatter line is written by the tool, not by its "
                    "author, who had no issue number when they wrote it.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
-        runner(["git", "push", "--quiet", "-u", "origin", branch],
-               cwd=str(worktree))
-        body = (f"The GHI-MD for issue #{number}, filed by "
-                "`scripts/ghi-issue-write.py`.\n\nUnder link-only that "
-                "issue's body is the links to its files, so this file has to "
-                "be on main before the body can point at it. Prose under "
-                "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
-                "rule.\n")
-        created = runner(
-            ["gh", "pr", "create", "--repo", repo, "--base", "main",
-             "--head", branch, "--title", f"GHI-MD for issue {number}: {title}",
-             "--body", body], cwd=str(worktree))
-        report((created.stdout or "").strip())
+        runner(["git", "push", "--quiet", "origin",
+                f"HEAD:refs/heads/{branch}"], cwd=str(worktree))
+        create_pull_request_for_branch(repo, branch, number, title, worktree,
+                                       runner, report)
     finally:
         runner(["git", "worktree", "remove", "--force", str(worktree)],
                cwd=str(repository_root), check=False)
@@ -415,16 +512,23 @@ def paired_paths(number: int, repository_root: Path, runner):
             if line.startswith(prefix)]
 
 
-def link_body(repo: str, number: int, repository_root: Path, runner, report):
+def link_body(repo: str, number: int, repository_root: Path, runner, report,
+              rerun_on: str):
     """Step 5. Nothing happens until the file is on main: until then the body
-    keeps its placeholder, which tells the next reader to rerun."""
+    keeps its placeholder, which tells the next reader to rerun.
+
+    `rerun_on` is the path the rerun must be given, which is not always the
+    path this run was given: filing moves a source that was already tracked
+    on main, so after the merge that source is gone and its landed copy is
+    the file that exists."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root),
            check=False)
     paths = paired_paths(number, repository_root, runner)
     if not paths:
-        report(f"step 5 not done: no file for issue {number} is on main yet. "
-               "The pull request from step 4 is waiting for merge-lane. Rerun "
-               "this command once it merges and the body becomes its links.")
+        report(f"step 5 not done: no file for issue {number} is on main yet, "
+               "so its body keeps the placeholder.")
+        report("Once the pull request from step 4 merges, pull main and "
+               f"rerun: scripts/ghi-issue-write.py create {rerun_on}")
         return False
     runner(["gh", "issue", "edit", str(number), "--repo", repo,
             "--body", links_body(repo, paths)])
@@ -434,6 +538,19 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report):
 
 def create(path: Path, repo: str, repository_root: Path, runner, report):
     """The whole sequence, and the one function the tests drive."""
+    paired = paired_issue_number(path)
+    if (paired is not None and path.is_file()
+            and issue_body_carries_pairing_key(repo, paired, runner)):
+        # The file this run was given is named for an issue whose body is
+        # still the placeholder a create wrote, so that filing stopped
+        # before step 5. Step 4 is what puts a file at a paired name, so
+        # step 5 is what is left, and this run touches nothing else.
+        report(f"resuming issue {paired} on its landed file: the issue's "
+               "body still carries a pairing key, so an earlier run stopped "
+               "before step 5")
+        return paired, link_body(repo, paired, repository_root, runner,
+                                 report, str(path))
+
     text, title = validate(path)
     key = pairing_key(text)
 
@@ -446,8 +563,10 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         adjudicate(repo, title, text, repository_root, runner, report)
         number = file_issue(repo, title, key, runner, report)
 
-    land_file(repo, number, title, path, repository_root, runner, report)
-    finished = link_body(repo, number, repository_root, runner, report)
+    destination = land_file(repo, number, title, path, repository_root,
+                            runner, report)
+    finished = link_body(repo, number, repository_root, runner, report,
+                         destination)
     return number, finished
 
 
@@ -488,11 +607,15 @@ def main(argv=None):
             report(f"would land at: {PAIRED_DIRECTORY}/<number>-"
                    f"{slug(title)}.md")
             return 0
+        if not path.is_file():
+            # Asked before the checkout is looked for, because step 4 moves
+            # a source that was already tracked on main and takes its
+            # directory with it when it held nothing else: git run from a
+            # directory that is gone raises instead of answering, and the
+            # caller gets a traceback where a refusal is the honest reply.
+            raise Refused(f"no such file: {path}", 64)
         root = repository_root_of(path.parent)
-        number, finished = create(path, arguments.repo, root, run, report)
-        if not finished:
-            report(f"issue {number} is filed and its file is on a pull "
-                   "request; rerun this command after that merges.")
+        create(path, arguments.repo, root, run, report)
         return 0
     except Refused as refusal:
         print(str(refusal), file=sys.stderr)
