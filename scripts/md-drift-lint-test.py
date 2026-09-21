@@ -4,43 +4,52 @@
 Run: python3 scripts/md-drift-lint-test.py
 """
 
-import importlib.util
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 
-# Mutation testing this lint reads the WRONG code without this line, and says
-# so with a clean, plausible, entirely wrong table. Python decides a cached
-# .pyc is current by (mtime, size) at one-second resolution, so two mutations
-# of the SAME byte length written to LINT_SCRIPT inside one second are
-# indistinguishable to it and the second run executes the first's bytecode.
-# The two mutations that pin PLACEHOLDER_SPAN's exclusions, `(?![!])` and
-# `(?![?])`, are the same length as each other -- seven characters each --
-# which is exactly that case. On this Mac sys.pycache_prefix puts the cache
-# under ~/Library/Caches rather than beside the script, so no __pycache__
-# appears here and the staleness is invisible to anyone looking for one.
+# The lint is loaded by compiling its source below rather than through
+# importlib, so Python's bytecode cache is never consulted for it, and
+# sys.dont_write_bytecode keeps one from being written either. The two cover
+# different halves of the same hazard and both are needed.
 #
-# It cost the merge-lane seat and its commissioned reviewer a wrong answer
-# each, independently, while reviewing the pull request that added the
-# processing-instruction case (2026-09-20). Three separate reproductions have
-# since measured it, each running both mutations back to back with no sleep:
-# 10, 9 and 8 collisions out of 10 attempts without this line, and 0 of 10
-# with it in all three. It collides in EITHER direction, onto whichever
-# case's bytecode landed first, which is why the wrong table reads as
-# convincing rather than as obviously broken.
+# Mutation testing this lint -- change PLACEHOLDER_SPAN, rerun, read which
+# case fails -- is how its exclusions are checked, and a stale .pyc makes it
+# report a clean, plausible, entirely wrong table. Python decides a cached
+# .pyc is current by (mtime, size) at one-second resolution, so two mutations
+# of the SAME byte length written inside one second are indistinguishable to
+# it and the second run executes the first's bytecode. The two mutations that
+# pin PLACEHOLDER_SPAN's exclusions, `(?![!])` and `(?![?])`, are the same
+# length as each other -- seven characters each -- which is exactly that case.
+# It collides in EITHER direction, onto whichever case's bytecode landed
+# first, so the wrong table does not look broken.
+#
+# Do not look for a __pycache__ to decide whether this is happening. Where the
+# cache lands is interpreter-dependent on this Mac, and both interpreters are
+# swept: under Apple's 3.9.6 sys.pycache_prefix puts it beneath
+# ~/Library/Caches and nothing appears beside the script, while under
+# Homebrew's 3.13.15 the prefix is None and scripts/__pycache__ appears.
+#
+# sys.dont_write_bytecode is not sufficient on its own, which is why the load
+# below avoids importlib: it suppresses WRITING a .pyc, not READING one, so a
+# cache left by an earlier run without it is still consulted and still wins.
+# Measured by giving a second mutation the first's mtime with `touch -r` at
+# equal size -- the run reported the FIRST mutation's failing case with the
+# knob in place. Compiling here removes the read half; the knob stays so that
+# a later change back to importlib does not silently reopen the write half.
+#
 # scripts/launch-claude-pre-trust-step-test.py sets the same knob through the
 # environment, for an unrelated reason.
-#
-# A fresh worktree per mutation also works, because the cache path mirrors
-# the source path. This line means no one has to remember that.
 sys.dont_write_bytecode = True
 
-_spec = importlib.util.spec_from_file_location("md_drift_lint", LINT_SCRIPT)
-lint = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(lint)
+lint = types.ModuleType("md_drift_lint")
+lint.__file__ = str(LINT_SCRIPT)   # md-drift-lint.py derives REPO_ROOT from it
+exec(compile(LINT_SCRIPT.read_text(encoding="utf-8"), str(LINT_SCRIPT), "exec"),
+     lint.__dict__)
 
 failures = []
 
