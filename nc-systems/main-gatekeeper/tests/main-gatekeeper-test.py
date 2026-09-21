@@ -1159,10 +1159,16 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("--help does not name the internal worker subcommand",
           "worker" not in completed.stdout, completed.stdout)
 
+    # The choice is matched unquoted, because argparse's invalid-choice wording
+    # is not stable across Python versions: 3.13 and earlier quote the choices,
+    # 3.14 leaves them bare. Measured 2026-09-21 — 3.13.15 emits "(choose from
+    # 'check-in', 'status', ...)" and 3.14.4 emits "(choose from check-in,
+    # status, ...)". The bare name is present under both, and an empty reply
+    # still fails, which is what this check is for.
     code, payload = run_gatekeeper(["no-such-subcommand"], state_home)
     check("an unknown subcommand refuses as malformed-field, naming the public choices",
           payload.get("error") == "malformed-field" and code == 1
-          and "'check-in'" in payload.get("facts", ""), payload)
+          and "check-in" in payload.get("facts", ""), payload)
     check("an unknown subcommand's refusal does not name the internal worker subcommand",
           "worker" not in json.dumps(payload), payload)
 
