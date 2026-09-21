@@ -63,6 +63,36 @@ push succeeded and whose `gh pr create` then failed leaves a branch with no
 pull request, and every rerun after that would otherwise report one waiting
 forever. Finding none, the rerun opens it.
 
+WHAT ELSE STOPS A SECOND ISSUE, the pairing key having limits. The key is a
+hash of the source's content, so it finds a filing only while that filing's
+issue still carries it and only while the source is unchanged. Two cases
+fall outside it. Both were walked with the user item by item on 2026-09-21
+and approved there, the in-flight refusal's wording included (walk-minutes
+nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-write-create-verb-follow-ups-and-two-open-questions-minutes.md).
+
+A FINISHED FILING LEAVES NO KEY ANYWHERE. Step 5 makes the body links, and a
+source the tool did not move — any file not already tracked on main, which
+is every freshly written document — is still on disk. A rerun on it finds no
+pairing and would file a second issue. So before filing, every paired file
+on main is compared against what this source would become if it were filed
+under that file's issue number. That is step 4's own idempotency test
+generalised over the corpus, and it is computed forward: stripping the
+`issue:` line back off main's copy would be a guess, because writing it may
+have added a whole frontmatter block around it.
+
+AN EDIT MID-FILING CHANGES THE KEY. An author who edits the source between
+step 3 and a rerun makes a key no open issue carries, and would file a
+second issue while the first one's pull request is still open. Content as
+identity is the user's ruling of 2026-09-20 and is not up for revision, so
+the second question is asked of the same read of the open issues: an issue
+whose body still carries the pairing key prefix is a filing in flight, and
+its title is the heading it was filed from. A source whose first heading
+matches one of those is refused, and the refusal names the issue, names the
+pull request to wait for, and sends the edit to the edit verb. Known
+residual, accepted on 2026-09-21 rather than guarded: an author who changes
+the heading itself mid-filing matches neither check, and that refusal's
+wording is what keeps them out of it.
+
 The worktree is cut with --detach and the push names the branch as a
 refspec, so nothing is created in the filing checkout that could outlive the
 run: a branch made with `git worktree add -b` survives `git worktree
@@ -103,7 +133,11 @@ Exit codes:
   0   the issue is filed, its file is on a pull request, its body is links
       (or the run resumed and said what is still outstanding)
   1   an operating failure — gh, git or the network
-  64  the caller's input is wrong: no such file, no heading, already paired
+  64  the caller's input is wrong: no such file, no heading, already paired,
+      already on main under an issue, a filing of the same heading already
+      in flight, or a bad command line. argparse's own errors are given this
+      code rather than its 2, which this list has no entry for and a caller
+      could not place.
   65  refused by adjudication as too similar to an open issue
 """
 
@@ -203,9 +237,24 @@ ISSUE_FRONTMATTER_KEY = "issue"
 def issue_frontmatter_line(repo: str, number: int, title: str) -> str:
     """The issue this file is paired with, written the way CLAUDE.md says to
     cite one: its link-type — the key — then its title, as a link. Never a
-    bare number."""
-    return (f"{ISSUE_FRONTMATTER_KEY}: [{title}]"
-            f"(https://github.com/{repo}/issues/{number})")
+    bare number.
+
+    The value is emitted as a JSON string, which is also a valid
+    double-quoted YAML scalar. Unquoted it is not valid YAML at all: the
+    value opens with `[`, so a parser reads a flow sequence and raises at
+    the `](` — on every document this tool files. json.dumps quotes and
+    escapes together, which matters because the quoting alone does not: a
+    title carrying a double quote or a backslash needs those escaped inside
+    the quotes, and json.dumps is the escaping YAML's double-quoted style
+    shares. ensure_ascii=False so a title's non-ASCII characters stay
+    themselves rather than being turned into escapes.
+
+    with_issue_frontmatter still finds a line written in the older unquoted
+    shape, because it matches the key and not the value; a file carrying
+    one corrects itself the next time this tool writes to it, and there is
+    no migration sweep."""
+    link = f"[{title}](https://github.com/{repo}/issues/{number})"
+    return f"{ISSUE_FRONTMATTER_KEY}: {json.dumps(link, ensure_ascii=False)}"
 
 
 def with_issue_frontmatter(text: str, repo: str, number: int,
@@ -222,7 +271,11 @@ def with_issue_frontmatter(text: str, repo: str, number: int,
     a computed list of links.
 
     Only this key is touched. `status:`, `form:` and the rest say things git
-    and GitHub cannot, and they stay exactly as their author wrote them."""
+    and GitHub cannot, and they stay exactly as their author wrote them.
+
+    An existing line is found by its key alone, never by the shape of its
+    value, so a line written before the value was quoted is still replaced
+    rather than duplicated."""
     line = issue_frontmatter_line(repo, number, title)
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -300,17 +353,60 @@ def validate(path: Path):
     return text, title
 
 
-def find_existing_pairing(repo: str, key: str, runner):
-    """The resume path. Reads bodies from the API rather than the search
-    index, which is not immediate — a rerun seconds after a failure must
-    still find its issue."""
+def open_issues_with_bodies(repo: str, runner):
+    """Every open issue, with the number, body and title of each. Read from
+    the API rather than the search index, which is not immediate — a rerun
+    seconds after a failure must still find its issue.
+
+    One read, two questions: which open issue carries this file's pairing
+    key, and which open issues are filings still in flight. Asking twice
+    would be two API calls for an answer that cannot change between them."""
     completed = runner(
         ["gh", "issue", "list", "--repo", repo, "--state", "open",
          "--limit", "300", "--json", "number,body,title"])
-    for issue in json.loads(completed.stdout or "[]"):
+    return json.loads(completed.stdout or "[]")
+
+
+def find_existing_pairing(issues, key: str):
+    """The resume path: the open issue whose body carries this file's
+    pairing key, or None when no run has filed this content yet."""
+    for issue in issues:
         if key in (issue.get("body") or ""):
             return issue
     return None
+
+
+def refuse_if_filing_is_in_flight(repo: str, issues, title: str, runner):
+    """Refuse when an open issue is this same document part way through
+    filing. An issue whose body still carries the pairing key prefix is a
+    filing in flight, and its title is the heading it was filed from, so a
+    source whose first heading matches one of those is that filing's
+    document — edited since, which is why the key no longer finds it.
+
+    Reads the list the resume scan already fetched, so the check costs no
+    API call. The refusal costs one: the pull request its file is on, asked
+    of GitHub by the branch step 4 pushes, so the author is told what to
+    wait for rather than left to find it."""
+    for issue in issues:
+        if PAIRING_KEY_PREFIX not in (issue.get("body") or ""):
+            continue
+        if (issue.get("title") or "") != title:
+            continue
+        number = issue.get("number")
+        waiting = existing_pull_request_for_branch(
+            repo, f"ghi-{number}-{slug(title)}", runner)
+        where = (f"Its file is on pull request [{waiting.get('title')}]"
+                 f"({waiting.get('url')})."
+                 if waiting else
+                 "No pull request carrying its file is open yet.")
+        raise Refused(
+            f"This file's heading is already being filed as issue [{title}]"
+            f"(https://github.com/{repo}/issues/{number}), whose body is "
+            "still a placeholder.\n"
+            f"{where}\n"
+            "Wait for the merge, then apply your edit to the landed file "
+            "with the edit verb, and do not rerun create on this file.",
+            64)
 
 
 def adjudicate(repo: str, title: str, text: str, repository_root: Path,
@@ -380,6 +476,53 @@ def blob_at(revision: str, relative: str, repository_root: Path, runner):
     completed = runner(["git", "show", f"{revision}:{relative}"],
                        cwd=str(repository_root), check=False)
     return completed.stdout if completed.returncode == 0 else None
+
+
+def ghi_md_paths_on_main(repository_root: Path, runner):
+    """Every paired GHI-MD on main — the files that carry an issue number in
+    their name. `docs/issues/` also holds the queue, whose files belong to no
+    issue and carry no number, so the number is what selects.
+
+    Raises on a failed list for the reason paired_paths does, which is where
+    that reasoning and the real-repository measurement behind it are
+    written."""
+    listed = runner(["git", "ls-tree", "-r", "--name-only", "origin/main",
+                     f"{PAIRED_DIRECTORY}/"], cwd=str(repository_root))
+    return [line for line in (listed.stdout or "").splitlines()
+            if paired_issue_number(Path(line)) is not None]
+
+
+def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
+                                     repository_root: Path, runner):
+    """Refuse when this source is already on main under some issue's number.
+
+    The case the pairing key cannot see: once a filing finishes, the issue's
+    body is links and the key is nowhere, so a rerun on a source that is
+    still on disk — every source the tool did not move, which is every
+    freshly written document — finds no pairing and files a second issue.
+
+    Each paired file on main is compared against what this source would
+    become if it were filed under that file's issue number, which is
+    land_file's own idempotency test generalised over the corpus. Computed
+    forward, never by stripping the `issue:` line back off main's copy:
+    with_issue_frontmatter may have added a whole frontmatter block around
+    that line, and taking one back off again is a guess about what the
+    author wrote.
+
+    The fetch is this check's own. land_file fetches again later because
+    adjudication runs between the two and can take minutes, and the
+    docstring's promise is that the worktree is cut from a just-fetched
+    main."""
+    runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
+    for landed in ghi_md_paths_on_main(repository_root, runner):
+        number = paired_issue_number(Path(landed))
+        staged = with_issue_frontmatter(text, repo, number, title)
+        if blob_at("origin/main", landed, repository_root, runner) == staged:
+            raise Refused(
+                f"This file is already on main as {landed}, filed as issue "
+                f"[{title}](https://github.com/{repo}/issues/{number}).\n"
+                f"Edit {landed} with the edit verb instead of rerunning "
+                "create on this file.", 64)
 
 
 def existing_pull_request_for_branch(repo: str, branch: str, runner):
@@ -503,10 +646,19 @@ def source_path_on_main(source: Path, repository_root: Path, runner):
 def paired_paths(number: int, repository_root: Path, runner):
     """Every file paired with this issue that is on main. The body is built
     from this, so a file still sitting on an unmerged branch is not linked —
-    a link that does not resolve is worse than a body that is not finished."""
+    a link that does not resolve is worse than a body that is not finished.
+
+    Raises on a failed list rather than answering with an empty one. The two
+    are indistinguishable to every caller, and the caller then states that
+    no file is on main yet as a fact it cannot know. Nothing is lost by
+    raising: measured against a real repository on 2026-09-21, `git ls-tree`
+    asked for a directory that is not on the revision exits 0 with empty
+    output, and a path that is not there does too, so a non-zero exit is a
+    real failure — a bad revision or a path outside the checkout, both
+    128 — and never means "nothing there"."""
     listed = runner(
         ["git", "ls-tree", "-r", "--name-only", "origin/main",
-         f"{PAIRED_DIRECTORY}/"], cwd=str(repository_root), check=False)
+         f"{PAIRED_DIRECTORY}/"], cwd=str(repository_root))
     prefix = f"{PAIRED_DIRECTORY}/{number}-"
     return [line for line in (listed.stdout or "").splitlines()
             if line.startswith(prefix)]
@@ -520,9 +672,13 @@ def link_body(repo: str, number: int, repository_root: Path, runner, report,
     `rerun_on` is the path the rerun must be given, which is not always the
     path this run was given: filing moves a source that was already tracked
     on main, so after the merge that source is gone and its landed copy is
-    the file that exists."""
-    runner(["git", "fetch", "origin", "main"], cwd=str(repository_root),
-           check=False)
+    the file that exists.
+
+    The fetch raises rather than being ignored. A fetch that failed leaves
+    the list below empty exactly as a main with nothing paired does, and the
+    report then tells the author no file for this issue is on main yet —
+    which, the fetch having failed, this run cannot know."""
+    runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     paths = paired_paths(number, repository_root, runner)
     if not paths:
         report(f"step 5 not done: no file for issue {number} is on main yet, "
@@ -554,12 +710,20 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
     text, title = validate(path)
     key = pairing_key(text)
 
-    existing = find_existing_pairing(repo, key, runner)
+    issues = open_issues_with_bodies(repo, runner)
+    existing = find_existing_pairing(issues, key)
     if existing:
         number = existing["number"]
         report(f"resuming issue {number}: its body still carries this file's "
                "pairing key, so an earlier run stopped partway")
     else:
+        # Nothing open carries this content's key, so this is either a new
+        # document or one of the two cases the key cannot see. Both are
+        # asked before adjudication, which is fail-open and can take
+        # minutes: a run that must be refused should not spend them.
+        refuse_if_filing_is_in_flight(repo, issues, title, runner)
+        refuse_if_already_landed_on_main(repo, text, title, repository_root,
+                                         runner)
         adjudicate(repo, title, text, repository_root, runner, report)
         number = file_issue(repo, title, key, runner, report)
 
@@ -570,17 +734,38 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
     return number, finished
 
 
-def repository_root_of(path: Path) -> Path:
-    completed = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], cwd=str(path),
-        capture_output=True, text=True, timeout=30, check=False)
+def repository_root_of(path: Path, runner=run) -> Path:
+    """The checkout this path sits in, or a refusal naming it.
+
+    Through the shared `run` like every other subprocess this program makes,
+    so that function's docstring — "Every subprocess this program makes goes
+    through here" — is true of this one too. check=False, so a path outside
+    a checkout keeps this refusal and its 64 rather than becoming `run`'s
+    generic exit 1."""
+    completed = runner(["git", "rev-parse", "--show-toplevel"], timeout=30,
+                       cwd=str(path), check=False)
     if completed.returncode != 0:
         raise Refused(f"{path} is not inside a git checkout", 64)
     return Path(completed.stdout.strip())
 
 
+class BadInvocationArgumentParser(argparse.ArgumentParser):
+    """argparse's own command-line errors join this program's 64.
+
+    argparse exits 2 on a missing or unknown option, and this program has no
+    2: the exit codes it documents are 0, 1, 64 and 65, so a caller reading
+    that list cannot place a 2 at all. 64 already means the caller's input is
+    wrong, which a mistyped flag is. Usage text and message are argparse's,
+    unchanged; only the exit code moves. The form is
+    scripts/ghi-issue-body-edit.py's parser of the same name."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(64, f"{self.prog}: error: {message}\n")
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(
+    parser = BadInvocationArgumentParser(
         description="File a GitHub issue from its GHI-MD and make the "
                     "issue's body the links to that issue's files.")
     sub = parser.add_subparsers(dest="verb", required=True)
