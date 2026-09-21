@@ -9,9 +9,9 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  scripts/cold-read-codex-cell.py --cell restate --tier floor \\
+  scripts/cold-read-codex-cell.py --cell restate --tier second \\
       --target docs/cross-project/foo.md \\
-      --report cold-read-records/foo-2026-01-01/codex-restate-floor.md
+      --report cold-read-records/foo-2026-01-01/codex-restate-second.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -100,21 +100,21 @@ PROGRAM = "cold-read-codex-cell"
 # ~/agents/cold-read-research/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/,
 # on that machine only and not committed, which is why the numbers are inline here; sections "Step-rule
 # tally, ALL SIX TARGETS", "Aggregate over all six targets" and "Addendum
-# 2026-09-04"). Sol keeps the good cold-read-tier: it is in every top
+# 2026-09-04"). Sol keeps the `deep` cold-read-tier: it is in every top
 # cold-read-cell set, and gpt-6-astra at max did not beat it (net -19
-# unique-and-real over two designs and two runs). Luna keeps the floor:
+# unique-and-real over two designs and two runs). Luna keeps `second`:
 # added to opus at max plus sol at max it lifts 238-round-1 0.89 -> 0.94 and
 # 120-design 0.94 -> 0.97 at no wall-clock cost (mean 665 s, under sol's).
 TIER_TO_CODEX_MODEL_CHAIN = {
-    "good": ("gpt-5.6-sol",),
-    "floor": ("gpt-5.6-luna",),
+    "deep": ("gpt-5.6-sol",),
+    "second": ("gpt-5.6-luna",),
 }
 
 # cold-read-tier -> reasoning effort, pinned explicitly so a cold-read-cell's
 # behavior never depends on the machine's own ~/.codex/config.toml default.
 # xhigh for both cold-read-tiers by user calibration 2026-08-03 ("xhigh is
-# OK for codex"). The good cold-read-tier was raised to max on the 2026-09-03
-# campaign and PUT BACK TO XHIGH 2026-09-15 (user-ruled, "approved"), because
+# OK for codex"). The `deep` cold-read-tier was raised to max on the
+# 2026-09-03 campaign and PUT BACK TO XHIGH 2026-09-15 (user-ruled, "approved"), because
 # the campaign measured each cold-read-cell alone and the grid is a union.
 #
 # What max bought, measured per cold-read-cell: sol at max beat sol at
@@ -128,13 +128,14 @@ TIER_TO_CODEX_MODEL_CHAIN = {
 # little fidelity for real time. The analysis is in the log-store at
 # nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
 #
-# The floor stays at xhigh because luna is the one model the step does not
-# help: max was +8 net alone, positive on only three of six targets, and in
-# the union it is worth -1. Opus and fable stay at max, where the union says
-# the effort is worth 20 and 6 findings; see the claude cold-read-cell.
+# The `second` cold-read-tier stays at xhigh because luna is the one model
+# the step does not help: max was +8 net alone, positive on only three of six
+# targets, and in the union it is worth -1. Opus and fable stay at max, where
+# the union says the effort is worth 20 and 6 findings; see the claude
+# cold-read-cell.
 TIER_TO_REASONING_EFFORT = {
-    "good": "xhigh",
-    "floor": "xhigh",
+    "deep": "xhigh",
+    "second": "xhigh",
 }
 
 

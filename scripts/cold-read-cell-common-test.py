@@ -49,9 +49,9 @@ WHAT IS PINNED HERE.
     dirty, so status is never clean, and a change to an already-dirty file
     was exactly what went unreported.
 
-  - The good tier's one model failing is the cell failing, with nothing tried
+  - The `deep` tier's one model failing is the cell failing, with nothing tried
     in its place (user-ruled 2026-09-04: "opus falling back to fable is not
-    valid"). Until that ruling the good tier was a chain and the case pinned
+    valid"). Until that ruling the `deep` tier was a chain and the case pinned
     that a model which wrote a report and then failed did not lend its text
     to the next model; the loop's reset before each attempt still exists and
     the last-model case below still exercises it.
@@ -373,7 +373,7 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "scripts" / f"cold-read-{runtime}-cell.py"),
-         "--cell", cell, "--tier", "floor",
+         "--cell", cell, "--tier", "second",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
         capture_output=True, text=True, check=False, env=environment,
@@ -396,7 +396,7 @@ def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
 
 def report_path_for(repository, case_slug, runtime):
     """A report path shaped exactly as the grid names one: a record directory
-    of its own, and inside it the bare cell name, `<runtime>-hunt-floor.md`
+    of its own, and inside it the bare cell name, `<runtime>-hunt-second.md`
     (user-ruled 2026-09-18: the directory carries the record's name, the
     files inside say only which agent ran which attack).
 
@@ -409,7 +409,7 @@ def report_path_for(repository, case_slug, runtime):
     """
     record_directory_name = f"{case_slug}-2026-08-25-aaaaaaa"
     return (repository / "cold-read-records" / record_directory_name
-            / f"{runtime}-hunt-floor.md")
+            / f"{runtime}-hunt-second.md")
 
 
 def near_miss_directory_of(report):
@@ -440,7 +440,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # detector the delta is empty and nothing is printed.
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-a" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-a" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -475,7 +475,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-b" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-b" / "claude-restate-second.md"
     created_relative_path = "docs/drafts/cold-read-cell-common-test-created.md"
     result = run_claude_cell(
         repository, stubs,
@@ -494,7 +494,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-c" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-c" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
     )
@@ -541,27 +541,27 @@ with tempfile.TemporaryDirectory() as scratch:
           visible_report_relative_path not in stray_write_warning(result.stderr),
           repr(result.stderr))
 
-    # --- The good tier has one model and its failure is the cell's ----------
+    # --- The `deep` tier has one model and its failure is the cell's --------
     # User-ruled 2026-09-04: "opus falling back to fable is not valid. If opus
     # fails we stop working and wait for it to come back." Until then the
-    # good tier was a chain, Opus then Fable, and the case that sat here
+    # `deep` tier was a chain, Opus then Fable, and the case that sat here
     # drove both: the first model wrote a report and then failed, the second
     # exited 0 having written nothing, and the check was that the second was
     # not credited with the first's findings. No pinned chain has a second
     # model now, so that hazard has no vehicle through the tiers; the reset
     # at the top of the loop stays, and the last-model case below is what
-    # exercises it. What this case pins instead is the ruling: the good tier
+    # exercises it. What this case pins instead is the ruling: the `deep` tier
     # refused is the cell failed, with no other model tried.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-d" / "claude-restate-good.md"
+    report = repository / "cold-read-records" / "run-d" / "claude-restate-deep.md"
     result = run_claude_cell(
         repository, stubs,
         {"claude-opus-5": {"exit": 1},
          "*": {"report": "STUB REVIEW: findings a fallback would have written\n"}},
-        report, "--tier", "good",
+        report, "--tier", "deep",
     )
-    check("an Opus failure fails the good-tier cell",
+    check("an Opus failure fails the `deep`-tier cell",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
     check("no other model is tried in Opus's place",
           not report.exists() and "claude-fable-5-1" not in result.stderr
@@ -687,11 +687,11 @@ with tempfile.TemporaryDirectory() as scratch:
     # in the log the grid reads, in the form the grid parses.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-a" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-cause-a" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs,
         {"claude-fable-5-1": {"exit": 1, "stdout": FABLE_LIMIT_LINE + "\n"}},
-        report, "--tier", "floor",
+        report, "--tier", "second",
     )
     check("a Claude cell that hit the Fable limit prints cause: model-limit — Fable",
           result.returncode == 1
@@ -705,7 +705,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-b" / "codex-restate-floor.md"
+    report = repository / "cold-read-records" / "run-cause-b" / "codex-restate-second.md"
     result = run_codex_cell(
         repository, stubs,
         {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
@@ -716,7 +716,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-c" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-cause-c" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"stdout": "STUB CHAT: wrote nothing\n", "exit": 0}},
@@ -733,7 +733,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # a file that is still there and carries no provenance stamp.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-e" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-e" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "FINDINGS: 1. something real\nclean sections: none\n",
@@ -758,7 +758,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # must reach the log the grid keeps on failure.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-h" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-h" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"stdout": "STUB CHAT: I read the document and then wrote nothing.\n",
@@ -810,7 +810,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # scripts/cold-read-grid-test.py pins the other end of that contract.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-f" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-f" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
         environment_overrides={"GIT_DIR": str(scratch / "no-such-git-directory")},
@@ -822,7 +822,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-g" / "claude-restate-floor.md"
+    report = repository / "cold-read-records" / "run-g" / "claude-restate-second.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -933,7 +933,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # THE CASE THE RECOVERY MUST REFUSE (user-ruled 2026-08-25, the rule
     # re-cut 2026-09-18). A second cold-read run, going on at the same time
     # in the same checkout, writes its own report for the same cell while
-    # this attempt runs. Both files are `codex-hunt-floor.md`, and a search
+    # this attempt runs. Both files are `codex-hunt-second.md`, and a search
     # that went by name alone would recover the other run's correctly placed
     # report: this run would then hold a review of the wrong document under
     # its stamp, and the other run would lose the review it produced. From
@@ -1154,7 +1154,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("target= is still the last field when checkout= is absent",
           stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
 
-    # --- The Claude cell denies Bash; the Codex good tier runs at xhigh ----
+    # --- The Claude cell denies Bash; the Codex `deep` tier runs at xhigh ----
     # Both settled 2026-09-15 on the union analysis in the log-store at
     # nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/2026-09-15-cold-read-grid-union-and-effort-analysis.md
     #
@@ -1203,7 +1203,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the Claude cell keeps CLAUDE.md: no --setting-sources",
           "--setting-sources" not in claude_argv, repr(claude_argv))
 
-    # The Codex good tier. Max beat xhigh by 46 net findings measured per
+    # The Codex `deep` tier. Max beat xhigh by 46 net findings measured per
     # cell, but the grid is a union and there it is worth ten findings of 331
     # and three points of worst-target recall. This is the slowest of the
     # four cells, so its effort sets the whole read's wall clock: 1339 s at
@@ -1211,12 +1211,12 @@ with tempfile.TemporaryDirectory() as scratch:
     # stamp is what this reads.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = report_path_for(repository, "codex-good-effort", "codex")
+    report = report_path_for(repository, "codex-deep-effort", "codex")
     result = run_codex_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}},
-        report, "--tier", "good",
+        report, "--tier", "deep",
     )
-    check("the Codex good tier runs at xhigh, not max",
+    check("the Codex `deep` tier runs at xhigh, not max",
           result.returncode == 0
           and "effort=xhigh" in provenance_stamp_of(report),
           f"exit {result.returncode}; stamp={provenance_stamp_of(report)!r}")

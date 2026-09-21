@@ -25,8 +25,8 @@ cold-read-record, cold-read-target, cold-read-tier; agent-binary, the installed
 program a cold-read-cell runs its model through, `claude` or `codex`, adopted
 2026-09-18 in place of agent-cli; and the skills /cold-read, /ghi-write,
 /handoff and /walk-me-through. The cold-read-tier values are
-`good` and `floor`; the tier names are ruled misleading and due to change
-(task at the MD-skills agent-seat).
+`deep` and `second`, renamed from `good` and `floor` on the user's ruling of
+2026-09-20 because the old names no longer described the models in them.
 
 A few more words are used here in a sense of this page's own:
 
@@ -137,7 +137,7 @@ tell from a path whether that rule applies. See the last section.
 | Cold-read-record directory | `cold-read-records/` | `<file stem>-<YYYY-MM-DD>`, and `SKILL-<skill name>-<YYYY-MM-DD>` for a skill, whose stem is always `SKILL` and whose name is its directory's, so `.claude/skills/cold-read/SKILL.md` gets `SKILL-cold-read-<date>`; the document comes first so every read of one document sits together in a listing, and the date is the local date of the machine that ran it. Ruled 2026-09-18, replacing a date-first form; two documents with the same stem in different directories, read on one day, come out as `-2` of each other, and the record's `target/` shows which was which | `scripts/cold-read-record-names.py`, `record_directory_name_for_target` and `record_name_for_target`, under its `RECORDS_DIR`; the four programs that create or find cold-read-records import it |
 | Same directory, on a same-day collision | as above | `-2`, `-3` appended, counting up, no cap in the code; the cold-read-fast-read and the cold-read-grid share this rule, so on one day the first to run takes the bare name and the next takes `-2` | `scripts/cold-read-record-names.py`, `fresh_record_directory`, which every one of those programs calls |
 | Frozen copy of the cold-read-target | inside the cold-read-record | `target/<repository path>`; for a cold-read-target outside the checkout, which both instruments accept, `target/` plus the absolute path without its leading slash | `scripts/cold-read-record-names.py`, `FROZEN_TARGET_DIRECTORY_NAME`, with the path built under it in `frozen_target_path` in the same module, which the cold-read-grid and `scripts/cold-read-fast-read.py` both call. The cold-read-target is resolved before it is made relative, so one document reached by two spellings freezes at one path (user-ruled 2026-09-20) |
-| Reviewer report | inside the cold-read-record | `<agent-binary>-<pass token>-<tier>.md`, the pass token being `hunt` for `defect-hunt`; six names are possible, `hunt-good`, `hunt-floor` and `terminology-good` under each of `claude` and `codex`, and an absent cold-read-cell leaves its name absent. The file says which agent ran which pass and nothing else; the directory says which read (user-ruled 2026-09-18, replacing a name that repeated the record's). A report's own name ends in `-good` or `-floor`, never `-report`, so the cold-read-grid does not refuse it | `scripts/cold-read-grid.py`, `cell_report_path`; the set of cold-read-cells is `GRID_CELL_ROSTER` |
+| Reviewer report | inside the cold-read-record | `<agent-binary>-<pass token>-<tier>.md`, the pass token being `hunt` for `defect-hunt`; six names are possible, `hunt-deep`, `hunt-second` and `terminology-deep` under each of `claude` and `codex`, and an absent cold-read-cell leaves its name absent. The file says which agent ran which pass and nothing else; the directory says which read (user-ruled 2026-09-18, replacing a name that repeated the record's). A report's own name ends in `-deep` or `-second`, never `-report`, so the cold-read-grid does not refuse it. The two cold-read-tiers were `good` and `floor` until the user renamed them 2026-09-20 (walk `docs/walk/md-skills-seat-open-decisions-2026-09-20.md`, item 5); cold-read-records already in the log-store keep their old file names, so both spellings are found there | `scripts/cold-read-grid.py`, `cell_report_path`; the set of cold-read-cells is `GRID_CELL_ROSTER` |
 | Reference check | inside the cold-read-record | `reference-check.md` | `scripts/cold-read-grid.py` |
 | A cold-read-cell's stderr | inside the cold-read-record, kept only for an attempt that produced no report: the cold-read-grid deletes the log of an attempt that succeeded | `<report name>.attempt-1.stderr.log` for the first attempt and `.attempt-2.stderr.log` for the retry, since every failed cold-read-cell is retried once (nedschorus#413) | `scripts/cold-read-grid.py` |
 | Triage of the reviewers' findings | inside the cold-read-record | `triage.md` (user-ruled 2026-09-18, replacing `dispositions.md`, which now names a walk's fifth file instead) | `.claude/skills/cold-read/SKILL.md`; spelled again in the cold-read-grid's closing text and in the log-store README |
@@ -300,7 +300,5 @@ decision for the user, tracked at the MD-skills agent-seat.
   `.claude/skills/cold-read/SKILL.md`, should be recognized by directory, by
   suffix, or by both, and where that list then lives so the skill's prose and
   the cold-read-grid's code do not each carry a copy.
-- What the cold-read-tiers are called: `good` and `floor` no longer describe
-  the models in them, and the rename is a decision for the user.
 - Whether kept cold-read-records, and `docs/walk/`, need a retention limit
   as they accumulate; until ruled, everything is kept.
