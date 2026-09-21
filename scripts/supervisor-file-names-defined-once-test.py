@@ -190,9 +190,12 @@ def defined_suffix_values(tree):
     handoff-supervisor.py says. A definition written any of the ways
     suffix_definition_assignments() accepts is read here the same way, and a
     definition whose value is not a plain string literal comes back as None,
-    which the check below counts and names rather than comparing: sorting a
-    list holding None against a list of strings raises TypeError, so the
-    comparison must not be reached at all.
+    which the check below counts and names rather than comparing. It counts
+    rather than drops because the comparison cannot see such a definition at
+    all: three readable values that match SPELLED_OUT_NAMES pass it however
+    many unreadable definitions sit beside them -- and a duplicate written
+    later in the file is the one the supervisor runs with (measured
+    2026-09-21).
     """
     values = []
     for node in suffix_definition_assignments(tree):
@@ -298,19 +301,38 @@ supervisor_defined_names = defined_suffix_values(
 unreadable_definitions = supervisor_defined_names.count(None)
 readable_definitions = sorted(value for value in supervisor_defined_names
                               if value is not None)
+# A definition this guard cannot read is absent from readable_definitions, so
+# the two lists differ whether or not a value was renamed: a remedy keyed on
+# `readable_definitions != sorted(SPELLED_OUT_NAMES)` still tells an unreadable
+# definition to mirror a rename that never happened (measured 2026-09-21).
+# Evidence of a rename is a readable value SPELLED_OUT_NAMES does not list, or
+# a shortfall bigger than the unreadable definitions can account for.
+readable_values_contradict_spelled_out_names = (
+    bool(set(readable_definitions) - set(SPELLED_OUT_NAMES))
+    or (len(set(SPELLED_OUT_NAMES) - set(readable_definitions))
+        > unreadable_definitions))
 
 check("the names this guard hunts are the supervisor's own, not a stale copy",
-      # Short-circuits before the comparison: sorting a list that holds None
-      # against a list of strings raises TypeError instead of failing a case.
+      # The count, not the comparison, is what sees a definition this guard
+      # cannot read: a duplicate SUPERVISOR_STATE_FILE_SUFFIX = ("-supervisor"
+      # + "-state.json") beside the three plain ones is the live value -- the
+      # last assignment wins -- while the three readable ones still match, and
+      # the comparison alone passed that suite green (measured 2026-09-21).
+      # readable_definitions filters None out, so no None reaches sorted().
       not unreadable_definitions
       and readable_definitions == sorted(SPELLED_OUT_NAMES),
       f"{SUPERVISOR_SCRIPT.name} defines {readable_definitions}"
+      # Each remedy states only the cause that fired. The rename remedy used
+      # to be appended whatever happened, and an agent obeying it after an
+      # unreadable definition edits SPELLED_OUT_NAMES instead of the value --
+      # greening the suite with a name no case hunts any more, the defect
+      # this check exists to prevent (reviewer of this branch, 2026-09-21).
       + (f", and {unreadable_definitions} more whose value is not a plain "
          f"string literal, which this guard cannot read -- write the value as "
          f"a plain string literal" if unreadable_definitions else "")
-      + f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
-        f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
-        f"uses")
+      + (f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
+         f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
+         f"uses" if readable_values_contradict_spelled_out_names else ""))
 
 check("the suffix constants are defined in one script",
       defining == [SUPERVISOR_SCRIPT.name],
