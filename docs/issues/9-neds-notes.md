@@ -526,7 +526,7 @@ Outer walk, 17 items:
     GHIs, and its tests" — with four duplicate overview bullets folded
     there; steward ideal → issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26)
     (candidate domain-expert duty: overview currency, never exclusive
-    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2)
+    control); scrub-duty enumeration → issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2)
     (the build enumerates task/memory disposal, queue-depth reporting,
     nc-queue expiry, trailer-absence audit — surfaced by the user's
     question whether any one artifact collects maintenance duties; none

@@ -215,7 +215,7 @@ when it is needed. Selecting by transcript age instead mis-selects in both
 directions: an idle seat looks dead and a long-finished one looks alive.
 
 **The mechanism was already built.**
-[`scripts/handoff-supervisor.py`](../../scripts/handoff-supervisor.py) has
+[`nc-systems/handoff/handoff-supervisor.py`](../../nc-systems/handoff/handoff-supervisor.py) has
 `stamp_heartbeat()`, and each supervisor keeps a per-seat file at
 `~/.claude/handoffs/<seat>-supervisor-state.json` carrying `last_poll_at`. The
 stamp is written on its own cadence, `HEARTBEAT_INTERVAL_SECONDS = 10.0`, inside

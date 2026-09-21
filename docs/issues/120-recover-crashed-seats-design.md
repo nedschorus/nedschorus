@@ -248,7 +248,7 @@ the tool worse.
 **The distinction already exists in behavior; it is only unwritten.** When the
 user exits, the supervisor watches the agent go and exits cleanly, printing
 "session ended without a handoff; supervisor stopping"
-([`handoff-supervisor.py`](../../scripts/handoff-supervisor.py), its no-handoff
+([`handoff-supervisor.py`](../../nc-systems/handoff/handoff-supervisor.py), its no-handoff
 return). When the machine or the tmux server dies, the supervisor is killed and
 never reaches that line. A supervisor that outlived its agent saw an intended
 ending; one that did not, did not.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for handoff-write-and-check-supervisor.py.
 
-Run: python3 scripts/handoff-write-and-check-supervisor-test.py
+Run: python3 nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -14,7 +14,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).with_name("handoff-write-and-check-supervisor.py")
+# This suite sits at nc-systems/handoff/tests/; the system it tests is one
+# directory up. A with_name() lookup here would resolve inside tests/.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+
+SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-write-and-check-supervisor.py"
 
 _spec = importlib.util.spec_from_file_location("handoff_write_and_check_supervisor", SCRIPT_PATH)
 writer = importlib.util.module_from_spec(_spec)
@@ -91,7 +95,7 @@ def handoff_text(workspace: Path, agent: str) -> str:
 def run_multi_line_next_step_cases(workspace: Path):
     """R20: a multi-line next step survives, without changing what old readers see.
 
-    Format in docs/cross-project/fast-handoff-design.md. `next-step:` stays the
+    Format in nc-systems/handoff/handoff-design.md. `next-step:` stays the
     collapsed single line every existing reader handles; a verbatim block is
     appended LAST when, and only when, the text spans lines.
     """

@@ -67,11 +67,14 @@ case "$AGENTS_ROOT" in
     ("~/"*) AGENTS_ROOT="$HOME${AGENTS_ROOT#?}" ;;
 esac
 
-# The supervisor is this script's sibling, so the checkout location is never
-# configured and never wrong — wherever this script was run from IS the
-# checkout it belongs to.
+# The supervisor lives in its own system directory one level up, so the
+# checkout location is never configured and never wrong — wherever this
+# script was run from IS the checkout it belongs to. It stopped being this
+# script's sibling when the handoff system moved into nc-systems/handoff/
+# on 2026-09-20.
 SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
-SUPERVISOR="$SCRIPT_DIRECTORY/handoff-supervisor.py"
+REPOSITORY_ROOT=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
+SUPERVISOR="$REPOSITORY_ROOT/nc-systems/handoff/handoff-supervisor.py"
 
 # The no-name case is the common mistake, so it teaches rather than scolds:
 # what a name is for, and which agents are running right now to pick from or
@@ -148,7 +151,7 @@ command -v claude >/dev/null 2>&1 || {
     exit 2
 }
 [ -f "$SUPERVISOR" ] || {
-    echo "launch-claude-mac: no handoff-supervisor.py beside this script ($SUPERVISOR) — run the copy inside a nedschorus checkout" >&2
+    echo "launch-claude-mac: no handoff-supervisor.py at $SUPERVISOR — run the copy inside a nedschorus checkout" >&2
     exit 2
 }
 

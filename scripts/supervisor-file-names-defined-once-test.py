@@ -8,7 +8,7 @@ handoff writer. Until 2026-09-19 each built the name from its own f-string --
 eleven sites across the five, plus a second copy of the suffix constant in
 scripts/restart-live-seats-at-login.py -- so a rename had eleven places to
 find and nothing that failed when it missed one. The suffixes now live in
-scripts/handoff-supervisor.py alone, and the path is composed only by its
+nc-systems/handoff/handoff-supervisor.py alone, and the path is composed only by its
 supervisor_state_path(), supervisor_lock_path() and supervisor_state_paths()
 (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4: reduce each
@@ -23,12 +23,26 @@ and globbing with it. Missing one site on a rename is silent and reads as the
 opposite of what happened: the supervisor writes <seat>-handoff.md, the
 recovery tool looks for the old name, finds nothing, and reports a seat that
 handed off cleanly as one that died leaving no handoff. HANDOFF_FILE_SUFFIX
-now lives in scripts/handoff-supervisor.py with the other two, and the path is
-composed only by its handoff_file_path() and handoff_file_paths(). Item 4
-above did not cover this name: the ruling it carried out named the state file,
-the cold-read-record names and the walk-file endings, and the handoff name was
-recorded on the file-naming wiki page as its own unruled topic until item 2
-ruled it.
+now lives in nc-systems/handoff/handoff-supervisor.py with the other two, and
+the path is composed only by its handoff_file_path() and
+handoff_file_paths(). Item 4 above did not cover this name: the ruling it
+carried out named the state file, the cold-read-record names and the
+walk-file endings, and the handoff name was recorded on the file-naming wiki
+page as its own unruled topic until item 2 ruled it.
+
+The supervisor and the writer both left scripts/ for nc-systems/handoff/ on
+2026-09-20. The first version of that change named the supervisor explicitly
+beside the scripts/ glob and left the writer out, which is the silent pass
+production_scripts() warns about below: the writer stopped being parsed, and
+its three cases went on passing by finding nothing in a file they no longer
+read (finding 2 of the review of pull request [The handoff system moves into
+nc-systems/handoff/, except what a live seat holds]
+(https://github.com/nedschorus/nedschorus/pull/578), 2026-09-21; measured
+that day -- a hand-built name added to the writer failed nothing). The set
+of scripts read is derived from the layout now, and
+PROGRAMS_THAT_NEED_THESE_FILE_NAMES fails loudly when a program this suite
+exists to watch is not among them -- a hand-added entry per move is the same
+defect waiting for the third move.
 
 This reads each script's syntax tree rather than its lines, after two rounds
 of the earlier line-matching version being wrong in both directions. Matching
@@ -85,7 +99,25 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
-SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
+# Production code lives in two places since nc-systems/ was made: scripts/,
+# and one directory per system. Tests sit a level deeper, in
+# nc-systems/<system>/tests/, so the system glob reaches production code only.
+NC_SYSTEMS_DIRECTORY = REPO_ROOT / "nc-systems"
+# The supervisor and the writer moved into nc-systems/handoff/ on 2026-09-20.
+# The supervisor is still named here because it is the one file allowed to
+# define the suffixes and to compose the paths, which two cases below ask
+# about by name; which files are READ is derived, not named.
+SUPERVISOR_SCRIPT = NC_SYSTEMS_DIRECTORY / "handoff" / "handoff-supervisor.py"
+# The programs that need these names, by file name, wherever they live. The
+# docstring above names them: the supervisor, the recovery tool,
+# resupervise-seat.py, the login restart and the handoff writer. A program
+# that is moved somewhere this suite does not read fails the membership case
+# rather than quietly dropping out of every other one.
+PROGRAMS_THAT_NEED_THESE_FILE_NAMES = ("handoff-supervisor.py",
+                                       "handoff-write-and-check-supervisor.py",
+                                       "recover-crashed-seats.py",
+                                       "resupervise-seat.py",
+                                       "restart-live-seats-at-login.py")
 # The functions that compose the names, and so the only code allowed to.
 # handoff_file_path is deliberately not named handoff_path: that name is
 # already the SupervisorSettings property, so the helper case below would
@@ -94,7 +126,14 @@ SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths", "handoff_file_path",
                      "handoff_file_paths")
-# The three file names, as they read on disk.
+# The three file names, as they read on disk. This is a copy, so the last
+# check below reads the same three out of handoff-supervisor.py and compares.
+# Until 2026-09-21 nothing did, and a copy nothing anchors goes stale at
+# exactly the moment it matters: rename a constant's value and this tuple
+# still hunts the OLD spelling, finds nothing, and a fresh hand-built copy of
+# the NEW one passes every case. The eleven-sites defect this guard exists to
+# prevent would come back invisible, and the guard would go on printing PASS
+# until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
                      "-handoff.md")
 # The constants that hold them.
@@ -114,8 +153,19 @@ def check(case_name, condition, detail=""):
 
 
 def production_scripts():
-    """Every script a seat runs -- test files excluded."""
-    return sorted(path for path in SCRIPTS_DIRECTORY.glob("*.py")
+    """Every script a seat runs -- test files excluded.
+
+    Derived from the layout, both places production code lives, rather than
+    globbing scripts/ and naming each moved file after it. A named file is
+    only ever as current as the last move someone remembered it in, and
+    forgetting one is silent here in the worst way: the cases below all take
+    the form "nothing in these files composes a name", so a file that stops
+    being read stops being able to fail them. That is what happened to the
+    writer for the length of one review round.
+    """
+    found = (list(SCRIPTS_DIRECTORY.glob("*.py"))
+             + list(NC_SYSTEMS_DIRECTORY.glob("*/*.py")))
+    return sorted(path for path in found
                   if not path.name.endswith("-test.py"))
 
 
@@ -174,6 +224,29 @@ def suffix_definition_assignments(tree):
             and any(isinstance(target, ast.Name)
                     and target.id in SUFFIX_CONSTANTS
                     for target in node.targets)]
+
+
+def defined_suffix_values(tree):
+    """The strings the suffix constants are actually assigned, from the tree.
+
+    Read rather than restated, so SPELLED_OUT_NAMES cannot drift from what
+    handoff-supervisor.py says. A definition written any of the ways
+    suffix_definition_assignments() accepts is read here the same way, and a
+    definition whose value is not a plain string literal comes back as None,
+    which the check below counts and names rather than comparing. It counts
+    rather than drops because the comparison cannot see such a definition at
+    all: three readable values that match SPELLED_OUT_NAMES pass it however
+    many unreadable definitions sit beside them -- and a duplicate written
+    later in the file is the one the supervisor runs with (measured
+    2026-09-21).
+    """
+    values = []
+    for node in suffix_definition_assignments(tree):
+        value = node.value
+        values.append(value.value
+                      if isinstance(value, ast.Constant)
+                      and isinstance(value.value, str) else None)
+    return values
 
 
 def exempt_lines_and_helpers(tree, path):
@@ -241,15 +314,28 @@ def composing_sites(path):
     return sites, helpers, bool(definitions)
 
 
+scripts_read = production_scripts()
 composing = []
 helpers_found = []
 defining = []
-for script in production_scripts():
+for script in scripts_read:
     sites, helpers, defines_the_suffixes = composing_sites(script)
     composing.extend(sites)
     helpers_found.extend(helpers)
     if defines_the_suffixes:
         defining.append(script.name)
+
+# Asked first, because it is the question every case below assumes an answer
+# to. Each of them reports what it found in the scripts that were read; none
+# of them can say anything about a script that was not.
+names_read = {script.name for script in scripts_read}
+programs_not_read = [name for name in PROGRAMS_THAT_NEED_THESE_FILE_NAMES
+                     if name not in names_read]
+check("every program that needs these names is among the scripts read",
+      not programs_not_read,
+      f"{programs_not_read} not found under scripts/ or nc-systems/*/ -- a "
+      f"program this suite exists to watch has moved somewhere it does not "
+      f"read, and the cases below now pass on it by finding nothing")
 
 check("no production script composes any of the three file names itself",
       not composing,
@@ -263,6 +349,46 @@ check("every composing helper was found in the syntax tree",
       f"found {sorted(helpers_found)} in {SUPERVISOR_SCRIPT.name}, expected "
       f"{sorted(COMPOSING_HELPERS)}; a helper that is renamed must be renamed "
       f"in COMPOSING_HELPERS here, or its body stops being checked")
+
+supervisor_defined_names = defined_suffix_values(
+    ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
+              filename=str(SUPERVISOR_SCRIPT)))
+
+unreadable_definitions = supervisor_defined_names.count(None)
+readable_definitions = sorted(value for value in supervisor_defined_names
+                              if value is not None)
+# A definition this guard cannot read is absent from readable_definitions, so
+# the two lists differ whether or not a value was renamed: a remedy keyed on
+# `readable_definitions != sorted(SPELLED_OUT_NAMES)` still tells an unreadable
+# definition to mirror a rename that never happened (measured 2026-09-21).
+# Evidence of a rename is a readable value SPELLED_OUT_NAMES does not list, or
+# a shortfall bigger than the unreadable definitions can account for.
+readable_values_contradict_spelled_out_names = (
+    bool(set(readable_definitions) - set(SPELLED_OUT_NAMES))
+    or (len(set(SPELLED_OUT_NAMES) - set(readable_definitions))
+        > unreadable_definitions))
+
+check("the names this guard hunts are the supervisor's own, not a stale copy",
+      # The count, not the comparison, is what sees a definition this guard
+      # cannot read: a duplicate SUPERVISOR_STATE_FILE_SUFFIX = ("-supervisor"
+      # + "-state.json") beside the three plain ones is the live value -- the
+      # last assignment wins -- while the three readable ones still match, and
+      # the comparison alone passed that suite green (measured 2026-09-21).
+      # readable_definitions filters None out, so no None reaches sorted().
+      not unreadable_definitions
+      and readable_definitions == sorted(SPELLED_OUT_NAMES),
+      f"{SUPERVISOR_SCRIPT.name} defines {readable_definitions}"
+      # Each remedy states only the cause that fired. The rename remedy used
+      # to be appended whatever happened, and an agent obeying it after an
+      # unreadable definition edits SPELLED_OUT_NAMES instead of the value --
+      # greening the suite with a name no case hunts any more, the defect
+      # this check exists to prevent (reviewer of this branch, 2026-09-21).
+      + (f", and {unreadable_definitions} more whose value is not a plain "
+         f"string literal, which this guard cannot read -- write the value as "
+         f"a plain string literal" if unreadable_definitions else "")
+      + (f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
+         f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
+         f"uses" if readable_values_contradict_spelled_out_names else ""))
 
 check("the suffix constants are defined in one script",
       defining == [SUPERVISOR_SCRIPT.name],

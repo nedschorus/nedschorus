@@ -30,6 +30,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("recover-crashed-seats.py")
+# The supervisor moved into nc-systems/handoff/ on 2026-09-20 and is no
+# longer a sibling of the recovery tool this suite tests.
+SUPERVISOR_SCRIPT = (SCRIPT_PATH.resolve().parent.parent
+                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 _spec = importlib.util.spec_from_file_location("recover_crashed_seats", SCRIPT_PATH)
 recovery = importlib.util.module_from_spec(_spec)
@@ -150,7 +154,7 @@ class Workspace:
 def real_subprocess_run_help():
     import subprocess
     return subprocess.run(
-        [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")), "--help"],
+        [sys.executable, str(SUPERVISOR_SCRIPT), "--help"],
         capture_output=True, text=True).stdout
 
 def patch(monkey_target, value):
@@ -399,7 +403,7 @@ def ps_confirms_supervisors(seat_supervised_by_process_id):
     """ps answers that each process id given runs the supervisor of the seat
     it maps to, and that no other process id exists."""
     recovery.supervisor.read_process_command_line = lambda process_id: (
-        (f"python3 /agents/scripts/handoff-supervisor.py --agent "
+        (f"python3 /agents/nc-systems/handoff/handoff-supervisor.py --agent "
          f"{seat_supervised_by_process_id[process_id]} --cd /agents/x", True)
         if process_id in seat_supervised_by_process_id else (None, True))
 
@@ -836,7 +840,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- the supervisor's --resume-session-id flag --------------------------
     supervisor_spec = importlib.util.spec_from_file_location(
-        "handoff_supervisor_under_test", SCRIPT_PATH.with_name("handoff-supervisor.py"))
+        "handoff_supervisor_under_test", SUPERVISOR_SCRIPT)
     supervisor_module = importlib.util.module_from_spec(supervisor_spec)
     supervisor_spec.loader.exec_module(supervisor_module)
 
@@ -975,7 +979,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # F8: every cross-file literal the filter relies on is asserted against
     # the supervisor's actual source, so a wording change there fails HERE
     # (round-3 P3-3: the round-2 assertion covered only the first marker).
-    source = SCRIPT_PATH.with_name("handoff-supervisor.py").read_text(encoding="utf-8")
+    source = SUPERVISOR_SCRIPT.read_text(encoding="utf-8")
     check("F8: the no-handoff marker is verbatim in handoff-supervisor.py",
           "No handoff exists yet" in source
           and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
@@ -1412,7 +1416,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty branch-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
-    # scripts/handoff-supervisor-test.py, by the boot-recovery whole-prompt
+    # nc-systems/handoff/tests/handoff-supervisor-test.py, by the boot-recovery
     # check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
@@ -1925,6 +1929,24 @@ with tempfile.TemporaryDirectory() as temporary:
               for marker in ("CLAUDE_CODE_TASK_LIST_ID",
                              "CLAUDE_CODE_ENABLE_TODO_TOOLS")),
           box_command)
+    # This branch hand-composes the supervisor's path, and it is the only
+    # branch off macOS -- launcher_path() returns None there, which is
+    # ned-box, where the seats run. The assertion resolves the path and asks
+    # the disk, rather than matching the file name the cases above match: when
+    # the supervisor moved to nc-systems/handoff/ on 2026-09-20 and this
+    # command went on composing a sibling of the recovery tool, every one of
+    # those name matches still passed, because the path that no longer existed
+    # ends with the same file name. tmux still created the session, so
+    # launch_seat returned 0 and only the come-up check caught it: every
+    # recovered seat reported LAUNCHED BUT DID NOT COME UP.
+    composed_supervisor = next(
+        (Path(token) for token in box_tokens
+         if token.endswith("handoff-supervisor.py")), None)
+    check("the box branch runs the supervisor at the path it really lives at",
+          composed_supervisor is not None
+          and composed_supervisor.is_file()
+          and composed_supervisor.resolve() == SUPERVISOR_SCRIPT.resolve(),
+          (str(composed_supervisor), str(SUPERVISOR_SCRIPT)))
 
     # PR #134 review finding 1: an apostrophe in an operator's directory path
     # must survive the one shell parse each composed value gets — the
@@ -2166,7 +2188,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(
-        [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")),
+        [sys.executable, str(SUPERVISOR_SCRIPT),
          "--agent", "x", "--resume-session-id", "a", "--adopt-session-id", "b",
          "--adopt-process-id", "1"],
         capture_output=True, text=True)
