@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "cold-read-record-ship.py"
@@ -52,6 +53,13 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
         if detail:
             print(f"      {detail}")
+
+
+def leftover_temporaries(root: pathlib.Path) -> list:
+    """The names of every temporary the README refresh left in the store's
+    root. Globbed rather than named, both sites now taking a unique name from
+    mktemp or mkstemp instead of a fixed README.md.new."""
+    return sorted(p.name for p in root.glob("README.md.*"))
 
 
 def make_record(root: pathlib.Path, name: str, files: dict) -> pathlib.Path:
@@ -93,6 +101,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the store's root gained a README saying what the store is",
           (store_root / "README.md").is_file()
           and "log-store" in (store_root / "README.md").read_text(encoding="utf-8"))
+    check("the README points at the wiki page for the naming rules "
+          "rather than restating them",
+          "nedschorus-file-naming-and-location-standards.md"
+          in (store_root / "README.md").read_text(encoding="utf-8"))
     check("the line names the store path the files went to",
           demo.name in result.stdout and "2 file(s) added" in result.stdout, result.stdout)
 
@@ -103,6 +115,237 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           result.returncode == 0 and "nothing new" in result.stdout, result.stdout)
     check("the second run touched nothing in the store",
           stored_a.stat().st_mtime_ns == mtime_before)
+
+    # --- The README is refreshed when it differs, not only when absent -----
+    # It was written once when the store was new and never again, so every
+    # ruling that changed the text left the live file behind (user-ruled
+    # 2026-09-19, walk file-naming-and-location-standards-cold-read-findings,
+    # item 5). A stale README is the state this checks: not missing, wrong.
+    readme_path = store_root / "README.md"
+    fresh = readme_path.read_text(encoding="utf-8")
+    readme_path.write_text("# stale\n\ndispositions.md\n", encoding="utf-8")
+    result = ship(local_destination, str(demo))
+    check("a README whose text differs is rewritten from the program's copy",
+          result.returncode == 0
+          and readme_path.read_text(encoding="utf-8") == fresh, result.stdout)
+
+    readme_mtime_before = readme_path.stat().st_mtime_ns
+    result = ship(local_destination, str(demo))
+    check("a README that already matches is left alone, not rewritten each run",
+          result.returncode == 0
+          and readme_path.stat().st_mtime_ns == readme_mtime_before)
+
+    # --- The refreshed README LANDS BY RENAME, at both sites ----------------
+    # An interrupted refresh must not leave the live README empty or partial.
+    # The ssh link to ned-box dropped eight times across 2026-09-19 and
+    # 2026-09-20, the last with `client_loop: send disconnect: Broken pipe`,
+    # so an interrupted shipment is a measured condition on this path rather
+    # than a hypothetical one, and the README is the store's own index: left
+    # half-written, nothing repairs it until a later shipment happens to run
+    # to completion.
+    #
+    # THE INODE IS THE EVIDENCE. A rename gives the README a new inode and
+    # publishes the text in one step, so a reader sees the old file whole or
+    # the new file whole. Writing over the live file keeps its inode and is
+    # the shape that can be caught half-done, so an unchanged inode with
+    # changed text is the failure these two cases catch.
+    readme_path.write_text("# stale\n\ndispositions.md\n", encoding="utf-8")
+    stale_inode = readme_path.stat().st_ino
+    result = ship(local_destination, str(demo))
+    check("locally the refreshed README is a temporary renamed over the old "
+          "one, not the live file written through",
+          result.returncode == 0
+          and readme_path.read_text(encoding="utf-8") == fresh
+          and readme_path.stat().st_ino != stale_inode,
+          result.stdout + result.stderr)
+    check("locally no temporary is left beside the README once it has landed",
+          not leftover_temporaries(store_root),
+          str(leftover_temporaries(store_root)))
+
+    # The remote script, replayed by a real /bin/sh, in the three states the
+    # store can be in. The suite's stub `ssh` records the invocation and runs
+    # nothing, so without this the shell was never parsed or executed by any
+    # case -- and the shell is where the landing happens.
+    _record_shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_replayed", SHIP)
+    record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+    _record_shipper_spec.loader.exec_module(record_shipper)
+
+    def remote_readme_script(root: pathlib.Path) -> str:
+        return record_shipper.make_directory_and_refresh_readme_script(
+            root / "cold-read-records", root)
+
+    def refresh_readme_through_real_sh(root: pathlib.Path, text=None):
+        """The remote script for this root, run by a real sh with the text on
+        stdin, exactly as ssh delivers it to ned-box's dash. `text` shorter
+        than the whole is a stream that ended early."""
+        return subprocess.run(
+            ["/bin/sh", "-c", remote_readme_script(root)],
+            input=record_shipper.STORE_README if text is None else text,
+            capture_output=True, text=True, check=False)
+
+    replay_root = scratch / "replayed-store"
+    replay_readme = replay_root / "README.md"
+    replayed = refresh_readme_through_real_sh(replay_root)
+    check("replayed by a real sh on a store that has neither directory nor "
+          "README, the script makes both and leaves no temporary",
+          replayed.returncode == 0
+          and (replay_root / "cold-read-records").is_dir()
+          and replay_readme.read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and not leftover_temporaries(replay_root),
+          replayed.stdout + replayed.stderr)
+
+    replay_readme.write_text("# stale\n\ndispositions.md\n", encoding="utf-8")
+    replay_stale_inode = replay_readme.stat().st_ino
+    replayed = refresh_readme_through_real_sh(replay_root)
+    check("remotely a stale README is replaced by RENAMING the temporary over "
+          "it, so a dropped ssh cannot leave it empty or half-written",
+          replayed.returncode == 0
+          and replay_readme.read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and replay_readme.stat().st_ino != replay_stale_inode
+          and not leftover_temporaries(replay_root),
+          replayed.stdout + replayed.stderr)
+
+    replay_inode = replay_readme.stat().st_ino
+    replay_mtime = replay_readme.stat().st_mtime_ns
+    replayed = refresh_readme_through_real_sh(replay_root)
+    check("remotely a README that already matches is neither rewritten nor "
+          "renamed over, and the temporary is cleaned up all the same",
+          replayed.returncode == 0
+          and replay_readme.stat().st_ino == replay_inode
+          and replay_readme.stat().st_mtime_ns == replay_mtime
+          and not leftover_temporaries(replay_root),
+          replayed.stdout + replayed.stderr)
+
+    check("the temporary is made BESIDE the README, in the store's root, so "
+          "the rename that lands it stays within one filesystem",
+          f"mktemp '{replay_root}/README.md.XXXXXX'"
+          in remote_readme_script(replay_root),
+          remote_readme_script(replay_root))
+
+    check("the landed README is readable by more than its owner, mktemp "
+          "having made the temporary 0600",
+          replay_readme.stat().st_mode & 0o444 == 0o444,
+          oct(replay_readme.stat().st_mode))
+
+    # --- A STREAM THAT ENDS EARLY IS REFUSED, NOT LANDED --------------------
+    # A dropped ssh link is not an error the remote shell can see: it is a
+    # clean EOF on a short stream, so `cat` returns 0 on the prefix that
+    # arrived, `cmp` finds a real difference, and the rename publishes the
+    # truncation over a correct README with the script exiting 0. The merge
+    # lane measured exactly that at the previous head on 2026-09-21: a 60-byte
+    # prefix replaced the live README, return code 0, nothing on stderr.
+    # Killing the writer is a DIFFERENT failure -- there `cat` itself fails --
+    # and does not reach this one, so these cases end the stream cleanly.
+    good_inode = replay_readme.stat().st_ino
+    truncated = refresh_readme_through_real_sh(
+        replay_root, record_shipper.STORE_README[:60])
+    check("a README text that ends early on a cleanly closed stream is "
+          "refused: nothing is landed, the good README keeps its inode and its "
+          "text, and the refusal is neither silent nor exit 0",
+          truncated.returncode != 0
+          and truncated.stderr.strip()
+          and replay_readme.read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and replay_readme.stat().st_ino == good_inode
+          and not leftover_temporaries(replay_root),
+          f"rc={truncated.returncode} stderr={truncated.stderr!r} "
+          f"left={leftover_temporaries(replay_root)}")
+
+    truncated_fresh_root = scratch / "replayed-store-that-was-new"
+    truncated_fresh = refresh_readme_through_real_sh(
+        truncated_fresh_root, record_shipper.STORE_README[:60])
+    check("on a store with no README yet, a stream that ends early leaves no "
+          "README at all rather than a truncated one",
+          truncated_fresh.returncode != 0
+          and not (truncated_fresh_root / "README.md").exists()
+          and not leftover_temporaries(truncated_fresh_root),
+          f"rc={truncated_fresh.returncode} "
+          f"left={leftover_temporaries(truncated_fresh_root)}")
+
+    # --- TWO SHIPMENTS PREPARING ONE STORE AT ONCE, at both sites -----------
+    # Every shipment of every kind refreshes this README, from every seat, and
+    # nothing locks. On one fixed temporary name they collide: the winner's
+    # closing `rm -f` falls between the loser's `cat` and its `cmp`, so the
+    # loser fails on a store that is correct, and with the two sending
+    # different text -- two checkouts at different commits -- the winner's
+    # rename takes the inode out from under a writer still holding it open.
+    #
+    # REMOTELY, with two real shells: each is held in `cat` with its stdin
+    # open and nothing written, so both have made their temporary before
+    # either lands. That is the state the collision needs, and it is reached by
+    # waiting for the temporaries to appear rather than by a timed sleep.
+    overlap_root = scratch / "overlapped-replayed-store"
+    holders = [subprocess.Popen(
+        ["/bin/sh", "-c", remote_readme_script(overlap_root)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True) for _ in range(2)]
+    deadline = time.monotonic() + 5
+    while (len(leftover_temporaries(overlap_root)) < 2
+           and time.monotonic() < deadline):
+        time.sleep(0.01)
+    temporaries_in_flight = leftover_temporaries(overlap_root)
+    finished = [holder.communicate(record_shipper.STORE_README)
+                for holder in holders]
+    check("remotely, two shipments preparing one store at once each hold "
+          "their own temporary, so neither takes the other's: both exit 0 and "
+          "the README is whole",
+          len(temporaries_in_flight) == 2
+          and all(holder.returncode == 0 for holder in holders)
+          and (overlap_root / "README.md").read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and not leftover_temporaries(overlap_root),
+          f"in flight={temporaries_in_flight} "
+          f"rc={[holder.returncode for holder in holders]} "
+          f"stderr={[out[1] for out in finished]} "
+          f"left={leftover_temporaries(overlap_root)}")
+
+    # LOCALLY, which is the path the seats take: they run on ned-box, where
+    # the copy is local and `refresh_store_readme` does the landing. The second
+    # shipment here runs INSIDE the first's rename, so the interleaving is
+    # exact rather than timed; on one fixed name the first's os.replace then
+    # raises FileNotFoundError, an uncaught traceback on a correct store.
+    local_overlap_root = scratch / "overlapped-local-store"
+    local_overlap_root.mkdir()
+    local_overlap_readme = local_overlap_root / "README.md"
+    local_overlap_readme.write_text("# stale\n\ndispositions.md\n",
+                                    encoding="utf-8")
+    temporaries_renamed = []
+    real_replace = os.replace
+    second_shipment = {"ran": False}
+
+    def replace_with_a_second_shipment_in_flight(source, target):
+        temporaries_renamed.append(pathlib.Path(source).name)
+        if not second_shipment["ran"]:
+            second_shipment["ran"] = True
+            record_shipper.refresh_store_readme(local_overlap_root)
+        return real_replace(source, target)
+
+    os.replace = replace_with_a_second_shipment_in_flight
+    try:
+        record_shipper.refresh_store_readme(local_overlap_root)
+        overlap_failure = None
+    except OSError as error:
+        overlap_failure = error
+    finally:
+        os.replace = real_replace
+    check("locally, a second shipment landing inside the first's rename does "
+          "not take the first's temporary: the two names differ, both land, "
+          "and neither raises",
+          overlap_failure is None
+          and second_shipment["ran"]
+          and len(set(temporaries_renamed)) == 2
+          and local_overlap_readme.read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and not leftover_temporaries(local_overlap_root),
+          f"{overlap_failure!r} renamed={temporaries_renamed} "
+          f"left={leftover_temporaries(local_overlap_root)}")
+    check("locally too the landed README is readable by more than its owner, "
+          "mkstemp having made the temporary 0600",
+          local_overlap_readme.stat().st_mode & 0o444 == 0o444,
+          oct(local_overlap_readme.stat().st_mode))
 
     (demo / "triage.md").write_text("# triage\n\nnone\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
@@ -245,10 +488,15 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("every ssh call runs in batch mode with a connect timeout",
           ssh_calls and all("BatchMode=yes" in c and any(a.startswith("ConnectTimeout=") for a in c)
                             for c in ssh_calls), str(ssh_calls))
-    check("the store is prepared over ssh: mkdir -p of the records path and the README when absent",
+    check("the store is prepared over ssh: mkdir -p of the records path and the README",
           any("mkdir -p" in " ".join(c) and "README.md" in " ".join(c)
               and "/home/nedlern/nedschorus-logs/cold-read-records" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))
+    check("the README is compared and renamed into place only on a "
+          "difference, never written only when absent",
+          any("cmp -s" in " ".join(c) and "mv --" in " ".join(c)
+              and "test -e" not in " ".join(c)
+              for c in ssh_calls if "README.md" in " ".join(c)), str(ssh_calls))
     check("the store's inventory is one ssh call running sha256sum under the record's directory",
           any("sha256sum" in " ".join(c) and f"cold-read-records/{demo.name}" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))

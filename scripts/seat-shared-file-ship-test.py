@@ -281,20 +281,26 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           and (seats_root / "cold-read-research" / "good.md").is_file()
           and len(result.stdout.strip().splitlines()) == 2, result.stdout)
 
-    # --- The README gains the kind, and is appended to, never rewritten ----
+    # --- The README is refreshed, not appended to ---------------------------
+    # This program used to add a `seats/` bullet to a README that lacked one.
+    # The README stopped listing the kinds on 2026-09-19 (user-ruled, walk
+    # file-naming-and-location-standards-cold-read-findings, item 5), so there
+    # is no list to add to. Both shippers now write the same pointer text, and
+    # the case that matters is that they do not fight: an old README with a
+    # kind list is replaced, not extended, whichever program gets there first.
     readme = store_root / "README.md"
     readme.write_text("# nedschorus-logs\n\n- `cold-read-records/` -- runs.\n",
                       encoding="utf-8")
     result = ship(local_destination, str(good), "--seat", "late-seat")
     text = readme.read_text(encoding="utf-8")
-    check("an existing README gains the seats bullet",
-          "`seats/`" in text and "organized by PRODUCER" in text, text)
-    check("the append kept every line the README already had",
-          text.startswith("# nedschorus-logs\n\n- `cold-read-records/` -- runs.\n"),
-          text)
+    check("a README listing the old kinds is replaced by the pointer, "
+          "not appended to",
+          text == record_shipper.STORE_README, text)
+    check("the pointer names the wiki page that holds the naming rules",
+          "nedschorus-file-naming-and-location-standards.md" in text, text)
     before = text
     ship(local_destination, str(good), "--seat", "late-seat-2")
-    check("a README that already describes the kind is not appended to twice",
+    check("a README that already matches is left alone",
           readme.read_text(encoding="utf-8") == before)
 
     # --- A store this program writes first is born with the whole README ---
@@ -309,24 +315,26 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           result.returncode == 0
           and born_here_text == record_shipper.STORE_README,
           result.stdout + result.stderr + repr(born_here_text[:200]))
-    check("that README already lists the seats kind, so no bullet is appended "
-          "to it",
-          born_here_text.count("`seats/`") == 1
-          and "organized by PRODUCER" in born_here_text, born_here_text)
+    check("the README it writes is the pointer, naming no kinds at all",
+          "nedschorus-file-naming-and-location-standards.md" in born_here_text
+          and "`seats/`" not in born_here_text, born_here_text)
 
-    # --- The two copies of the bullet must not drift -----------------------
-    bullet_start = "- `seats/` -- the one kind organized by PRODUCER"
+    # --- The README text is in ONE program, not two ------------------------
+    # This suite used to check that a `seats/` bullet in both programs had not
+    # drifted apart. The bullet is gone with the kind list (user-ruled
+    # 2026-09-19, walk file-naming-and-location-standards-cold-read-findings,
+    # item 5), and a copy that cannot drift is better than two that agree
+    # today: this program holds no README text of its own and calls the record
+    # shipper's, so the drift this checked for cannot happen.
     ship_text = SHIP.read_text(encoding="utf-8")
-    record_text = RECORD_SHIP.read_text(encoding="utf-8")
-    check("the seats bullet is in both programs, so a fresh store is born "
-          "complete and an old one is completed on first use",
-          bullet_start in ship_text and bullet_start in record_text)
-    ship_bullet = ship_text.split(bullet_start, 1)[1].split('"""', 1)[0]
-    record_bullet = record_text.split(bullet_start, 1)[1].split("\n\n", 1)[0]
-    check("the two copies of the bullet are the same text",
-          ship_bullet.strip().rstrip('\\n').strip()
-          == record_bullet.strip().rstrip('\\n').strip(),
-          f"{ship_bullet!r}\n      {record_bullet!r}")
+    check("this program keeps no README text of its own",
+          "STORE_README = " not in ship_text
+          and "README_BULLET" not in ship_text, ship_text[:200])
+    check("it reaches the record shipper's text and rules by name, "
+          "never by copy",
+          "shipper.STORE_README" in ship_text
+          and "shipper.refresh_store_readme" in ship_text
+          and "shipper.make_directory_and_refresh_readme_script" in ship_text)
 
     # --- REMOTE mode: read the invocation without a network ----------------
     stub_dir = scratch / "stubs"
@@ -359,16 +367,21 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
     readme_calls = [c for c in ssh_calls
                     if "mkdir -p" in " ".join(c)
                     and "seats/cold-read-research" in " ".join(c)]
-    check("one ssh call makes the seat's directory and carries the README "
-          "program, which adds the kind only when it is absent",
+    check("one ssh call makes the seat's directory and refreshes the README, "
+          "as it did when it placed a bullet instead",
           len(readme_calls) == 1
-          and "`seats/`" in " ".join(readme_calls[0])
-          and "README.md" in " ".join(readme_calls[0]),
-          str(ssh_calls))
-    check("the remote README is written whole and renamed, never appended in "
-          "place, so an interrupted run leaves no half file",
-          "os.replace" in " ".join(readme_calls[0])
-          and ".new" in " ".join(readme_calls[0]), str(readme_calls))
+          and "README.md" in " ".join(readme_calls[0]), str(ssh_calls))
+    check("the remote README is compared before it is landed, so an unchanged "
+          "store is not rewritten on every shipment, and it lands by a rename "
+          "that cannot leave it half-written",
+          "cmp -s" in " ".join(readme_calls[0])
+          and "mv --" in " ".join(readme_calls[0]), str(readme_calls))
+    check("the remote script is the record shipper's, not a copy of it",
+          " ".join(readme_calls[0]).endswith(
+              record_shipper.make_directory_and_refresh_readme_script(
+                  "/home/nedlern/nedschorus-logs/seats/cold-read-research",
+                  "/home/nedlern/nedschorus-logs")),
+          str(readme_calls))
     check("one ssh call asks for the stored file's sha256 before copying",
           any("sha256sum" in " ".join(c) for c in ssh_calls), str(ssh_calls))
     check("exactly one rsync call, into the seat's own directory, over batch "

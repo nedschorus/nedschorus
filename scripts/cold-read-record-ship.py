@@ -83,6 +83,7 @@ import pathlib
 import socket
 import subprocess
 import sys
+import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
@@ -116,49 +117,42 @@ EXIT_FAILED = 1
 EXIT_REFUSED = 2
 EXIT_BAD_INVOCATION = 64
 
+# The note at the door of the log-store, written into it by this program.
+#
+# AGENT-FACING TEXT, so it is instruction and nothing else: what the store is,
+# how to cite a file in it, where the naming rules are, and what to edit to
+# change this file. No dates, no ruling citations, no account of why it reads
+# this way -- those live here and in `refresh_store_readme` below, where a
+# maintainer reads them (user-ruled 2026-09-18, on the force-push guard's
+# refusal, in CLAUDE.md).
+#
+# It used to list every kind and how its files were named. That restatement
+# went stale at each ruling that changed one, and when the cold-read-records'
+# triage file was renamed from dispositions.md to triage.md a reader following
+# this text would have looked for the old name, not found it, and reported a
+# finished triage as unfinished. The rules now live in the wiki page it points
+# at; what the store is and how to cite a file in it do not change
+# (user-ruled 2026-09-19, walk
+# file-naming-and-location-standards-cold-read-findings, item 5). The
+# 2026-09-07 ruling that made the store at all is "separate the system from
+# its logs".
 STORE_README = """\
 # nedschorus-logs
 
 The log-store: the byproducts of the nedschorus project's work that are not
-the system -- good data, never part of the repository (user-ruled
-2026-09-07: "separate the system from its logs"). One subdirectory per kind.
-
-- `cold-read-records/` -- one directory per cold-read run, named
-  `<document name>-<date>` with `-2`, `-3` for later runs on one day, holding
-  the reviewer reports, `triage.md` when the agent finished its triage
-  (its absence means a triage that never finished, which is true state), and
-  `target/<repository path>` with the exact bytes the reviewers read. Records
-  dated before 2026-09-08 predate that freeze and hold no `target/`; the
-  grid recorded only a hash of the target then.
-- `sanity-check-records/` -- one directory per sanity-check run, named
-  `<date>-<target stem>` with `-2`, `-3` for later runs on one day (the
-  order scripts/sanity-check-attacks.py gives them, unchanged when cold-read
-  records went document-first on 2026-09-18), holding the cells' reports,
-  `finding-dispositions.md` when the
-  requesting agent finished its triage, and each cell's `scratch/`. Written
-  by scripts/sanity-check-record-ship.py in the nedschorus repository, under
-  the same rules as the records beside them (user-ruled 2026-09-15).
-- `walk/` -- the files of each walk-me-through walk, flat: draft, suggestions,
-  walk text, minutes, and a cold-read walk's dispositions. Written by
-  scripts/walk-files-ship.py in the nedschorus repository at the walk's close:
-  draft, suggestions and walk text add-only; the minutes and the dispositions
-  replaced, each displaced copy's digest announced (user-ruled 2026-09-18).
-- `transcripts/` -- Claude Code session transcripts and handoffs, one
-  subdirectory per machine (nedschorus#7).
-- `seats/` -- the one kind organized by PRODUCER rather than by kind: one
-  directory per agent seat, holding the files that seat must cite from the
-  other machine and that belong to no other kind. Written by
-  scripts/seat-shared-file-ship.py in the nedschorus repository, which prints
-  the citation to paste. A seat replaces its own files, the records beside it
-  being add-only (user-ruled 2026-09-09).
+the system. Good data, never part of the repository. One subdirectory per
+kind.
 
 Cite a file here with its host, in the form scp takes:
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/<kind>/<path>`.
 
-Written by scripts/cold-read-record-ship.py in the nedschorus repository when
-it found no README here; that program is what puts records in
-`cold-read-records/`, add-only, never overwriting a file whose content
-differs.
+What each subdirectory holds, and how its files are named, is not written
+here. Read it in the nedschorus repository, which this machine also clones:
+docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
+
+To change this file, edit STORE_README in
+scripts/cold-read-record-ship.py. The next shipment rewrites this file
+whenever it differs from that text, so an edit made here is lost.
 """
 
 
@@ -231,20 +225,157 @@ def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *ex
     return command + [f"{source}/", destination]
 
 
+def refresh_store_readme(root) -> None:
+    """STORE_README into <root>/README.md, on this machine, when it differs.
+
+    REWRITTEN WHENEVER IT DIFFERS, not only when it is missing (user-ruled
+    2026-09-19, walk file-naming-and-location-standards-cold-read-findings,
+    item 5). The README was written once, when the store was new, and never
+    again, so every later ruling that changed the text left the live file
+    behind: read over ssh on 2026-09-19 it still gave cold-read-record names
+    in the old date-first order, still called the triage file
+    dispositions.md, still said a walk has four files, and had no analysis/
+    entry at all. Refreshing here means the next shipment carries a change,
+    and nobody edits a file on ned-box by hand to land one.
+
+    The README is the shippers' own file, so the add-only rule that protects
+    the records does not cover it.
+
+    It lands by rename, from a temporary written beside it, for the reason
+    given in `make_directory_and_refresh_readme_script`: a reader sees the
+    old file whole or the new one whole, never a half-written index.
+
+    THE TEMPORARY'S NAME COMES FROM `mkstemp`, never a fixed README.md.new.
+    This is the path the seats take, not the remote script's: they run on
+    ned-box, where the copy is local, and every shipment of every kind
+    refreshes this README with nothing locking it. On one name two
+    overlapping shipments collide -- the winner's rename removes the shared
+    path and the loser's `os.replace` raises FileNotFoundError, an
+    uncaught traceback on a store that is correct.
+
+    `mkstemp` creates the file 0600 and the store's README has always been
+    world-readable (0664 on ned-box, read 2026-09-20), so the mode is widened
+    before the rename rather than leaving the store's index owner-only.
+    """
+    readme = pathlib.Path(root) / "README.md"
+    try:
+        live = readme.read_text(encoding="utf-8")
+    except OSError:
+        live = None
+    if live == STORE_README:
+        return
+    handle, name = tempfile.mkstemp(prefix="README.md.", dir=str(readme.parent))
+    os.close(handle)
+    temporary = pathlib.Path(name)
+    try:
+        temporary.write_text(STORE_README, encoding="utf-8")
+        temporary.chmod(0o644)
+        os.replace(temporary, readme)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def make_directory_and_refresh_readme_script(directory, root) -> str:
+    """The remote script for `mkdir -p <directory>` and the README refresh.
+
+    ONE DEFINITION, here, called by every shipper that prepares the store:
+    this program's `ensure_store` and scripts/seat-shared-file-ship.py's
+    `ensure_seat_directory`. A second copy is how two programs come to
+    disagree about when the README is rewritten -- and they would rewrite it
+    against each other on every shipment.
+
+    The new text arrives on stdin rather than quoted into the script, so a
+    README holding quotes needs no escaping. `cmp` then decides: the text is
+    landed only when it differs, so an unchanged store is not rewritten, and
+    its modification time still says when the text last changed.
+
+    IT LANDS BY RENAME, from a temporary written BESIDE the README -- same
+    directory, so the same filesystem, so `mv` is one rename and a reader
+    sees the old file whole or the new one whole. Writing through the live
+    file instead would leave the store's own index empty or half-written when
+    the shipment is interrupted, and nothing would repair it until a later
+    shipment happened to run to completion. Interruption is measured here,
+    not hypothetical: the ssh link to ned-box dropped eight times across
+    2026-09-19 and 2026-09-20, the last with `client_loop: send disconnect:
+    Broken pipe`. `mkdir -p` of the kind's directory runs first and creates
+    the root as its parent, so `mktemp` has somewhere to put the temporary on
+    a store that is new, and the closing `rm -f` removes it when `cmp` found
+    no difference.
+
+    WHAT ARRIVED IS COUNTED BEFORE ANYTHING LANDS. A dropped link is not an
+    error the shell can see: it is a clean EOF on a short stream, so `cat`
+    returns 0 on the prefix that arrived, `cmp` finds a real difference, and
+    `mv` publishes the truncation over a good README with the script exiting
+    0. Measured by the merge lane on 2026-09-21 against the previous head: a
+    60-byte prefix of this text replaced the live README, return code 0,
+    nothing on stderr. So the text's byte count is written into this script
+    and `wc -c` on the received temporary must equal it; a stream that ends
+    short is refused and nothing is landed. The count is what STORE_README
+    encodes to in UTF-8, which is the encoding `ensure_store` and the seat
+    shipper pin on the ssh call that sends it.
+
+    THE REFUSAL REMOVES THE TEMPORARY BEFORE IT REPORTS. The drop that causes
+    a short stream has closed stderr as well, so writing the reason first can
+    take SIGPIPE and end the shell with the temporary still there; the
+    cleanup goes ahead of the diagnostic.
+
+    THE TEMPORARY'S NAME COMES FROM `mktemp`, never a fixed README.md.new.
+    Every shipment from every seat refreshes this README, nothing locks, and
+    two overlapping shipments on one name collide two ways, both measured by
+    the merge lane on 2026-09-21: the winner's closing `rm -f` falls between
+    the loser's `cat` and its `cmp`, so the loser exits 1 on a store that is
+    correct; and when the two send different text, which two checkouts at
+    different commits do, the winner's `mv` renames the inode out from under a
+    writer still holding it open and the loser's remaining bytes land inside
+    the live README. A unique name is reachable by neither. `mktemp` creates
+    the temporary 0600, so the mode is widened before the rename, the store's
+    README having always been world-readable (0664 on ned-box, read
+    2026-09-20).
+
+    A temporary orphaned by a drop is no longer overwritten by the next run,
+    each run's name being its own: a drop that arrives as a short stream is
+    refused and its temporary removed here, and one left by a shell killed
+    outright stays beside the README, inert, until it is removed by hand. A
+    sweep of README.md.* cannot be added here without racing exactly the
+    overlap the unique name fixes.
+
+    POSIX shell only -- ned-box's /bin/sh is dash, with uutils coreutils
+    0.8.0 for `mktemp`, `wc` and `chmod` and GNU diffutils 3.12 for `cmp`; the
+    template form of `mktemp` and `[ "$(wc -c < f)" -eq n ]` were run there on
+    2026-09-20. `chmod` takes `--` BEFORE the mode: a trailing one is a file
+    name to this Mac's BSD chmod, which then exits 1.
+    """
+    return (f"mkdir -p -- '{directory}' || exit 1\n"
+            f"readme_new=$(mktemp '{root}/README.md.XXXXXX') || exit 1\n"
+            'cat > "$readme_new" || { rm -f -- "$readme_new"; exit 1; }\n'
+            f'[ "$(wc -c < "$readme_new")" -eq {len(STORE_README.encode("utf-8"))} ] '
+            '|| { rm -f -- "$readme_new"; '
+            "printf '%s\\n' 'the log-store README arrived incomplete; "
+            "nothing was landed. Ship again.' >&2; exit 1; }\n"
+            'chmod -- 644 "$readme_new" || { rm -f -- "$readme_new"; exit 1; }\n'
+            f'cmp -s -- "$readme_new" \'{root}/README.md\' '
+            f'|| mv -- "$readme_new" \'{root}/README.md\' '
+            '|| { rm -f -- "$readme_new"; exit 1; }\n'
+            'rm -f -- "$readme_new"\n')
+
+
 def ensure_store(host, records_path: pathlib.PurePosixPath) -> subprocess.CompletedProcess:
-    """The records directory exists and the store's root has its README.
-    One ssh round trip remotely; plain filesystem calls locally."""
+    """The records directory exists and the store's root holds STORE_README.
+    One ssh round trip remotely; plain filesystem calls locally.
+
+    The stdin encoding is pinned to UTF-8 rather than left to the locale,
+    because the script counts the bytes it receives against a count taken in
+    UTF-8; see `make_directory_and_refresh_readme_script`."""
     root = records_path.parent
     if host is None:
         pathlib.Path(records_path).mkdir(parents=True, exist_ok=True)
-        readme = pathlib.Path(root) / "README.md"
-        if not readme.exists():
-            readme.write_text(STORE_README, encoding="utf-8")
+        refresh_store_readme(root)
         return subprocess.CompletedProcess([], 0, "", "")
-    script = (f"mkdir -p -- '{records_path}' && "
-              f"{{ test -e '{root}/README.md' || cat > '{root}/README.md'; }}")
+    script = make_directory_and_refresh_readme_script(records_path, root)
     return subprocess.run(SSH_COMMAND + [host, script], input=STORE_README,
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, encoding="utf-8",
+                          check=False)
 
 
 def local_inventory(record_dir: pathlib.Path) -> dict:
