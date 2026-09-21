@@ -45,22 +45,32 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def nothing_is_appended_to(prompt, tail, allowed_continuations):
-    """`tail` is in `prompt`, and what follows it starts a sentence we expect.
+def nothing_is_appended_to(prompt, tail, expected_rest_of_prompt):
+    """`tail` is in `prompt`, and what follows it is EXACTLY
+    `expected_rest_of_prompt` -- through to the end of the prompt.
 
     A plain `tail in prompt` passes when text is APPENDED to the pinned
     sentence, which is how three of these pins went blind: each was named
     "exactly" while an extra sentence bolted onto the end of the real one was
-    invisible (swept 2026-09-20). build_ignition_prompt joins its sentences
-    with a single space and several are conditional, so the tail cannot simply
-    be extended into the next one -- what may legitimately follow is listed
-    instead, and anything else fails.
+    invisible (swept 2026-09-20).
+
+    The first repair listed the sentences that may legitimately follow and
+    accepted any rest STARTING with one of them. That bounded the beginning of
+    what follows and never its end, so the defect survived in the shape it was
+    written to catch: " NOTE: Resume each one by its id." appended to the
+    orphaned-subagent roster sentence left all 228 cases green, and resume-by-id
+    is the exact instruction that sentence exists to keep out of a successor's
+    prompt -- a dead subagent cannot be resumed by id across a reincarnation
+    (probed 2026-08-29). Reviewed 2026-09-21.
+
+    So the rest is pinned whole. build_ignition_prompt's segments are
+    conditional in production, but each case's own fixture decides every one of
+    them, so what follows the pinned sentence is fully determined and can be
+    spelled out to the last character. A fixture that gains a branch sync, a
+    roster, an unterminated verbatim block, or a different next step must extend
+    `expected_rest_of_prompt` with the segment it adds -- never reopen the tail.
     """
-    if tail not in prompt:
-        return False
-    rest = prompt.split(tail, 1)[1]
-    return rest == "" or any(rest.startswith(start)
-                             for start in allowed_continuations)
+    return tail in prompt and prompt.split(tail, 1)[1] == expected_rest_of_prompt
 
 
 def run_offline_cases(workspace: Path):
@@ -895,8 +905,10 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "scripts/handoff-supervisor.py, which watches this seat and composed "
               "this prompt — read it if you need to investigate the handoff "
               "mechanism.",
-              (" branch sync:", " The session you are replacing had",
-               " NOTE:", " Then continue from where that dialog ends.", "\n")),
+              # This fixture passes no sync report and no roster, and its
+              # verbatim block is not unterminated, so the pointer sentence is
+              # the last of the preamble and only the next step follows it.
+              "\n\nThen take the next step:\nfinish the supervisor"),
           prompt[:800])
     # The branch-state line (user-ruled 2026-08-30, second round): the sync's
     # own one-line result, then the static instruction. Called through
@@ -2008,7 +2020,10 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
               ". You may need to re-commission similar agents. If you need more "
               "context, the dead agents' full transcripts are at "
               f"{predecessor_directory}/subagents/agent-<id>.jsonl.",
-              (" NOTE:", " Then continue from where that dialog ends.", "\n")),
+              # The roster sentence is the last of the preamble, and this
+              # fixture's verbatim block is not unterminated, so only the next
+              # step follows it.
+              "\n\nThen take the next step:\nmerge the queue"),
           prompt)
     check("the first-round roster wording is gone",
           "Re-commission each" not in prompt and "if its state matters" not in prompt
