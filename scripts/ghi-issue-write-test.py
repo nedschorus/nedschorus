@@ -31,6 +31,21 @@ at the path it moved from, a move that also renamed the file, and a move
 whose first heading changed. The first of those was run through the tool
 itself, which pushed a branch whose tree did not hold the other seat's line
 at all — the deletion the conflict check now refuses.
+
+The third round's states are the same rule again, 2026-09-21, and each was
+run through the tool itself against a repository with a bare remote and gh
+stubbed. A branch pushed with no pull request on it, made by failing `gh pr
+create` after the push: the frozen head, rerun on it with a too-similar
+verdict standing, exited 65 having made no gh call at all, and with another
+seat's change landed on main under it, exited 66 — either way the branch
+stayed stranded, and the fixed tool opened its pull request without asking
+ghi-info anything. A file whose name carries a number no issue has: the
+frozen head pushed the branch and opened the pull request before learning
+that, then exited 1; the fixed tool exits 64 having run nothing but the
+read, and still exits 1 when gh fails for any other reason. gh's own words
+for such a number were read from the real repository. And the listing the
+paired-path cases assert against is origin/main's own tree, read at that
+commit and cut to the entries that decide the question.
 """
 
 import contextlib
@@ -644,9 +659,76 @@ def run_edit_cases(scratch: Path):
           == ["docs/issues/570-design.md",
               "nc-systems/statusline/570-contract.md"],
           str(tool.paired_paths(570, scratch, listing)))
-    check("and git is asked for both of them, not just the one",
-          ran_with(listing, "git ls-tree", "docs/issues/", "nc-systems/"),
+    check("and git is asked for both of them, recursively, since a "
+          "system's own directory is a level below the tree named",
+          ran_with(listing, "git ls-tree", "-r", "docs/issues/",
+                   "nc-systems/"),
           str(listing.calls))
+
+    # --- What counts as one of the issue's files, and what does not ------
+    # The user ruled on 2026-09-19, in the walk
+    # ghi-info-design-write-path-becomes-link-only, that step 5 writes one
+    # link per file matching `docs/issues/<number>-*`, globbed at every
+    # write. That glob is a literal prefix and does not descend, and the
+    # ruling's worked example counts on it: it gives issue 3 four files.
+    # Re-confirmed by the user 2026-09-21.
+    #
+    # The listing below is origin/main's own tree, read on 2026-09-21 and
+    # cut to the entries that decide the question — the paired names
+    # directly under docs/issues/, the same issues' numbers under its
+    # queue/ and archived/ subdirectories, and a system's own directory.
+    # `create`'s step 5 calls this same function, so a rule that descended
+    # would have rewritten these issues' bodies on the next create run.
+
+    MAIN_TREE = (
+        "docs/issues/18-write-test-plan-riders-and-test-evidence-rules.md\n"
+        "docs/issues/3-credential-work-measured-state-and-rulings.md\n"
+        "docs/issues/3-dismiss-stale-reviews-experiment-design.md\n"
+        "docs/issues/3-main-gatekeeper-build-slice-plan.md\n"
+        "docs/issues/3-slice-6-review-evidence-not-built.md\n"
+        "docs/issues/45-remote-named-agent-launch-and-reattach.md\n"
+        "docs/issues/archived/43-step-2-claude-md-inputs.md\n"
+        "docs/issues/queue/18-write-test-plan-agent-native-riders.md\n"
+        "docs/issues/queue/3-gatekeeper-build-bindings.md\n"
+        "docs/issues/queue/3-gatekeeper-checks-never-run-at-check-in.md\n"
+        "docs/issues/queue/45-session-seat-and-isolation-riders.md\n"
+        "docs/issues/queue/45-ubuntu-fleet-open-work-inventory.md\n"
+        "nc-systems/main-gatekeeper/main-gatekeeper-design.md\n")
+
+    main_tree = Recorder({"git ls-tree": Completed(MAIN_TREE)})
+    check("issue 3's files are the four directly under docs/issues/, which "
+          "is the count the ruling's own worked example gives",
+          tool.paired_paths(3, scratch, main_tree) == [
+              "docs/issues/3-credential-work-measured-state-and-rulings.md",
+              "docs/issues/3-dismiss-stale-reviews-experiment-design.md",
+              "docs/issues/3-main-gatekeeper-build-slice-plan.md",
+              "docs/issues/3-slice-6-review-evidence-not-built.md"],
+          str(tool.paired_paths(3, scratch, main_tree)))
+    check("the queue is not part of an issue's file set: issue 18 has one "
+          "file on main, not two",
+          tool.paired_paths(18, scratch, main_tree)
+          == ["docs/issues/18-write-test-plan-riders-and-test-evidence"
+              "-rules.md"],
+          str(tool.paired_paths(18, scratch, main_tree)))
+    check("and issue 45 one, not three",
+          tool.paired_paths(45, scratch, main_tree)
+          == ["docs/issues/45-remote-named-agent-launch-and-reattach.md"],
+          str(tool.paired_paths(45, scratch, main_tree)))
+    check("nor is the archive: issue 43 has no paired file on main at all, "
+          "so there is nothing for its body to link",
+          tool.paired_paths(43, scratch, main_tree) == [],
+          str(tool.paired_paths(43, scratch, main_tree)))
+
+    deeper = Recorder({"git ls-tree": Completed(
+        "nc-systems/statusline/570-contract.md\n"
+        "nc-systems/statusline/tests/570-contract-test.md\n"
+        "nc-systems/570-loose.md\n")})
+    check("a system's own directory is one level down, so a paired name "
+          "buried deeper under it is not the issue's file, and neither is "
+          "one loose in the system tree",
+          tool.paired_paths(570, scratch, deeper)
+          == ["nc-systems/statusline/570-contract.md"],
+          str(tool.paired_paths(570, scratch, deeper)))
 
     # --- The happy path: the file differs from main, so it lands ---------
 
@@ -684,6 +766,12 @@ def run_edit_cases(scratch: Path):
     check("main is fetched before anything is compared against it",
           landing.commands().index("git fetch origin")
           < landing.commands().index(f"git show origin/main:{EDIT_RELATIVE}"),
+          str(landing.commands()))
+    check("the issue is read before the run touches git at all, so a "
+          "number no issue has is found before a branch is pushed for it",
+          landing.commands().index("gh issue view") == 0
+          and landing.commands().index("gh issue view")
+          < landing.commands().index("git worktree add"),
           str(landing.commands()))
     check("the run is unfinished while its pull request waits", not finished)
     check("a heading the edit did change renames the issue",
@@ -1010,11 +1098,24 @@ def run_edit_cases(scratch: Path):
             '"url": "https://github.com/x/y/pull/11"}]'),
         "gh issue view": issue_json("Older", one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        ASK: Completed("verdict: too-similar #13\n"),
     })
-    _, still_waiting = tool.edit(source, REPO, scratch, waiting, quiet)
+    still_waiting, waiting_refusal = False, None
+    try:
+        _, still_waiting = tool.edit(source, REPO, scratch, waiting, quiet)
+    except tool.Refused as refusal:
+        waiting_refusal = refusal
     check("a branch already on the remote is not pushed a second time",
-          not waiting.ran("git worktree add")
-          and not waiting.ran("gh pr create"), str(waiting.commands()))
+          waiting_refusal is None and not waiting.ran("git worktree add")
+          and not waiting.ran("gh pr create"),
+          f"refused {getattr(waiting_refusal, 'code', None)}: "
+          f"{str(waiting_refusal)[:160]}" if waiting_refusal
+          else str(waiting.commands()))
+    check("nor does a rerun whose pull request is already open ask ghi-info "
+          "again, or get refused for an edit it already landed",
+          waiting_refusal is None and not waiting.ran(ASK),
+          f"refused: {str(waiting_refusal)[:160]}" if waiting_refusal
+          else str(waiting.commands()))
     check("and the pull request it reports is one GitHub says is open, not "
           "one inferred from the branch being there",
           waiting.ran("gh pr list"), str(waiting.commands()))
@@ -1033,10 +1134,25 @@ def run_edit_cases(scratch: Path):
         "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
         "gh issue view": issue_json("Older", one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        # Standing over that state, the verdict that refused the first run.
+        # The question is the same draft with the same exclusion, so this is
+        # the answer every rerun gets.
+        ASK: Completed("verdict: too-similar #13\n"),
     })
-    tool.edit(source, REPO, scratch, pushed_only, quiet)
+    stranded_refusal = None
+    try:
+        tool.edit(source, REPO, scratch, pushed_only, quiet)
+    except tool.Refused as refusal:
+        stranded_refusal = refusal
     check("a branch pushed without a pull request gets one on the rerun",
-          pushed_only.ran("gh pr create"), str(pushed_only.commands()))
+          stranded_refusal is None and pushed_only.ran("gh pr create"),
+          f"refused {getattr(stranded_refusal, 'code', None)}: "
+          f"{str(stranded_refusal)[:160]}" if stranded_refusal
+          else str(pushed_only.commands()))
+    check("and it asks ghi-info nothing, this content being pushed already: "
+          "a rerun that only opens the missing pull request has nothing new "
+          "to adjudicate",
+          not pushed_only.ran(ASK), str(pushed_only.commands()))
     check("and nothing is committed or pushed over it to get there",
           not pushed_only.ran("git worktree add")
           and not pushed_only.ran("git push"), str(pushed_only.commands()))
@@ -1045,6 +1161,139 @@ def run_edit_cases(scratch: Path):
                    f"GHI-MD edit for issue 570: {EDIT_TITLE}",
                    "An edit to the GHI-MD for issue #570"),
           str(pushed_only.calls))
+
+    # The same state with main moved under it: another seat landed a change
+    # at this path after the branch was pushed. Refusing here cannot un-push
+    # the branch — it only leaves it stranded, exactly as the verdict above
+    # would have. Produced against a real repository on 2026-09-21: the
+    # frozen head exited 66 on this state with the branch already on the
+    # remote and no pull request on it.
+
+    pushed_while_main_moved = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Theirs\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git diff": Completed("@@\n-# Older\n+# Theirs\n"),
+        "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n"),
+        "gh pr list": Completed("[]"),
+        "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    moved_refusal = None
+    try:
+        tool.edit(source, REPO, scratch, pushed_while_main_moved, quiet)
+    except tool.Refused as refusal:
+        moved_refusal = refusal
+    check("a rerun that only opens the missing pull request is not refused "
+          "for a change on main either, a refusal being unable to un-push "
+          "the branch it would strand",
+          moved_refusal is None
+          and pushed_while_main_moved.ran("gh pr create"),
+          f"refused {getattr(moved_refusal, 'code', None)}: "
+          f"{str(moved_refusal)[:160]}" if moved_refusal
+          else str(pushed_while_main_moved.commands()))
+    check("and the conflict check is not even reached on that rerun, the "
+          "push it guards having happened already",
+          not pushed_while_main_moved.ran("git merge-base"),
+          str(pushed_while_main_moved.commands()))
+
+    # --- Which runs are adjudicated, and which have nothing to ask -------
+    # Adjudication costs a model call and can refuse the run, so the run
+    # that asks must be a run with something new to land. Two states have
+    # nothing new: main's copy is already this file, and this content is
+    # already pushed on its branch. Only the first was tested, so the second
+    # asked again — and the same draft with the same exclusion gets the same
+    # verdict, which raised 65 before the resume was reached. The one run
+    # that could open the missing pull request was the one run refused.
+
+    at_rest = Recorder()
+    check("an edit whose content main already holds has nothing to land, "
+          "and the branch is not even asked about",
+          tool.edit_landing_state(570, staged, staged, scratch, at_rest)
+          == (tool.EDIT_LANDING_ALREADY_ON_MAIN, None)
+          and not at_rest.ran("git ls-remote"), str(at_rest.commands()))
+    pushed_state = Recorder({
+        "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n")})
+    check("an edit already pushed on its branch has nothing NEW to land",
+          tool.edit_landing_state(570, staged, "# Older\n", scratch,
+                                  pushed_state)
+          == (tool.EDIT_LANDING_ALREADY_PUSHED,
+              tool.edit_landing_branch_name(570, staged)),
+          str(tool.edit_landing_state(570, staged, "# Older\n", scratch,
+                                      pushed_state)))
+    fresh_state = Recorder({"git ls-remote": Completed("")})
+    check("and an edit that is neither on main nor pushed has new content "
+          "to land",
+          tool.edit_landing_state(570, staged, "# Older\n", scratch,
+                                  fresh_state)
+          == (tool.EDIT_LANDING_NEW_CONTENT,
+              tool.edit_landing_branch_name(570, staged)),
+          str(tool.edit_landing_state(570, staged, "# Older\n", scratch,
+                                      fresh_state)))
+
+    # The opposite defect, and the worse one: a run that DOES have new
+    # content to land must still be adjudicated, and a too-similar verdict
+    # must still stop it before anything reaches the remote.
+
+    new_to_land = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        ASK: Completed("verdict: too-similar #13\n"),
+    })
+    try:
+        tool.edit(source, REPO, scratch, new_to_land, quiet)
+        check("an edit with new content to land is adjudicated still",
+              False, "it proceeded unasked")
+    except tool.Refused as refusal:
+        check("an edit with new content to land is adjudicated still",
+              refusal.code == 65 and new_to_land.ran(ASK),
+              f"code {refusal.code}, asked ghi-info: "
+              f"{new_to_land.ran(ASK)}")
+    check("and the verdict stops it before anything is pushed or opened",
+          not new_to_land.ran("git worktree add")
+          and not new_to_land.ran("git push")
+          and not new_to_land.ran("gh pr create")
+          and not new_to_land.ran("gh issue edit"),
+          str(new_to_land.commands()))
+
+    # A moved file is new content to land too — main holds nothing at the
+    # author's path, so `on_main` is None and never equals the staged text.
+
+    moved_to_land = Recorder({
+        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+                                                            returncode=128),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git ls-remote": Completed(""),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        ASK: Completed("verdict: too-similar #13\n"),
+    })
+    try:
+        tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
+                  scratch, moved_to_land, quiet)
+        check("and so is a move, which main has nothing at the author's "
+              "path to compare with",
+              False, "it proceeded unasked")
+    except tool.Refused as refusal:
+        check("and so is a move, which main has nothing at the author's "
+              "path to compare with",
+              refusal.code == 65 and moved_to_land.ran(ASK),
+              f"code {refusal.code}, asked ghi-info: "
+              f"{moved_to_land.ran(ASK)}")
+    check("and nothing of that move is staged, removed or pushed",
+          not moved_to_land.ran("git worktree add")
+          and not moved_to_land.ran("git rm")
+          and not moved_to_land.ran("git push")
+          and not moved_to_land.ran("gh pr create"),
+          str(moved_to_land.commands()))
 
     # --- The body is rewritten only when the file set changed ------------
 
@@ -1125,6 +1374,61 @@ def run_edit_cases(scratch: Path):
     check("a file that is not on main lands, and the issue waits for it",
           absent.ran("gh pr create") and not not_yet
           and not absent.ran("gh issue edit"), str(absent.commands()))
+
+    # --- A name carrying a number no issue has ---------------------------
+    # The issue was read after the push and the pull request, so a file
+    # whose name carried a number that is not an issue got a branch pushed
+    # and a pull request opened for an issue that does not exist, and then
+    # failed with 1 — an operating failure — for what the exit table calls
+    # wrong caller input. Both halves were produced against a real
+    # repository on 2026-09-21: the frozen head exited 1 with the branch on
+    # the remote and the pull request open. gh's answer to such a number was
+    # read from the repository itself the same day — `gh issue view 999999
+    # --repo nedschorus/nedschorus --json title,body`, exit 1, nothing on
+    # stdout, this line on stderr with 999999 where this case's own number
+    # stands.
+
+    GH_SAID_NO_SUCH_ISSUE = (
+        "GraphQL: Could not resolve to an issue or pull request with the "
+        "number of 570. (repository.issue)")
+
+    no_such_issue = Recorder({
+        "gh issue view": Completed("", returncode=1,
+                                   stderr=GH_SAID_NO_SUCH_ISSUE)})
+    try:
+        tool.edit(source, REPO, scratch, no_such_issue, quiet)
+        check("a file named for an issue that does not exist is refused",
+              False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a file named for an issue that does not exist is refused",
+              refusal.code == 64, f"code {refusal.code}")
+        check("and the refusal names the file, the repository with no such "
+              "issue, and the verb that files one",
+              EDIT_RELATIVE in str(refusal) and REPO in str(refusal)
+              and "create verb" in str(refusal), str(refusal)[:300])
+    check("and the number is tested before anything is fetched, "
+          "adjudicated, pushed or opened",
+          not no_such_issue.ran("git fetch")
+          and not no_such_issue.ran(ASK)
+          and not no_such_issue.ran("git worktree add")
+          and not no_such_issue.ran("git push")
+          and not no_such_issue.ran("gh pr create")
+          and not no_such_issue.ran("gh issue edit"),
+          str(no_such_issue.commands()))
+
+    gh_unreachable = Recorder({
+        "gh issue view": Completed(
+            "", returncode=1,
+            stderr="error connecting to api.github.com: no such host")})
+    try:
+        tool.edit(source, REPO, scratch, gh_unreachable, quiet)
+        check("while gh failing for any other reason is an operating "
+              "failure still, not a caller who named a wrong number",
+              False, "it proceeded")
+    except tool.Refused as refusal:
+        check("while gh failing for any other reason is an operating "
+              "failure still, not a caller who named a wrong number",
+              refusal.code == 1, f"code {refusal.code}")
 
     # --- Adjudication, in the shape the design gives for an edit ---------
 

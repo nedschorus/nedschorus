@@ -104,9 +104,9 @@ its name wherever it sits — and does four things:
                 before its system's code starts, the system's own directory
                 after.
   2. Adjudicate as create does, with this issue left out of the comparison,
-                which the cold-start prompt's item 2 asks for. Skipped when
-                main's copy is already this file, since a rerun that only
-                finishes step 4 has nothing new to adjudicate.
+                which the cold-start prompt's item 2 asks for. Asked only
+                where step 3 has new content to land, which a rerun
+                finishing an earlier run's last steps has not.
   3. Land       the author's file, when it differs from main's copy, on a
                 pull request, the way create's step 4 lands a new one —
                 including the move: a file the author took out of
@@ -121,13 +121,32 @@ its name wherever it sits — and does four things:
   5. Link       the body to the paired files on main, as create's step 5
                 writes it in the first place.
 
+THE ISSUE IS READ BEFORE ANYTHING IS LANDED, not after. The number comes
+from the file's name, so a name carrying a number no issue has is the
+caller's input being wrong — the 64 below — and the run that learned it at
+step 5 had already pushed a branch and opened a pull request naming an
+issue that does not exist. One read serves that test and both of the steps
+that may change the issue (reviewed 2026-09-21 on PR [Build the GHI write
+tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596)).
+
+WHICH RUNS ARE ADJUDICATED is settled before step 2 is reached, by the same
+branch test the pull-request resume uses. Nothing new to land is nothing to
+adjudicate, and TWO states mean that: main's copy is already this file, and
+this edit's content is already pushed on its branch. Testing only the first
+refused the one run that could finish an interrupted one — the question is
+the same draft with the same exclusion, so the too-similar verdict that
+stopped the first run stopped every rerun, and the pushed branch stayed
+stranded with no pull request on it. Measured 2026-09-21, reviewing the
+same pull request; see `edit_landing_state`.
+
 THE TITLE FOLLOWS A CHANGE, NOT A MISMATCH. The design's trigger is "when
 the edit changes the file's first heading", and reading that as "make the
-title match the heading" would be a different tool. Measured 2026-09-20 over
-the paired corpus on main: 35 files have a heading that differs from their
+title match the heading" would be a different tool. Measured 2026-09-21 over
+the paired corpus on main — the 26 files `paired_paths` returns, for the 21
+issues that have one: 25 of them have a heading that differs from their
 issue's title, so the matching rule renames most issues the first time
 anybody edits one. An issue with several paired files is left alone even
-when the heading did change — issue 3 has six files with six headings, and
+when the heading did change — issue 3 has four files with four headings, and
 nothing in the pairing says which one names it — and the tool says so
 rather than guessing.
 
@@ -176,17 +195,22 @@ THE ORDER MATTERS FOR RESUMING. Main's copy is compared to the author's
 BEFORE the conflict check runs, because once the pull request merges the
 author's own landed change is a difference between the merge base and main,
 and a conflict check made first would refuse an author their own edit on the
-rerun that finishes step 4.
+rerun that finishes step 4. The branch test comes before it too, and for the
+same reason: a branch under this name is one this tool pushed, after that
+check had passed, and a refusal on the rerun cannot un-push it — it can only
+leave it stranded with no pull request. What each guard protects is the
+push, so the run that pushes nothing passes both.
 
 A PROSE BODY IS LEFT ALONE, NOT RELINKED AND NOT REFUSED. The design says
 that until an issue is migrated it keeps its prose body and is read as it
 stands, and measurement says that is every issue this verb can reach:
-2026-09-20, all 26 paired issues on main still carry the prose body they
-were filed with, migrating them being its own build-slice. So step 5 writes
-only over a body this tool wrote — its link list, or create's placeholder —
-reports what it found otherwise, and finishes. Refusing instead would shut
-the verb out of the whole existing corpus, and refusing AFTER the file had
-landed would refuse an author work that had already happened.
+2026-09-21, all 21 issues with a paired file on main still carry the prose
+body they were filed with, migrating them being its own build-slice. So step
+5 writes only over a body this tool wrote — its link list, or create's
+placeholder — reports what it found otherwise, and finishes. Refusing
+instead would shut the verb out of the whole existing corpus, and refusing
+AFTER the file had landed would refuse an author work that had already
+happened.
 
 Usage:
   ghi-issue-write.py create <path-to-ghi-md> [--repo OWNER/NAME] [--dry-run]
@@ -206,8 +230,9 @@ Exit codes:
       outstanding
   1   an operating failure — gh, git or the network
   64  the caller's input is wrong: no such file, no heading, paired when
-      create wants it unpaired or unpaired when edit wants it paired, or a
-      path this tool does not write
+      create wants it unpaired or unpaired when edit wants it paired, a
+      path this tool does not write, or a name carrying a number no issue
+      has
   65  refused by adjudication as too similar to an open issue
   66  refused: the file, or the path a move takes it from, changed on main
       since the caller's checkout started from it, so landing would discard
@@ -238,6 +263,9 @@ PAIRED_DIRECTORY = "docs/issues"
 SYSTEM_DIRECTORY = "nc-systems"
 PAIRING_KEY_PREFIX = "ghipair"
 RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
+# What gh's stderr carries when the number names no issue, lowercased for
+# the comparison. Measured 2026-09-21; see `read_issue`.
+GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
 SLUG_WORD_LIMIT = 8
 GH_TIMEOUT_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
@@ -634,20 +662,56 @@ def source_path_on_main(source: Path, repository_root: Path, runner):
 
 
 def paired_paths(number: int, repository_root: Path, runner):
-    """Every file paired with this issue that is on main, wherever § Where
-    the tool may write allows one to sit: under docs/issues/ before a
-    system's code starts and under the system's own directory after, which
-    is the move the design names as a reason the body is rewritten. The body
-    is built from this, so a file still sitting on an unmerged branch is not
-    linked — a link that does not resolve is worse than a body that is not
-    finished."""
+    """Every file paired with this issue that is on main: the files named
+    `<number>-*` DIRECTLY in docs/issues/, and the files named `<number>-*`
+    DIRECTLY in a system's own directory under nc-systems/. Those are the
+    two places § Where the tool may write allows a paired file to sit —
+    before a system's code starts and after — and the move between them is
+    the reason the design gives for rewriting the body. The body is built
+    from this, so a file still sitting on an unmerged branch is not linked:
+    a link that does not resolve is worse than a body that is not finished.
+
+    DIRECTLY IN, NOT ANYWHERE BENEATH, and that is the user's ruling rather
+    than this function's choice. The walk
+    ghi-info-design-write-path-becomes-link-only, 2026-09-19 (minutes at
+    nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/ghi-info-design-write-path-becomes-link-only-minutes.md),
+    ruled that step 5 "writes a computed list: one link per file matching
+    `docs/issues/<number>-*`, globbed at every write, never curated". That
+    glob is a literal prefix and does not descend, and the ruling's own
+    worked example counts on it: it gives issue 3 four files. Re-confirmed
+    by the user 2026-09-21.
+
+    Measured 2026-09-21 against origin/main, which is what a rule matching
+    the name at any depth would have linked instead: issue 3 six files
+    rather than four, the two extra being queue notes under
+    docs/issues/queue/; issue 18 two rather than one; issue 45 three rather
+    than one; and issue 43, which has no paired file at all, one — an
+    archived draft under docs/issues/archived/. Neither the queue nor the
+    archive is part of an issue's file set. `create`'s step 5 calls this
+    function too, so a wider rule would have rewritten those issues' bodies
+    on the next create run, not only on an edit."""
     listed = runner(
         ["git", "ls-tree", "-r", "--name-only", "origin/main",
          f"{PAIRED_DIRECTORY}/", f"{SYSTEM_DIRECTORY}/"],
         cwd=str(repository_root), check=False)
     prefix = f"{number}-"
-    return [line for line in (listed.stdout or "").splitlines()
-            if Path(line).name.startswith(prefix)]
+    paired_directory_parts = tuple(Path(PAIRED_DIRECTORY).parts)
+    selected = []
+    for line in (listed.stdout or "").splitlines():
+        parts = Path(line).parts
+        if not parts or not parts[-1].startswith(prefix):
+            continue
+        # The depth is read off the path rather than left to git: `-r` is
+        # what reaches a system's own directory at all, and it also keeps
+        # a DIRECTORY named `<number>-something` out of the answer, git
+        # listing only blobs when it recurses.
+        directly_in_the_paired_directory = (
+            parts[:-1] == paired_directory_parts)
+        directly_in_a_system_directory = (
+            len(parts) == 3 and parts[0] == SYSTEM_DIRECTORY)
+        if directly_in_the_paired_directory or directly_in_a_system_directory:
+            selected.append(line)
+    return selected
 
 
 def link_body(repo: str, number: int, repository_root: Path, runner, report,
@@ -930,29 +994,80 @@ def report_no_moved_from_match(number: int, relative: str, paths, report):
            "removal of the old path yourself.")
 
 
+# The three states step 3 can be in. Resolved before step 2 runs, because
+# which of them a run is in is what says whether step 2 runs at all. Named
+# for the state rather than for what the run then does in it: the state is
+# what the next reader has to recognise.
+EDIT_LANDING_ALREADY_ON_MAIN = "already-on-main"
+EDIT_LANDING_ALREADY_PUSHED = "already-pushed"
+EDIT_LANDING_NEW_CONTENT = "new-content"
+
+
+def edit_landing_branch_name(number: int, staged: str) -> str:
+    """The branch this edit lands on. Named for the content and not for the
+    issue alone, so a rerun of the same edit names the same branch — which
+    is what lets `edit_landing_state` recognise this tool's own earlier
+    push — and an edit that changed since names another."""
+    return f"ghi-{number}-edit-{pairing_key(staged)}"
+
+
+def edit_landing_state(number: int, staged: str, on_main,
+                       repository_root: Path, runner):
+    """Whether step 3 has new content to land, and the branch it would land
+    on. Asked BEFORE step 2, because the answer is what says whether step 2
+    is asked at all.
+
+    NOTHING NEW TO LAND IS NOTHING TO ADJUDICATE, and TWO states mean that,
+    not one. Main's copy is already this file — the rerun after the merge.
+    Or this exact content is already pushed on its branch — the rerun after
+    a push whose `gh pr create` then failed, which the resume in `land_edit`
+    exists to finish.
+
+    Only the first was tested until this was measured on 2026-09-21,
+    reviewing PR [Build the GHI write tool's edit
+    verb](https://github.com/nedschorus/nedschorus/pull/596). In the second
+    state main's copy is NOT this file — the edit has not merged — so the
+    run asked ghi-info a question it had already asked, and the question is
+    the same draft with the same exclusion, so the answer is the same: a
+    too-similar verdict raised 65 before the resume was reached, every
+    rerun, and the one run that could open the missing pull request was the
+    one run refused. Adjudication also consumes the reconsidered marker, so
+    the marker the caller spent to pass the first run was already gone.
+
+    The conflict check in `land_edit` sits behind this same answer, for the
+    same reason: see the module docstring, THE ORDER MATTERS FOR RESUMING."""
+    if on_main == staged:
+        return EDIT_LANDING_ALREADY_ON_MAIN, None
+    branch = edit_landing_branch_name(number, staged)
+    on_remote = runner(["git", "ls-remote", "--heads", "origin", branch],
+                       cwd=str(repository_root))
+    if (on_remote.stdout or "").strip():
+        return EDIT_LANDING_ALREADY_PUSHED, branch
+    return EDIT_LANDING_NEW_CONTENT, branch
+
+
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
-              on_main, moved_from, moved_from_on_main, repository_root: Path,
-              runner, report) -> bool:
+              on_main, moved_from, moved_from_on_main, state, branch,
+              repository_root: Path, runner, report) -> bool:
     """Step 3. Returns True when a pull request is waiting on this edit.
 
-    Main's copy is compared to the author's before the conflict check is
-    made, which is what makes the rerun after a merge work: see the module
-    docstring, THE ORDER MATTERS FOR RESUMING.
+    `state` and `branch` are `edit_landing_state`'s answer, resolved by the
+    caller before step 2 rather than taken here: which state this run is in
+    is what says whether step 2 is asked at all. The conflict check and the
+    push below are what the one state with new content to land does, and
+    the other two return above them — see the module docstring, THE ORDER
+    MATTERS FOR RESUMING, for why neither guard belongs in front of a run
+    that pushes nothing.
 
     `moved_from` is the path main still holds this document at when the
     author moved it, and `moved_from_on_main` is main's copy there. Both are
     resolved by the caller, which needs the same copy for the title: one
     reading of main serves every comparison the run makes."""
-    if on_main == staged:
+    if state == EDIT_LANDING_ALREADY_ON_MAIN:
         report(f"step 3 already done: main's copy of {relative} is this file")
         return False
-    refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
-                       repository_root, runner, report)
 
-    branch = f"ghi-{number}-edit-{pairing_key(staged)}"
-    on_remote = runner(["git", "ls-remote", "--heads", "origin", branch],
-                       cwd=str(repository_root))
-    if (on_remote.stdout or "").strip():
+    if state == EDIT_LANDING_ALREADY_PUSHED:
         # The branch says the push happened, not that the pull request did:
         # GitHub is asked, as create's step 4 asks it, or a run whose
         # `gh pr create` failed reports a pull request waiting forever.
@@ -969,6 +1084,9 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                                                 repository_root, runner,
                                                 report)
         return True
+
+    refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
+                       repository_root, runner, report)
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
@@ -1011,11 +1129,43 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
     return True
 
 
-def read_issue(repo: str, number: int, runner):
+def read_issue(repo: str, number: int, relative: str, runner):
     """The issue's title and body as GitHub holds them, read once and used
-    by both of the steps that may change them."""
+    by both of the steps that may change them — and, because the caller
+    reads it before anything is fetched, adjudicated, pushed or opened, the
+    test that the number the file's name carries names an issue at all.
+
+    A NUMBER NO ISSUE HAS IS A 64, NOT A 1. The number comes from the file's
+    NAME, so a name carrying one no issue has is the caller's input being
+    wrong, which is the class the exit table calls 64 — the same class as a
+    path this tool does not write. It was a 1 until 2026-09-21, this read
+    having gone through `run`, which calls every failed subprocess an
+    operating failure.
+
+    gh says which of the two happened. Measured 2026-09-21 against
+    nedschorus/nedschorus — `gh issue view 999999 --repo nedschorus/nedschorus
+    --json title,body`, exit 1, nothing on stdout, this on stderr:
+
+      GraphQL: Could not resolve to an issue or pull request with the number
+      of 999999. (repository.issue)
+
+    Anything else it fails on — logged out, no network, the repository
+    unreadable — is an operating failure still, and stays a 1."""
     current = runner(["gh", "issue", "view", str(number), "--repo", repo,
-                      "--json", "title,body"])
+                      "--json", "title,body"], check=False)
+    if current.returncode != 0:
+        said = (current.stderr or current.stdout or "").strip()
+        if GH_NO_SUCH_ISSUE_STDERR_FRAGMENT in said.lower():
+            raise Refused(
+                f"Refused: {repo} has no issue {number}, and {relative} is "
+                "named for it.\n\n"
+                "Rename the file for the issue it is paired with, if it has "
+                "one.\n"
+                "If it has no issue yet, file one with the create verb, from "
+                "a copy whose name carries no number — create refuses a file "
+                "already named for an issue.\n\n"
+                f"gh said: {said}", 64)
+        raise Refused(f"gh issue view failed: {said}", 1)
     return json.loads(current.stdout or "{}")
 
 
@@ -1024,16 +1174,17 @@ def sync_title_on_heading_change(repo: str, number: int,
                                  paths, issue, runner, report):
     """Step 4. The design's trigger is a CHANGE — "when the edit changes the
     file's first heading" — not a mismatch between the issue's title and the
-    file's heading, and the difference is not academic. Measured 2026-09-20
-    over the paired corpus on main: 35 files have a heading that differs
-    from their issue's title, so a tool that made the title match a heading
-    would rename most issues the first time anybody edited one.
+    file's heading, and the difference is not academic. Measured 2026-09-21
+    over the paired corpus on main, the 26 files `paired_paths` returns: 25
+    of them have a heading that differs from their issue's title, so a tool
+    that made the title match a heading would rename most issues the first
+    time anybody edited one.
 
     An issue with more than one paired file is left alone even when the
-    heading did change: issue 3 has six files with six headings, and nothing
-    in the pairing says which of them names the issue. The design's sentence
-    was written for the common shape it also states — most issues carry one
-    file.
+    heading did change: issue 3 has four files with four headings, and
+    nothing in the pairing says which of them names the issue. The design's
+    sentence was written for the common shape it also states — most issues
+    carry one file.
 
     WHAT THE CHANGE IS MEASURED AGAINST is the document as main holds it
     before this edit, which on a moved file is main's copy at the path it
@@ -1088,6 +1239,12 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
     """The whole edit sequence, and the one function the tests drive."""
     text, title, number, relative = validate_edit(path, repository_root)
     staged = with_issue_frontmatter(text, repo, number, title)
+    # Read here, before a fetch, a model call, a push or a pull request: the
+    # number is the file's NAME, so a name carrying a number no issue has is
+    # the caller's input being wrong, and the run that found that out at
+    # step 5 had already pushed a branch and opened a pull request for an
+    # issue that does not exist. This one read serves steps 4 and 5 below.
+    issue = read_issue(repo, number, relative, runner)
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
     on_main = blob_at("origin/main", relative, repository_root, runner)
@@ -1106,17 +1263,20 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         if moved_from else None)
     if on_main is None and moved_from is None and paths:
         report_no_moved_from_match(number, relative, paths, report)
-    if on_main != staged:
+    state, branch = edit_landing_state(number, staged, on_main,
+                                       repository_root, runner)
+    if state == EDIT_LANDING_NEW_CONTENT:
         # Nothing new to land is nothing new to adjudicate, so a rerun that
         # only finishes steps 4 and 5 costs no model call — the same reason
-        # create skips the question when it resumes onto its own issue.
+        # create skips the question when it resumes onto its own issue. Two
+        # states mean that, and testing main's copy alone saw one of them:
+        # see `edit_landing_state`.
         adjudicate(repo, title, text, repository_root, runner, report,
                    exclude_issue=number)
     pending = land_edit(repo, number, title, relative, staged, on_main,
-                        moved_from, moved_from_on_main, repository_root,
-                        runner, report)
+                        moved_from, moved_from_on_main, state, branch,
+                        repository_root, runner, report)
 
-    issue = read_issue(repo, number, runner)
     # The document as main holds it before this edit, which is the author's
     # path where main has one and the path the file moved from where it
     # does not. Step 5 is not given this: it links what main holds AT the
