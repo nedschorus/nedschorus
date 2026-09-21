@@ -8,7 +8,7 @@ handoff writer. Until 2026-09-19 each built the name from its own f-string --
 eleven sites across the five, plus a second copy of the suffix constant in
 scripts/restart-live-seats-at-login.py -- so a rename had eleven places to
 find and nothing that failed when it missed one. The suffixes now live in
-scripts/handoff-supervisor.py alone, and the path is composed only by its
+nc-systems/handoff/handoff-supervisor.py alone, and the path is composed only by its
 supervisor_state_path(), supervisor_lock_path() and supervisor_state_paths()
 (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4: reduce each
@@ -68,7 +68,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
-SUPERVISOR_SCRIPT = SCRIPTS_DIRECTORY / "handoff-supervisor.py"
+# The supervisor moved into nc-systems/handoff/ on 2026-09-20; the other four
+# programs this suite reads are still under scripts/.
+SUPERVISOR_SCRIPT = REPO_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py"
 # The functions that compose the names, and so the only code allowed to.
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths")
@@ -90,9 +92,16 @@ def check(case_name, condition, detail=""):
 
 
 def production_scripts():
-    """Every script a seat runs -- test files excluded."""
-    return sorted(path for path in SCRIPTS_DIRECTORY.glob("*.py")
-                  if not path.name.endswith("-test.py"))
+    """Every script a seat runs -- test files excluded.
+
+    The supervisor left scripts/ for nc-systems/handoff/ on 2026-09-20, so it
+    is named explicitly rather than reached by the glob. Without it every case
+    below passes by finding nothing: the one file allowed to define these
+    names would simply stop being read.
+    """
+    globbed = [path for path in SCRIPTS_DIRECTORY.glob("*.py")
+               if not path.name.endswith("-test.py")]
+    return sorted(globbed + [SUPERVISOR_SCRIPT])
 
 
 def names_a_suffix_constant(node):

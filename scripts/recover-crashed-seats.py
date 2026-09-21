@@ -120,7 +120,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _supervisor_spec = importlib.util.spec_from_file_location(
-    "handoff_supervisor", Path(__file__).with_name("handoff-supervisor.py")
+    "handoff_supervisor", Path(__file__).resolve().parent.parent
+    / "nc-systems" / "handoff" / "handoff-supervisor.py"
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)

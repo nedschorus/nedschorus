@@ -24,9 +24,14 @@ import json, sys, re
 from pathlib import Path
 from collections import Counter, defaultdict
 
+# The extractor stays in scripts/ until every live supervisor runs from
+# nc-systems/handoff/; see EXTRACTOR_PATH in handoff-supervisor.py. This file
+# sits at nc-systems/handoff/, so the repository root is two directories up.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
 _spec = importlib.util.spec_from_file_location(
     "handoff_extract_conversation",
-    Path(__file__).with_name("handoff-extract-conversation.py"))
+    REPOSITORY_ROOT / "scripts" / "handoff-extract-conversation.py")
 _extractor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_extractor)
 

@@ -34,7 +34,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links. This project's durable documents, wiki pages, skills and designs, the documents of lasting value, are written for fresh-readers rather than for the user, to enable parallelism and increase reliability.
 - **GHI** — GitHub issue
 - **GHI-MD** — the MD file used to explain a GitHub issue.
-- **handoff-supervisor** — the program `scripts/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
+- **handoff-supervisor** — the program `nc-systems/handoff/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
 - **handoff-system** — the subsystem that reincarnates agent-sessions. Overview: `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md`.
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
 - **initial-agent-instructions** — defined in the agent-instructions entry above: the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent.

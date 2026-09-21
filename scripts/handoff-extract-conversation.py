@@ -2,7 +2,7 @@
 """Extract the two-voice dialog from a Claude Code session transcript.
 
 The handoff system's dialog carrier (specification:
-docs/cross-project/fast-handoff-design.md). A retiring session names a
+nc-systems/handoff/handoff-design.md). A retiring session names a
 boundary; the supervisor runs this after killing that session, and the
 extracted markdown becomes the successor's context.
 

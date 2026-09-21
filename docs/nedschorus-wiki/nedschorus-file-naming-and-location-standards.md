@@ -145,8 +145,8 @@ tell from a path whether that rule applies. See the last section.
 | Cold-read-fast-read of anything else | `cold-read-records/<file stem>-<YYYY-MM-DD>/`, the same record name the cold-read-grid uses | `fast-read.md`, beside `<target stem>-with-sentence-ids.md`, the marked copy the reviewer read; a skill's is `cold-read-records/SKILL-cold-read-<date>/fast-read.md` beside `SKILL-with-sentence-ids.md` | `scripts/cold-read-record-names.py`, `record_name_for_target` for the directory, which `scripts/cold-read-fast-read.py` imports |
 | Restater-judge run | `cold-read-records/` | `<YYYY-MM-DD>-restater-judge-<restater class>`, the one cold-read-record kind not named for a cold-read-target | `scripts/cold-read-restater-judge-runner.py` |
 | Approval-walk files, four by the approval-walk's close and five for an approval-walk that rules on a cold-read-full-run | `docs/walk/` | `<walk name>-draft.md` first, then `-suggestions.md`, then `<walk name>.md`, then `-minutes.md`, and for a cold-read approval-walk `-dispositions.md` at its close. The approval-walk that rules on a cold-read-full-run is named after that cold-read-record, so its files sit under the record's name (user-ruled 2026-09-18) | `.claude/skills/walk-me-through/SKILL.md` decides the endings, with `.claude/skills/cold-read/SKILL.md` for the fifth file; `WALK_FILE_ROLES` in `scripts/walk-files-ship.py` and the two endings in `scripts/cold-read-fast-read.py` are held to the skill's text by `scripts/walk-file-endings-match-the-skill-test.py` |
-| Next-step file, written by /handoff | `~/.claude/handoffs/` | `<seat name>-next-step-<YYYYMMDD-HHMMSS>.md`, which /handoff gives as the expression `~/.claude/handoffs/$(basename "$PWD")-next-step-$(date +%Y%m%d-%H%M%S).md`, to be run rather than composed; the seat name is the working directory's name, the agent-seat name the handoff-supervisor watches | `.claude/skills/handoff/SKILL.md` step 1; the same name is the default `--agent` of `scripts/handoff-write-and-check-supervisor.py`, `default_agent_name` |
-| The handoff-supervisor's own files | `~/.claude/handoffs/` by default, or the directory its `--handoff-dir` names | `<seat name>-handoff.md`, `<seat name>-handoff-<NNNN>.md`, `<seat name>-dialog-<NNNN>.md` and its `-complete.md` companion, `<seat name>-supervisor.lock`, `<seat name>-supervisor-state.json`. Of the numbered files it keeps the two newest generations of `-handoff-<NNNN>.md` and of `-dialog-<NNNN>.md`, a `-complete.md` companion counting as part of its generation, and deletes the older ones | `scripts/handoff-supervisor.py`: the state and lock names through `supervisor_state_path()` and `supervisor_lock_path()` over `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX`, and the generations through `prune_old_generations` with `GENERATIONS_KEPT`; the dialog files are written by `scripts/handoff-extract-conversation.py`. The handoff file's own name has no constant, see the note below |
+| Next-step file, written by /handoff | `~/.claude/handoffs/` | `<seat name>-next-step-<YYYYMMDD-HHMMSS>.md`, which /handoff gives as the expression `~/.claude/handoffs/$(basename "$PWD")-next-step-$(date +%Y%m%d-%H%M%S).md`, to be run rather than composed; the seat name is the working directory's name, the agent-seat name the handoff-supervisor watches | `.claude/skills/handoff/SKILL.md` step 1; the same name is the default `--agent` of `nc-systems/handoff/handoff-write-and-check-supervisor.py`, `default_agent_name` |
+| The handoff-supervisor's own files | `~/.claude/handoffs/` by default, or the directory its `--handoff-dir` names | `<seat name>-handoff.md`, `<seat name>-handoff-<NNNN>.md`, `<seat name>-dialog-<NNNN>.md` and its `-complete.md` companion, `<seat name>-supervisor.lock`, `<seat name>-supervisor-state.json`. Of the numbered files it keeps the two newest generations of `-handoff-<NNNN>.md` and of `-dialog-<NNNN>.md`, a `-complete.md` companion counting as part of its generation, and deletes the older ones | `nc-systems/handoff/handoff-supervisor.py`: the state and lock names through `supervisor_state_path()` and `supervisor_lock_path()` over `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX`, and the generations through `prune_old_generations` with `GENERATIONS_KEPT`; the dialog files are written by `scripts/handoff-extract-conversation.py`. The handoff file's own name has no constant, see the note below |
 | Retired session-handoff, moved there by hand when an agent-seat is retired | `~/.claude/handoffs/retired/`, created if needed | `<seat name>-handoff-<YYYY-MM-DD>.md`; if that name exists, `-2`, `-3` before `.md`, never onto an existing archive | `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`, "Pausing and retiring a seat", step 2 |
 
 **One definition each, and the guards that hold them there.** Three sets of
@@ -162,7 +162,7 @@ repeated names were reduced to one definition apiece on 2026-09-19
   `scripts/cold-read-record-names-test.py`.
 - The supervisor's state and lock file names are
   `SUPERVISOR_STATE_FILE_SUFFIX` and `SUPERVISOR_LOCK_FILE_SUFFIX` in
-  `scripts/handoff-supervisor.py`, reached through `supervisor_state_path()`
+  `nc-systems/handoff/handoff-supervisor.py`, reached through `supervisor_state_path()`
   and `supervisor_lock_path()`. Eleven production sites across five scripts
   had built those names by hand, two of them inside the file that defines the
   constants. Guard: `scripts/supervisor-file-names-defined-once-test.py`.
@@ -175,9 +175,9 @@ repeated names were reduced to one definition apiece on 2026-09-19
 
 **What is still written more than once.** The handoff file's own name has no
 shared constant: eight places in four scripts compose it, one as a local
-`suffix` variable in `scripts/handoff-write-and-check-supervisor.py` and
+`suffix` variable in `nc-systems/handoff/handoff-write-and-check-supervisor.py` and
 seven as spelled-out literals in that script,
-`scripts/handoff-supervisor.py`, `scripts/recover-crashed-seats.py` and
+`nc-systems/handoff/handoff-supervisor.py`, `scripts/recover-crashed-seats.py` and
 `scripts/resupervise-seat.py`. It is the same defect the supervisor's state
 file had, and it is not ruled on yet. The frozen copy's directory name is one
 constant now, but the path built under it is not: `frozen_target_path` is

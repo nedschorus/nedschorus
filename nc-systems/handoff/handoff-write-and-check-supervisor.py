@@ -2,7 +2,7 @@
 """Write the handoff file for a retiring session, and report who is watching.
 
 The handoff system's writer (specification:
-docs/cross-project/fast-handoff-design.md). The retiring agent writes one
+nc-systems/handoff/handoff-design.md). The retiring agent writes one
 thing — the prompt telling its successor what to do first — and this script
 does everything else a machine can do: it stamps the timestamp, derives the
 restart counter, derives the roster of subagents still working — the ones the
@@ -33,7 +33,7 @@ quotes, and newlines survive: a shell mangles all three inside an inline
 argument.
 
 A multi-line next step is written TWICE, and this is deliberate (R20; format
-specified in docs/cross-project/fast-handoff-design.md). `next-step:` is
+specified in nc-systems/handoff/handoff-design.md). `next-step:` is
 always the whitespace-collapsed single line, because that is what every
 reader already handles — including a supervisor process that started before
 this format existed and is still running. When the text spans lines, a
@@ -64,6 +64,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# This file sits at nc-systems/handoff/, so the repository root is two
+# directories up; parents[2] names that depth once. handoff-supervisor.py is a
+# sibling inside this system and stays a with_name() lookup.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 _supervisor_spec = importlib.util.spec_from_file_location(
     "handoff_supervisor", Path(__file__).with_name("handoff-supervisor.py")
@@ -610,10 +615,11 @@ def run_branch_protection_audit() -> str:
     named finding, and a broken audit must never break a handoff."""
     if os.environ.get("HANDOFF_SKIP_PROTECTION_AUDIT"):
         return "branch-protection audit: skipped (HANDOFF_SKIP_PROTECTION_AUDIT set)"
-    # The gate lives in its system's directory, nc-systems/main-gatekeeper/,
-    # two levels up from scripts/ (GitHub issue #224's layout rule; moved
-    # 2026-09-19), no longer beside this script.
-    gatekeeper_path = (Path(__file__).resolve().parent.parent
+    # The gate lives in its own system's directory, nc-systems/main-gatekeeper/
+    # (GitHub issue #224's layout rule; moved 2026-09-19). It is now a sibling
+    # system of this one, so the path is derived from the repository root
+    # rather than from this file's depth.
+    gatekeeper_path = (REPOSITORY_ROOT
                        / "nc-systems" / "main-gatekeeper" / "main-gatekeeper.py")
     if not gatekeeper_path.is_file():
         return f"branch-protection audit: audit-failed — no gatekeeper at {gatekeeper_path}"

@@ -168,7 +168,7 @@ The dedicated-identity rung was **admitted early** (user-ruled 2026-08-09, exerc
 
 ## Cross-spec consequence (resolved)
 
-RESOLVED 2026-07-24, then SUPERSEDED 2026-08-02 by the session-reincarnation revision of [fast-handoff-design.md](fast-handoff-design.md): reincarnation handoffs stay on the machine and are never checked in; the one committed handoff (the founding one) lands as an ordinary file. The files-written-to-disk-first principle survives inside the supervisor's cycle.
+RESOLVED 2026-07-24, then SUPERSEDED 2026-08-02 by the session-reincarnation revision of [handoff-design.md](../handoff/handoff-design.md): reincarnation handoffs stay on the machine and are never checked in; the one committed handoff (the founding one) lands as an ordinary file. The files-written-to-disk-first principle survives inside the supervisor's cycle.
 
 ## Relationship to the legacy design
 
