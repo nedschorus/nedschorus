@@ -431,11 +431,11 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # --all reads cold-read-records/ beside the script's own repository root,
     # so the case runs a copy of the script from a scratch repository.
     scratch_repo = scratch / "repo"
-    (scratch_repo / "scripts").mkdir(parents=True)
-    shutil.copy(SHIP, scratch_repo / "scripts" / SHIP.name)
-    # The shipper imports it for the records directory name.
-    record_names = SCRIPTS_DIR / "cold-read-record-names.py"
-    shutil.copy(record_names, scratch_repo / "scripts" / record_names.name)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, scratch_repo / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "store-all" / "cold-read-records")
     good = make_record(scratch_repo / "cold-read-records", "2026-09-01-good", {"r.md": REPORT_A})

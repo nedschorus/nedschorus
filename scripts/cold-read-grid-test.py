@@ -2,17 +2,16 @@
 """Tests for cold-read-grid.py — what a grid run tells the agent reading it.
 
 HOW A CASE RUNS. Each case builds a throwaway git repository holding a copy
-of the grid, the two cell launchers, the module they share and the prompt
-templates, and runs the grid inside it with stub `claude` and `codex`
-executables first on PATH. Two seams make that work. The grid and the cells
-take their repository root from their own location on disk, so a copy is a
-grid whose record directories and whose `git status` are the scratch tree's
-and never this checkout's. And the stubs are the models: each finds the
-report path in the prompt it was handed — the Claude leg on stdin, the Codex
-leg as an argument — writes a line to it and exits 0, so six cells complete
-in seconds without a model call. A real grid run is six reviews and half an
-hour; these cases are about what the grid says, not about what a reviewer
-finds.
+of the whole scripts/ directory and of the prompt templates, and runs the grid
+inside it with stub `claude` and `codex` executables first on PATH. Two seams
+make that work. The grid and the cells take their repository root from their
+own location on disk, so a copy is a grid whose record directories and whose
+`git status` are the scratch tree's and never this checkout's. And the stubs
+are the models: each finds the report path in the prompt it was handed — the
+Claude leg on stdin, the Codex leg as an argument — writes a line to it and
+exits 0, so six cells complete in seconds without a model call. A real grid
+run is six reviews and half an hour; these cases are about what the grid says,
+not about what a reviewer finds.
 
 WHAT IS PINNED HERE.
 
@@ -136,14 +135,6 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
-GRID_SCRIPT_NAMES = (
-    "cold-read-grid.py",
-    "cold-read-record-names.py",
-    "cold-read-cell-common.py",
-    "cold-read-claude-cell.py",
-    "cold-read-codex-cell.py",
-    "cold-read-record-ship.py",
-)
 # Every run here ships its record to a scratch log-store inside the scratch
 # repository, through the shipper's destination override, so no case reaches
 # ned-box; the store is real, the copy is the real rsync. A case that wants the
@@ -297,10 +288,11 @@ def git(repository, *arguments):
 
 def build_scratch_repository(scratch, name):
     repository = scratch / name
-    (repository / "scripts").mkdir(parents=True)
-    for script_name in GRID_SCRIPT_NAMES:
-        shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
-        (repository / "scripts" / script_name).chmod(0o755)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
@@ -310,6 +302,11 @@ def build_scratch_repository(scratch, name):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
+    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # 2.55 repacks this repository in the background, and its temporary files
+    # race the deletion of these throwaway checkouts — measured 2026-09-20,
+    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
+    git(repository, "config", "maintenance.auto", "false")
     git(repository, "config", "user.email", "test@test.invalid")
     git(repository, "config", "user.name", "cold-read-grid test")
     git(repository, "add", "-A")

@@ -82,13 +82,6 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
-SCRIPT_NAMES = (
-    "cold-read-record-names.py",
-    "cold-read-cell-common.py",
-    "cold-read-agy-cell.py",
-    "cold-read-fast-read.py",
-    "cold-read-record-ship.py",
-)
 # Every read on the records route ships its record; here, to a scratch
 # log-store inside the scratch checkout through the shipper's destination
 # override, so no case reaches ned-box.
@@ -184,9 +177,11 @@ def build_scratch_repository(scratch):
     repository = scratch / "scratch-checkout"
     if repository.exists():
         shutil.rmtree(repository)
-    (repository / "scripts").mkdir(parents=True)
-    for script_name in SCRIPT_NAMES:
-        shutil.copy2(SCRIPTS_DIR / script_name, repository / "scripts" / script_name)
+    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
+    # md-skills-seat-open-decisions-2026-09-20 item 3).
+    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+                    ignore=shutil.ignore_patterns("__pycache__"))
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     walk_draft = repository / "docs" / "walk" / "a-walk-item-draft.md"
     walk_draft.parent.mkdir(parents=True)
@@ -195,6 +190,11 @@ def build_scratch_repository(scratch):
     other_document.parent.mkdir(parents=True)
     other_document.write_text("# A design\n\nOne committed line.\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
+    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # 2.55 repacks this repository in the background, and its temporary files
+    # race the deletion of these throwaway checkouts — measured 2026-09-20,
+    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
+    git(repository, "config", "maintenance.auto", "false")
     git(repository, "config", "user.email", "test@test.invalid")
     git(repository, "config", "user.name", "cold-read-fast-read test")
     git(repository, "add", "-A")
