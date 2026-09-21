@@ -127,7 +127,10 @@ def read_tasks(directory):
     """Every task in one list, in id order.
 
     A file that is not readable JSON is reported rather than skipped: a
-    silently dropped task is a task the reader will never learn exists.
+    silently dropped task is a task the reader will never learn exists. The
+    second return value carries those names to whichever entry path called;
+    each one hands them to unreadable_files_notice below, so the reporting
+    is one behaviour rather than three.
     """
     tasks, unreadable = [], []
     for path in sorted(directory.glob("*.json")):
@@ -142,6 +145,36 @@ def read_tasks(directory):
         else:
             unreadable.append(path.name)
     return sorted(tasks, key=sort_key), unreadable
+
+
+def unreadable_files_notice(unreadable):
+    """The lines that name the files this run could not read, or "".
+
+    Written once and printed by EVERY entry path -- the listing, --task and
+    --seats -- because a property this file holds on one path only is the
+    defect it has now produced twice. The first time, the wrong-machine
+    refusal was written out twice and only the --seats copy was pinned by a
+    case, so emptying the other left every case green; that is why
+    task_list_directories_or_refuse above exists. The second time was this
+    notice: read_tasks collected an unreadable file from the start and only
+    the listing said so, so `--seat <seat> --task <id>` -- the invocation a
+    citation-follower uses -- answered "No task <id>" for a task whose file
+    was sitting on disk, and --seats printed a total that silently left it
+    out. Found by the reviewer of pull request [seat-task-list-read: a task
+    can be cited and opened like the other
+    ID-types](https://github.com/nedschorus/nedschorus/pull/607),
+    2026-09-21.
+
+    The file is named and nothing more. This program does not parse, guess
+    at or repair it: it is read-only by charter, and a repaired guess is a
+    wrong task reported as a right one.
+    """
+    if not unreadable:
+        return ""
+    return (f"These files could not be read and are left out of this "
+            f"answer: {', '.join(unreadable)}.\n"
+            f"Open an unreadable file yourself if the task you want is in "
+            f"it.")
 
 
 def matches_status(task, wanted_open_only):
@@ -195,26 +228,35 @@ def main(argv=None):
     if arguments.seats:
         directories = task_list_directories_or_refuse(store)
         for directory in directories:
-            tasks, _ = read_tasks(directory)
+            tasks, unreadable = read_tasks(directory)
             open_count = sum(1 for task in tasks
                              if task.get("status") != "completed")
             print(f"{seat_of(directory.name):<28}{open_count:>4} open  "
                   f"{len(tasks):>4} total   {directory.name}")
+            notice = unreadable_files_notice(unreadable)
+            if notice:
+                print(notice)
         return 0
 
     wanted = arguments.seat or os.environ.get(LIST_ID_VARIABLE) or None
     directory = resolve_list_directory(store, wanted)
     tasks, unreadable = read_tasks(directory)
+    notice = unreadable_files_notice(unreadable)
 
     if arguments.task:
         for task in tasks:
             if str(task.get("id")) == str(arguments.task):
                 print(format_task(task, directory.name))
+                if notice:
+                    print(notice)
                 return 0
-        raise SystemExit(
-            f"No task {arguments.task} in {seat_of(directory.name)}.\n"
-            f"Run without --task to see the {len(tasks)} task(s) this seat "
-            f"has.")
+        refusal = [f"No task {arguments.task} among the readable tasks in "
+                   f"{seat_of(directory.name)}."]
+        if notice:
+            refusal.append(notice)
+        refusal.append(f"Run without --task to see the {len(tasks)} readable "
+                       f"task(s) this seat has.")
+        raise SystemExit("\n".join(refusal))
 
     shown = [task for task in tasks if matches_status(task, not arguments.all)]
     for task in shown:
@@ -222,8 +264,8 @@ def main(argv=None):
     print()
     print(f"{len(shown)} shown of {len(tasks)} in {seat_of(directory.name)}"
           f"{'' if arguments.all else ' (completed hidden; --all shows them)'}")
-    if unreadable:
-        print(f"unreadable, not counted above: {', '.join(unreadable)}")
+    if notice:
+        print(notice)
     return 0
 
 
