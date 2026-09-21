@@ -127,6 +127,95 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           result.returncode == 0
           and readme_path.stat().st_mtime_ns == readme_mtime_before)
 
+    # --- The refreshed README LANDS BY RENAME, at both sites ----------------
+    # An interrupted refresh must not leave the live README empty or partial.
+    # The ssh link to ned-box dropped eight times across 2026-09-19 and
+    # 2026-09-20, the last with `client_loop: send disconnect: Broken pipe`,
+    # so an interrupted shipment is a measured condition on this path rather
+    # than a hypothetical one, and the README is the store's own index: left
+    # half-written, nothing repairs it until a later shipment happens to run
+    # to completion.
+    #
+    # THE INODE IS THE EVIDENCE. A rename gives the README a new inode and
+    # publishes the text in one step, so a reader sees the old file whole or
+    # the new file whole. Writing over the live file keeps its inode and is
+    # the shape that can be caught half-done, so an unchanged inode with
+    # changed text is the failure these two cases catch.
+    readme_path.write_text("# stale\n\ndispositions.md\n", encoding="utf-8")
+    stale_inode = readme_path.stat().st_ino
+    result = ship(local_destination, str(demo))
+    check("locally the refreshed README is a temporary renamed over the old "
+          "one, not the live file written through",
+          result.returncode == 0
+          and readme_path.read_text(encoding="utf-8") == fresh
+          and readme_path.stat().st_ino != stale_inode,
+          result.stdout + result.stderr)
+    check("locally no temporary is left beside the README once it has landed",
+          not (store_root / "README.md.new").exists())
+
+    # The remote script, replayed by a real /bin/sh, in the three states the
+    # store can be in. The suite's stub `ssh` records the invocation and runs
+    # nothing, so without this the shell was never parsed or executed by any
+    # case -- and the shell is where the landing happens.
+    _record_shipper_spec = importlib.util.spec_from_file_location(
+        "cold_read_record_ship_replayed", SHIP)
+    record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+    _record_shipper_spec.loader.exec_module(record_shipper)
+
+    def refresh_readme_through_real_sh(root: pathlib.Path):
+        """The remote script for this root, run by a real sh with the text on
+        stdin, exactly as ssh delivers it to ned-box's dash."""
+        return subprocess.run(
+            ["/bin/sh", "-c",
+             record_shipper.make_directory_and_refresh_readme_script(
+                 root / "cold-read-records", root)],
+            input=record_shipper.STORE_README,
+            capture_output=True, text=True, check=False)
+
+    replay_root = scratch / "replayed-store"
+    replay_readme = replay_root / "README.md"
+    replay_temporary = replay_root / "README.md.new"
+    replayed = refresh_readme_through_real_sh(replay_root)
+    check("replayed by a real sh on a store that has neither directory nor "
+          "README, the script makes both and leaves no temporary",
+          replayed.returncode == 0
+          and (replay_root / "cold-read-records").is_dir()
+          and replay_readme.read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and not replay_temporary.exists(),
+          replayed.stdout + replayed.stderr)
+
+    replay_readme.write_text("# stale\n\ndispositions.md\n", encoding="utf-8")
+    replay_stale_inode = replay_readme.stat().st_ino
+    replayed = refresh_readme_through_real_sh(replay_root)
+    check("remotely a stale README is replaced by RENAMING the temporary over "
+          "it, so a dropped ssh cannot leave it empty or half-written",
+          replayed.returncode == 0
+          and replay_readme.read_text(encoding="utf-8")
+          == record_shipper.STORE_README
+          and replay_readme.stat().st_ino != replay_stale_inode
+          and not replay_temporary.exists(),
+          replayed.stdout + replayed.stderr)
+
+    replay_inode = replay_readme.stat().st_ino
+    replay_mtime = replay_readme.stat().st_mtime_ns
+    replayed = refresh_readme_through_real_sh(replay_root)
+    check("remotely a README that already matches is neither rewritten nor "
+          "renamed over, and the temporary is cleaned up all the same",
+          replayed.returncode == 0
+          and replay_readme.stat().st_ino == replay_inode
+          and replay_readme.stat().st_mtime_ns == replay_mtime
+          and not replay_temporary.exists(),
+          replayed.stdout + replayed.stderr)
+
+    check("the temporary is written BESIDE the README, in the store's root, "
+          "so the rename that lands it stays within one filesystem",
+          f"{replay_root}/README.md.new"
+          in record_shipper.make_directory_and_refresh_readme_script(
+              replay_root / "cold-read-records", replay_root),
+          record_shipper.make_directory_and_refresh_readme_script(
+              replay_root / "cold-read-records", replay_root))
+
     (demo / "triage.md").write_text("# triage\n\nnone\n", encoding="utf-8")
     result = ship(local_destination, str(demo))
     check("triage.md written later joins the reports on the next run",
@@ -272,9 +361,9 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           any("mkdir -p" in " ".join(c) and "README.md" in " ".join(c)
               and "/home/nedlern/nedschorus-logs/cold-read-records" in " ".join(c)
               for c in ssh_calls), str(ssh_calls))
-    check("the README is compared and copied only on a difference, never "
-          "written only when absent",
-          any("cmp -s" in " ".join(c) and "cp --" in " ".join(c)
+    check("the README is compared and renamed into place only on a "
+          "difference, never written only when absent",
+          any("cmp -s" in " ".join(c) and "mv --" in " ".join(c)
               and "test -e" not in " ".join(c)
               for c in ssh_calls if "README.md" in " ".join(c)), str(ssh_calls))
     check("the store's inventory is one ssh call running sha256sum under the record's directory",

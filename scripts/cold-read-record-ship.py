@@ -239,6 +239,10 @@ def refresh_store_readme(root) -> None:
 
     The README is the shippers' own file, so the add-only rule that protects
     the records does not cover it.
+
+    It lands by rename, from a temporary written beside it, for the reason
+    given in `make_directory_and_refresh_readme_script`: a reader sees the
+    old file whole or the new one whole, never a half-written index.
     """
     readme = pathlib.Path(root) / "README.md"
     try:
@@ -246,7 +250,9 @@ def refresh_store_readme(root) -> None:
     except OSError:
         live = None
     if live != STORE_README:
-        readme.write_text(STORE_README, encoding="utf-8")
+        temporary = readme.with_name(readme.name + ".new")
+        temporary.write_text(STORE_README, encoding="utf-8")
+        os.replace(temporary, readme)
 
 
 def make_directory_and_refresh_readme_script(directory, root) -> str:
@@ -259,17 +265,31 @@ def make_directory_and_refresh_readme_script(directory, root) -> str:
     against each other on every shipment.
 
     The new text arrives on stdin rather than quoted into the script, so a
-    README holding quotes needs no escaping. `cmp` then decides: the file is
-    copied only when it differs, so an unchanged store is not rewritten, and
+    README holding quotes needs no escaping. `cmp` then decides: the text is
+    landed only when it differs, so an unchanged store is not rewritten, and
     its modification time still says when the text last changed.
+
+    IT LANDS BY RENAME, from a temporary written BESIDE the README -- same
+    directory, so the same filesystem, so `mv` is one rename and a reader
+    sees the old file whole or the new one whole. Writing through the live
+    file instead would leave the store's own index empty or half-written when
+    the shipment is interrupted, and nothing would repair it until a later
+    shipment happened to run to completion. Interruption is measured here,
+    not hypothetical: the ssh link to ned-box dropped eight times across
+    2026-09-19 and 2026-09-20, the last with `client_loop: send disconnect:
+    Broken pipe`. `mkdir -p` of the kind's directory runs first and creates
+    the root as its parent, so the sibling has somewhere to be written on a
+    store that is new. A temporary orphaned by a drop is overwritten by the
+    next run's `cat`, and the closing `rm -f` removes it when `cmp` found no
+    difference.
 
     POSIX shell only -- ned-box's /bin/sh is dash.
     """
     return (f"mkdir -p -- '{directory}' || exit 1\n"
-            "readme_new=$(mktemp) || exit 1\n"
+            f"readme_new='{root}/README.md.new'\n"
             'cat > "$readme_new" || { rm -f -- "$readme_new"; exit 1; }\n'
             f'cmp -s -- "$readme_new" \'{root}/README.md\' '
-            f'|| cp -- "$readme_new" \'{root}/README.md\' '
+            f'|| mv -- "$readme_new" \'{root}/README.md\' '
             '|| { rm -f -- "$readme_new"; exit 1; }\n'
             'rm -f -- "$readme_new"\n')
 

@@ -371,10 +371,11 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-test-") as scratc
           "as it did when it placed a bullet instead",
           len(readme_calls) == 1
           and "README.md" in " ".join(readme_calls[0]), str(ssh_calls))
-    check("the remote README is compared before it is copied, so an unchanged "
-          "store is not rewritten on every shipment",
+    check("the remote README is compared before it is landed, so an unchanged "
+          "store is not rewritten on every shipment, and it lands by a rename "
+          "that cannot leave it half-written",
           "cmp -s" in " ".join(readme_calls[0])
-          and "cp --" in " ".join(readme_calls[0]), str(readme_calls))
+          and "mv --" in " ".join(readme_calls[0]), str(readme_calls))
     check("the remote script is the record shipper's, not a copy of it",
           " ".join(readme_calls[0]).endswith(
               record_shipper.make_directory_and_refresh_readme_script(
