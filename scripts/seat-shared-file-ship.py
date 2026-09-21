@@ -209,6 +209,10 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     started a fight: this program would add it, the record shipper would see
     the text differ from STORE_README and write the pointer back, on every
     shipment either made.
+
+    The stdin encoding is pinned to UTF-8, as it is in the record shipper's
+    `ensure_store`, because the remote script counts the bytes it receives
+    against a count taken in UTF-8.
     """
     seat_directory = destination.seats_path / seat
     root = destination.seats_path.parent
@@ -221,7 +225,7 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     return subprocess.run(
         shipper.SSH_COMMAND + [destination.copy_host, script],
         input=shipper.STORE_README,
-        capture_output=True, text=True, check=False)
+        capture_output=True, text=True, encoding="utf-8", check=False)
 
 
 def stored_digest(copy_host, target):
