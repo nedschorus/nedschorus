@@ -90,7 +90,16 @@ SKIP_MARKERS = ("://", "<", "{", "*", "$", "~", "…")
 # redirect, and rejecting a leading "!", "/" or "?" rejects a comment, a
 # closing tag and a processing instruction. `<docs/x.md >docs/y.md` is rejected
 # by the same non-space rule at the closing bracket.
-PLACEHOLDER_SPAN = re.compile(r"<(?![!/?])[^\s<>](?:[^<>]*[^\s<>])?>")
+#
+# "/" was excluded here too, to reject a closing tag, and came out again on
+# 2026-09-20: it was the only part of this pattern no case could fail on, and
+# it was buying a WRONG finding rather than nothing. `</path to clone>/docs/x.md`
+# is a placeholder like any other -- the reader supplies the clone's path -- and
+# excluding "/" stopped it collapsing, so the tail was reported as the
+# nonexistent path "clone>/docs/x.md". A plain `</section>` collapses now and
+# carries no path either way, so nothing is lost. The case below fails if "/"
+# is put back.
+PLACEHOLDER_SPAN = re.compile(r"<(?![!?])[^\s<>](?:[^<>]*[^\s<>])?>")
 
 # A line saying a file lives in git history references something deliberately
 # absent from the working tree; its paths are not drift.
