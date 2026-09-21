@@ -1403,8 +1403,20 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # PR review of 7e33908, finding 1: the supervisor's other ignition shape,
     # a boot that found an unconsumed handoff but no dialog to extract
-    # (fired four times on this Mac, 2026-08-16/17). Composed through the
-    # supervisor's own plan, so a wording change there fails here.
+    # (fired four times on this Mac, 2026-08-16/17). The prompt is composed
+    # through the supervisor's own plan so this case cannot drift from the
+    # real shape -- but it does NOT pin the wording, and the comment here
+    # claimed it did until 2026-09-21. Measured that day: appending a sentence
+    # to BRANCH_STATE_INSTRUCTION at the plan's own call site left this suite
+    # at 345 passed, 0 failed. Two reasons. The case asserts only that the
+    # recovery marker reaches the successor, never what the prompt says; and
+    # it composes with an empty branch-sync report, so the branch-state
+    # sentence is not in this fixture at all. The wording is pinned in
+    # scripts/handoff-supervisor-test.py, by the boot-recovery whole-prompt
+    # check that pull request [the ignition prompt's sentences are constants,
+    # and both branch-state call sites are pinned whole]
+    # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
+    # not here, before trusting that a wording change is guarded.
     boot_recovery_prompt = supervisor_module.BootRecoveryIgnitionPlan(
         "Finish the walk.").compose("")
     workspace = Workspace(root / "r27")

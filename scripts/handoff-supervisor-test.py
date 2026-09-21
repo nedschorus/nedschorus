@@ -785,8 +785,24 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     truncated_prompt = supervisor.build_ignition_prompt(Path("/tmp/d.md"), truncated_fields)
     check("an unterminated block falls back to the collapsed next-step",
           "the collapsed instruction survives" in truncated_prompt, repr(truncated_prompt))
-    check("an unterminated block tells the successor what happened",
-          "unterminated" in truncated_prompt, repr(truncated_prompt))
+    # Bounded at BOTH ends. `"unterminated" in prompt` was the whole guard
+    # until 2026-09-21, so a sentence appended to the note was invisible: the
+    # note is composed inline onto the preamble and nothing pinned what
+    # followed it. This fixture has a next step and no sync report or roster,
+    # so what follows the note is fully determined.
+    check("an unterminated block tells the successor what happened, and nothing is appended to it",
+          truncated_prompt.split(
+              " NOTE: this handoff's verbatim next-step block was unterminated, so what "
+              "follows is the collapsed one-line form and may have lost structure.", 1
+          )[1:] == ["\n\nThen take the next step:\nthe collapsed instruction survives"],
+          repr(truncated_prompt))
+    # The note itself, word for word, held as the module constant it now lives
+    # in, so the wording keeps a guard no change of fixture can take away.
+    check("the unterminated-block note is word for word what the prompt carries",
+          supervisor.UNTERMINATED_NEXT_STEP_BLOCK_NOTE == (
+              " NOTE: this handoff's verbatim next-step block was unterminated, so what "
+              "follows is the collapsed one-line form and may have lost structure."),
+          repr(supervisor.UNTERMINATED_NEXT_STEP_BLOCK_NOTE))
 
     # A trailing double space is a markdown hard break: the one function whose
     # purpose is carrying text unaltered must not strip it (PR #108 review).
@@ -1044,7 +1060,15 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           str([field.name for field in dataclasses.fields(supervisor.DialogIgnitionPlan)]))
     check("ignition carries the next step", "finish the supervisor" in prompt, prompt)
     prompt_without_step = supervisor.build_ignition_prompt(Path("/tmp/d.md"), {"written-at": recent})
-    check("ignition survives a missing next-step", "continue from where that dialog ends" in prompt_without_step)
+    # Bounded at the END, which containment alone never was: this sentence
+    # closes the prompt, so anything appended to it would have been invisible
+    # to `"continue from where that dialog ends" in prompt`.
+    check("ignition survives a missing next-step, and that sentence ends the prompt",
+          prompt_without_step.endswith(" Then continue from where that dialog ends."),
+          repr(prompt_without_step))
+    check("the no-next-step tail is word for word what the prompt carries",
+          supervisor.NO_NEXT_STEP_TAIL_SENTENCE == " Then continue from where that dialog ends.",
+          repr(supervisor.NO_NEXT_STEP_TAIL_SENTENCE))
     # The queue-status line was CUT from the prompt (user-ruled 2026-08-29,
     # expiring his 2026-08-12 #32 ruling: "Also useless is the reminder there
     # are files in the queues. Thats what queues are for."). The cut is

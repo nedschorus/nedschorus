@@ -207,6 +207,23 @@ ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE = (
 )
 
 
+# The two tail sentences of build_ignition_prompt, hoisted for the same reason
+# as the two above: only a constant can be pinned by equality. Until 2026-09-21
+# each was reached by a containment check alone -- `"unterminated" in prompt`
+# and `"continue from where that dialog ends" in prompt` -- so a sentence
+# appended to either was invisible. Same class as the two branch-state call
+# sites closed in pull request [the ignition prompt's sentences are constants,
+# and both branch-state call sites are pinned whole]
+# (https://github.com/nedschorus/nedschorus/pull/590). Each carries its own
+# leading space, because each is concatenated onto a preamble that does not
+# end in one.
+UNTERMINATED_NEXT_STEP_BLOCK_NOTE = (
+    " NOTE: this handoff's verbatim next-step block was unterminated, so what "
+    "follows is the collapsed one-line form and may have lost structure."
+)
+NO_NEXT_STEP_TAIL_SENTENCE = " Then continue from where that dialog ends."
+
+
 def parse_handoff_file(handoff_path: Path) -> dict:
     """Read the agent-written handoff into a dict of its `key: value` lines.
 
@@ -896,10 +913,9 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         ))
     preamble = " ".join(lines)
     if handoff_fields.get(NEXT_STEP_BLOCK_UNTERMINATED_FIELD):
-        preamble += (" NOTE: this handoff's verbatim next-step block was unterminated, so what "
-                     "follows is the collapsed one-line form and may have lost structure.")
+        preamble += UNTERMINATED_NEXT_STEP_BLOCK_NOTE
     if not next_step:
-        return preamble + " Then continue from where that dialog ends."
+        return preamble + NO_NEXT_STEP_TAIL_SENTENCE
     # The next step keeps its own line breaks: it is handed to the successor as
     # one argv element, so newlines survive delivery. Joining it into the
     # preamble would flatten exactly what the block form exists to preserve.
