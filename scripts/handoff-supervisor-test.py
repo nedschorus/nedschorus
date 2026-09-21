@@ -910,6 +910,16 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               # the last of the preamble and only the next step follows it.
               "\n\nThen take the next step:\nfinish the supervisor"),
           prompt[:800])
+    # The sentence itself, word for word, held as the module constant it now
+    # lives in. The pin above carries it into one composed prompt; this one
+    # holds the constant, so the wording keeps a guard of its own that no
+    # change of fixture can quietly take away.
+    check("the supervisor-pointer sentence is word for word what the user ruled",
+          supervisor.SUPERVISOR_POINTER_SENTENCE == (
+              "This session was launched by scripts/handoff-supervisor.py, which "
+              "watches this seat and composed this prompt — read it if you need "
+              "to investigate the handoff mechanism."),
+          repr(supervisor.SUPERVISOR_POINTER_SENTENCE))
     # The branch-state line (user-ruled 2026-08-30, second round): the sync's
     # own one-line result, then the static instruction. Called through
     # try/except so this case FAILS cleanly against a supervisor whose
@@ -944,17 +954,54 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "merges them; a changes-requested one gets a fix round from a fresh agent "
               "\u2014 never extend a head you've already announced."),
           repr(supervisor.BRANCH_STATE_INSTRUCTION))
-    check("the branch-state instruction follows the sync result, exactly",
-          "branch sync: fixture-branch is 3 commit(s) behind main — If this "
-          "branch has never been pushed, rebase it onto origin/main before your "
-          "first substantive action and rerun the tests for what you touched. "
-          "If it is pushed, leave it as it is, and start new work on a branch "
-          "from origin/main. If this seat has "
-          "open pull requests, check their state with `gh`: merge-lane reviews "
-          "and merges them; a changes-requested one gets a fix round from a "
-          "fresh agent — never extend a head you've already announced."
-          in synced_prompt,
-          synced_prompt[:1100])
+    # This fixture passes no roster and its verbatim block is not
+    # unterminated, so the branch-state segment ends the preamble and only the
+    # next step follows it. Pinned as a tail rather than by containment: the
+    # instruction is a constant, but the segment is COMPOSED at the call site
+    # (`lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)`), and text
+    # appended there lands outside the constant's equality pin -- measured
+    # 2026-09-21, " If unclear, rebase onto origin/main anyway." appended at
+    # that call site left both suites fully green.
+    expected_rest_after_the_branch_state_line = (
+        "\n\nThen take the next step:\nfinish the supervisor")
+    check("the branch-state instruction follows the sync result, exactly, and nothing is appended at the call site",
+          nothing_is_appended_to(
+              synced_prompt,
+              "branch sync: fixture-branch is 3 commit(s) behind main — If this "
+              "branch has never been pushed, rebase it onto origin/main before your "
+              "first substantive action and rerun the tests for what you touched. "
+              "If it is pushed, leave it as it is, and start new work on a branch "
+              "from origin/main. If this seat has "
+              "open pull requests, check their state with `gh`: merge-lane reviews "
+              "and merges them; a changes-requested one gets a fix round from a "
+              "fresh agent — never extend a head you've already announced.",
+              expected_rest_after_the_branch_state_line),
+          "rest after the pinned line: "
+          + repr(synced_prompt.split("already announced.", 1)[-1])
+          + "; expected: " + repr(expected_rest_after_the_branch_state_line))
+    # The supervisor's other ignition shape composes the same instruction at a
+    # second call site (`BootRecoveryIgnitionPlan.compose`), and nothing pinned
+    # what that one produced: measured 2026-09-21, the same appended sentence
+    # there left handoff-supervisor-test at 234 PASS / 0 FAIL and
+    # recover-crashed-seats-test at 345 passed / 0 failed. The whole prompt is
+    # pinned, so an append anywhere in it -- inside the constant or after it --
+    # fails here.
+    boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
+        "finish the supervisor").compose(
+            "branch sync: fixture-branch is 3 commit(s) behind main")
+    check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
+          boot_recovery_prompt == (
+              "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
+              "session's dialog extract is unavailable; this next-step and the "
+              "repository are your whole context.) branch sync: fixture-branch is 3 "
+              "commit(s) behind main — If this branch has never been pushed, rebase "
+              "it onto origin/main before your first substantive action and rerun the "
+              "tests for what you touched. If it is pushed, leave it as it is, and "
+              "start new work on a branch from origin/main. If this seat has open "
+              "pull requests, check their state with `gh`: merge-lane reviews and "
+              "merges them; a changes-requested one gets a fix round from a fresh "
+              "agent — never extend a head you've already announced."),
+          repr(boot_recovery_prompt))
     # The branch-state half of that instruction, pinned as its own exact line
     # (user-ruled 2026-09-16, "y", item 1 of nedschorus#418, verbatim). It
     # replaced the 2026-08-31 catch-up sentence, which a seat read as "merge
@@ -2152,6 +2199,17 @@ def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
               # step follows it.
               "\n\nThen take the next step:\nmerge the queue"),
           prompt)
+    # The sentence itself, word for word, as the module template it now lives
+    # in. Three insertions the caller computes -- the count, the joined
+    # roster, and the directory the dead agents' transcripts survive in -- so
+    # the pin holds the template with its placeholders spelled out.
+    check("the orphaned-subagent roster sentence is word for word what the user ruled",
+          supervisor.ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE == (
+              "The session you are replacing had {subagent_count} subagent(s) still "
+              "working when it ended: {joined_roster}. You may need to re-commission "
+              "similar agents. If you need more context, the dead agents' full "
+              "transcripts are at {transcript_directory}/subagents/agent-<id>.jsonl."),
+          repr(supervisor.ORPHANED_SUBAGENT_ROSTER_SENTENCE_TEMPLATE))
     check("the first-round roster wording is gone",
           "Re-commission each" not in prompt and "if its state matters" not in prompt
           and "cannot be resumed by id" not in prompt, prompt)
