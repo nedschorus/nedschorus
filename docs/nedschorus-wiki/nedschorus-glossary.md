@@ -39,9 +39,9 @@ Every project-term should be listed here; a term this page does not list is not 
 - **handoff-supervisor** — the program `nc-systems/handoff/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
 - **handoff-system** — the subsystem that reincarnates agent-sessions. Overview: `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md`.
 - **hard-block** — a hook refusal with no override, often accompanied by additional context given to teach the agent the preferred behavior. There are three types of hook blocks: hard-block, soft-block and user-block.
+- **ID-type** — the kind of thing an identifier names, and the word written before its name in a citation: `GHI` for a GitHub issue, `PR` for a pull request, and the ordinary word for a commit, task, seat or session.
 - **initial-agent-instructions** — defined in the agent-instructions entry above: the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent.
 - **key-term** — in a document under cold read, a term that is a project-term or should be one.
-- **link-type** — the word before a titled link saying what it points at: `GHI` for a GitHub issue, `PR` for a pull request. The convention is the "GHI for GHIs" ruling of 2026-09-20; the name is the user's, 2026-09-21.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
 - **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
