@@ -279,6 +279,12 @@ def agent_exit_record_from_supervisor_state(state: dict):
 
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
 SUPERVISOR_LOCK_FILE_SUFFIX = "-supervisor.lock"
+# The session-handoff a seat writes and its supervisor waits on, named after the
+# agent like the two above. Composed only by handoff_file_path() and
+# handoff_file_paths() below. agent_name_from_supervisor_file does NOT take this
+# suffix apart: a handoff file is not a supervisor file, and the seat name it
+# would return is already in hand wherever a handoff path is built.
+HANDOFF_FILE_SUFFIX = "-handoff.md"
 # This script's own name, as it appears in a running supervisor's command line.
 SUPERVISOR_SCRIPT_FILE_NAME = "handoff-supervisor.py"
 
@@ -333,6 +339,60 @@ def supervisor_state_paths(handoff_directory: Path) -> list:
     if not directory.is_dir():
         return []
     return sorted(directory.glob(f"*{SUPERVISOR_STATE_FILE_SUFFIX}"))
+
+
+def handoff_file_path(handoff_directory: Path, agent: str) -> Path:
+    """Where `agent`'s session-handoff lives under `handoff_directory`.
+
+    The one place the handoff file's name is composed. Four programs need this
+    path -- this supervisor, which waits on it; the handoff writer, which writes
+    it; the recovery tool and resupervise-seat.py, which read it -- and until
+    2026-09-20 each built it from its own f-string: eight sites across the four,
+    one of them a local `suffix` variable in the writer. A rename that missed one
+    left that program composing the old name, and the failure is silent in the
+    worst direction: the supervisor writes <seat>-handoff.md, the recovery tool
+    looks for something else, finds nothing, and reports a seat that handed off
+    cleanly as one that died leaving no handoff.
+
+    User-ruled 2026-09-20, item 2 of the walk
+    md-skills-seat-open-decisions-2026-09-20. The eight sites were measured on
+    main at 986bc31 on 2026-09-19 and re-measured unchanged on 2026-09-20,
+    excluding test files -- whose literals are the assertion -- and three prose
+    mentions in handoff-write-and-check-supervisor.py's docstrings. PR "The
+    supervisor's state and lock file names are defined once"
+    (nedschorus/nedschorus#545), which gave the state and lock files their
+    constants and the guard beside them, left this name out because the ruling
+    it carried out (item 4 of the walk
+    file-naming-and-location-standards-cold-read-findings, 2026-09-19) named the
+    supervisor state file, the cold-read-record names and the walk-file endings.
+    The handoff name was measured while that work was carried out and recorded
+    on docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md as
+    its own unruled topic.
+
+    Named handoff_file_path, not the walk's handoff_path, because handoff_path is
+    already the SupervisorSettings property below, a parameter of
+    parse_handoff_file and wait_for_handoff, and a local in three other scripts.
+    A module-level function of that name is also a second FunctionDef named
+    handoff_path in this file, and the guard collects its composing helpers by
+    that name: it would find two, fail its own helper case, and exempt the
+    property's body from the check that watches it.
+    """
+    return Path(handoff_directory) / f"{agent}{HANDOFF_FILE_SUFFIX}"
+
+
+def handoff_file_paths(handoff_directory: Path) -> list:
+    """Every seat's session-handoff under `handoff_directory`, sorted.
+
+    The handoff writer reads them all to find the name a seat working in this
+    very directory already hands off under, and it used to glob the suffix from a
+    local copy of it. A search pattern spells the name out as surely as a path
+    does, as supervisor_state_paths above says, so it belongs here with the rest.
+    Pair it with HANDOFF_FILE_SUFFIX to get each seat's name back.
+    """
+    directory = Path(handoff_directory)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob(f"*{HANDOFF_FILE_SUFFIX}"))
 
 
 def read_process_command_line(process_id: int):
@@ -1291,7 +1351,9 @@ class SupervisorSettings:
 
     @property
     def handoff_path(self) -> Path:
-        return self.handoff_directory / f"{self.agent}-handoff.md"
+        # The module function, not this property: a method body never resolves a
+        # bare name in its own class namespace.
+        return handoff_file_path(self.handoff_directory, self.agent)
 
     @property
     def state_path(self) -> Path:

@@ -1064,7 +1064,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
     if occupied:
         return "refuse", occupancy_detail
 
-    handoff_path = handoff_directory / f"{name}-handoff.md"
+    handoff_path = supervisor.handoff_file_path(handoff_directory, name)
     if handoff_path.is_file():
         fields = supervisor.parse_handoff_file(handoff_path)
         counter = supervisor.counter_from(fields)
@@ -1759,7 +1759,7 @@ def main(argv=None) -> int:
         # A never-run directory can still be recovered by NAME, deliberately.
         def ever_ran(name: str) -> bool:
             return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
-                    or (handoff_directory / f"{name}-handoff.md").is_file()
+                    or supervisor.handoff_file_path(handoff_directory, name).is_file()
                     or harness_project_directory(agents_root / name,
                                                  projects_root).is_dir())
         names = sorted(

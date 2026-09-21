@@ -384,7 +384,7 @@ def main(argv=None) -> int:
         return resupervise_box_seat(arguments)
 
     handoff_directory = Path(arguments.handoff_dir or "~/.claude/handoffs").expanduser()
-    handoff_path = handoff_directory / f"{arguments.name}-handoff.md"
+    handoff_path = supervisor.handoff_file_path(handoff_directory, arguments.name)
     state_path = supervisor.supervisor_state_path(handoff_directory, arguments.name)
     agents_root = (Path(arguments.agents_root).expanduser() if arguments.agents_root
                    else default_agents_root())
