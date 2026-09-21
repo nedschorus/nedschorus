@@ -15,7 +15,7 @@ Every project-term should be listed here; a term this page does not list is not 
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief; context compressed and renewed by a series of agent-sessions connected by session-handoffs from old agent to new agent.
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
 - **approval-walk** — presenting material to the user one item at a time for a decision, conducted by the /walk-me-through skill; its outcomes are recorded in walk-minutes and its approvals are walked-approvals.
-- **bare-number-sweep** — the project-wide replacement of references written as a bare number with titled clickable links, run class by class under the user's rulings; completed 2026-09-21.
+- **bare-number-sweep** — the replacement of references written as a bare number with titled clickable links, run class by class under the user's rulings. The ruled classes were completed 2026-09-21. It was never project-wide: the agent-only files — `scripts/`, `.claude/hooks/`, `docs/agents/`, `nc-queue/` — keep their bare numbers by his ruling of 2026-09-18, "I read all the maybes", and are not a backlog.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — `C1`, `C3`, `C7`…, the identifiers of the main-gatekeeper's credential rulings, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
 - **code-prompt-code (aka CPC)** — a program built from both code and prompts.
