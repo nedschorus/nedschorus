@@ -18,17 +18,21 @@ LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 # of the SAME byte length written to LINT_SCRIPT inside one second are
 # indistinguishable to it and the second run executes the first's bytecode.
 # The two mutations that pin PLACEHOLDER_SPAN's exclusions, `(?![!])` and
-# `(?![?])`, are both five characters, which is exactly that case. On this
-# Mac sys.pycache_prefix puts the cache under ~/Library/Caches rather than
-# beside the script, so no __pycache__ appears here and the staleness is
-# invisible to anyone looking for one.
+# `(?![?])`, are the same length as each other -- seven characters each --
+# which is exactly that case. On this Mac sys.pycache_prefix puts the cache
+# under ~/Library/Caches rather than beside the script, so no __pycache__
+# appears here and the staleness is invisible to anyone looking for one.
 #
 # It cost the merge-lane seat and its commissioned reviewer a wrong answer
 # each, independently, while reviewing the pull request that added the
-# processing-instruction case (2026-09-20). Measured here: a reproduction
-# running both mutations back to back collided on 10 of 10 attempts without
-# this line and 0 of 10 with it. scripts/launch-claude-pre-trust-step-test.py
-# sets the same knob through the environment, for an unrelated reason.
+# processing-instruction case (2026-09-20). Three separate reproductions have
+# since measured it, each running both mutations back to back with no sleep:
+# 10, 9 and 8 collisions out of 10 attempts without this line, and 0 of 10
+# with it in all three. It collides in EITHER direction, onto whichever
+# case's bytecode landed first, which is why the wrong table reads as
+# convincing rather than as obviously broken.
+# scripts/launch-claude-pre-trust-step-test.py sets the same knob through the
+# environment, for an unrelated reason.
 #
 # A fresh worktree per mutation also works, because the cache path mirrors
 # the source path. This line means no one has to remember that.
