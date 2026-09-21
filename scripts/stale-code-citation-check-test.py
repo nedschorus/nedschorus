@@ -333,7 +333,7 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/still-design.md")
     check("a status naming neither landed nor built is reported beside a stale citation",
           code == 1 and "docs/still-design.md:2:" in out
-          and "says neither landed nor built" in out, f"{code} {out}")
+          and "say in status whether the code has landed" in out, f"{code} {out}")
     reported = [line.split(":")[1] for line in out.splitlines() if line.startswith("docs/")]
     check("findings print in the document's own line order",
           reported == sorted(reported, key=int), out)
@@ -343,7 +343,8 @@ with tempfile.TemporaryDirectory() as workspace:
         body="The test is `scripts/moved.py` lines 20-24."))
     code, out, err = run(root, "docs/landed.md")
     check("a status naming landed gets no status finding",
-          code == 1 and "says neither landed nor built" not in out, f"{code} {out}")
+          code == 1 and "say in status whether the code has landed" not in out,
+          f"{code} {out}")
 
     write_document(root, "docs/design-but-current.md", document(
         status="design, not built",
@@ -351,6 +352,72 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "docs/design-but-current.md")
     check("a status saying design raises nothing when no citation is stale",
           code == 0 and out == "", f"{code} {out}")
+
+    # A NEGATED BUILT WORD IS NOT A CLAIM THAT THE CODE IS BUILT. The status
+    # values here are the ones docs/design-to-main/design-to-main-state-machine-
+    # design.md and nc-systems/main-gatekeeper/main-gatekeeper-design.md carry
+    # on main, which a substring test read as built -- so the rider was silent
+    # on the clearest unbuilt claim a status can make.
+    write_document(root, "docs/not-built.md", document(
+        status="design, not built",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/not-built.md")
+    check("a status saying \"design, not built\" is reported beside a stale citation",
+          code == 1 and "docs/not-built.md:2:" in out
+          and "say in status whether the code has landed" in out, f"{code} {out}")
+    check("the status finding does not say the status is silent about built",
+          "does not claim the code landed or was built" in out
+          and "says neither landed nor built" not in out, out)
+
+    write_document(root, "docs/partially-built.md", document(
+        status="specification (partially built — see Implementation status)",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/partially-built.md")
+    check("a status saying partially built is reported beside a stale citation",
+          code == 1 and "docs/partially-built.md:2:" in out
+          and "say in status whether the code has landed" in out, f"{code} {out}")
+
+    write_document(root, "docs/not-yet-built.md", document(
+        status="specification; not yet built",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/not-yet-built.md")
+    check("a negator a word away from the built word still negates it",
+          code == 1 and "docs/not-yet-built.md:2:" in out
+          and "say in status whether the code has landed" in out, f"{code} {out}")
+
+    write_document(root, "docs/unbuilt.md", document(
+        status="unbuilt specification",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/unbuilt.md")
+    check("a status saying unbuilt is reported beside a stale citation",
+          code == 1 and "docs/unbuilt.md:2:" in out
+          and "say in status whether the code has landed" in out, f"{code} {out}")
+
+    # And the other side: an unnegated built word still ends the rider, and a
+    # word that merely contains the letters does not.
+    write_document(root, "docs/as-built.md", document(
+        status="overview of the tool as built; six changes ruled 2026-09-02",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/as-built.md")
+    check("a status saying as built gets no status finding",
+          code == 1 and "say in status whether the code has landed" not in out,
+          f"{code} {out}")
+
+    write_document(root, "docs/build-tracked.md", document(
+        status="design of record; build tracked in issue 116",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/build-tracked.md")
+    check("a status saying build tracked is not read as built",
+          code == 1 and "docs/build-tracked.md:2:" in out
+          and "say in status whether the code has landed" in out, f"{code} {out}")
+
+    write_document(root, "docs/landed-build-tracked.md", document(
+        status="landed design; build tracked in issue 46",
+        body="The test is `scripts/moved.py` lines 20-24."))
+    code, out, err = run(root, "docs/landed-build-tracked.md")
+    check("a status saying landed gets no status finding whatever follows it",
+          code == 1 and "say in status whether the code has landed" not in out,
+          f"{code} {out}")
 
 
 # --- Changed-paths mode ---------------------------------------------------

@@ -39,9 +39,15 @@ landed on 2026-09-18 in pull request [cold-read-grid: a failed cell is
 retried once and reported with its cause, and every run closes with one
 closing text](https://github.com/nedschorus/nedschorus/pull/508), merged as
 02f4ede. Nobody edited the document; scripts/cold-read-grid.py moved
-underneath it. By 2026-09-20 seven of its line-number citations pointed at
-code that was no longer there, and it was reconciled by hand in pull request
-[The 413 cell-failure design's citations match the code that landed](
+underneath it. By 2026-09-20 seven of its line-number citations named files
+that had changed since its stamp, and six of the seven pointed at code that
+was no longer there. The seventh, scripts/cold-read-codex-cell.py lines
+108-111, still held the TIER_TO_CODEX_MODEL_CHAIN block it named: that file
+changed after the stamp, but those four lines did not move. That is the limit
+of what this program knows, and why its finding says the cited file changed
+and asks for the number to be read rather than asserting the code is gone.
+The document was reconciled by hand in pull request [The 413 cell-failure
+design's citations match the code that landed](
 https://github.com/nedschorus/nedschorus/pull/559), merged as b6fe18d.
 
 That is why the key is THE CITED FILE'S HISTORY SINCE THE STAMP and not the
@@ -124,10 +130,44 @@ pre-dated it, and are absent both when nothing was built and when the
 citation is a forward reference to a program the project has decided to build
 and has not. The one piece of evidence available is the git history the first
 check already reads. So the status finding is raised only for a document that
-already has a stale-citation finding and whose `status:` names neither
-"landed" nor "built" -- the exact shape of the 413 fault, which read
+already has a stale-citation finding and whose `status:` does not claim the
+code is built -- the exact shape of the 413 fault, which read
 "status: design; its cold-read-full-run of 2026-09-16 is triaged" while the
 code had been in main for two days. It adds no findings of its own on main.
+
+A STATUS CLAIMS THE CODE IS BUILT when "landed" or "built" appears in it as a
+WHOLE WORD with no negating word in the two words before it. Both halves are
+measured on the nine values in use, not on invented strings. A substring test,
+which is what this check first shipped with, read "design, not built" as built
+-- the clearest unbuilt claim a status can make, a value in use, and a value
+quoted two paragraphs up -- so the rider was silent on the very shape it
+exists to catch, and on "not yet built" and "specification (partially built --
+see Implementation status)" with it. The whole-word half is what keeps "build
+tracked in issue ..." from reading as "built". The negators are not, never,
+nor, no, un and partially; "un" is in the list for a hyphenated "un-built",
+since "unbuilt" is one word and so is already not the word "built".
+
+The verdicts on the nine values on main at 3eb3a59. Built: "overview of the
+tool as built; six changes ruled ...", "landed design; built in pull requests
+508 ... and 521 ..." and "landed design; build tracked in issue [Build
+ghi-info ...]" (on "landed", since "build" is not "built"). Not built:
+"design, not built", "specification (partially built -- see Implementation
+status)", "design of record; build tracked in issue [Fleet survives ...]",
+"specification", "SUPERSEDED at walk item 1" and "draft for the user's walk".
+Only the first two of those six change verdict against the substring test; the
+other seven values are read as the substring test read them. The cost of the
+whole-word half is that a status saying "rebuilt" would read as unbuilt too;
+none of the nine says it, and one that did would be asked for one clause.
+
+"partially built" reading as NOT built is the one judgement in this rule
+rather than a measurement, and the one to ratify or overrule: part of the code
+landing does not answer whether the code a stale number cites landed. It
+changes nothing on main today: both documents whose verdict it moves --
+docs/design-to-main/design-to-main-state-machine-design.md, which says
+"design, not built", and nc-systems/main-gatekeeper/main-gatekeeper-design.md,
+which says "partially built" -- carry no line-number citation at all, so
+neither reaches the status check. The hole this closes is in the rider's
+purpose, not in today's tree.
 
 REUSE. scripts/md-drift-lint.py is imported by path, the way
 scripts/walk-files-ship.py imports scripts/cold-read-record-ship.py, and its
@@ -191,8 +231,23 @@ COMMIT_ISH_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
 # docstring.
 PINNED_SECTION_PHRASE = "line numbers"
 
-# A status value naming either of these is not claiming the code is unbuilt.
+# A status value claims the code is built when it names one of these as a
+# whole word with no negating word just before it. See A STATUS CLAIMS THE
+# CODE IS BUILT in the docstring for why each half of that is there.
 STATUS_WORDS_MEANING_BUILT = ("landed", "built")
+STATUS_BUILT_WORD = re.compile(
+    r"\b(?:" + "|".join(STATUS_WORDS_MEANING_BUILT) + r")\b")
+
+# A word that takes a built word back: "design, not built", "not yet built",
+# "specification (partially built ...)". Read from the words just before the
+# built word, not from the whole value, so "not a design; built in pull
+# request 508" still claims built.
+STATUS_WORDS_NEGATING_BUILT = ("not", "never", "nor", "no", "un", "partially")
+STATUS_NEGATOR_LOOKBACK_WORDS = 2
+
+# A word of a status value, for that lookback. The value is lowercased first,
+# so a-z is every letter there is to match.
+STATUS_WORD = re.compile(r"[a-z]+")
 
 _commit_ish_cache = {}
 _last_change_cache = {}
@@ -407,6 +462,25 @@ def changed_code_paths(base: str, repository_root: pathlib.Path, lint) -> list:
                   if pathlib.PurePath(name).suffix in lint.CODE_SOURCE_EXTENSIONS)
 
 
+def status_means_built(status: str) -> bool:
+    """Whether a `status:` value claims the code this document describes is built.
+
+    A whole-word "landed" or "built" with no negating word in the two words
+    before it. A substring test read "design, not built" as built, so the
+    status finding was silent on the clearest unbuilt claim a status can make;
+    see A STATUS CLAIMS THE CODE IS BUILT in the docstring for the rule and
+    for its verdict on each of the nine values in use.
+    """
+    lowered = status.lower()
+    for match in STATUS_BUILT_WORD.finditer(lowered):
+        before = STATUS_WORD.findall(lowered[:match.start()])
+        if any(word in STATUS_WORDS_NEGATING_BUILT
+               for word in before[-STATUS_NEGATOR_LOOKBACK_WORDS:]):
+            continue
+        return True
+    return False
+
+
 def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
                           lint, wanted_paths=None, moved_on=None):
     """(line number, problem) per finding, and the count of pinned citations.
@@ -464,13 +538,13 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
         status_field = frontmatter_field(text, STATUS_FIELD)
         if status_field is not None:
             status_line, status = status_field
-            if not any(word in status.lower() for word in STATUS_WORDS_MEANING_BUILT):
+            if not status_means_built(status):
                 findings.append((
                     status_line,
-                    f"{STATUS_NAME} says neither landed nor built, and code "
-                    f"this document cites by line number moved after "
-                    f"{DESIGN_AS_OF_NAME} {stamp}: say in {STATUS_NAME} "
-                    f"whether the code has landed"))
+                    f"{STATUS_NAME} does not claim the code landed or was "
+                    f"built, and code this document cites by line number "
+                    f"moved after {DESIGN_AS_OF_NAME} {stamp}: say in "
+                    f"{STATUS_NAME} whether the code has landed"))
     return findings, pinned_count
 
 
