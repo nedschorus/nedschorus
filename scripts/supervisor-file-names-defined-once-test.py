@@ -126,7 +126,14 @@ PROGRAMS_THAT_NEED_THESE_FILE_NAMES = ("handoff-supervisor.py",
 COMPOSING_HELPERS = ("supervisor_state_path", "supervisor_lock_path",
                      "supervisor_state_paths", "handoff_file_path",
                      "handoff_file_paths")
-# The three file names, as they read on disk.
+# The three file names, as they read on disk. This is a copy, so the last
+# check below reads the same three out of handoff-supervisor.py and compares.
+# Until 2026-09-21 nothing did, and a copy nothing anchors goes stale at
+# exactly the moment it matters: rename a constant's value and this tuple
+# still hunts the OLD spelling, finds nothing, and a fresh hand-built copy of
+# the NEW one passes every case. The eleven-sites defect this guard exists to
+# prevent would come back invisible, and the guard would go on printing PASS
+# until the rename after that.
 SPELLED_OUT_NAMES = ("-supervisor-state.json", "-supervisor.lock",
                      "-handoff.md")
 # The constants that hold them.
@@ -217,6 +224,29 @@ def suffix_definition_assignments(tree):
             and any(isinstance(target, ast.Name)
                     and target.id in SUFFIX_CONSTANTS
                     for target in node.targets)]
+
+
+def defined_suffix_values(tree):
+    """The strings the suffix constants are actually assigned, from the tree.
+
+    Read rather than restated, so SPELLED_OUT_NAMES cannot drift from what
+    handoff-supervisor.py says. A definition written any of the ways
+    suffix_definition_assignments() accepts is read here the same way, and a
+    definition whose value is not a plain string literal comes back as None,
+    which the check below counts and names rather than comparing. It counts
+    rather than drops because the comparison cannot see such a definition at
+    all: three readable values that match SPELLED_OUT_NAMES pass it however
+    many unreadable definitions sit beside them -- and a duplicate written
+    later in the file is the one the supervisor runs with (measured
+    2026-09-21).
+    """
+    values = []
+    for node in suffix_definition_assignments(tree):
+        value = node.value
+        values.append(value.value
+                      if isinstance(value, ast.Constant)
+                      and isinstance(value.value, str) else None)
+    return values
 
 
 def exempt_lines_and_helpers(tree, path):
@@ -319,6 +349,46 @@ check("every composing helper was found in the syntax tree",
       f"found {sorted(helpers_found)} in {SUPERVISOR_SCRIPT.name}, expected "
       f"{sorted(COMPOSING_HELPERS)}; a helper that is renamed must be renamed "
       f"in COMPOSING_HELPERS here, or its body stops being checked")
+
+supervisor_defined_names = defined_suffix_values(
+    ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
+              filename=str(SUPERVISOR_SCRIPT)))
+
+unreadable_definitions = supervisor_defined_names.count(None)
+readable_definitions = sorted(value for value in supervisor_defined_names
+                              if value is not None)
+# A definition this guard cannot read is absent from readable_definitions, so
+# the two lists differ whether or not a value was renamed: a remedy keyed on
+# `readable_definitions != sorted(SPELLED_OUT_NAMES)` still tells an unreadable
+# definition to mirror a rename that never happened (measured 2026-09-21).
+# Evidence of a rename is a readable value SPELLED_OUT_NAMES does not list, or
+# a shortfall bigger than the unreadable definitions can account for.
+readable_values_contradict_spelled_out_names = (
+    bool(set(readable_definitions) - set(SPELLED_OUT_NAMES))
+    or (len(set(SPELLED_OUT_NAMES) - set(readable_definitions))
+        > unreadable_definitions))
+
+check("the names this guard hunts are the supervisor's own, not a stale copy",
+      # The count, not the comparison, is what sees a definition this guard
+      # cannot read: a duplicate SUPERVISOR_STATE_FILE_SUFFIX = ("-supervisor"
+      # + "-state.json") beside the three plain ones is the live value -- the
+      # last assignment wins -- while the three readable ones still match, and
+      # the comparison alone passed that suite green (measured 2026-09-21).
+      # readable_definitions filters None out, so no None reaches sorted().
+      not unreadable_definitions
+      and readable_definitions == sorted(SPELLED_OUT_NAMES),
+      f"{SUPERVISOR_SCRIPT.name} defines {readable_definitions}"
+      # Each remedy states only the cause that fired. The rename remedy used
+      # to be appended whatever happened, and an agent obeying it after an
+      # unreadable definition edits SPELLED_OUT_NAMES instead of the value --
+      # greening the suite with a name no case hunts any more, the defect
+      # this check exists to prevent (reviewer of this branch, 2026-09-21).
+      + (f", and {unreadable_definitions} more whose value is not a plain "
+         f"string literal, which this guard cannot read -- write the value as "
+         f"a plain string literal" if unreadable_definitions else "")
+      + (f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
+         f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
+         f"uses" if readable_values_contradict_spelled_out_names else ""))
 
 check("the suffix constants are defined in one script",
       defining == [SUPERVISOR_SCRIPT.name],
