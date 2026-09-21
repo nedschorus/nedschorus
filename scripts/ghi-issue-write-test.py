@@ -523,6 +523,7 @@ def run_cases(scratch: Path):
 
 EDIT_NAME = "570-a-statusline-that-drops-its-branch-name.md"
 EDIT_RELATIVE = f"docs/issues/{EDIT_NAME}"
+MOVED_RELATIVE = f"nc-systems/statusline/{EDIT_NAME}"
 EDIT_TITLE = "A statusline that drops its branch name"
 BASE_REVISION = "basesha1234"
 
@@ -651,6 +652,17 @@ def run_edit_cases(scratch: Path):
           "alone",
           ran_with(landing, "gh pr create", f"ghi-570-edit-{tool.pairing_key(staged)}"),
           str(landing.commands()))
+    check("the worktree is detached, so the run makes no branch to leave",
+          landing.ran("git worktree add --quiet --detach")
+          and not any("-b" in call for call in landing.calls
+                      if call[:3] == ["git", "worktree", "add"]),
+          str(landing.calls))
+    check("and the push names the branch as a refspec instead",
+          landing.ran("git push --quiet origin HEAD:refs/heads/"
+                      f"ghi-570-edit-{tool.pairing_key(staged)}"),
+          str(landing.commands()))
+    check("an edit in place removes nothing from main",
+          not landing.ran("git rm"), str(landing.commands()))
     check("main is fetched before anything is compared against it",
           landing.commands().index("git fetch origin")
           < landing.commands().index(f"git show origin/main:{EDIT_RELATIVE}"),
@@ -693,6 +705,58 @@ def run_edit_cases(scratch: Path):
     check("the file that lands is the author's, at its own path, carrying "
           "the issue line",
           reader.staged == staged, repr((reader.staged or "")[:140]))
+
+    # --- A file the author moved into its system's directory -------------
+    # The move § Where the tool may write allows: out of docs/issues/ once
+    # the system's code starts. Main still holds the file where it was, and
+    # a commit that only adds the new path leaves the document at two paths
+    # the moment it merges — after which paired_paths returns both and step
+    # 5 links the same document twice.
+
+    moved_source = paired(scratch, directory="nc-systems/statusline")
+    moved = Recorder({
+        f"git show origin/main:{MOVED_RELATIVE}": Completed("", returncode=1),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
+            "", returncode=1),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+    })
+    tool.edit(moved_source, REPO, scratch, moved, quiet)
+    check("a moved file is added at its new path",
+          ran_with(moved, "git add", MOVED_RELATIVE), str(moved.commands()))
+    check("and the copy main still holds is removed in the same commit, "
+          "so the merge leaves one document and not two",
+          ran_with(moved, "git rm", EDIT_RELATIVE)
+          and moved.commands().index("git rm --quiet")
+          < moved.commands().index("git commit --quiet"),
+          str(moved.commands()))
+    check("while the issue's other paired file, which this edit did not "
+          "move, is left where it is",
+          not ran_with(moved, "git rm", "570-test-design.md"),
+          str(moved.calls))
+
+    # A same-named copy in the other directory, while this run's own file
+    # is where main has it, is not a move: it is an edit in place, and that
+    # copy is not this edit's to delete.
+
+    in_place = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + f"\n{MOVED_RELATIVE}\n"),
+    })
+    tool.edit(source, REPO, scratch, in_place, quiet)
+    check("an edit in place removes no copy of itself from elsewhere on "
+          "main, however that copy got there",
+          not in_place.ran("git rm"), str(in_place.commands()))
 
     # --- The conflict the 2026-09-08 ruling is about ---------------------
 
@@ -764,6 +828,9 @@ def run_edit_cases(scratch: Path):
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n"),
+        "gh pr list": Completed(
+            '[{"number": 11, "title": "GHI-MD edit for issue 570", '
+            '"url": "https://github.com/x/y/pull/11"}]'),
         "gh issue view": issue_json("Older", one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
     })
@@ -771,7 +838,36 @@ def run_edit_cases(scratch: Path):
     check("a branch already on the remote is not pushed a second time",
           not waiting.ran("git worktree add")
           and not waiting.ran("gh pr create"), str(waiting.commands()))
+    check("and the pull request it reports is one GitHub says is open, not "
+          "one inferred from the branch being there",
+          waiting.ran("gh pr list"), str(waiting.commands()))
     check("and the run says it is not finished", not still_waiting)
+
+    # A push that succeeded and a `gh pr create` that then failed leaves
+    # this state. Reported as a pull request waiting for merge-lane, it
+    # would be reported that way forever, because nothing else opens one.
+
+    pushed_only = Recorder({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n"),
+        "gh pr list": Completed("[]"),
+        "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(source, REPO, scratch, pushed_only, quiet)
+    check("a branch pushed without a pull request gets one on the rerun",
+          pushed_only.ran("gh pr create"), str(pushed_only.commands()))
+    check("and nothing is committed or pushed over it to get there",
+          not pushed_only.ran("git worktree add")
+          and not pushed_only.ran("git push"), str(pushed_only.commands()))
+    check("and the pull request it opens is the edit's own, not a filing's",
+          ran_with(pushed_only, "gh pr create",
+                   f"GHI-MD edit for issue 570: {EDIT_TITLE}",
+                   "An edit to the GHI-MD for issue #570"),
+          str(pushed_only.calls))
 
     # --- The body is rewritten only when the file set changed ------------
 

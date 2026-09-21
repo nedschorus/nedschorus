@@ -69,6 +69,13 @@ refspec, so nothing is created in the filing checkout that could outlive the
 run: a branch made with `git worktree add -b` survives `git worktree
 remove --force`, and the next run's add then fails on the name.
 
+Both of those hold of the edit verb's step 3 as much as of create's step 4:
+it asks GitHub about its branch, and its worktree leaves no branch behind.
+It did neither until the review of PR [Build the GHI write tool's edit
+verb](https://github.com/nedschorus/nedschorus/pull/596), where the cost was
+measured — an edit's branch name is derived from the file's content, so one
+branch left behind wedged every later run on that content, not one run.
+
 AFTER THE MERGE, WHAT TO RERUN ON. Step 4 is a move when the source is
 already tracked on main, so the merge takes the source path off main and the
 author's pull takes it off disk; a rerun on that path has nothing to read.
@@ -101,7 +108,12 @@ its name wherever it sits — and does four things:
                 main's copy is already this file, since a rerun that only
                 finishes step 4 has nothing new to adjudicate.
   3. Land       the author's file, when it differs from main's copy, on a
-                pull request, the way create's step 4 lands a new one.
+                pull request, the way create's step 4 lands a new one —
+                including the move: a file the author took out of
+                docs/issues/ and into its system's directory is removed
+                from where main still holds it, in the same commit, or the
+                merge leaves the document at two paths and step 5 links it
+                twice.
   4. Title      when the edit CHANGED the file's first heading, and the
                 issue has one paired file.
   5. Link       the body to the paired files on main, as create's step 5
@@ -778,6 +790,48 @@ def refuse_on_conflict(relative: str, on_main, repository_root: Path,
         f"{(difference.stdout or '').strip()}", 66)
 
 
+def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
+                                        title: str, cwd: Path, runner,
+                                        report):
+    """Open the pull request that carries this edit to main. Called from the
+    worktree on the ordinary path, and from the author's checkout when a
+    rerun finds the branch pushed with no pull request on it.
+
+    Its own wording rather than `create_pull_request_for_branch`'s: that one
+    says a file is reaching main for the first time, and this one says an
+    edit is following a file already there."""
+    body = (f"An edit to the GHI-MD for issue #{number}, landed by "
+            "`scripts/ghi-issue-write.py`.\n\nUnder link-only the "
+            "issue's title and body are derived from main's copy of its "
+            "files, so this has to land before either follows. Prose "
+            "under `docs/`, silent to reviewers by CLAUDE.md's "
+            "review-scope rule.\n")
+    created = runner(
+        ["gh", "pr", "create", "--repo", repo, "--base", "main",
+         "--head", branch, "--title",
+         f"GHI-MD edit for issue {number}: {title}", "--body", body],
+        cwd=str(cwd))
+    report((created.stdout or "").strip())
+
+
+def moved_from_path_on_main(number: int, relative: str,
+                            repository_root: Path, runner):
+    """The path main still holds this file at, when the author moved it out
+    of docs/issues/ and into its system's directory — the move § Where the
+    tool may write allows. None when main holds no other copy.
+
+    `source_path_on_main`, which answers this for `create`, cannot answer it
+    here. There the source and the destination are different paths, so the
+    source's own path is the answer; here they are one path, and the
+    question is which OTHER path main pairs with this issue. A paired file
+    carries its issue's number in its name wherever it sits, and the move
+    changes the directory and not the name, so the name is the match."""
+    name = Path(relative).name
+    return next((path
+                 for path in paired_paths(number, repository_root, runner)
+                 if path != relative and Path(path).name == name), None)
+
+
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
               on_main, repository_root: Path, runner, report) -> bool:
     """Step 3. Returns True when a pull request is waiting on this edit.
@@ -794,19 +848,50 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
     on_remote = runner(["git", "ls-remote", "--heads", "origin", branch],
                        cwd=str(repository_root))
     if (on_remote.stdout or "").strip():
-        report(f"step 3 already done: branch {branch} is on the remote and "
-               "its pull request is waiting for merge-lane")
+        # The branch says the push happened, not that the pull request did:
+        # GitHub is asked, as create's step 4 asks it, or a run whose
+        # `gh pr create` failed reports a pull request waiting forever.
+        waiting = existing_pull_request_for_branch(repo, branch, runner)
+        if waiting:
+            report(f"step 3 already done: pull request "
+                   f"[{waiting.get('title')}]({waiting.get('url')}) is "
+                   "waiting for merge-lane")
+        else:
+            report(f"branch {branch} is on the remote with no pull request "
+                   "open on it, so an earlier run stopped between its push "
+                   "and its pull request")
+            create_pull_request_for_edit_branch(repo, branch, number, title,
+                                                repository_root, runner,
+                                                report)
         return True
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
     try:
-        runner(["git", "worktree", "add", "--quiet", "-b", branch,
+        # --detach, and the push names the branch as a refspec, so this run
+        # creates nothing in the author's checkout: a branch made with -b
+        # outlives `git worktree remove --force`, and this branch's name is
+        # derived from the file's content, so every later run on that same
+        # content walks into the name again.
+        runner(["git", "worktree", "add", "--quiet", "--detach",
                 str(worktree), "origin/main"], cwd=str(repository_root))
         target = worktree / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(staged, encoding="utf-8")
         runner(["git", "add", relative], cwd=str(worktree))
+        # A move, not a copy, as create's step 4 is. The author moved this
+        # file into its system's directory and main still holds it where it
+        # was: leaving that behind would put the same document at two paths
+        # the moment this merges, and paired_paths would then link it twice.
+        # Asked only when main has nothing at the author's path — where it
+        # does, this is an edit in place and a same-named file elsewhere is
+        # another document.
+        moved_from = (moved_from_path_on_main(number, relative,
+                                              repository_root, runner)
+                      if on_main is None else None)
+        if moved_from:
+            runner(["git", "rm", "--quiet", moved_from], cwd=str(worktree))
+            report(f"removing {moved_from}: its content moves to {relative}")
         message = (f"GHI-MD edit for issue {number}: {title}\n\n"
                    f"Edited by scripts/ghi-issue-write.py from {relative}. "
                    "The issue's title and body are derived from main's copy "
@@ -814,20 +899,10 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                    "file's `issue:` frontmatter line is written by the "
                    "tool, not by its author.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
-        runner(["git", "push", "--quiet", "-u", "origin", branch],
-               cwd=str(worktree))
-        body = (f"An edit to the GHI-MD for issue #{number}, landed by "
-                "`scripts/ghi-issue-write.py`.\n\nUnder link-only the "
-                "issue's title and body are derived from main's copy of its "
-                "files, so this has to land before either follows. Prose "
-                "under `docs/`, silent to reviewers by CLAUDE.md's "
-                "review-scope rule.\n")
-        created = runner(
-            ["gh", "pr", "create", "--repo", repo, "--base", "main",
-             "--head", branch, "--title",
-             f"GHI-MD edit for issue {number}: {title}", "--body", body],
-            cwd=str(worktree))
-        report((created.stdout or "").strip())
+        runner(["git", "push", "--quiet", "origin",
+                f"HEAD:refs/heads/{branch}"], cwd=str(worktree))
+        create_pull_request_for_edit_branch(repo, branch, number, title,
+                                            worktree, runner, report)
     finally:
         runner(["git", "worktree", "remove", "--force", str(worktree)],
                cwd=str(repository_root), check=False)
