@@ -46,6 +46,32 @@ read, and still exits 1 when gh fails for any other reason. gh's own words
 for such a number were read from the real repository. And the listing the
 paired-path cases assert against is origin/main's own tree, read at that
 commit and cut to the entries that decide the question.
+
+The fourth round's, 2026-09-22, are the same rule again, and each was run
+through the FIXED tool against a repository with a bare remote and `gh`
+stubbed before it was written down. What the frozen head did in each is
+the review's own reproduction, cited here rather than repeated.
+
+A queue note named for an issue — `paired_paths` refuses to link one and
+`writable_relative_path` used to accept it, so the frozen head landed the
+note and renamed the issue after THAT file's heading. The two are one
+function now, and a case over main's own tree asserts they cannot answer
+differently; the fixed tool refuses the note with 64, and `create`'s
+refusal no longer sends an agent holding one to a verb that refuses it
+too.
+
+A second edit of one file, made while the first is still open — the frozen
+head pushed a second branch, both merged clean, and main held the later
+file with the earlier correction gone. The fixed tool refuses with 66 and
+pushes nothing; handed an open edit of ANOTHER of the issue's files, it
+lands, the open pull request's own file list being what is compared.
+
+A file whose `issue:` line was built from its own heading rather than from
+the issue's title — the fixed tool's run landed a line citing the issue by
+the title GitHub holds, with the heading left where the author wrote it,
+and the Reader cases read that line back out of the staged file. The issue
+and number counts a case quotes were read from nedschorus/nedschorus the
+same week.
 """
 
 import contextlib
@@ -178,6 +204,22 @@ def run_cases(scratch: Path):
     except tool.Refused as refusal:
         check("a file already named for an issue is refused",
               refusal.code == 64, f"code {refusal.code}")
+        # This refusal used to say "use the edit verb" and nothing else,
+        # and create sends every `<number>-*` file here. Main holds ten
+        # queue notes named for issues and an archived draft named for
+        # one, and the edit verb writes none of those paths: an agent
+        # holding one was sent from a refusal to a refusal. Each line now
+        # carries the condition it applies under.
+        check("and it says where the edit verb writes, so the agent "
+              "holding a queue note is not sent to a verb that refuses it "
+              "too",
+              "docs/issues/" in str(refusal)
+              and "nc-systems/<system>/" in str(refusal)
+              and "edit verb" in str(refusal), str(refusal))
+        check("and it says what to do with a file that is a new issue "
+              "rather than one of that issue's files",
+              "a copy whose name carries no number" in str(refusal),
+              str(refusal))
 
     # --- The happy path, which takes two runs ---------------------------
     # One run cannot both find its file on main and have something to
@@ -560,6 +602,26 @@ MOVED_HEADING_TITLE = "A statusline that keeps its branch name"
 MOVED_HEADING_TEXT = FILE_TEXT.replace(EDIT_TITLE, MOVED_HEADING_TITLE)
 OTHER_SEAT_TEXT = FILE_TEXT + "\nAnother seat measured this on 2026-09-21.\n"
 
+# The issue's title as GitHub holds it, which is not the file's heading —
+# the state 25 of the 26 paired files on main are in, measured 2026-09-21.
+# The file's `issue:` line cites the issue, so it has to carry this.
+ISSUE_TITLE_ON_GITHUB = "Statusline: branch name lost after a rebase"
+
+# A second edit of the same file, landed while the first is still open.
+# The branch is named for the content, so the revision gets a branch of
+# its own; the name below stands for the first one's.
+EARLIER_EDIT_BRANCH = "ghi-570-edit-ghipair0123456789ab"
+EARLIER_EDIT_TITLE = f"GHI-MD edit for issue 570: {EDIT_TITLE}"
+EARLIER_EDIT_URL = "https://github.com/nedschorus/nedschorus/pull/21"
+
+
+def earlier_edit_pull_request(*paths):
+    """What `gh pr list --head <that branch> --json ...,files` answers with
+    when an earlier edit of those paths is open on it."""
+    return Completed(json.dumps([{
+        "number": 21, "title": EARLIER_EDIT_TITLE, "url": EARLIER_EDIT_URL,
+        "files": [{"path": path} for path in paths]}]))
+
 
 def paired(scratch: Path, name=EDIT_NAME, text=FILE_TEXT,
            directory="docs/issues"):
@@ -608,6 +670,23 @@ def run_edit_cases(scratch: Path):
           not tool.writable_relative_path("nc-systems/570-contract.md"))
     check("and neither is one somewhere else entirely",
           not tool.writable_relative_path("docs/drafts/570-contract.md"))
+
+    # DIRECTLY IN, the same rule paired_paths applies, because they are now
+    # the same function. This one took any depth under docs/issues/ and any
+    # depth from three down under nc-systems/ until 2026-09-21, so the verb
+    # would land a file the issue's body cannot link — and take its title
+    # from that file's heading.
+
+    check("a queue note named for an issue is not one of the issue's "
+          "files, so it is not a path this verb writes either",
+          not tool.writable_relative_path(
+              "docs/issues/queue/18-write-test-plan-agent-native-riders.md"))
+    check("nor is an archived draft named for one",
+          not tool.writable_relative_path(
+              "docs/issues/archived/43-step-2-claude-md-inputs.md"))
+    check("nor is a file buried below a system's own directory",
+          not tool.writable_relative_path(
+              "nc-systems/statusline/tests/570-contract-test.md"))
 
     text, title, number, relative = tool.validate_edit(
         paired(scratch), scratch)
@@ -719,6 +798,25 @@ def run_edit_cases(scratch: Path):
           tool.paired_paths(43, scratch, main_tree) == [],
           str(tool.paired_paths(43, scratch, main_tree)))
 
+    # And it is ONE rule, not two that agree today. `paired_paths` says
+    # which files an issue's body links; `writable_relative_path` says
+    # which files this verb may land. They were separate and they
+    # disagreed, which is how a queue note got landed and its heading made
+    # an issue's title. Over main's own tree, they answer together.
+
+    numbered_on_main = [line for line in MAIN_TREE.splitlines()
+                        if Path(line).name.split("-")[0].isdigit()]
+    disagreed = [
+        line for line in numbered_on_main
+        if tool.writable_relative_path(line)
+        != (line in tool.paired_paths(
+            int(Path(line).name.split("-")[0]), scratch,
+            Recorder({"git ls-tree": Completed(MAIN_TREE)})))]
+    check("every <number>-* path on main that the body links is a path "
+          "this verb writes, and every one it drops is a path this verb "
+          "refuses",
+          not disagreed, str(disagreed))
+
     deeper = Recorder({"git ls-tree": Completed(
         "nc-systems/statusline/570-contract.md\n"
         "nc-systems/statusline/tests/570-contract-test.md\n"
@@ -811,6 +909,80 @@ def run_edit_cases(scratch: Path):
     check("the file that lands is the author's, at its own path, carrying "
           "the issue line",
           reader.staged == staged, repr((reader.staged or "")[:140]))
+
+    # --- What that issue line cites --------------------------------------
+    # The issue, by title, as CLAUDE.md says to cite one. It was built from
+    # the file's first HEADING, which is the title only in `create`, where
+    # the issue is filed under the heading. Here the two part company on 25
+    # of the 26 paired files on main, and each of an issue's files would
+    # have cited it under that file's own heading — four different wrong
+    # names for issue 3. The case above passes either way: its heading
+    # changed and its issue has one file, so the title follows the heading
+    # and the two answers coincide. These three separate them.
+
+    citing = Reader({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(source, REPO, scratch, citing, quiet)
+    check("an edit that leaves the heading alone cites the issue by the "
+          "title GitHub holds, which is not that heading",
+          citing.staged == staged_form(title=ISSUE_TITLE_ON_GITHUB),
+          repr((citing.staged or "")[:160]))
+    check("and the issue is read before the file is staged, that title "
+          "being what the line carries",
+          citing.commands().index("gh issue view")
+          < citing.commands().index("git worktree add"),
+          str(citing.commands()))
+
+    renaming = Reader({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    tool.edit(paired(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
+              renaming, quiet)
+    check("while an edit that renames the issue cites the name the issue "
+          "ends this run with, not the one it started with — the line "
+          "would be stale the moment it landed",
+          renaming.staged == staged_form(title=MOVED_HEADING_TITLE,
+                                         text=MOVED_HEADING_TEXT),
+          repr((renaming.staged or "")[:160]))
+    check("and that run does rename the issue",
+          ran_with(renaming, "gh issue edit", "--title", MOVED_HEADING_TITLE),
+          str(renaming.commands()))
+
+    several_citing = Reader({
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+    })
+    tool.edit(paired(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
+              several_citing, quiet)
+    check("and an issue with several files, whose title follows no one "
+          "file's heading, is cited by its own title even where this "
+          "file's heading changed",
+          several_citing.staged == staged_form(title=ISSUE_TITLE_ON_GITHUB,
+                                               text=MOVED_HEADING_TEXT),
+          repr((several_citing.staged or "")[:160]))
+
+    # Put the author's file back the way the cases below expect it: the two
+    # above wrote a changed heading over it.
+    source = paired(scratch)
 
     # --- A file the author moved into its system's directory -------------
     # The move § Where the tool may write allows: out of docs/issues/ once
@@ -1054,13 +1226,171 @@ def run_edit_cases(scratch: Path):
           and not moved_conflict.ran("gh issue edit"),
           str(moved_conflict.commands()))
 
+    # --- The author's own second edit, before the first one merges -------
+    # The conflict check above compares main with the merge base, and an
+    # edit that has not merged is on neither. So a revision made before
+    # merge-lane's next session got a branch of its own, cut from a main
+    # without the first, and merging both was CLEAN in either order — each
+    # branch changed the line once against its own base — leaving main
+    # holding the second file with the first's correction gone, and no
+    # conflict shown to git or to merge-lane. Reproduced at the frozen head
+    # on 2026-09-21: run 1 made a line read one way, run 2 put it back and
+    # added a line, both exited 0.
+
+    second_edit = Recorder({
+        "ghi-570-edit-*": Completed(
+            f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+        f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
+            EDIT_RELATIVE),
+        "git ls-remote": Completed(""),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    try:
+        tool.edit(source, REPO, scratch, second_edit, quiet)
+        check("a second edit of a file whose first edit is still open is "
+              "refused", False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a second edit of a file whose first edit is still open is "
+              "refused", refusal.code == 66, f"code {refusal.code}")
+        check("and the refusal names the pull request to wait for, by "
+              "title and link rather than by number",
+              EARLIER_EDIT_TITLE in str(refusal)
+              and EARLIER_EDIT_URL in str(refusal), str(refusal)[:400])
+        check("and tells the caller to let that merge and fold this edit "
+              "in, not to rebase onto a main that does not hold it",
+              "to merge" in str(refusal)
+              and "Fold this edit into it" in str(refusal)
+              and "merge or rebase onto origin/main" not in str(refusal),
+              str(refusal)[:400])
+        check("and does not promise the marker can pass it either",
+              tool.RECONSIDER_LINE not in str(refusal), str(refusal)[:400])
+    check("and the second branch is never pushed, so merge-lane is never "
+          "handed two branches that each drop the other",
+          not second_edit.ran("git worktree add")
+          and not second_edit.ran("git push")
+          and not second_edit.ran("gh pr create")
+          and not second_edit.ran("gh issue edit"),
+          str(second_edit.commands()))
+
+    # Every edit of every file of one issue shares the branch prefix, so
+    # the prefix alone would refuse an author editing the second of an
+    # issue's files while the first waits — issue 3 has four on main. Those
+    # are different documents and different lines, and merging both drops
+    # nothing, so the open pull request's own file list is what decides.
+
+    other_file = Recorder({
+        "ghi-570-edit-*": Completed(
+            f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+        f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
+            "docs/issues/570-test-design.md"),
+        "git ls-remote": Completed(""),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(
+            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+    })
+    other_file_refusal = None
+    try:
+        tool.edit(source, REPO, scratch, other_file, quiet)
+    except tool.Refused as refusal:
+        other_file_refusal = refusal
+    check("while an open edit of ANOTHER of the issue's files does not "
+          "refuse this one, the two changing nothing in common",
+          other_file_refusal is None and other_file.ran("gh pr create"),
+          f"refused {getattr(other_file_refusal, 'code', None)}: "
+          f"{str(other_file_refusal)[:200]}" if other_file_refusal
+          else str(other_file.commands()))
+
+    # A branch left by a push whose `gh pr create` failed will never merge
+    # on its own, and the resume above is what finishes it. Refusing on the
+    # branch rather than on the pull request would wedge every later run on
+    # that file behind a branch nothing can merge.
+
+    stranded_earlier = Recorder({
+        "ghi-570-edit-*": Completed(
+            f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+        f"--head {EARLIER_EDIT_BRANCH}": Completed("[]"),
+        "git ls-remote": Completed(""),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    stranded_refusal_on_earlier = None
+    try:
+        tool.edit(source, REPO, scratch, stranded_earlier, quiet)
+    except tool.Refused as refusal:
+        stranded_refusal_on_earlier = refusal
+    check("and an earlier branch with no pull request open on it refuses "
+          "nothing: GitHub is asked, not the remote's branch list",
+          stranded_refusal_on_earlier is None
+          and stranded_earlier.ran("gh pr create"),
+          f"refused {getattr(stranded_refusal_on_earlier, 'code', None)}: "
+          f"{str(stranded_refusal_on_earlier)[:200]}"
+          if stranded_refusal_on_earlier
+          else str(stranded_earlier.commands()))
+
+    # A move puts the moved-from path under this check too: that is where
+    # the run deletes main's copy, so an open edit of it is work this run
+    # would remove.
+
+    moved_second_edit = Recorder({
+        "ghi-570-edit-*": Completed(
+            f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+        f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
+            EDIT_RELATIVE),
+        "git ls-remote": Completed(""),
+        f"git show origin/main:{MOVED_RELATIVE}": Completed(
+            "", returncode=128),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    try:
+        tool.edit(paired(scratch, directory="nc-systems/statusline"), REPO,
+                  scratch, moved_second_edit, quiet)
+        check("a move whose old path an open edit still holds is refused "
+              "too, that path being where this run deletes main's copy",
+              False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a move whose old path an open edit still holds is refused "
+              "too, that path being where this run deletes main's copy",
+              refusal.code == 66 and EDIT_RELATIVE in str(refusal),
+              f"code {refusal.code}: {str(refusal)[:200]}")
+    check("and nothing of that move is staged, removed or pushed",
+          not moved_second_edit.ran("git worktree add")
+          and not moved_second_edit.ran("git rm")
+          and not moved_second_edit.ran("git push")
+          and not moved_second_edit.ran("gh pr create"),
+          str(moved_second_edit.commands()))
+
     # --- Resuming after the pull request merged --------------------------
     # The author's own landed change is a difference between the merge base
     # and main, so a conflict check made first would refuse them their own
     # edit. Main's copy is compared to theirs before any of that.
 
+    # Main's copy is what the earlier run landed, `issue:` line included,
+    # and that line cites the issue by the title GitHub holds — which on
+    # this file is nowhere near its heading, and stays where it is because
+    # the heading did not change. A fixture where main's copy cited the
+    # HEADING instead would be a state this tool cannot produce, and the
+    # rerun would read it as content of its own to land.
     resumed = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed(
+            staged_form(title="Stale title")),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh issue view": issue_json("Stale title", one_link),
@@ -1429,6 +1759,42 @@ def run_edit_cases(scratch: Path):
         check("while gh failing for any other reason is an operating "
               "failure still, not a caller who named a wrong number",
               refusal.code == 1, f"code {refusal.code}")
+
+    # --- A name carrying a number a PULL REQUEST has ---------------------
+    # `gh issue view` given a pull request's number exits 0 and answers
+    # with the pull request, so the refusal above never fires and the run
+    # edits that pull request's title. Issues and pull requests share one
+    # number line here — 125 issues among 632 numbers on 2026-09-22 — so a
+    # mistyped number is likelier to name a pull request than nothing. The
+    # url says which came back.
+
+    numbered_for_a_pull_request = Recorder({
+        "gh issue view": Completed(json.dumps({
+            "title": "Build the GHI write tool's edit verb",
+            "body": "",
+            "url": "https://github.com/nedschorus/nedschorus/pull/570"}))})
+    try:
+        tool.edit(source, REPO, scratch, numbered_for_a_pull_request, quiet)
+        check("a file named for a number a pull request has is refused",
+              False, "it proceeded")
+    except tool.Refused as refusal:
+        check("a file named for a number a pull request has is refused",
+              refusal.code == 64, f"code {refusal.code}")
+        check("and the refusal says which it was, and shows the url gh "
+              "answered with",
+              "pull request" in str(refusal)
+              and "/pull/570" in str(refusal), str(refusal)[:300])
+    check("and the url is asked for, or nothing could tell the two apart",
+          ran_with(numbered_for_a_pull_request, "gh issue view",
+                   "title,body,url"),
+          str(numbered_for_a_pull_request.calls))
+    check("and nothing is fetched, adjudicated, pushed or opened for it",
+          not numbered_for_a_pull_request.ran("git fetch")
+          and not numbered_for_a_pull_request.ran(ASK)
+          and not numbered_for_a_pull_request.ran("git worktree add")
+          and not numbered_for_a_pull_request.ran("gh pr create")
+          and not numbered_for_a_pull_request.ran("gh issue edit"),
+          str(numbered_for_a_pull_request.commands()))
 
     # --- Adjudication, in the shape the design gives for an edit ---------
 
