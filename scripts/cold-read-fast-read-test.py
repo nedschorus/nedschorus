@@ -69,6 +69,7 @@ launches and succeed after.
 Run: python3 scripts/cold-read-fast-read-test.py
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -82,6 +83,14 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
+
+# The scratch repository every cold-read suite builds, defined once.
+_scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+scratch_repository_fixture = importlib.util.module_from_spec(
+    _scratch_repository_fixture_spec)
+_scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 # Every read on the records route ships its record; here, to a scratch
 # log-store inside the scratch checkout through the shipper's destination
 # override, so no case reaches ned-box.
@@ -163,43 +172,20 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def git(repository, *arguments):
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
-        capture_output=True, text=True, check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"git {' '.join(arguments)}: {completed.stderr.strip()}")
-    return completed.stdout
-
-
 def build_scratch_repository(scratch):
+    """This suite's own seeding only; the scripts copy and the seed commit
+    are the fixture's."""
     repository = scratch / "scratch-checkout"
     if repository.exists():
         shutil.rmtree(repository)
-    # The whole scripts/ directory, __pycache__ aside, so a shared module
-    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
-    # md-skills-seat-open-decisions-2026-09-20 item 3).
-    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
-                    ignore=shutil.ignore_patterns("__pycache__"))
-    (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     walk_draft = repository / "docs" / "walk" / "a-walk-item-draft.md"
     walk_draft.parent.mkdir(parents=True)
     walk_draft.write_text("# A walk item\n\nOne committed line.\n", encoding="utf-8")
     other_document = repository / "docs" / "drafts" / "a-design.md"
     other_document.parent.mkdir(parents=True)
     other_document.write_text("# A design\n\nOne committed line.\n", encoding="utf-8")
-    git(repository, "init", "-b", "main")
-    # Auto maintenance off: with the whole scripts/ directory committed, git
-    # 2.55 repacks this repository in the background, and its temporary files
-    # race the deletion of these throwaway checkouts — measured 2026-09-20,
-    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
-    git(repository, "config", "maintenance.auto", "false")
-    git(repository, "config", "user.email", "test@test.invalid")
-    git(repository, "config", "user.name", "cold-read-fast-read test")
-    git(repository, "add", "-A")
-    git(repository, "commit", "-m", "seed")
-    return repository
+    return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
+        repository)
 
 
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
