@@ -1042,7 +1042,10 @@ requirement would later replace.
 
 ### Shape 2 — a reviewer attached to the gate, deferred
 
-Deferred, not rejected. Shape 2, as presented and not chosen: the gate
+Deferred, not rejected, and tracked as issue [Deferred: main-gatekeeper
+activation shape 2 — a reviewer attached to the gate and an approving identity
+of its own](https://github.com/nedschorus/nedschorus/issues/357), which cites
+this section as its deferral record. Shape 2, as presented and not chosen: the gate
 acquires its own reviewer and a second approving identity before activation,
 and the merge lane retires. What it would add to shape 1: a reviewer the gate
 invokes itself, so the verdict returns in the gate's reply rather than on the
