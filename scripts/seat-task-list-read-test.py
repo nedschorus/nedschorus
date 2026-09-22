@@ -816,6 +816,38 @@ with tempfile.TemporaryDirectory() as root:
           "readable archive" in garbage_out
           and garbage_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ,
           garbage_out)
+    check("and a machine whose archive could not be read is not listed as "
+          "read",
+          "Machines read: mac (this machine)." in garbage_out, garbage_out)
+
+# A stream ssh cut short, with ssh itself exiting 0: once inside a member,
+# where tarfile raises while the members are read, and once at a member
+# boundary, where tarfile raises nothing and simply returns fewer files. Both
+# are the machine not read, never a traceback and never a short list
+# (merge-lane-2's finding on pull request [Fold every seat, on both machines,
+# into the one task viewer](https://github.com/nedschorus/nedschorus/pull/646)).
+BOX_TAR_WITHOUT_END_MARKER = BOX_TAR.rstrip(b"\0")
+BOX_TAR_CUT_AT_A_MEMBER_BOUNDARY = BOX_TAR_WITHOUT_END_MARKER + bytes(
+    -len(BOX_TAR_WITHOUT_END_MARKER) % tarfile.BLOCKSIZE)
+BOX_TAR_CUT_INSIDE_A_MEMBER = BOX_TAR[:BOX_TAR.index(b'"Box task done"')]
+for cut_name, cut_archive in (
+        ("inside a member", BOX_TAR_CUT_INSIDE_A_MEMBER),
+        ("at a member boundary", BOX_TAR_CUT_AT_A_MEMBER_BOUNDARY)):
+    with tempfile.TemporaryDirectory() as root:
+        store = build_store(root, {
+            "nedschorus-merge-lane-tasks": [task(1, "Mac task")]})
+        with pretending_the_host_is("Edwards-MacBook-Air.local"):
+            cut_out, cut_message, cut_code = run_and_code(
+                ["--seats", "--store", str(store), "--machine", "both"],
+                runner=a_runner_returning(stdout=cut_archive))
+        check(f"an archive cut {cut_name} is a problem, not a traceback",
+              "readable archive" in cut_out and not cut_message
+              and cut_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ,
+              (cut_out, cut_message, cut_code))
+        check(f"and an archive cut {cut_name} does not list that machine as "
+              f"read, nor any of its seats",
+              "Machines read: mac (this machine)." in cut_out
+              and "merge-lane-2" not in cut_out, cut_out)
 
 # An unreadable task file on the other machine goes through the same notice
 # as one on this machine, because it is the same reader reading it.

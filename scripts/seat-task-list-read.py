@@ -113,6 +113,7 @@ SSH_TARGET_BY_MACHINE = {MACHINE_NAME_NED_BOX: "nedlern@ned-box"}
 
 SSH_ITSELF_FAILED_EXIT = 255
 TAR_WROTE_EVERYTHING_BUT_WARNED_EXIT = 1
+END_OF_TAR_ARCHIVE = bytes(2 * tarfile.BLOCKSIZE)
 
 EXIT_EVERYTHING_ASKED_FOR_WAS_READ = 0
 EXIT_SOMETHING_COULD_NOT_BE_READ = 1
@@ -243,42 +244,65 @@ def stays_inside(name):
 def unpack_task_store_archive(archive_bytes, into_directory, machine):
     """Write a fetched store's task files into a directory of our own.
 
-    Returns (store directory, problems). Unpacked rather than parsed in
-    place so that every task list, on either machine, is a directory the one
-    reader below reads. Directories are made even when they hold no task
-    file, so a seat whose list is empty is still shown as a seat. Every file
-    in a list's directory is written, .lock and .highwatermark included:
-    what counts as a task file is read_tasks's *.json glob and is decided
-    there alone, for both machines.
+    Returns (store directory, problems), or (None, problems) when the
+    archive could not be read whole: then the machine was not read, and its
+    caller must say so rather than list the part that arrived. Unpacked
+    rather than parsed in place so that every task list, on either machine,
+    is a directory the one reader below reads. Directories are made even
+    when they hold no task file, so a seat whose list is empty is still
+    shown as a seat. Every file in a list's directory is written, .lock and
+    .highwatermark included: what counts as a task file is read_tasks's
+    *.json glob and is decided there alone, for both machines.
+
+    A stream cut short, which ssh can deliver with exit 0 or 1, is caught
+    both ways it arrives. Cut inside a member, tarfile raises ReadError while
+    the members are read, not when the archive is opened, so the whole read
+    is inside the try (merge-lane-2's finding on pull request [Fold every
+    seat, on both machines, into the one task
+    viewer](https://github.com/nedschorus/nedschorus/pull/646)). Cut at a
+    member boundary, tarfile raises nothing and returns fewer files, so the
+    stream must also end in tar's end-of-archive marker, two zero blocks,
+    which `tar -cf -` always writes. Measured 2026-09-22 on a three-file
+    archive cut every 97 bytes: 93 cuts raised and 113 returned clean with
+    files missing.
     """
     store = into_directory / machine
     store.mkdir(parents=True, exist_ok=True)
-    problems = []
+    if not archive_bytes.endswith(END_OF_TAR_ARCHIVE):
+        return None, [archive_unreadable_notice(
+            machine, "it ended before tar's end-of-archive marker")]
     try:
-        archive = tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:")
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes),
+                          mode="r:") as archive:
+            problems = unpack_task_store_members(archive, store, machine)
     except tarfile.TarError as tar_failure:
-        return store, [archive_unreadable_notice(machine, tar_failure)]
-    with archive:
-        for member in archive.getmembers():
-            parts = Path(member.name).parts
-            if not all(stays_inside(part) for part in parts):
-                continue
-            if member.isdir() and len(parts) == 1:
-                (store / parts[0]).mkdir(exist_ok=True)
-                continue
-            if not member.isfile() or len(parts) != 2:
-                continue
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                problems.append(
-                    f"{member.name} on {machine} could not be read out of "
-                    f"the archive.\n"
-                    f"Read that file on {machine} itself if the task you "
-                    f"want is in it.")
-                continue
-            (store / parts[0]).mkdir(exist_ok=True)
-            (store / parts[0] / parts[1]).write_bytes(extracted.read())
+        return None, [archive_unreadable_notice(machine, tar_failure)]
     return store, problems
+
+
+def unpack_task_store_members(archive, store, machine):
+    """Write an opened archive's task files under store; the problems met."""
+    problems = []
+    for member in archive.getmembers():
+        parts = Path(member.name).parts
+        if not all(stays_inside(part) for part in parts):
+            continue
+        if member.isdir() and len(parts) == 1:
+            (store / parts[0]).mkdir(exist_ok=True)
+            continue
+        if not member.isfile() or len(parts) != 2:
+            continue
+        extracted = archive.extractfile(member)
+        if extracted is None:
+            problems.append(
+                f"{member.name} on {machine} could not be read out of "
+                f"the archive.\n"
+                f"Read that file on {machine} itself if the task you "
+                f"want is in it.")
+            continue
+        (store / parts[0]).mkdir(exist_ok=True)
+        (store / parts[0] / parts[1]).write_bytes(extracted.read())
+    return problems
 
 
 def read_task_lists(machines, store, scratch, runner):
@@ -309,6 +333,8 @@ def read_task_lists(machines, store, scratch, runner):
         unpacked, unpack_problems = unpack_task_store_archive(
             archive_bytes, scratch, machine)
         problems.extend(unpack_problems)
+        if unpacked is None:
+            continue
         machines_read.append(machine)
         locations.extend(task_lists_in_store(unpacked, machine))
     return sorted(locations), problems, machines_read
