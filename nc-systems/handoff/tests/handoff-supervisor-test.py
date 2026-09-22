@@ -1829,7 +1829,9 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     first_prompt = "You are the seat. Do the work."
 
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
-                                            adopted_session=None):
+                                            adopted_session=None, handoffs_after_launches=(),
+                                            resume_session_id="", seat_first_prompt=None,
+                                            transcripts_before_the_supervisor=None):
         """Supervise a seat whose every session ends without a handoff.
 
         `deaths` is one (exit_code, substantive_turns_written) per launch, in
@@ -1841,6 +1843,13 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
 
         A launch past the end of the script raises: that is the runaway the
         budget exists to stop, and it must fail a case rather than spin.
+
+        `handoffs_after_launches` names launches, counted from 1, whose session
+        writes a handoff after its work instead of dying, so a case can put a
+        reincarnation between two deaths; the successor gets the id
+        `successor-<generation>`. `transcripts_before_the_supervisor` maps a
+        session id to the substantive turns its transcript already holds when
+        the supervisor starts, which is what a startup resume resumes.
         """
         case_projects = workspace / f"death-resume-projects-{case}"
         case_projects.mkdir(parents=True, exist_ok=True)
@@ -1849,8 +1858,23 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         settings = supervisor.SupervisorSettings(
             agent=f"death{case}", working_directory=workspace,
             handoff_directory=case_directory, agent_command="unused-stub-agent",
-            first_prompt=first_prompt, adopted_session=adopted_session)
+            first_prompt=first_prompt if seat_first_prompt is None else seat_first_prompt,
+            adopted_session=adopted_session, resume_session_id=resume_session_id)
         launches, state_at_each_launch = [], []
+        for earlier_session_id, earlier_turns in (transcripts_before_the_supervisor or {}).items():
+            with (case_projects / f"{earlier_session_id}.jsonl").open("w", encoding="utf-8") as stream:
+                stream.write(json.dumps(
+                    {"type": "user", "message": {"content": "do the thing"}}) + "\n")
+                for _ in range(earlier_turns):
+                    stream.write(json.dumps(
+                        {"type": "assistant",
+                         "message": {"model": "claude", "content": "work"}}) + "\n")
+        real_wait_for_handoff = supervisor.wait_for_handoff
+
+        def wait_for_handoff(process, *arguments):
+            if len(launches) in handoffs_after_launches:
+                return {"restart-counter": str(len(launches))}
+            return real_wait_for_handoff(process, *arguments)
 
         def launch(agent_command, session_id, working_directory, prompt, **kwargs):
             if len(launches) >= len(deaths):
@@ -1874,6 +1898,10 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: case_projects,
                 sync_working_branch_with_main=no_branch_sync,
+                wait_for_handoff=wait_for_handoff,
+                stop_session=lambda process: None,
+                carry_over_to_successor=lambda settings, retiring, fields, generation: (
+                    f"successor-{generation}", None),
                 stdin_isatty=stdin_isatty), \
                 contextlib.redirect_stdout(console):
             try:
@@ -1977,6 +2005,90 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           "added nothing to this session's transcript" in recovered.printed
           and recovered.record is not None and recovered.record[0] == -15,
           f"{recovered.state} {recovered.printed[-400:]}")
+
+    # 5a. A SUCCESSOR STARTS WITH THE BUDGET WHOLE. The predecessor spends its
+    # one resume, works, and writes a handoff; the successor works and dies.
+    # Found at c7419d4 by merge-lane-2's review of PR [The handoff-supervisor
+    # resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651):
+    # the successor was measured against its predecessor's turn count and
+    # spent budget, refused, and the seat went dark.
+    reincarnated = supervise_a_seat_whose_sessions_die(
+        "budgetacrosshandoff", [(-15, 5), (0, 3), (-15, 2), (-15, 0), (-15, 0)],
+        handoffs_after_launches=(2,))
+    check("BUDGET ACROSS A HANDOFF: a successor that worked and died is resumed",
+          [(launched[0], launched[2]) for launched in reincarnated.launches][:4]
+          == [(reincarnated.launches[0][0], False), (reincarnated.launches[0][0], True),
+              ("successor-1", False), ("successor-1", True)]
+          and not reincarnated.overran,
+          f"{reincarnated.launches} {reincarnated.overran} {reincarnated.printed[-400:]}")
+    check("BUDGET ACROSS A HANDOFF: and the successor's own workless resume still ends the run",
+          len(reincarnated.launches) == 4
+          and "added nothing to this session's transcript" in reincarnated.printed,
+          f"{reincarnated.launches} {reincarnated.printed[-400:]}")
+
+    # 5b. A STARTUP RESUME IS CHARGED. --resume-session-id (which
+    # recover-crashed-seats.py and the login-time restart pass) makes the first
+    # launch a resume, and that launch is the one resume the budget allows.
+    # Found at c7419d4 by mac-claude's and merge-lane-2's reviews: a startup
+    # resume that did nothing was resumed a second time.
+    startup_workless = supervise_a_seat_whose_sessions_die(
+        "startupresumeworkless", [(-15, 0), (-15, 0)],
+        resume_session_id="crashed-session",
+        transcripts_before_the_supervisor={"crashed-session": 7})
+    check("STARTUP RESUME: a --resume-session-id launch that does nothing is not resumed again",
+          [(launched[0], launched[2]) for launched in startup_workless.launches]
+          == [("crashed-session", True)] and not startup_workless.overran
+          and "added nothing to this session's transcript" in startup_workless.printed,
+          f"{startup_workless.launches} {startup_workless.overran} "
+          f"{startup_workless.printed[-400:]}")
+    startup_working = supervise_a_seat_whose_sessions_die(
+        "startupresumeworking", [(-15, 2), (-15, 0)],
+        resume_session_id="crashed-session",
+        transcripts_before_the_supervisor={"crashed-session": 7})
+    check("STARTUP RESUME: a --resume-session-id launch that works before dying is resumed",
+          [(launched[0], launched[2]) for launched in startup_working.launches]
+          == [("crashed-session", True), ("crashed-session", True)]
+          and not startup_working.overran,
+          f"{startup_working.launches} {startup_working.overran} "
+          f"{startup_working.printed[-400:]}")
+    # The by-hand resume: no first prompt, no handoff, no recorded exit, and a
+    # real transcript on disk, so the first launch resumes it.
+    by_hand_workless = supervise_a_seat_whose_sessions_die(
+        "byhandresumeworkless", [(-15, 0), (-15, 0)], seat_first_prompt="",
+        transcripts_before_the_supervisor={"last-real-session": 7})
+    check("STARTUP RESUME: a by-hand resume that does nothing is not resumed again",
+          [(launched[0], launched[2]) for launched in by_hand_workless.launches]
+          == [("last-real-session", True)] and not by_hand_workless.overran,
+          f"{by_hand_workless.launches} {by_hand_workless.overran} "
+          f"{by_hand_workless.printed[-400:]}")
+    by_hand_working = supervise_a_seat_whose_sessions_die(
+        "byhandresumeworking", [(-15, 2), (-15, 0)], seat_first_prompt="",
+        transcripts_before_the_supervisor={"last-real-session": 7})
+    check("STARTUP RESUME: a by-hand resume that works before dying is resumed",
+          [(launched[0], launched[2]) for launched in by_hand_working.launches]
+          == [("last-real-session", True), ("last-real-session", True)]
+          and not by_hand_working.overran,
+          f"{by_hand_working.launches} {by_hand_working.overran} "
+          f"{by_hand_working.printed[-400:]}")
+
+    # 5c. A transcript cut off inside a multibyte character still counts. The
+    # death path reads it before the exit record is written, so a decode error
+    # there would crash the supervisor with the seat unrecorded. Raised as a
+    # question by merge-lane-2's review and the Codex cell; nobody has seen
+    # Claude Code write such a file, and tolerating it costs one argument.
+    cut_directory = workspace / "cut-mid-character"
+    cut_directory.mkdir(parents=True, exist_ok=True)
+    cut_transcript = cut_directory / "cut-session.jsonl"
+    cut_transcript.write_bytes(
+        (json.dumps({"type": "assistant", "message": {"model": "claude", "content": "work"}})
+         + "\n").encode("utf-8")
+        + '{"type": "assistant", "message": {"content": "café'.encode("utf-8")[:-1])
+    try:
+        cut_count = supervisor.worth_resuming.substantive_turn_count(cut_transcript)
+    except UnicodeDecodeError as decode_error:
+        cut_count = decode_error
+    check("CUT TRANSCRIPT: a transcript cut mid-character counts its whole turns, not a crash",
+          cut_count == 1, repr(cut_count))
 
     # 6. The no-terminal refusal holds for a resume exactly as for a successor:
     # a resumed session inherits this supervisor's stdio, and without a

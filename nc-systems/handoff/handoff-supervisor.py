@@ -1726,10 +1726,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     # was watching (the 2026-09-21 ruling). It was called resume_first_launch
     # while only the first launch could be a resume.
     next_launch_resumes_the_session = bool(settings.resume_session_id) and adopted is None
-    # The resume budget, consecutive across the whole loop, so it survives every
-    # launch this call makes. The turn count is the one taken at the last
-    # resume; the next death compares against it to see whether that resume
-    # produced anything (CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET).
+    # The resume budget (CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET), charged at
+    # the launch site: every resume launch spends one and takes the session's
+    # turn count as its baseline, and every fresh session id starts the budget
+    # over. The next death compares against that baseline to see whether the
+    # resume produced anything. Charging at the launch rather than at the death
+    # is what counts a startup resume (--resume-session-id, or the by-hand
+    # resume below) against the budget, and what keeps a successor from
+    # inheriting its predecessor's spent budget and turn count.
     consecutive_resumes_without_new_work = 0
     substantive_turns_at_the_last_resume = None
     if adopted:
@@ -1869,6 +1873,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 settings.appended_system_prompt_file,
                 settings.appended_system_prompt_agent_part_path,
             )
+            if next_launch_resumes_the_session:
+                consecutive_resumes_without_new_work += 1
+                substantive_turns_at_the_last_resume = (
+                    substantive_turn_count_of_session_transcript(
+                        session_id, settings.working_directory))
+            else:
+                consecutive_resumes_without_new_work = 0
+                substantive_turns_at_the_last_resume = None
             verb = "resuming" if next_launch_resumes_the_session else "launching"
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
             process = launch_agent_session(
@@ -1890,11 +1902,11 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             death = resume_or_stop_after_a_death_without_a_handoff(process.returncode)
             print(f"handoff-supervisor: {death.reason}")
             if death.resume:
-                # Gate 1, the budget. Measured before the resume, against the
-                # count taken at the previous one: growth means that resume
-                # produced work, and the budget is handed back whole. The first
-                # death of a run has no previous resume to compare against, so
-                # it starts with the budget in hand.
+                # Gate 1, the budget. Measured against the count taken when
+                # the last resume launched: growth means that resume produced
+                # work, and the budget is handed back whole. A session launched
+                # fresh has no resume to compare against, so its first death
+                # finds the budget in hand.
                 substantive_turns = substantive_turn_count_of_session_transcript(
                     session_id, settings.working_directory)
                 if (substantive_turns_at_the_last_resume is None
@@ -1914,10 +1926,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                           "(launch-claude-ubuntu / launch-claude-mac) or "
                           "scripts/recover-crashed-seats.py picks this seat up.")
                 else:
-                    consecutive_resumes_without_new_work += 1
-                    substantive_turns_at_the_last_resume = substantive_turns
                     print("handoff-supervisor: resuming it where it died "
-                          f"(resume {consecutive_resumes_without_new_work} of "
+                          f"(resume {consecutive_resumes_without_new_work + 1} of "
                           f"{CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET} before the transcript "
                           "has to grow again)")
                     # The same session id and the same generation: a resume
