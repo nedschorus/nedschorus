@@ -129,6 +129,51 @@ case "$AGENT_NAME" in
     (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
+# Which GitHub account this seat acts as. The default is the HOST's account,
+# which is the shape credential ruling C4 states — "each agent host holds a
+# fine-grained token for this repository only ... never a classic
+# all-repository token, and never the `workflow` scope"
+# (nc-systems/main-gatekeeper/main-gatekeeper-design.md). The override exists
+# for the seat whose job needs a different identity: the merge-lane seat must
+# be `ned-review-merge`, which is one of the two accounts main's protection
+# lets push (the other is the user's own), and which exists as a separate
+# identity at all because GitHub refuses an approving review from a pull
+# request's author — so the account that approves cannot be the one that
+# opened it
+# (docs/nedschorus-wiki/queue/github-identities-credentials-and-token-policy.md).
+#
+# Measured on this Mac 2026-09-22, and the defect this exists to close: `gh
+# auth status` reports the login as `nedlern` — the USER — holding a CLASSIC
+# token whose scopes include admin:enterprise, admin:org, admin:org_hook,
+# repo, workflow and user. Every Mac seat therefore runs today with the
+# owner's organization-admin credential, and every server-side record of a
+# seat's writes names the user rather than the seat.
+#
+# The charset check is the AGENT_NAME rule above applied to the same kind of
+# value for the same two reasons: the account name is spliced into the
+# composed pane command, and a value validated to letters, digits, - and _
+# needs no escaping at any parse it crosses; and an override either works or
+# is blocked, never a third state (user-ruled 2026-08-22, the ruling this
+# script already cites for NEDSCHORUS_AGENTS_ROOT). Refused here, before
+# `claude update`, before any mkdir. The :- form rather than -, so an
+# exported-but-empty override is the default rather than a refusal.
+SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-mac-claude}"
+case "$SEAT_GITHUB_ACCOUNT" in
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
+esac
+
+# The override is CONSUMED here and unset before the tmux server starts, so
+# the seat's process tree never inherits it — the same rule, for the same
+# measured reason, as LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS below. That
+# variable leaked on 2026-09-03: a recovered seat ran `launch-claude-mac
+# <other-seat>` from its Bash tool, the launcher found the inherited value,
+# and the other seat came up wrong. This one leaks worse. The merge-lane
+# seat is launched with the override set to `ned-review-merge`, an account
+# on main's push allow-list; without this unset, any seat merge-lane
+# launched from its own Bash tool would come up on that account too — a
+# second merge lane, which is the one thing a seat may not be.
+unset NEDSCHORUS_SEAT_GITHUB_ACCOUNT
+
 # Resolve Claude Code the way the SEAT will resolve it, and do it before
 # anything checks for it or updates it. The supervisor command further down
 # exports this same directory, so without it here the launcher can check and
@@ -380,7 +425,70 @@ if [ -d "$UNPREFIXED_TASK_STORE" ] && [ ! -e "$PREFIXED_TASK_STORE" ]; then
     mv "$UNPREFIXED_TASK_STORE" "$PREFIXED_TASK_STORE"
 fi
 
+# The seat's own GitHub credential. The token is never read HERE and never
+# put in the composed string: the string is handed to tmux, so a token
+# spliced into it would stand in every `ps` listing on the machine for as
+# long as the seat lives. What is composed is the READ — `IFS= read -r`
+# against the file — which the seat's own pane shell performs, so the value
+# exists only inside that process tree. `$(cat ...)` would do the same job
+# on this Mac, where the pane command is parsed once; it is not used,
+# because the box twin's pane command crosses a second parse where the box's
+# login shell would run the substitution and splice the token into the
+# string tmux receives (measured 2026-09-22 against
+# scripts/launch-claude-ubuntu-test.py's tmux-argv capture). The two twins
+# carry the same shape so neither drifts into that.
+#
+# `IFS= read -r` rather than a bare `read`: IFS= keeps a leading or trailing
+# space in the file out of the split, and -r keeps a backslash literal. It
+# stops at the first newline, which is what strips the trailing one a text
+# editor adds. Its status is discarded — a file with no trailing newline
+# makes `read` return non-zero AFTER setting the variable — because `export`
+# follows it inside the same `if`.
+#
+# The leading `unset GH_TOKEN` is what makes the warning below true rather
+# than nearly true: without it, a seat launched from a shell that already
+# carried a GH_TOKEN — the merge-lane seat exports one by hand today —
+# would silently keep that credential when its own token file is missing,
+# and the launcher would be announcing a fallback to the keyring that did
+# not happen. The seat's account is decided here, never inherited.
+#
+# The `if` is what keeps GH_TOKEN UNSET rather than empty when the file is
+# missing: `gh` falls back to its keyring login on an unset variable and
+# fails outright on an empty one, so the two are not interchangeable. It
+# re-checks what the warning below already checked, a few milliseconds
+# apart on the same filesystem; the check that decides is this one, in the
+# seat's own shell at the moment the seat starts.
+#
+# The after-exit shell inherits this export, as it inherits the task-list
+# pin below and for the same reason: the `claude --continue` that shell
+# offers is the same seat, and a `gh` typed there is the seat acting, not
+# the user. Nothing is re-exported for it — it is the same pane shell.
+#
+# SEAT_GITHUB_ACCOUNT needs no escaping — validated above to letters,
+# digits, - and _ — so the composed path is always a plain file name.
+SEAT_GITHUB_TOKEN_FILE_UNDER_HOME=".config/nedschorus/$SEAT_GITHUB_ACCOUNT.token"
+SEAT_GITHUB_TOKEN_FILE="$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME"
+
+# A missing token file WARNS and launches anyway, rather than refusing
+# (user-ruled 2026-09-22): the box holds no `ubuntu-claude.token` today, and
+# a launcher that refused would take every seat on both machines down at
+# once over a credential that is an improvement, not a prerequisite. The
+# warning is loud because the fallback is the defect this change exists to
+# close — the seat runs as whatever `gh`'s keyring holds, which on this Mac
+# is the user's own organization-admin credential.
+if [ ! -s "$SEAT_GITHUB_TOKEN_FILE" ]; then
+    echo "launch-claude-mac: ============================================================" >&2
+    echo "launch-claude-mac: NO SEAT TOKEN — $AGENT_NAME will NOT act as $SEAT_GITHUB_ACCOUNT" >&2
+    echo "launch-claude-mac:   account wanted: $SEAT_GITHUB_ACCOUNT" >&2
+    echo "launch-claude-mac:   file looked in: $SEAT_GITHUB_TOKEN_FILE" >&2
+    echo "launch-claude-mac:   GH_TOKEN stays unset, so gh and git act as gh's keyring login on this Mac, the user's own account" >&2
+    echo "launch-claude-mac:   write that account's fine-grained token to that file, mode 600, then relaunch this seat" >&2
+    echo "launch-claude-mac:   or export NEDSCHORUS_SEAT_GITHUB_ACCOUNT naming an account whose token file is there" >&2
+    echo "launch-claude-mac: ============================================================" >&2
+fi
+
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+unset GH_TOKEN; if [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ]; then IFS= read -r GH_TOKEN < \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\"; export GH_TOKEN; fi; \
 export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
