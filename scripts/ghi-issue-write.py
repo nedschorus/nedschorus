@@ -236,7 +236,7 @@ ISSUE_FRONTMATTER_KEY = "issue"
 
 def issue_frontmatter_line(repo: str, number: int, title: str) -> str:
     """The issue this file is paired with, written the way CLAUDE.md says to
-    cite one: its link-type — the key — then its title, as a link. Never a
+    cite one: its ID-type — the key — then its name, as a link. Never a
     bare number.
 
     The value is emitted as a JSON string, which is also a valid
@@ -386,19 +386,31 @@ def refuse_if_filing_is_in_flight(repo: str, issues, title: str, runner):
     Reads the list the resume scan already fetched, so the check costs no
     API call. The refusal costs one: the pull request its file is on, asked
     of GitHub by the branch step 4 pushes, so the author is told what to
-    wait for rather than left to find it."""
+    wait for rather than left to find it.
+
+    That lookup has three answers, not two. `gh pr list` exits non-zero on
+    an expired token, a rate limit or an unreachable network, and the line
+    beneath the refusal used to say "No pull request carrying its file is
+    open yet" on all three — sending the author to wait for a pull request
+    nobody looked up. The refusal fires either way; only its second line
+    changes."""
     for issue in issues:
         if PAIRING_KEY_PREFIX not in (issue.get("body") or ""):
             continue
         if (issue.get("title") or "") != title:
             continue
         number = issue.get("number")
-        waiting = existing_pull_request_for_branch(
+        open_pull_requests = open_pull_requests_for_branch(
             repo, f"ghi-{number}-{slug(title)}", runner)
-        where = (f"Its file is on pull request [{waiting.get('title')}]"
-                 f"({waiting.get('url')})."
-                 if waiting else
-                 "No pull request carrying its file is open yet.")
+        if open_pull_requests is None:
+            where = ("Looking up the pull request carrying its file failed, "
+                     "so this run cannot name it.")
+        elif open_pull_requests:
+            waiting = open_pull_requests[0]
+            where = (f"Its file is on pull request [{waiting.get('title')}]"
+                     f"({waiting.get('url')}).")
+        else:
+            where = "No pull request carrying its file is open yet."
         raise Refused(
             f"This file's heading is already being filed as issue [{title}]"
             f"(https://github.com/{repo}/issues/{number}), whose body is "
@@ -478,18 +490,46 @@ def blob_at(revision: str, relative: str, repository_root: Path, runner):
     return completed.stdout if completed.returncode == 0 else None
 
 
-def ghi_md_paths_on_main(repository_root: Path, runner):
-    """Every paired GHI-MD on main — the files that carry an issue number in
-    their name. `docs/issues/` also holds the queue, whose files belong to no
-    issue and carry no number, so the number is what selects.
+def origin_main_commit_hash(repository_root: Path, runner) -> str:
+    """The one commit `origin/main` names at this moment.
+
+    Every read of main in the check below is made at this hash rather than
+    at the ref. The ref moves: this clone's worktrees share one object store
+    and one set of remote-tracking refs, so another seat's fetch can move
+    origin/main between a listing and the reads that follow it, and a path
+    listed from one commit is then read from another. Resolved once, the
+    listing and its reads are of the same tree.
+
+    --verify, so the answer is one hash or a failure. Through the shared
+    `run` with check on, so a failure to resolve is a refusal rather than an
+    empty string spliced into the revisions below."""
+    resolved = runner(["git", "rev-parse", "--verify", "origin/main"],
+                      cwd=str(repository_root))
+    return (resolved.stdout or "").strip()
+
+
+def ghi_md_paths_on_main(revision: str, repository_root: Path, runner):
+    """Every paired GHI-MD at this revision — the files that carry an issue
+    number in their name and sit directly under `docs/issues/`.
+
+    Two things in that directory are not paired files. The queue's files
+    belong to no issue and carry no number, so the number is one thing that
+    selects. And `-r` descends, so a numbered file in a subdirectory is
+    listed too — docs/issues/queue/18-… and docs/issues/archived/43-… are
+    both on main — and those are named for their issue without being paired
+    with it: step 4 lands every file it files as a direct child of
+    `docs/issues/`, which is the only place a paired file is. The parent is
+    what selects those out, and the cost of not selecting them was one
+    `git show` each, every create.
 
     Raises on a failed list for the reason paired_paths does, which is where
     that reasoning and the real-repository measurement behind it are
     written."""
-    listed = runner(["git", "ls-tree", "-r", "--name-only", "origin/main",
+    listed = runner(["git", "ls-tree", "-r", "--name-only", revision,
                      f"{PAIRED_DIRECTORY}/"], cwd=str(repository_root))
     return [line for line in (listed.stdout or "").splitlines()
-            if paired_issue_number(Path(line)) is not None]
+            if str(Path(line).parent) == PAIRED_DIRECTORY
+            and paired_issue_number(Path(line)) is not None]
 
 
 def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
@@ -512,12 +552,22 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     The fetch is this check's own. land_file fetches again later because
     adjudication runs between the two and can take minutes, and the
     docstring's promise is that the worktree is cut from a just-fetched
-    main."""
+    main.
+
+    A read that fails raises rather than going through blob_at, whose None
+    means "not there". Here it cannot mean that: the path came from a
+    successful listing of this same commit, so a `git show` that exits
+    non-zero at it is a git failure. Read as an absence, None differs from
+    what this source would become, the loop moves on, and the run files the
+    second issue this check exists to prevent."""
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    for landed in ghi_md_paths_on_main(repository_root, runner):
+    revision = origin_main_commit_hash(repository_root, runner)
+    for landed in ghi_md_paths_on_main(revision, repository_root, runner):
         number = paired_issue_number(Path(landed))
         staged = with_issue_frontmatter(text, repo, number, title)
-        if blob_at("origin/main", landed, repository_root, runner) == staged:
+        read = runner(["git", "show", f"{revision}:{landed}"],
+                      cwd=str(repository_root))
+        if read.stdout == staged:
             raise Refused(
                 f"This file is already on main as {landed}, filed as issue "
                 f"[{title}](https://github.com/{repo}/issues/{number}).\n"
@@ -525,16 +575,29 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
                 "create on this file.", 64)
 
 
-def existing_pull_request_for_branch(repo: str, branch: str, runner):
-    """The open pull request whose head is this branch, or None. Asked of
-    GitHub rather than inferred from the branch being on the remote, which
-    is true of a push whose `gh pr create` then failed."""
+def open_pull_requests_for_branch(repo: str, branch: str, runner):
+    """The open pull requests whose head is this branch, or None where the
+    lookup itself did not happen.
+
+    None and the empty list are two different answers and a caller that
+    needs to say which has to have both. An expired token, a rate limit and
+    an unreachable network all exit non-zero, and read as "none open" they
+    make a run state, as a fact, something nobody looked up."""
     listed = runner(["gh", "pr", "list", "--repo", repo, "--head", branch,
                      "--state", "open", "--json", "number,title,url"],
                     check=False)
     if listed.returncode != 0:
         return None
-    entries = json.loads(listed.stdout or "[]") or []
+    return json.loads(listed.stdout or "[]") or []
+
+
+def existing_pull_request_for_branch(repo: str, branch: str, runner):
+    """The open pull request whose head is this branch, or None. Asked of
+    GitHub rather than inferred from the branch being on the remote, which
+    is true of a push whose `gh pr create` then failed. A caller that must
+    tell a failed lookup from none open asks open_pull_requests_for_branch
+    instead."""
+    entries = open_pull_requests_for_branch(repo, branch, runner)
     return entries[0] if entries else None
 
 
