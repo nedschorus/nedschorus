@@ -48,8 +48,11 @@ from pathlib import Path
 DEFAULT_LABEL = "com.nedschorus.restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
 LAUNCHD_OUTPUT_FILE_NAME = "restart-live-seats-at-login-launchd-output.txt"
-# The interpreter launchd runs: the system one, present without Homebrew.
-PYTHON_PATH = "/usr/bin/python3"
+# The interpreter launchd runs: Homebrew's python3 link, not a numbered version,
+# so the login restart follows whatever interpreter this Mac is standardized on.
+# Apple's /usr/bin/python3 is not needed: without Homebrew the restart cannot
+# launch a seat anyway, since tmux, gh and git all come from it (user-ruled 2026-09-22).
+PYTHON_PATH = "/opt/homebrew/bin/python3"
 # Where the fleet's binaries live on this Mac, measured 2026-09-14: claude in
 # ~/.local/bin, tmux and gh in /opt/homebrew/bin; the rest is launchd's own.
 LAUNCHD_PATH = "{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
