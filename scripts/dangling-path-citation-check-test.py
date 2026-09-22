@@ -403,6 +403,21 @@ echo hello
           code == 1 and "scripts/carries-the-same-line.py:1:" in out
           and "dangling-path-citation-check-test.py:" not in out, f"{code} {out!r} {err!r}")
 
+    # The Test row's rule is the stem plus "-test" before the extension, and
+    # the constant read "-test.py" until 2026-09-21. scripts/launch-claude-
+    # update-step-test.sh is the real file that made the difference reachable.
+    commit_change(root, "scripts/launch-step-test.sh",
+                  '# FIXTURE="scripts/absent-under-a-shell-test-name.py"\n')
+    code, out, err = run_check(root, base)
+    check("a shell test file, whose stem ends -test, is exempt forward",
+          "absent-under-a-shell-test-name" not in out, f"{code} {out!r} {err!r}")
+    commit_change(root, "scripts/launch-step-tested.sh",
+                  '# FIXTURE="scripts/absent-under-a-name-ending-tested.py"\n')
+    code, out, err = run_check(root, base)
+    check("a stem ending -tested, not -test, is still reported",
+          code == 1 and "absent-under-a-name-ending-tested" in out,
+          f"{code} {out!r} {err!r}")
+
     # --- BACKWARD: a citation carrying a leading or dotted slash --------
     # The six hook commands in .claude/settings.json are written
     # `"$CLAUDE_PROJECT_DIR"/scripts/<name>.py`, and a launcher runs a

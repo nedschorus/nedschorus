@@ -191,7 +191,7 @@ a test -- the stem plus "-test" before the extension, or any file in the
 Both halves earn their place. Measured with this program's own
 plain_path_citations over origin/main on 2026-09-21: 162 absent-path tokens
 in 23 non-Markdown files with no exemption at all, 15 in 9 files once
-"-test.py" is exempt, and 14 in 8 once the "tests" directory is too. The one
+the "-test" stem is exempt, and 14 in 8 once the "tests" directory is too. The one
 file the second half adds is design-to-main's own test fixture, whose name
 ends in neither "-test.py" nor anything else the first half reads. (The
 reviewing seat measured the same three rows as 172/27, 18/13 and 17/12; the
@@ -280,11 +280,21 @@ PLAIN_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]]+")
 
 # What the project calls a test, from the Test row of
 # docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md: the
-# stem plus "-test" before the extension, and a subsystem with its own
+# stem plus "-test" before the extension, whatever that extension is, and a
+# subsystem with its own
 # directory puts its tests in a "tests" subdirectory of it. See "THE
 # FIXTURE-CARRYING FILES" above for why the FORWARD direction skips them and
 # what that costs.
-PROJECT_TEST_FILE_NAME_ENDING = "-test.py"
+# Ruled CODE on 2026-09-21, finding 2 of GHI "dangling-path-citation-check:
+# three measured blind spots". The constant read "-test.py" while the Test
+# row and this file's own docstring both state the rule as the stem plus
+# "-test" before the extension, and the difference was reachable: a shell
+# test file was not a test under the constant and was under the rule.
+# Measured on main the day it was widened: it moves exactly one tracked
+# file, scripts/launch-claude-update-step-test.sh, into the exempt set, and
+# that file names no repository path at all, so the three rows measured
+# above are unchanged by the widening.
+PROJECT_TEST_FILE_STEM_ENDING = "-test"
 PROJECT_TEST_DIRECTORY_NAME = "tests"
 
 
@@ -596,8 +606,8 @@ def base_already_cites(cited: str, base_cited_paths: set, citing_path: pathlib.P
 
 
 def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> bool:
-    """True for a file the project's own Test row calls a test: a name ending
-    in "-test.py", or any file in a "tests" directory.
+    """True for a file the project's own Test row calls a test: a stem ending
+    in "-test" whatever the extension, or any file in a "tests" directory.
 
     FORWARD only: the one caller is findings_for_file. Adding it to
     citations_of_removed_paths would hide a test's stale citation of a path
@@ -606,7 +616,7 @@ def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> b
         relative = path.resolve().relative_to(repository_root.resolve())
     except ValueError:  # a file outside the repository is not one of these
         return False
-    return (relative.name.endswith(PROJECT_TEST_FILE_NAME_ENDING)
+    return (relative.stem.endswith(PROJECT_TEST_FILE_STEM_ENDING)
             or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
