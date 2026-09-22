@@ -945,7 +945,7 @@ check("the section's heading names issues, pull requests and tasks",
       bare_module.BARE_REFERENCES_HEADING)
 check("the section gives one instruction and a line per number",
       bare_module.BARE_REFERENCES_HEADING in listed
-      and "Replace each with its link-type and its title, as a link when it can "
+      and "Replace each with its ID-type and its name, as a link when it can "
           "be opened: write PR [its title](its URL), not PR #426." in listed
       and "- Line 2: #466" in listed and "- Line 5: nedschorus#418" in listed,
       listed)
