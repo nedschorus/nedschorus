@@ -746,6 +746,107 @@ echo hello
     check("a real dangling citation on the same file is still reported forward",
           code == 1 and "absent-for-real" in out, f"{code} {out!r} {err!r}")
 
+    # --- BACKWARD: a directory every file moved out of -------------------
+    # Git emits --name-status rows for files and never for directories, so a
+    # directory a change EMPTIES appeared in no row, and a document citing
+    # ONLY that directory -- naming no file inside it -- was reported not at
+    # all while the moved files' own citations were. Measured 2026-09-21 on a
+    # probe that moved two files out of one directory: two file findings, and
+    # silence about "All the gate code lives under `scripts/gate/`". The
+    # directory is derivable from the rows the program already holds, which
+    # is what made this code rather than disclosure.
+    #
+    # Three documents and one move, because the three questions share it: the
+    # directory-only citation that must be reported, an ancestor that
+    # SURVIVES the move and must not be, and one line naming both the
+    # directory and a file inside it, which is one stale sentence and must
+    # not be two findings. The last is the shape the double-report actually
+    # takes here: comparison is by resolved path, so a line naming only the
+    # file never resolves to the directory at all.
+    git(root, "checkout", "-q", "-b", "empties-a-whole-directory", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "scripts" / "gate-that-moves-whole").mkdir(exist_ok=True)
+    (root / "scripts" / "gate-that-moves-whole" / "entry.py").write_text(
+        "# the entry point\n", encoding="utf-8")
+    (root / "scripts" / "gate-that-moves-whole" / "helper.py").write_text(
+        "# the helper\n", encoding="utf-8")
+    (root / "docs" / "cites-the-emptied-directory-only.md").write_text(
+        "All the gate code lives under `scripts/gate-that-moves-whole/`.\n", encoding="utf-8")
+    (root / "docs" / "cites-a-surviving-ancestor.md").write_text(
+        "Every program of this project lives under `scripts/`.\n", encoding="utf-8")
+    (root / "docs" / "cites-the-directory-and-a-file-on-one-line.md").write_text(
+        "The gate is `scripts/gate-that-moves-whole/` and its entry is "
+        "`scripts/gate-that-moves-whole/entry.py`.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a gate directory and three documents citing it")
+    emptied_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems" / "gate-that-moves-whole").mkdir(parents=True, exist_ok=True)
+    git(root, "mv", "scripts/gate-that-moves-whole/entry.py",
+        "nc-systems/gate-that-moves-whole/entry.py")
+    git(root, "mv", "scripts/gate-that-moves-whole/helper.py",
+        "nc-systems/gate-that-moves-whole/helper.py")
+    git(root, "commit", "-qm", "move the gate whole, sweeping nothing")
+    code, out, err = run_check(root, emptied_base)
+    check("a citation of a directory every file moved out of is reported",
+          code == 1 and "docs/cites-the-emptied-directory-only.md:1: cites "
+          "scripts/gate-that-moves-whole, which this change removed" in out,
+          f"{code} {out!r} {err!r}")
+    check("a citation of an ancestor the move leaves standing is not reported",
+          "cites-a-surviving-ancestor" not in out, out)
+    findings_on_the_shared_line = [
+        line for line in out.splitlines()
+        if line.startswith("docs/cites-the-directory-and-a-file-on-one-line.md:")]
+    check("a line naming a removed file and its emptied directory is one finding, the file's",
+          findings_on_the_shared_line == [
+              "docs/cites-the-directory-and-a-file-on-one-line.md:1: cites "
+              "scripts/gate-that-moves-whole/entry.py, which this change removed"],
+          f"{findings_on_the_shared_line!r}")
+    # The fixture's own precondition, in the shape the rename cases use.
+    # `git mv` leaves the emptied source directory on disk -- measured
+    # 2026-09-21 on git 2.55.0, still there after the commit -- which is why
+    # the existence question is asked of HEAD's tree rather than of the
+    # filesystem. Asserted rather than assumed: on a git that pruned the
+    # directory, a filesystem-asking implementation would pass the first case
+    # above and still be silent for the author who just made the move.
+    check("the emptied directory is still on disk, so only the tree can answer",
+          (root / "scripts" / "gate-that-moves-whole").exists(),
+          "git pruned the emptied directory, so this fixture no longer separates "
+          "the tree from the filesystem")
+
+    # --- BACKWARD: a directory whose parent vanished with it -------------
+    # One removed file can empty more than one level, so more than one
+    # ancestor is derivable from it. Each level is cited by its own document,
+    # on its own line, because the suppression above would drop the parent if
+    # one line named both -- and because deriving only the immediate parent
+    # passes every case above and fails this one.
+    git(root, "checkout", "-q", "-b", "empties-a-directory-and-its-parent", base)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "scripts" / "outer-that-empties" / "inner-that-empties").mkdir(
+        parents=True, exist_ok=True)
+    (root / "scripts" / "outer-that-empties" / "inner-that-empties" / "only-file.py").write_text(
+        "# the only file under either directory\n", encoding="utf-8")
+    (root / "docs" / "cites-the-inner-directory.md").write_text(
+        "The cells live under `scripts/outer-that-empties/inner-that-empties/`.\n",
+        encoding="utf-8")
+    (root / "docs" / "cites-the-outer-directory.md").write_text(
+        "The subsystem lives under `scripts/outer-that-empties/`.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "add a nested directory and a document citing each level")
+    nested_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    (root / "nc-systems" / "outer-that-empties" / "inner-that-empties").mkdir(
+        parents=True, exist_ok=True)
+    git(root, "mv", "scripts/outer-that-empties/inner-that-empties/only-file.py",
+        "nc-systems/outer-that-empties/inner-that-empties/only-file.py")
+    git(root, "commit", "-qm", "move the only file out, emptying both directories")
+    code, out, err = run_check(root, nested_base)
+    check("the emptied directory holding the moved file is reported",
+          code == 1 and "docs/cites-the-inner-directory.md:1: cites "
+          "scripts/outer-that-empties/inner-that-empties, which this change removed" in out,
+          f"{code} {out!r} {err!r}")
+    check("the emptied directory's own emptied parent is reported too",
+          "docs/cites-the-outer-directory.md:1: cites scripts/outer-that-empties, "
+          "which this change removed" in out, out)
+
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
     sys.exit(1)
