@@ -14,7 +14,8 @@ Every project-term should be listed here; a term this page does not list is not 
 - **agent-instructions** — prompts or MD files that instruct agents. Initial agent instructions are the agent-instructions given to an agent at its session start via the prompt that starts the agent or subagent. In addition, instructions can live in CLAUDE.md, CLAUDE.local.md, the project's appended system-prompt file, the project's memory index, a session-start hook, or the equivalent for non-Claude agents such as AGENTS.md.
 - **agent-seat** — a named, long-lived agent identity with its own worktree, seat-branch and seat-brief; context compressed and renewed by a series of agent-sessions connected by session-handoffs from old agent to new agent.
 - **agent-session** — one running conversation occupying an agent-seat. Agent-sessions end and are replaced; the agent-seat persists.
-- **approval-walk** — presenting material to the user one item at a time for a decision, conducted by the /walk-me-through skill; its outcomes are recorded in walk-minutes and its approvals are walked-approvals.
+- **approval-walk** — presenting material to the user one item at a time for a decision, conducted by the /walk-me-through skill; its outcomes are recorded in walk-minutes, and what it approves is approved-by-walk.
+- **approved-by-walk** — approved by the user item by item in an approval-walk, not by one yes to a bundle. When the change is to a file `.claude/hooks/instruction-file-guard.py` guards, his words are quoted into `.walk-approved` at the root of the session's own checkout, and the guard consumes them for the single write they approve.
 - **bare-number-sweep** — the replacement of references written as a bare number with titled clickable links, run class by class under the user's rulings. The ruled classes were completed 2026-09-21. It was never project-wide: the agent-only files — `scripts/`, `.claude/hooks/`, `docs/agents/`, `nc-queue/` — keep their bare numbers by his ruling of 2026-09-18, "I read all the maybes", and are not a backlog.
 - **build-slice** — one numbered increment of a build plan, built and merged on its own.
 - **C-numbers** — `C1`, `C3`, `C7`…, the identifiers of the main-gatekeeper's credential rulings, defined in `nc-systems/main-gatekeeper/main-gatekeeper-design.md` § The credential and enforcement.
@@ -70,5 +71,4 @@ Every project-term should be listed here; a term this page does not list is not 
 - **topic-branch** — a branch cut from current main for one change, PR'd when its tests pass; not a seat-branch.
 - **user-block** — a hook refusal that can only be cleared by the user.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
-- **walked-approval** — the user's approval given item by item through a /walk-me-through walk, not one yes to a bundle; recorded by quoting his words into `.walk-approved` at the root of the session's own checkout, which `.claude/hooks/instruction-file-guard.py` consumes for the single write it approves.
 - **walk-minutes** — the document the /walk-me-through skill uses to record the outcome of each item of a walk.

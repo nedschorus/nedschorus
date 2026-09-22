@@ -28,7 +28,7 @@ All five are open and awaiting merge-lane. They do not conflict: different files
 
 1. **The sanity-checker grid seat** — whether the sanity-checker joins the cold-read run as three stance attacks (cut, mechanization, fresh-eyes) across Fable and gpt-5.6-sol at xhigh. Evidence is in `git show db917b5:md-review-records/2026-08-12-attack-split-experiment/scorecard.md` and PR [sanity-checker attack-split experiment: prompts, drift lint, twelve cells run and scored](https://github.com/nedschorus/nedschorus/pull/53); the split beat the unsplit baseline. Job `ea663864` has been blocked on this ruling.
 2. **Which comes first** — that grid-seat walk, or triage of the novel findings below. This is the question `ea663864` asked and never got answered.
-3. **The gatekeeper's remaining road**, all user-gated: the walked-approval evidence format, then build slice 6 (the review-evidence check), then the credential work. Until then the gate stays dormant.
+3. **The gatekeeper's remaining road**, all user-gated: the approved-by-walk evidence format, then build slice 6 (the review-evidence check), then the credential work. Until then the gate stays dormant.
 
 ## 3. Un-triaged novel findings (from the attack-split experiment)
 

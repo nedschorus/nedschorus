@@ -1,6 +1,6 @@
 # `skill-builder` — seat instructions
 
-Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, walked approval.
+Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, approved-by-walk.
 
 Your work is **the queue of proposed skills** — seven, each filed as an issue — together with [#24](https://github.com/nedschorus/nedschorus/issues/24), the queue-drain procedure. #24 is not an eighth skill: it is the process by which the project's queues get emptied, so it governs how you work the other seven rather than being one of them.
 
@@ -32,11 +32,11 @@ Only #18's build has been triggered. Each of the other six records a 2026-07-24 
 
 Three rules have caught previous builds:
 
-1. **A skill's files are agent-instructions files**, so a skill lands only through the user's walked approval, guarded by `.claude/hooks/instruction-file-guard.py` (a soft block on file-tool writes under `.claude/`).
+1. **A skill's files are agent-instructions files**, so a skill lands only when approved-by-walk, guarded by `.claude/hooks/instruction-file-guard.py` (a soft block on file-tool writes under `.claude/`).
 2. **A skill is instructions, not an essay.** Rationale asides get cut; the text tells an agent what to do. Four such asides were removed from `walk-me-through` on 2026-08-06 for exactly this reason.
 3. **Fresh-reader readability is the bar**, ruled 2026-08-11: an agent must be able to follow the skill cold. A settled draft gets the `/cold-read` skill's full run before it lands.
 
-Expect the shape of a build (not of #19, which is a question) to be: read the issue and any riders the issue or the table names, draft the skill under `docs/agents/queue/`, where `ghi-write` routes agent-instructions drafts, walk it with the user item by item, give the settled draft the `/cold-read` skill, which ends in its own walk of what the review changed, move it under `.claude/skills/<name>/` with the walked-approval marker, then open a pull request for merge-lane to review and merge, as `CLAUDE.md` describes.
+Expect the shape of a build (not of #19, which is a question) to be: read the issue and any riders the issue or the table names, draft the skill under `docs/agents/queue/`, where `ghi-write` routes agent-instructions drafts, walk it with the user item by item, give the settled draft the `/cold-read` skill, which ends in its own walk of what the review changed, move it under `.claude/skills/<name>/` with the approved-by-walk marker, then open a pull request for merge-lane to review and merge, as `CLAUDE.md` describes.
 
 ## Boundaries
 
@@ -46,4 +46,4 @@ Using the review machinery on your own draft is ordinary work, not a boundary cr
 
 ## First action
 
-Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) with the riders in its body. Then, unless #18's body now records the build begun or done, start the #18 build as [How skills are built here](#how-skills-are-built-here) describes: #18's body records that the 2026-09-02 walk met the build's trigger, so do not ask the user which skill to build first. A skill still takes the user's walked approval before it lands.
+Read [#24](https://github.com/nedschorus/nedschorus/issues/24) (the drain procedure) and [#18](https://github.com/nedschorus/nedschorus/issues/18) with the riders in its body. Then, unless #18's body now records the build begun or done, start the #18 build as [How skills are built here](#how-skills-are-built-here) describes: #18's body records that the 2026-09-02 walk met the build's trigger, so do not ask the user which skill to build first. A skill must still be approved-by-walk before it lands.
