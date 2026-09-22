@@ -104,10 +104,50 @@ def run_offline_cases(workspace: Path):
     # --- Consumed-marker semantics ---------------------------------------
     state_path = workspace / "agent-supervisor-state.json"
     check("absent state starts fresh", supervisor.read_supervisor_state(state_path)["consumed_counter"] is None)
-    supervisor.write_supervisor_state(state_path, {"consumed_counter": 7, "session_id": "s", "generation": 3})
+    supervisor.write_supervisor_state(state_path, {"consumed_counter": 7, "launched_session_id": "s", "generation": 3})
     check("state round-trips", supervisor.read_supervisor_state(state_path)["consumed_counter"] == 7)
     state_path.write_text("{ not json", encoding="utf-8")
     check("unreadable state starts fresh", supervisor.read_supervisor_state(state_path)["generation"] == 0)
+
+    # --- The launched-session key, and its migration ----------------------
+    # A state file written before 2026-09-21 carries the field under the bare
+    # name "session_id". A supervisor reading one must come away with the same
+    # value under the new name, or carry_over_to_successor sees no retiring
+    # session and the seat ignites dialog-less -- losing the conversation tail
+    # of every live seat on the fleet's first restart after the rename.
+    legacy_state_path = workspace / "legacy-key-supervisor-state.json"
+    legacy_state_path.write_text(
+        json.dumps({"consumed_counter": 2, "session_id": "written-before-the-rename",
+                    "generation": 5}),
+        encoding="utf-8")
+    migrated = supervisor.read_supervisor_state(legacy_state_path)
+    check("a pre-rename state file migrates its session id to the new key",
+          migrated[supervisor.LAUNCHED_SESSION_ID_STATE_KEY] == "written-before-the-rename",
+          str(migrated))
+    check("migrating drops the old key rather than keeping both",
+          supervisor.LEGACY_SESSION_ID_STATE_KEY not in migrated, str(migrated))
+    check("migrating leaves the rest of the state alone",
+          migrated["consumed_counter"] == 2 and migrated["generation"] == 5, str(migrated))
+
+    supervisor.write_supervisor_state(legacy_state_path, migrated)
+    on_disk = json.loads(legacy_state_path.read_text(encoding="utf-8"))
+    check("the next write persists the new key and not the old",
+          supervisor.LAUNCHED_SESSION_ID_STATE_KEY in on_disk
+          and supervisor.LEGACY_SESSION_ID_STATE_KEY not in on_disk, str(on_disk))
+
+    # The new key wins when a file somehow carries both, so a half-migrated
+    # file cannot resurrect a stale id.
+    both_state_path = workspace / "both-keys-supervisor-state.json"
+    both_state_path.write_text(
+        json.dumps({"session_id": "stale", "launched_session_id": "current"}),
+        encoding="utf-8")
+    check("the new key wins over a leftover old one",
+          supervisor.read_supervisor_state(both_state_path)[
+              supervisor.LAUNCHED_SESSION_ID_STATE_KEY] == "current")
+
+    check("a fresh state names the launched session, not a bare session",
+          supervisor.LAUNCHED_SESSION_ID_STATE_KEY in supervisor.fresh_supervisor_state()
+          and "session_id" not in supervisor.fresh_supervisor_state())
 
     # --- Heartbeat and liveness ------------------------------------------
     heartbeat_state_path = workspace / "heartbeat-supervisor-state.json"
@@ -120,7 +160,7 @@ def run_offline_cases(workspace: Path):
 
     heartbeat_lock_path = workspace / "heartbeat-supervisor.lock"
 
-    supervisor.write_supervisor_state(heartbeat_state_path, {"session_id": "s"})
+    supervisor.write_supervisor_state(heartbeat_state_path, {"launched_session_id": "s"})
     alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
     check("a state file with no lock beside it reads as dead",
           not alive and "no supervisor is watching" in explanation
@@ -132,7 +172,7 @@ def run_offline_cases(workspace: Path):
     # supervisor killed seconds ago still read as alive — measured on ned-box,
     # recovery refused a killed seat until 60 seconds after the kill, and the
     # login restart was predicted to fall inside that window on a fast boot.
-    supervisor.stamp_heartbeat(heartbeat_state_path, {"session_id": "s"})
+    supervisor.stamp_heartbeat(heartbeat_state_path, {"launched_session_id": "s"})
     heartbeat_lock_path.write_text("99999999\n", encoding="utf-8")
     alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
     check("a stamp from a second ago does NOT read as alive when the process is gone",
@@ -187,7 +227,7 @@ def run_offline_cases(workspace: Path):
         [sys.executable, "-c", "import time; time.sleep(60)"])
     try:
         heartbeat_lock_path.write_text(f"{unrelated.pid}\n", encoding="utf-8")
-        supervisor.stamp_heartbeat(heartbeat_state_path, {"session_id": "s"})
+        supervisor.stamp_heartbeat(heartbeat_state_path, {"launched_session_id": "s"})
         alive, explanation = supervisor.supervisor_liveness(heartbeat_state_path)
         check("a reused process id does not resurrect a dead supervisor",
               not alive and "not a supervisor" in explanation, explanation)
@@ -692,7 +732,7 @@ def run_lock_cases(workspace: Path):
     # cannot be ruled out is reported as watching, so nothing recovers over it.
     unknown_state_path = workspace / "unknown-supervisor-state.json"
     unknown_lock_path = workspace / "unknown-supervisor.lock"
-    supervisor.stamp_heartbeat(unknown_state_path, {"session_id": "s"})
+    supervisor.stamp_heartbeat(unknown_state_path, {"launched_session_id": "s"})
     # A process that really exists, so existence is not what is unknown here —
     # only its identity is. A dead id would now be answered outright.
     unidentifiable = subprocess.Popen(  # pylint: disable=consider-using-with
@@ -1617,7 +1657,7 @@ def run_agent_exit_record_cases(workspace: Path):
     # writes a record of its own.
     settings = settings_for("cleared")
     supervisor.write_supervisor_state(settings.state_path, {
-        "consumed_counter": None, "session_id": "earlier-session", "generation": 2,
+        "consumed_counter": None, "launched_session_id": "earlier-session", "generation": 2,
         supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
         supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
     snapshots = []
@@ -1851,7 +1891,7 @@ def run_boot_ignition_case(workspace: Path):
     )
     supervisor.write_supervisor_state(
         handoff_directory / "bootignite-supervisor-state.json",
-        {"consumed_counter": 4, "session_id": "no-such-session", "generation": 4},
+        {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4},
     )
     record_path = handoff_directory / "launch-record.txt"
     stub_agent = handoff_directory / "stub-agent"
@@ -1932,7 +1972,7 @@ def run_appended_system_prompt_cases(workspace: Path):
         )
         supervisor.write_supervisor_state(
             handoff_directory / f"{name}-supervisor-state.json",
-            {"consumed_counter": 4, "session_id": "no-such-session", "generation": 4},
+            {"consumed_counter": 4, "launched_session_id": "no-such-session", "generation": 4},
         )
         record_path = handoff_directory / "argv.txt"
         stub_agent = handoff_directory / "stub-agent"
@@ -2178,7 +2218,7 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     check("the launched session is told the session id it was launched with",
           launched_session_id is not None
           and recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID") == launched_session_id
-          and state.get("session_id") == launched_session_id,
+          and state.get("launched_session_id") == launched_session_id,
           f"{recorded} state session_id={state.get('session_id')}")
 
 

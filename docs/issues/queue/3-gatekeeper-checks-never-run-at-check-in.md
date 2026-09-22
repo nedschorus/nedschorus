@@ -28,7 +28,7 @@ The program says so itself. `nc-systems/main-gatekeeper/main-gatekeeper.py:823-8
 
 Recorded here so it is not raised a third time. The concern: an agent edits `nc-systems/main-gatekeeper/main-gatekeeper.py` and checks that edit in through the very program it just changed. It is real, and it is already answered by ruling rather than open.
 
-`nc-systems/main-gatekeeper/main-gatekeeper-design.md:147` (C2, the Unix-user boundary) rules that the deployed copy keeps itself current from main automatically, and that this is safe because "the gatekeeper's source joins the instruction-file class: changes reach main only with walked-approval evidence, enforced by the review-evidence check (slice 6). Activating the privileged lane therefore waits on slice 6."
+`nc-systems/main-gatekeeper/main-gatekeeper-design.md:147` (C2, the Unix-user boundary) rules that the deployed copy keeps itself current from main automatically, and that this is safe because "the gatekeeper's source joins the instruction-file class: changes reach main only with approved-by-walk evidence, enforced by the review-evidence check (slice 6). Activating the privileged lane therefore waits on slice 6."
 
 `docs/agents/gatekeeper-instructions.md:20` already carries this as that seat's work, including the residual it does not close: slice 6 closes the hole against agents, not against the repository's owners, who can bypass branch protection by design — "that residual is accepted, not solved."
 

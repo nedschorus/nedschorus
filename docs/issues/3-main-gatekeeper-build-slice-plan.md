@@ -54,7 +54,7 @@ User-ruled 2026-08-10, now superseded: slice 6 was a scheduled
 prerequisite of activating the privileged lane. The deployed, root-owned
 gatekeeper copy (C2 as amended) upgrades itself from main, which was held
 to be safe only once the gatekeeper's own source was in the
-instruction-file class with an evidence check enforcing walked approval.
+instruction-file class with an evidence check enforcing approved-by-walk.
 Sequence then planned: slices 4 and 5, then the approval-evidence format
 design, then slice 6, then the credential work.
 
@@ -991,7 +991,7 @@ either. CLAUDE.md's "How a change reaches main" line says merges consolidate
 at the merge-lane seat "until the gatekeeper activates". Under shape 1 the
 merge lane keeps reviewing, approving and merging the gate's pull requests
 after activation, so that clause becomes false the day the gate goes live.
-The new wording is CLAUDE.md text, so it needs the user's walked approval.
+The new wording is CLAUDE.md text, so it must be approved-by-walk.
 Found in the walk of the five seat-brief cold reads, 2026-09-16.
 
 ### The per-file staleness report — slice 8's requirement
@@ -1042,7 +1042,10 @@ requirement would later replace.
 
 ### Shape 2 — a reviewer attached to the gate, deferred
 
-Deferred, not rejected. Shape 2, as presented and not chosen: the gate
+Deferred, not rejected, and tracked as issue [Deferred: main-gatekeeper
+activation shape 2 — a reviewer attached to the gate and an approving identity
+of its own](https://github.com/nedschorus/nedschorus/issues/357), which cites
+this section as its deferral record. Shape 2, as presented and not chosen: the gate
 acquires its own reviewer and a second approving identity before activation,
 and the merge lane retires. What it would add to shape 1: a reviewer the gate
 invokes itself, so the verdict returns in the gate's reply rather than on the

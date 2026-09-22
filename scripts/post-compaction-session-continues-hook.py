@@ -12,9 +12,18 @@ Two things follow from the id being kept, and this hook answers both:
 
 1. The session stops. The user ruled the fix on 2026-09-20: "the post-compact
    hook can read the last 1000 words of the scrubbed jsonl and then be told to
-   continue (usually I think it just stops)." There is no documented way to
-   make a session act, so "continue" is phrased inside the injected context,
-   which is the only channel a SessionStart hook has.
+   continue (usually I think it just stops)." The one channel this hook is
+   documented to have is its stdout, which the hooks reference says Claude Code
+   "adds ... as context that Claude can see and act on" -- context, not a turn.
+   So "continue" is phrased INSIDE the injected context rather than asked for
+   through a restart mechanism. Precise about what is documented and what is
+   not, because the two get confused here (checked 2026-09-22 against
+   https://code.claude.com/docs/en/hooks): the reference distinguishes `manual`
+   from `auto` compaction as a trigger and says nothing about what the session
+   does after either, so the stall above is this fleet's measurement, not a
+   documented behaviour; and `initialUserMessage`, which gets cited as a way to
+   make a session act, is not in that reference at all, so nothing here rests
+   on it.
 
 2. Reincarnation is quietly retired. The fired marker is named for the session
    and is once-per-session, so a kept id means the marker still stands and the
@@ -217,9 +226,14 @@ def recovered_tail(transcript_path_text: str) -> str:
     try:
         selected, _start_index = extract.select_tail_clearing_floor(turns)
         selected = turns_within_injected_tail_ceiling(selected)
+        # Inside the try, not after it: the docstring promises never to raise,
+        # and a raise here costs the CONTINUE INSTRUCTION, not just the tail --
+        # main()'s handler would return 0 having emitted nothing. Unreachable
+        # with today's extractor, which always yields {"voice", "text"} dicts,
+        # and the extractor is a separate program with other callers.
+        return render_turns(selected)
     except Exception:
         return ""
-    return render_turns(selected)
 
 
 def turn_words(turn) -> int:

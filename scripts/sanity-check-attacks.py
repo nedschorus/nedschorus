@@ -304,9 +304,13 @@ def prompt_body(attack: str) -> str:
     """
     path = ATTACK_PROMPT_FILES[attack]
     lines = path.read_text(encoding="utf-8").splitlines()
-    # A line that IS the marker, not a line mentioning it: the header names the
-    # marker when it explains the split, and that mention must not be mistaken
-    # for the boundary itself.
+    # A line that IS the marker, not a line that spells it inside a sentence.
+    # No shipped header spells it any more: commit "prompt headers: the
+    # marker-split sentence cut from all three (user-ruled 2026-08-22)",
+    # 70a813b, left them saying "everything below the marker", which names
+    # the marker without carrying it. The strict equality is what makes
+    # either wording harmless, and the test keeps the mistakable case alive
+    # from a synthetic header.
     marker_lines = [i for i, line in enumerate(lines)
                     if line.strip() == PROMPT_BODY_MARKER]
     if len(marker_lines) != 1:
@@ -1077,7 +1081,10 @@ def main() -> int:
         fresh_eyes_text = ATTACK_PROMPT_FILES["fresh-eyes"].read_text(encoding="utf-8")
         heading = "## Writing the problem statement"
         start = fresh_eyes_text.find(heading)
-        # The marker as its own line, not the header sentence that names it.
+        # Bounded by the marker on a line of its own, so a sentence that
+        # spelled it could not end this section early. No shipped header
+        # spells it today; the newlines are what makes that independent of
+        # how the headers are worded.
         end = fresh_eyes_text.find("\n" + PROMPT_BODY_MARKER + "\n")
         if start == -1 or end == -1 or start >= end:
             print("requester section not found in the fresh-eyes prompt", file=sys.stderr)

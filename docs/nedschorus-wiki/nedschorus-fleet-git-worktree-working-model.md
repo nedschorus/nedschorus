@@ -47,7 +47,7 @@ passing review.
   clone is its own workspace, never "the reference" — where any mechanical
   test disagrees with that definition, the definition governs (pinned
   2026-08-17). The test the guards use lives in the guard scripts.
-- **Walked approval** — the user's approval given item by item, not one
+- **Approved-by-walk** — approved by the user item by item, not by one
   yes to a bundle (`docs/nedschorus-wiki/nedschorus-agent-seat-model.md` § The words this
   model uses).
 - **The gatekeeper** — `nc-systems/main-gatekeeper/main-gatekeeper.py`, the main-gatekeeper:
@@ -267,7 +267,7 @@ carry no stamp; directory basenames are not globally unique across machines
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
-**R10. Agent-instructions files change only with walked approval —
+**R10. Agent-instructions files change only when approved-by-walk —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, and `.claude/` (minus `worktrees/` and `jobs/`) block
@@ -483,7 +483,7 @@ rulings; listed here to keep the numbering complete.
 | R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
 | R9 | One name = one seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
-| R10 | Instruction files need walked approval | block | built-live; shell gap ruled unguarded |
+| R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
 | R13 | PR process + deputization | text (process) | built-live; deputization in CLAUDE.md, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |

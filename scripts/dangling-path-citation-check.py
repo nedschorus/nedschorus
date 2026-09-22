@@ -127,6 +127,72 @@ which already carry it, and the base text is read there.
   changed in its citing line scored a delete and an add, and the same
   document with a dozen unrelated paragraphs in it scored 91% and a rename.
 
+AND WHICH PATHS THE ROWS CANNOT CARRY. Git emits --name-status rows for
+files and never for directories, so a directory a change EMPTIES appears in
+no row, nothing asks who still cites it, and a document naming only that
+directory -- no file inside it -- was reported in neither direction.
+Measured 2026-09-21 on a probe that moved both files out of one directory:
+each moved file's citations were reported, and "All the gate code lives
+under `<dir>/gate/`" was not. Live rather than hypothetical, at 362
+directory citations across 123 distinct directories in 144 Markdown files
+of main, in a fleet that moves whole directories -- the handoff move of
+2026-09-21 was one, and per-system documentation directories are planned.
+
+It is not git's limitation, and that is what made this code rather than
+disclosure: the vanished directory is derivable from the rows the program
+already holds. Every ancestor directory of a removed file, kept when HEAD no
+longer has it, joins the removed paths a citation is compared against, and a
+directory-only citation is then reported like any other. Ruled 2026-09-21,
+finding 1 of GitHub issue [dangling-path-citation-check: three measured
+blind spots — two for code, one for
+disclosure](https://github.com/nedschorus/nedschorus/issues/614).
+
+  ASKED OF THE TREE AND NOT OF THE FILESYSTEM, which for a directory is the
+  difference between working and not working. `git mv` leaves the emptied
+  source directory behind on disk -- measured 2026-09-21 on git 2.55.0,
+  still there after the commit -- so a filesystem test tells the author who
+  just made the move nothing, and tells a fresh checkout, which prunes the
+  directory, everything. HEAD's own directory list answers the same in both,
+  and HEAD is already where this direction reads removal from. The
+  file-level test in paths_this_change_removed still asks the filesystem and
+  is deliberately left alone; what that costs is the paragraph below.
+
+  A CASE-ONLY RENAME IS WHAT THAT COSTS, disclosed rather than guarded.
+  paths_this_change_removed keeps a rename's old name only when that name no
+  longer exists, and it asks the filesystem: this Mac's filesystem folds
+  case, so after `Foo.py` becomes `foo.py` the old spelling still answers
+  exists(), the rename is dropped from the removed paths, and the old
+  spelling is never checked. Clean here and dangling on ned-box, whose
+  filesystem does not fold. Not the same asymmetry as the directory one
+  above -- that is the author's checkout against a fresh one, this is one
+  filesystem against another -- but the same mistake, asking the filesystem
+  where HEAD's tree answers alike on both machines, and the same fix.
+  Disclosure and not code because the trigger is plausible and has never
+  fired: measured against origin/main on 2026-09-22 over `git log
+  --diff-filter=R --name-status`, 90 rename rows, zero whose two names
+  differ only by case. Ruled 2026-09-21, finding 3 of the issue above.
+
+  THE ANCESTOR AND THE FILE INSIDE IT ARE ONE FINDING, not two. A directory
+  is a prefix of the files under it, so a line naming both -- "the gate is
+  `<dir>/gate/` and its entry is `<dir>/gate/entry.py`" -- cites two removed
+  paths for one stale sentence. The deepest citation on the line is the one
+  a reader needs, so a removed path that another cited removed path sits
+  inside is dropped. Per LINE and not per document, because two lines are
+  two sentences to sweep and dropping a directory's line because some other
+  line named a file inside it would leave that line unswept. No removed FILE
+  is ever inside another removed path, so nothing that was reported before
+  the directories joined the list is narrowed by this.
+
+  FORWARD, A DIRECTORY IS CHECKED ONLY AS A LINK TARGET, and that residual
+  is stated rather than guarded. The forward direction believes a token is a
+  path when it ends in a file extension the drift lint knows, which a
+  directory does not, so a backticked directory and a directory named in a
+  non-Markdown file are not checked forward; a markdown link to one is,
+  through the lint's own resolve. A directory citation newly written at a
+  path that was never there is therefore reported in that one shape alone.
+  Widening the forward extension test is a larger question -- every word
+  with a slash in it becomes a candidate -- and is not this change's.
+
 THE FIXTURE-CARRYING FILES ARE THE TESTS, by the project's own definition
 of a test and not by a list. A test whose subject is paths names paths that
 are deliberately absent, and against a base where the test did not exist
@@ -139,7 +205,7 @@ a test -- the stem plus "-test" before the extension, or any file in the
 Both halves earn their place. Measured with this program's own
 plain_path_citations over origin/main on 2026-09-21: 162 absent-path tokens
 in 23 non-Markdown files with no exemption at all, 15 in 9 files once
-"-test.py" is exempt, and 14 in 8 once the "tests" directory is too. The one
+the "-test" stem is exempt, and 14 in 8 once the "tests" directory is too. The one
 file the second half adds is design-to-main's own test fixture, whose name
 ends in neither "-test.py" nor anything else the first half reads. (The
 reviewing seat measured the same three rows as 172/27, 18/13 and 17/12; the
@@ -150,6 +216,12 @@ the frozen measured data, and were taken at a different main.)
   half of them scripts/md-drift-lint.py's own documented examples, and they
   are reported only if a change touches the line they sit on. A list of
   names would have to grow every time a test was written; this does not.
+  Unmoved by the directory derivation above, which touches neither direction
+  of the extension test those 14 come through. The directory citations are
+  this program's second residual and are stated where they are derived, at
+  "AND WHICH PATHS THE ROWS CANNOT CARRY": checked backward since
+  2026-09-21, forward only as a markdown link target. The case-only rename
+  is the third, stated at "ASKED OF THE TREE AND NOT OF THE FILESYSTEM".
 
   THIS FILE IS NOT A TEST and is no longer exempt, which the main-checkout
   measurement above could not see because this file is not on main yet.
@@ -223,11 +295,21 @@ PLAIN_PATH_TOKEN_SEPARATOR = re.compile(r"[\s'\"()\[\]]+")
 
 # What the project calls a test, from the Test row of
 # docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md: the
-# stem plus "-test" before the extension, and a subsystem with its own
+# stem plus "-test" before the extension, whatever that extension is, and a
+# subsystem with its own
 # directory puts its tests in a "tests" subdirectory of it. See "THE
 # FIXTURE-CARRYING FILES" above for why the FORWARD direction skips them and
 # what that costs.
-PROJECT_TEST_FILE_NAME_ENDING = "-test.py"
+# Ruled CODE on 2026-09-21, finding 2 of GHI "dangling-path-citation-check:
+# three measured blind spots". The constant read "-test.py" while the Test
+# row and this file's own docstring both state the rule as the stem plus
+# "-test" before the extension, and the difference was reachable: a shell
+# test file was not a test under the constant and was under the rule.
+# Measured on main the day it was widened: it moves exactly one tracked
+# file, scripts/launch-claude-update-step-test.sh, into the exempt set, and
+# that file names no repository path at all, so the three rows measured
+# above are unchanged by the widening.
+PROJECT_TEST_FILE_STEM_ENDING = "-test"
 PROJECT_TEST_DIRECTORY_NAME = "tests"
 
 
@@ -539,8 +621,8 @@ def base_already_cites(cited: str, base_cited_paths: set, citing_path: pathlib.P
 
 
 def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> bool:
-    """True for a file the project's own Test row calls a test: a name ending
-    in "-test.py", or any file in a "tests" directory.
+    """True for a file the project's own Test row calls a test: a stem ending
+    in "-test" whatever the extension, or any file in a "tests" directory.
 
     FORWARD only: the one caller is findings_for_file. Adding it to
     citations_of_removed_paths would hide a test's stale citation of a path
@@ -549,7 +631,7 @@ def is_project_test_file(path: pathlib.Path, repository_root: pathlib.Path) -> b
         relative = path.resolve().relative_to(repository_root.resolve())
     except ValueError:  # a file outside the repository is not one of these
         return False
-    return (relative.name.endswith(PROJECT_TEST_FILE_NAME_ENDING)
+    return (relative.stem.endswith(PROJECT_TEST_FILE_STEM_ENDING)
             or PROJECT_TEST_DIRECTORY_NAME in relative.parts[:-1])
 
 
@@ -613,6 +695,55 @@ def paths_this_change_removed(name_status_rows: list, repository_root: pathlib.P
             if not (repository_root / old).exists():
                 removed.append(old)
     return removed
+
+
+def ancestor_directories_of(relative: str) -> list:
+    """Every directory above a repository-relative path, deepest first.
+
+    `<dir>/gate/entry.py` yields `<dir>/gate` and then `<dir>`. A path at the
+    repository root yields nothing, and the root itself is never one of
+    these: it is not a path anything can cite."""
+    components = relative.split("/")[:-1]
+    return ["/".join(components[:depth]) for depth in range(len(components), 0, -1)]
+
+
+def directories_in_the_head_tree(repository_root: pathlib.Path) -> frozenset:
+    """Every directory HEAD tracks, at every depth.
+
+    The tree and not the filesystem, for the reason stated at "ASKED OF THE
+    TREE AND NOT OF THE FILESYSTEM" above: `git mv` leaves the emptied source
+    directory on disk, so the filesystem says a directory is still there for
+    exactly the author who just emptied it."""
+    listed = subprocess.run(["git", "ls-tree", "-r", "-d", "--name-only", "HEAD"],
+                            cwd=repository_root, capture_output=True, text=True, check=False)
+    if listed.returncode != 0:
+        fail_bad_invocation(f"git ls-tree of HEAD failed: "
+                            f"{listed.stderr.strip() or listed.returncode}")
+    return frozenset(name for name in listed.stdout.splitlines() if name)
+
+
+def directories_this_change_emptied(removed_files: list, repository_root: pathlib.Path) -> list:
+    """The directories that held a file this change removed and that HEAD no
+    longer has -- the paths a --name-status row can never carry, because git
+    emits rows for files only. See "AND WHICH PATHS THE ROWS CANNOT CARRY"
+    above for why they are derived here rather than left residual."""
+    surviving = directories_in_the_head_tree(repository_root)
+    return sorted({ancestor for gone in removed_files
+                   for ancestor in ancestor_directories_of(gone)
+                   if ancestor not in surviving})
+
+
+def removed_paths_a_line_is_reported_for(cited_and_removed: set) -> list:
+    """The removed paths one line is reported for: the ones no OTHER removed
+    path it cites sits inside.
+
+    A directory is a prefix of the files under it, so a line naming both the
+    emptied directory and a file that was in it cites two removed paths for
+    one stale sentence. The deepest is the one a reader needs. Stated in full
+    at "THE ANCESTOR AND THE FILE INSIDE IT ARE ONE FINDING" above, including
+    why this is per line and not per document."""
+    return sorted(path for path in cited_and_removed
+                  if not any(other.startswith(path + "/") for other in cited_and_removed))
 
 
 def merge_base_names_of_renamed_files(name_status_rows: list) -> dict:
@@ -687,7 +818,7 @@ def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lin
                 continue
             cited = set(repository_paths_a_line_cites(
                 line, citing_path, lint, repository_root))
-            for gone in sorted(cited & wanted):
+            for gone in removed_paths_a_line_is_reported_for(cited & wanted):
                 findings.append((citing, number,
                                  f"cites {gone}, which this change removed"))
     return findings
@@ -713,7 +844,8 @@ def main(argv=None) -> int:
 
     findings = []
     name_status_rows = name_status_rows_against_merge_base(merge_base, REPOSITORY_ROOT)
-    removed = paths_this_change_removed(name_status_rows, REPOSITORY_ROOT)
+    removed_files = paths_this_change_removed(name_status_rows, REPOSITORY_ROOT)
+    removed = removed_files + directories_this_change_emptied(removed_files, REPOSITORY_ROOT)
     merge_base_name_of_renamed_file = merge_base_names_of_renamed_files(name_status_rows)
     for citing, line_number, problem in citations_of_removed_paths(
             removed, REPOSITORY_ROOT, lint):
