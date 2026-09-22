@@ -33,16 +33,24 @@ What these cases are defending, in the order the defects actually happened
     traceback, and the escapes reached the quoted snippet).
 
 The three interrupt cases failed four times in the merge lane's sweeps and
-passed alone every time, and the trigger was recorded as unidentified. The
-MECHANISM is identified: signal_and_wait() below SIGKILLs a watcher that has
-not exited within its grace window, so under load the helper itself
-manufactures all three failures at once — rc=-9 where 130 is expected, no
-"NOT WATCHING" line because the process never got to print it, and a surviving
-dialog stream because the killed watcher never reaped its child. The grace was
-15 s; it is SIGNALLED_EXIT_GRACE_SECONDS below, and the kill now says so in
-the output rather than leaving rc=-9 to be read as a handler defect. What makes
-a signalled watcher slow on a loaded machine is still unidentified, and a run
-carrying that note is still a load symptom to re-run alone.
+passed alone every time. The proximate MECHANISM is signal_and_wait() below:
+it SIGKILLs a watcher that has not exited within its grace window, and that
+kill manufactures all three failures at once — rc=-9 where 130 is expected,
+no "NOT WATCHING" line because the process never got to print it, and a
+surviving dialog stream because the killed watcher never reaped its child.
+
+The TRIGGER is not machine load, which is what those four records assumed. It
+is the SIGINT disposition the suite inherits. A sweep launched as
+`nohup ... &` from a non-interactive shell runs with SIGINT ignored; the
+watcher inherits SIG_IGN across exec, CPython installs its KeyboardInterrupt
+handler only over SIG_DFL, so the interrupt each of the three cases sends is
+discarded and NO grace window is long enough. That is also why re-running the
+suite "alone" cured it every time: those re-runs were typed at a terminal,
+where SIGINT is at its default. The call below,
+install_python_sigint_handler_in_the_test_process(), is what gives the watcher
+a default SIGINT however this suite was launched;
+SIGNALLED_EXIT_GRACE_SECONDS is the window, and the kill says so in the output
+rather than leaving rc=-9 to be read as a handler defect.
 
 Synchronization without sleeps: the fake stream appends a timestamp per
 attempt, so a case can wait for the Nth attempt rather than guessing a
@@ -73,12 +81,49 @@ _spec.loader.exec_module(watcher_module)
 CONTROL_DIRECTORY_VARIABLE = "WATCH_AGENT_DIALOG_ALERTS_TEST_CONTROL_DIR"
 
 # How long a signalled watcher is given to exit on its own before the helper
-# SIGKILLs it. MEASURED: an unloaded watcher exits in well under a second, and
-# the kill path is only ever reached on a machine too busy to let it. It was
-# 15 s, and at 15 s the merge lane's sweeps hit it four times (2026-09-21,
-# sequential sweeps and concurrent ones both), each time failing the same three
-# interrupt cases and each time passing when that suite was re-run alone.
-SIGNALLED_EXIT_GRACE_SECONDS = 60.0
+# SIGKILLs it. MEASURED: a watcher that actually receives its signal exits in
+# well under a second. 15 s sits with the rest of this suite's timeouts —
+# wait_for 20 s, wait_until_gone 10 s, stop 5 s — so a machine slow enough to
+# need more than 15 s here is already failing those. It was briefly 60 s, on
+# the theory that load was what failed the merge lane's four sweeps; the
+# trigger was the inherited SIGINT disposition instead (docstring above), so
+# the widening had no evidence behind it and is undone. It bought nothing and
+# cost 60 s a case on the launch style that was actually failing.
+SIGNALLED_EXIT_GRACE_SECONDS = 15.0
+
+
+def install_python_sigint_handler_in_the_test_process():
+    """Make every watcher this suite starts begin with SIGINT at its default.
+
+    A process that inherits SIGINT as SIG_IGN keeps it: CPython installs
+    default_int_handler at startup only over SIG_DFL, so an inherited SIG_IGN
+    survives and nothing raises KeyboardInterrupt.
+    watch-agent-dialog-alerts.py depends on that exception for the interrupt
+    — it installs a handler for SIGTERM only and catches KeyboardInterrupt
+    for SIGINT — so a watcher started with SIGINT ignored discards the signal
+    the three interrupt cases send, and no grace window is long enough.
+
+    The child cannot fix this from inside the child, and this is where it is
+    fixed instead: a Python handler is a CAUGHT signal, and a caught signal is
+    reset to SIG_DFL at exec, so every watcher Popen'd below starts with SIGINT
+    at its default whatever this suite was launched with. Measured 2026-09-22
+    on the user's Mac: under `bash -c '... & wait $!'` this suite inherits
+    signal.SIG_IGN and a child python3 reports 1; after this call the same
+    child reports default_int_handler. That launch ran 69 passed / 3 failed in
+    29 s with this call removed and 72 passed / 0 failed in 4 s with it.
+
+    Called at import rather than from __main__, so it holds for every entry
+    point into this file. It is idempotent, and a no-op in the ordinary
+    foreground run where Python installed this same handler at startup. It
+    does leave this process interruptible by a SIGINT it would otherwise have
+    ignored, which is the ordinary foreground behaviour; the background job of
+    a non-interactive shell is not in the terminal's foreground process group,
+    so no terminal interrupt reached it to ignore in the first place.
+    """
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+install_python_sigint_handler_in_the_test_process()
 
 # The fake dialog stream. One attempt reads its step from plan.json (the
 # last step repeats once the plan runs out), records that it started, and
@@ -568,11 +613,14 @@ class WatcherProcess:
             returncode = self.process.wait()
             # Said out loud, because this kill is what fails the cases that
             # follow: rc=-9 read as a handler defect is what sent four sweeps
-            # looking for one.
+            # looking for one. Facts only, no remedy: the remedy this line
+            # used to carry, "re-run this suite alone", named concurrency,
+            # and naming concurrency is what turned four inherited-SIG_IGN
+            # failures into four load records.
             print(f"NOTE  the watcher did not exit within {timeout:g}s of "
-                  f"signal {signal_number}, so this helper SIGKILLed it. The "
-                  f"cases below fail for that reason, not the watcher's "
-                  f"handler. Re-run this suite alone.")
+                  f"{signal.Signals(signal_number).name}, so this helper "
+                  f"SIGKILLed it. The cases below fail for that reason, not "
+                  f"the watcher's handler.")
         for thread in self._threads:
             thread.join(timeout=2)
         return returncode
