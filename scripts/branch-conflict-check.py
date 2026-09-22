@@ -47,13 +47,52 @@ CONFLICTING. GitHub decides, so a CONFLICTING verdict from GitHub stands even
 when merge-tree is clean. When GitHub never settles, the git answer is used and
 the report says so rather than implying GitHub agreed.
 
+ONLY WHEN THE TWO ORACLES ARE ANSWERING ABOUT THE SAME COMMIT. GitHub answers
+about the pull request's PUSHED head; git answers about whatever --head names.
+Nothing tied those together until 2026-09-22, and the gap let GitHub's verdict
+about one commit overrule git's verdict about a different one. Reproduced at the
+merge-lane seat:
+
+    branch-conflict-check.py --no-fetch --head origin/main --pull-request 605
+
+printed CONFLICT for origin/main against origin/main -- main conflicting with
+itself -- because pull request 605 genuinely conflicts and its verdict was
+applied to a commit it was never about. Without --pull-request the same command
+correctly printed CLEAN. The workflow version is worse than the demonstration:
+the CONFLICT message below tells the agent to hand-merge the base, and after an
+unpushed hand merge the local HEAD is the merge commit while GitHub still answers
+about the old pushed head -- so a rerun orders the merge that just happened. So
+GitHub's headRefOid is read too, and its verdict counts only when that equals the
+resolved --head. When they differ the mismatch is disclosed, both short hashes
+named, and the verdict is git's alone.
+
+WHY THE BASE IS NOT BOUND THE SAME WAY. A reviewer proposed also requiring
+GitHub's baseRefOid to equal the resolved --base, on the reasoning that a settled
+mergeability value can have been computed against an older main. The window is
+real; baseRefOid does not detect it. Measured 2026-09-22 on PR 605, whose
+baseRefOid was 3fa1e8c216c5 while origin/main was 5f0fd4c5ebc6:
+
+    git merge-tree --write-tree 3fa1e8c216c5 a370cc08f9b5  -> exit 0, clean
+    git merge-tree --write-tree 5f0fd4c5ebc6 a370cc08f9b5  -> exit 1, conflict
+
+GitHub reported CONFLICTING, which agrees with git against LIVE main and
+disagrees with git against baseRefOid. So mergeability tracks the live base tip,
+while baseRefOid is the base as of the pull request's open or last sync: 6 of the
+9 open pull requests lagged main that day, and the 3 that matched (633, 634, 635)
+were opened after 5f0fd4c landed. Binding it would discard correct GitHub
+verdicts on most pull requests -- including the PR 353 shape, git clean against
+GitHub CONFLICTING, which would then read CLEAN, the exact false answer this
+program exists to prevent. The stale-value window is the UNKNOWN window, and the
+poll above already covers it.
+
 Usage:
   scripts/branch-conflict-check.py [--head REV] [--base REV] [--pull-request N]
                                    [--no-fetch] [--fetch-remote NAME]
 
   --head           defaults to HEAD. Any rev git understands; resolved first.
   --base           defaults to origin/main.
-  --pull-request   also ask GitHub, and let it overrule git.
+  --pull-request   also ask GitHub, and let it overrule git -- but only when
+                   GitHub's pushed head is the commit --head resolved to.
   --no-fetch       skip the fetch; the base is whatever the checkout already has.
   --fetch-remote   remote to fetch, default origin.
 
@@ -116,6 +155,20 @@ def git_says_conflict(base_hash, head_hash, runner=run):
     return status != 0
 
 
+def github_head_commit(pull_request, runner=run):
+    """The pushed head commit GitHub's mergeability answer is about, or None.
+
+    None when gh could not be asked at all. Read before the mergeability poll,
+    because a verdict about another commit cannot count and is not worth
+    waiting up to six reads for.
+    """
+    status, out = runner([
+        "gh", "pr", "view", str(pull_request),
+        "--json", "headRefOid", "-q", ".headRefOid",
+    ])
+    return out if status == 0 and out else None
+
+
 def github_mergeable(pull_request, runner=run, sleep=time.sleep,
                      reads=GITHUB_UNKNOWN_READS,
                      sleep_seconds=GITHUB_UNKNOWN_SLEEP_SECONDS):
@@ -175,28 +228,46 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
     conflict = git_says_conflict(base_hash, head_hash, runner)
 
     if pull_request is not None:
-        verdict, taken = github_mergeable(
-            pull_request, runner, sleep, reads, sleep_seconds)
-        if verdict is None:
+        github_head = github_head_commit(pull_request, runner)
+        if github_head is None:
             lines.append(
                 "GITHUB: could not be asked (gh failed) -- git's answer stands")
+        elif github_head != head_hash:
+            lines.append(
+                "GITHUB: not consulted -- pull request %d's pushed head is %s, "
+                "not the %s this run checked"
+                % (pull_request, github_head[:12], head_hash[:12]))
+            lines.append(
+                "DISCLOSURE: GitHub's mergeability is about pull request %d's "
+                "pushed head %s, not the %s checked here, so it cannot overrule "
+                "git about a commit it was never asked about; this verdict is "
+                "git's alone. Say so in the pull request."
+                % (pull_request, github_head[:12], head_hash[:12]))
         else:
-            lines.append("GITHUB: %s after %d read(s)" % (verdict, taken))
-            if verdict == "UNKNOWN":
+            verdict, taken = github_mergeable(
+                pull_request, runner, sleep, reads, sleep_seconds)
+            if verdict is None:
                 lines.append(
-                    "DISCLOSURE: GitHub had not settled after %d read(s); this "
-                    "verdict is git's alone. Say so in the pull request." % taken)
-            elif verdict == "CONFLICTING" and not conflict:
-                lines.append(
-                    "DISCLOSURE: git finds no conflict but GitHub reports "
-                    "CONFLICTING; GitHub decides whether the merge is allowed, "
-                    "so the branch still needs the hand merge.")
-                conflict = True
-            elif verdict == "MERGEABLE" and conflict:
-                lines.append(
-                    "DISCLOSURE: git finds a conflict but GitHub reports "
-                    "MERGEABLE; treating it as a conflict, because a merge that "
-                    "git cannot do is not one to attempt.")
+                    "GITHUB: could not be asked (gh failed) -- git's answer "
+                    "stands")
+            else:
+                lines.append("GITHUB: %s after %d read(s)" % (verdict, taken))
+                if verdict == "UNKNOWN":
+                    lines.append(
+                        "DISCLOSURE: GitHub had not settled after %d read(s); "
+                        "this verdict is git's alone. Say so in the pull "
+                        "request." % taken)
+                elif verdict == "CONFLICTING" and not conflict:
+                    lines.append(
+                        "DISCLOSURE: git finds no conflict but GitHub reports "
+                        "CONFLICTING; GitHub decides whether the merge is "
+                        "allowed, so the branch still needs the hand merge.")
+                    conflict = True
+                elif verdict == "MERGEABLE" and conflict:
+                    lines.append(
+                        "DISCLOSURE: git finds a conflict but GitHub reports "
+                        "MERGEABLE; treating it as a conflict, because a merge "
+                        "that git cannot do is not one to attempt.")
 
     if conflict:
         lines.insert(0, "VERDICT: CONFLICT -- %s conflicts with %s. Merge %s into "

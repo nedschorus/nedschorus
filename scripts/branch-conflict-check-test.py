@@ -36,13 +36,19 @@ def case(name, condition):
 
 def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 merge_tree_status=0, gh_results=None, log=None,
-                fetch_status=0):
+                fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0):
     """A runner that answers git and gh without touching either.
 
     base_resolves and head_resolves override `resolves` for one side, so a case
     can make exactly one rev unresolvable. Without that, both guards see a
     failure, the first one returns, and the second is never exercised -- which
     is how the head guard went unpinned until mutation testing found it.
+
+    gh_head is the pushed head GitHub answers about, and defaults to the hash
+    the fake git resolves HEAD to -- the matching case, so a case that says
+    nothing about it gets a GitHub verdict that counts. gh_results answers only
+    the mergeability reads; the headRefOid read is answered from gh_head, so
+    adding it did not shift any existing case's queue.
     """
     gh_queue = list(gh_results or [])
     base_ok = resolves if base_resolves is None else base_resolves
@@ -62,12 +68,22 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, ""
         if command[:2] == ["gh", "pr"]:
+            if "headRefOid" in command:
+                return gh_head_status, (gh_head or "")
             if not gh_queue:
                 return 1, ""
             return gh_queue.pop(0)
         raise AssertionError("unexpected command: %r" % (command,))
 
     return runner
+
+
+def mergeability_reads(log):
+    """How many times the log asked GitHub for mergeability.
+
+    Counted apart from the headRefOid read, which is a gh call too.
+    """
+    return sum(1 for c in log if c[:2] == ["gh", "pr"] and "mergeable" in c)
 
 
 def run(runner, pull_request=None, reads=3, sleeps=None, fetch=True,
@@ -116,6 +132,20 @@ case("a conflict exits 1", status == CHECK.EXIT_CONFLICT)
 case("a conflict says CONFLICT", lines[0].startswith("VERDICT: CONFLICT"))
 case("a conflict says what to do about it", "by hand" in lines[0])
 
+# A merge-tree status that is neither 0 nor 1. git 2.55.0 exits 129 for an
+# option it does not know and 128 for unrelated histories, measured 2026-09-22,
+# and until this case every case answered 0 or 1, so rewriting the
+# classification to `status == 1` left the whole suite green.
+#
+# This pins the SAFETY PROPERTY ONLY: such a status is never reported as no
+# conflict. Whether it should stay a CONFLICT or become its own exit-2 "no
+# trustworthy answer" is an open question with the user, so the case asserts
+# nothing about which, and passes either way.
+status, lines = run(fake_runner(merge_tree_status=129))
+case("a merge-tree status that is neither 0 nor 1 is never reported CLEAN",
+     status != CHECK.EXIT_NO_CONFLICT
+     and not lines[0].startswith("VERDICT: CLEAN"))
+
 # --- UNKNOWN: measured at eight of nine open pull requests after main moved ---
 status, lines = run(
     fake_runner(merge_tree_status=0, gh_results=[(0, "UNKNOWN")] * 3),
@@ -139,7 +169,7 @@ run(fake_runner(merge_tree_status=0,
                 log=log),
     pull_request=600, reads=3)
 case("polling stops as soon as GitHub settles",
-     sum(1 for c in log if c[:2] == ["gh", "pr"]) == 2)
+     mergeability_reads(log) == 2)
 
 # --- the two oracles disagreeing --------------------------------------------
 # Measured 2026-09-16 on PR 353: git merged clean by following a rename where
@@ -159,6 +189,63 @@ case("a git conflict is not waved through by GitHub MERGEABLE",
      status == CHECK.EXIT_CONFLICT)
 case("that disagreement is disclosed too",
      any("not one to attempt" in l for l in lines))
+
+# --- the two oracles must be answering about the SAME commit -----------------
+# GitHub answers about the pull request's PUSHED head; git answers about
+# whatever --head names. Nothing tied them together until 2026-09-22, and
+# reproduced at the merge-lane seat that day, the gap let GitHub's verdict about
+# one commit overrule git's about another:
+#   branch-conflict-check.py --no-fetch --head origin/main --pull-request 605
+# printed CONFLICT for origin/main against origin/main -- main conflicting with
+# ITSELF -- because 605 genuinely conflicts. In the workflow it is worse: after
+# the hand merge the CONFLICT message orders, the local HEAD is the merge commit
+# while GitHub still answers about the old pushed head, so a rerun orders the
+# merge that just happened.
+OTHER_COMMIT = "c" * 40
+
+# The matching case: nothing changes, GitHub still overrules a clean git.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_head=RESOLVED_HEAD,
+                gh_results=[(0, "CONFLICTING")]),
+    pull_request=353, reads=3)
+case("GitHub still overrules when it is answering about the checked commit",
+     status == CHECK.EXIT_CONFLICT)
+
+# The differing case: GitHub does not get to overrule git about another commit.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_head=OTHER_COMMIT,
+                gh_results=[(0, "CONFLICTING")]),
+    pull_request=605, reads=3)
+case("GitHub CONFLICTING about another commit does not overrule a clean git",
+     status == CHECK.EXIT_NO_CONFLICT and lines[0].startswith("VERDICT: CLEAN"))
+case("the commit mismatch is disclosed rather than silent",
+     any(l.startswith("DISCLOSURE:") and "git's alone" in l for l in lines))
+case("the disclosure names both commits, GitHub's and the one checked",
+     any(OTHER_COMMIT[:12] in l and RESOLVED_HEAD[:12] in l for l in lines))
+
+log = []
+run(fake_runner(merge_tree_status=0, gh_head=OTHER_COMMIT,
+                gh_results=[(0, "CONFLICTING")], log=log),
+    pull_request=605, reads=3)
+case("mergeability is not even polled when the commits differ",
+     mergeability_reads(log) == 0)
+
+# The mismatch withholds GitHub's verdict; it does not suppress git's own.
+status, lines = run(
+    fake_runner(merge_tree_status=1, gh_head=OTHER_COMMIT,
+                gh_results=[(0, "MERGEABLE")]),
+    pull_request=605, reads=3)
+case("a commit mismatch still reports the conflict git itself found",
+     status == CHECK.EXIT_CONFLICT)
+
+# GitHub's head cannot be read at all: git's answer stands, as when gh fails.
+status, lines = run(
+    fake_runner(merge_tree_status=1, gh_head_status=1),
+    pull_request=605, reads=3)
+case("an unreadable GitHub head leaves git's answer standing",
+     status == CHECK.EXIT_CONFLICT)
+case("an unreadable GitHub head says GitHub could not be asked",
+     any("could not be asked" in l for l in lines))
 
 # --- gh unavailable ----------------------------------------------------------
 status, lines = run(
