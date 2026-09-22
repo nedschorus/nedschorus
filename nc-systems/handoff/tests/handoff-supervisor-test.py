@@ -1661,9 +1661,14 @@ def run_agent_exit_record_cases(workspace: Path):
         supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
         supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
     snapshots = []
+    # No terminal, stated rather than inherited: exit code 9 is a death the
+    # 2026-09-21 ruling resumes (GHI 613), and the no-terminal refusal is what
+    # holds this case to the one launch it counts. Left to the real stdin it
+    # would pass under a redirect and resume under a developer's terminal,
+    # exhausting the one-session list below.
     with supervisor_names_replaced(
             launch_agent_session=launch_recording([StubLaunchedSession(9)], snapshots, settings),
-            sync_working_branch_with_main=no_branch_sync), \
+            sync_working_branch_with_main=no_branch_sync, stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
@@ -1749,6 +1754,239 @@ def run_agent_exit_record_cases(workspace: Path):
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
           str(state))
+
+
+def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
+    """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
+    that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
+    a session that dies without writing a handoff is resumed, chosen by how it
+    died, under a budget of two consecutive resumes that produce no new work.
+
+    The behaviour it answers: on 2026-09-21 the MD-skills seat was terminated
+    with exit code 143 beside an intact 6.4 MB transcript, its supervisor wrote
+    the exit record and stopped as designed, and the seat stayed dark until the
+    user happened to look.
+
+    The budget is the case that matters, because a resume loop is unattended
+    automation that spends money on every launch. "A budget of 2" is read here
+    as two resumes: a seat whose transcript never grows gets its original
+    launch and two resumes — three launches — and the third resume is refused.
+    The scripted launcher below raises rather than looping when the supervisor
+    asks for a launch past the script, so a budget that stopped counting fails
+    these cases instead of running forever.
+    """
+    # --- The ruling's table, against the pure function --------------------
+    # Both spellings of each signal death: subprocess reports -15, a shell 143.
+    # A rule that recognised one and not the other would stop the seat on the
+    # other, which is why the ruling's table lists both.
+    for exit_code, expect_resume, reason_fragment, row in (
+            (0, False, "exited cleanly", "exit code 0 (a clean exit is a decision)"),
+            (143, True, "SIGTERM", "exit code 143 (SIGTERM, as a shell reports it)"),
+            (-15, True, "SIGTERM", "exit code -15 (SIGTERM, as subprocess reports it)"),
+            (137, True, "SIGKILL", "exit code 137 (SIGKILL, as a shell reports it)"),
+            (-9, True, "SIGKILL", "exit code -9 (SIGKILL, as subprocess reports it)"),
+            (3, True, "error status", "exit code 3 (another non-zero status)"),
+            (None, False, "adopted session", "exit code None (an adopted session)")):
+        decision = supervisor.resume_or_stop_after_a_death_without_a_handoff(exit_code)
+        check(f"RULING TABLE: {row} -> {'resume' if expect_resume else 'stop'}",
+              decision.resume is expect_resume and reason_fragment in decision.reason,
+              str(decision))
+
+    # --- The growth measure the budget resets on --------------------------
+    transcript_directory = workspace / "death-resume-turn-count"
+    transcript_directory.mkdir(parents=True, exist_ok=True)
+    with supervisor_names_replaced(
+            project_directory_for_working_directory=lambda _: transcript_directory):
+        check("BUDGET: a session with no transcript at all counts no work",
+              supervisor.substantive_turn_count_of_session_transcript(
+                  "no-such-session", workspace) == 0)
+        # The resume prompt rides in as a user record at every launch. Counting
+        # bytes or lines would read that alone as new work and hand the budget
+        # back on every resume, which is the defeat this measure avoids.
+        prompt_only = transcript_directory / "prompt-only.jsonl"
+        prompt_only.write_text(
+            json.dumps({"type": "user",
+                        "message": {
+                            "content":
+                                supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF}})
+            + "\n", encoding="utf-8")
+        check("BUDGET: a transcript holding only the resume prompt counts no work",
+              supervisor.substantive_turn_count_of_session_transcript(
+                  "prompt-only", workspace) == 0)
+        with prompt_only.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(
+                {"type": "assistant", "message": {"model": "claude", "content": "work"}}) + "\n")
+        check("BUDGET: an assistant turn on top of it counts as work",
+              supervisor.substantive_turn_count_of_session_transcript(
+                  "prompt-only", workspace) == 1)
+
+    # --- The loop: what the supervisor actually does at a death -----------
+    directory = workspace / "death-resume"
+    directory.mkdir(parents=True, exist_ok=True)
+    no_branch_sync = lambda working_directory: (
+        "branch sync: not a git checkout, nothing to sync")
+    first_prompt = "You are the seat. Do the work."
+
+    def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
+                                            adopted_session=None):
+        """Supervise a seat whose every session ends without a handoff.
+
+        `deaths` is one (exit_code, substantive_turns_written) per launch, in
+        order: the code that launch dies with, and how much work it writes to
+        its transcript first. Every launch also writes the prompt it was given
+        as a user record, as the harness does, so a case that writes no work
+        still grows the file.
+
+        A launch past the end of the script raises: that is the runaway the
+        budget exists to stop, and it must fail a case rather than spin.
+        """
+        case_projects = workspace / f"death-resume-projects-{case}"
+        case_projects.mkdir(parents=True, exist_ok=True)
+        case_directory = directory / case
+        case_directory.mkdir(parents=True, exist_ok=True)
+        settings = supervisor.SupervisorSettings(
+            agent=f"death{case}", working_directory=workspace,
+            handoff_directory=case_directory, agent_command="unused-stub-agent",
+            first_prompt=first_prompt, adopted_session=adopted_session)
+        launches, state_at_each_launch = [], []
+
+        def launch(agent_command, session_id, working_directory, prompt, **kwargs):
+            if len(launches) >= len(deaths):
+                raise RuntimeError(
+                    f"launch {len(launches) + 1} past the {len(deaths)} this case scripted")
+            exit_code, substantive_turns_written = deaths[len(launches)]
+            launches.append((session_id, prompt, kwargs.get("resume")))
+            state_at_each_launch.append(
+                json.loads(settings.state_path.read_text(encoding="utf-8")))
+            with (case_projects / f"{session_id}.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(
+                    {"type": "user", "message": {"content": prompt}}) + "\n")
+                for _ in range(substantive_turns_written):
+                    stream.write(json.dumps(
+                        {"type": "assistant",
+                         "message": {"model": "claude", "content": "work"}}) + "\n")
+            return StubLaunchedSession(exit_code)
+
+        console, overran = io.StringIO(), ""
+        with supervisor_names_replaced(
+                launch_agent_session=launch,
+                project_directory_for_working_directory=lambda _: case_projects,
+                sync_working_branch_with_main=no_branch_sync,
+                stdin_isatty=stdin_isatty), \
+                contextlib.redirect_stdout(console):
+            try:
+                supervisor.supervise_sessions(settings)
+            except RuntimeError as overrun:
+                overran = str(overrun)
+        state = supervisor.read_supervisor_state(settings.state_path)
+        return SimpleNamespace(
+            launches=launches, state_at_each_launch=state_at_each_launch,
+            printed=console.getvalue(), overran=overran, state=state,
+            record=supervisor.agent_exit_record_from_supervisor_state(state))
+
+    # 1. A clean exit stops. The ruling: /exit or a headless turn ending is a
+    # decision, not a crash, so it gets the seat stood down as before.
+    clean = supervise_a_seat_whose_sessions_die("clean", [(0, 1)])
+    check("TABLE IN THE LOOP: a clean exit stops the supervisor after one launch",
+          len(clean.launches) == 1 and not clean.overran
+          and "session ended without a handoff; supervisor stopping" in clean.printed,
+          f"{clean.launches} {clean.overran} {clean.printed[-300:]}")
+    check("TABLE IN THE LOOP: the clean stop still writes the exit record recovery reads",
+          clean.record is not None and clean.record[0] == 0,
+          f"{clean.state}")
+
+    # 2. Each resuming row of the table, both spellings of each signal. With a
+    # transcript that never grows, every one of them spends the budget and
+    # stops after the original launch and two resumes.
+    for case, exit_code, row in (
+            ("sigtermnegative", -15, "SIGTERM as subprocess reports it (-15)"),
+            ("sigtermshell", 143, "SIGTERM as a shell reports it (143)"),
+            ("sigkillnegative", -9, "SIGKILL as subprocess reports it (-9)"),
+            ("sigkillshell", 137, "SIGKILL as a shell reports it (137)"),
+            ("othernonzero", 3, "another non-zero status (3)")):
+        died = supervise_a_seat_whose_sessions_die(case, [(exit_code, 0)] * 3)
+        check(f"TABLE IN THE LOOP: {row} is resumed",
+              len(died.launches) >= 2 and died.launches[1][2] is True
+              and not died.overran,
+              f"{died.launches} {died.overran} {died.printed[-300:]}")
+        check(f"TABLE IN THE LOOP: the resume after {row} continues the same session",
+              len({launched[0] for launched in died.launches}) == 1,
+              str(died.launches))
+        check(f"TABLE IN THE LOOP: the resume after {row} carries the resume prompt",
+              died.launches[1][1] == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
+              and died.launches[0][1] == first_prompt,
+              str(died.launches))
+
+    # 3. An adopted session's code is None — this supervisor never owned it —
+    # so its death stops the seat, and nothing is launched over it.
+    adopted = supervise_a_seat_whose_sessions_die(
+        "adopted", [(0, 0)], adopted_session=supervisor.AdoptedSession("adopted-session", 99999999))
+    check("TABLE IN THE LOOP: an adopted session's death stops without launching anything",
+          adopted.launches == [] and not adopted.overran
+          and "exit code is unknown" in adopted.printed,
+          f"{adopted.launches} {adopted.printed[-300:]}")
+    check("TABLE IN THE LOOP: the adopted stop still writes the exit record, code unknown",
+          adopted.record is not None
+          and adopted.state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
+          str(adopted.state))
+
+    # 4. THE BUDGET STOPS A LOOP. A session that dies again and again without
+    # adding a single turn gets its launch and two resumes, and no more. The
+    # script holds four deaths, so a fourth launch would be taken rather than
+    # raising: the count below is the assertion, not merely that it stopped.
+    looping = supervise_a_seat_whose_sessions_die("budget", [(-15, 0)] * 4)
+    check("BUDGET: a seat whose transcript never grows gets its launch and two resumes, no more",
+          len(looping.launches) == 3 and not looping.overran,
+          f"{looping.launches} {looping.overran} {looping.printed[-400:]}")
+    check("BUDGET: the two launches after the first are resumes of the same session",
+          [launched[2] for launched in looping.launches] == [False, True, True]
+          and len({launched[0] for launched in looping.launches}) == 1,
+          str(looping.launches))
+    check("BUDGET: the refusal says the resumes added nothing and names the cost",
+          "added nothing to this session's transcript" in looping.printed
+          and "costs money" in looping.printed, looping.printed[-400:])
+    check("BUDGET: the stop that spends the budget still writes the exit record",
+          looping.record is not None and looping.record[0] == -15, str(looping.state))
+    check("BUDGET: a resume advances no generation and keeps the launched session id",
+          looping.state.get("generation") == 0
+          and looping.state.get(supervisor.LAUNCHED_SESSION_ID_STATE_KEY)
+          == looping.launches[0][0],
+          str(looping.state))
+    check("BUDGET: no resume leaves an exit record behind, which would read as a stop",
+          all(supervisor.AGENT_EXIT_CODE_STATE_KEY not in launched_state
+              for launched_state in looping.state_at_each_launch),
+          str(looping.state_at_each_launch))
+
+    # 5. THE BUDGET RESETS. The second session does real work before dying, so
+    # the resume that produced it is not a workless one and the budget comes
+    # back whole: this seat gets four launches where the looping seat got
+    # three. Without the reset a long-lived seat would eventually refuse to
+    # recover at all.
+    recovered = supervise_a_seat_whose_sessions_die(
+        "budgetreset", [(-15, 2), (-15, 3), (-15, 0), (-15, 0), (-15, 0)])
+    check("BUDGET RESETS: a resumed session that works before dying gets the budget back",
+          len(recovered.launches) == 4 and not recovered.overran,
+          f"{recovered.launches} {recovered.overran} {recovered.printed[-400:]}")
+    check("BUDGET RESETS: and it is the same session resumed each time",
+          len({launched[0] for launched in recovered.launches}) == 1
+          and [launched[2] for launched in recovered.launches] == [False, True, True, True],
+          str(recovered.launches))
+    check("BUDGET RESETS: the run still ends on the budget rather than running on",
+          "added nothing to this session's transcript" in recovered.printed
+          and recovered.record is not None and recovered.record[0] == -15,
+          f"{recovered.state} {recovered.printed[-400:]}")
+
+    # 6. The no-terminal refusal holds for a resume exactly as for a successor:
+    # a resumed session inherits this supervisor's stdio, and without a
+    # terminal it reads EOF at its first need for input (observed 2026-08-14).
+    seatless = supervise_a_seat_whose_sessions_die("noterminal", [(-15, 0), (-15, 0)],
+                                                   stdin_isatty=False)
+    check("NO TERMINAL: a death that would be resumed is refused without a seat",
+          len(seatless.launches) == 1 and not seatless.overran
+          and "no terminal to seat a resumed session on" in seatless.printed,
+          f"{seatless.launches} {seatless.printed[-400:]}")
+    check("NO TERMINAL: the refusal still writes the exit record recovery reads",
+          seatless.record is not None and seatless.record[0] == -15, str(seatless.state))
 
 
 def run_by_hand_resume_cases(workspace: Path):
@@ -2569,6 +2807,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_agent_exit_record_cases(Path(temporary_directory))
+    run_resume_after_a_death_without_a_handoff_cases(Path(temporary_directory))
     run_by_hand_resume_cases(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))

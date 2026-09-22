@@ -36,6 +36,31 @@ How much dialog to carry is not among them: the extractor takes the tail that
 clears its word floor, so the retiring agent exercises no judgment over what
 its successor receives.
 
+When a session dies WITHOUT writing a handoff, the supervisor resumes it
+rather than standing the seat down (user-ruled 2026-09-21, GHI [The
+handoff-supervisor resumes a session that died without a handoff, instead of
+stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)). The
+behaviour that prompted it: on 2026-09-21 the MD-skills seat finished a turn
+cleanly, sat idle for 4m41s, was terminated with exit code 143 beside an
+intact 6.4 MB transcript, and stayed dark until the user happened to look.
+The supervisor can know the MANNER of a death and never its AGENT — POSIX
+does not tell a parent who sent a signal, and the child's dying words go to
+the console it inherited, never to this process — so the choice is made on
+process.returncode alone (resume_or_stop_after_a_death_without_a_handoff):
+
+  0              stop.   A clean exit is a decision, not a crash
+  143 / -15      resume. SIGTERM
+  137 / -9       resume. SIGKILL — OOM or `kill -9`
+  other non-zero resume. The CLI exited with an error status
+  None           stop.   An adopted session, whose code this supervisor
+                         never owned
+
+Two gates hold every resume: CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET, and
+the no-terminal refusal that already guards a successor — a resumed session
+needs a seat exactly as a successor does. Every stopping path still writes the
+exit record, so scripts/recover-crashed-seats.py remains the fallback and its
+offer-versus-resume behaviour is unchanged.
+
 Never pass --allowedTools on the launch: it silently swallows the positional
 prompt, so the successor would boot with no instructions at all.
 
@@ -89,6 +114,28 @@ RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
     "previous session ended without writing a handoff. Re-verify in-flight "
     "state before trusting it, then continue the work underway."
 )
+
+# Both spellings of one death, because two programs report a signal two ways:
+# subprocess sets a NEGATIVE returncode (-15), while a shell reports 128 plus
+# the signal (143). The supervisor reads its own child's code through
+# subprocess, so the negative form is the one it normally sees; the shell form
+# is accepted too because a code can reach this state file and these functions
+# from a wrapper that ran the session under a shell, and a rule that recognised
+# only one spelling would silently stop the seat on the other. Both are listed
+# in the ruling's table for the same reason (GHI 613).
+SIGTERM_SESSION_EXIT_CODES = (143, -15)
+SIGKILL_SESSION_EXIT_CODES = (137, -9)
+
+# How many consecutive resumes may produce no new work before the supervisor
+# stops resuming (user-ruled 2026-09-21, GHI 613's gate 1). This is the gate
+# that matters: an unattended resume loop spends money on every launch. The
+# reset signal is the resumed session's transcript growing —
+# launch_agent_session's docstring records that --resume reuses the session id
+# in place (confirmed live 2026-08-21), so a resumed session's work lands in
+# the same transcript and growth there is the one available proof that the
+# resume produced anything. A session that dies again having added nothing is
+# looping, and the launch after that is refused.
+CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 2
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
@@ -376,6 +423,56 @@ def agent_exit_record_from_supervisor_state(state: dict):
     if AGENT_EXIT_RECORDED_AT_STATE_KEY not in state:
         return None
     return state.get(AGENT_EXIT_CODE_STATE_KEY), state[AGENT_EXIT_RECORDED_AT_STATE_KEY]
+
+
+@dataclass(frozen=True)
+class DeathWithoutAHandoffDecision:
+    """What to do about a session that ended without writing a handoff, and why.
+
+    `reason` is a console line for whoever reads the pane or the log, not an
+    instruction to an agent: the resumed session is told what it needs through
+    RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF.
+    """
+
+    resume: bool
+    reason: str
+
+
+def resume_or_stop_after_a_death_without_a_handoff(exit_code) -> DeathWithoutAHandoffDecision:
+    """The ruling's table (user-ruled 2026-09-21, GHI 613), as a pure function.
+
+    It takes the exit code and nothing else, because the exit code is the only
+    thing the supervisor holds at that moment: POSIX does not tell a parent who
+    sent a signal, and the session's own error output went to the terminal it
+    inherited (subprocess.Popen in launch_agent_session passes no stdout= or
+    stderr=, and cannot — the session is interactive and needs that terminal).
+    So the manner of a death is knowable and its agent never is, and this
+    discriminates on manner alone rather than guessing.
+
+    A clean exit stops because it is a decision — /exit, or a headless turn
+    ending. A code this supervisor never owned (None, an adopted session whose
+    poll() reports only "gone") stops for the opposite reason: nothing was
+    learned about the death at all. Everything else resumes.
+    """
+    if exit_code is None:
+        return DeathWithoutAHandoffDecision(
+            False,
+            "the session's exit code is unknown — an adopted session, whose code "
+            "this supervisor never owned; not resuming")
+    if exit_code == 0:
+        return DeathWithoutAHandoffDecision(
+            False,
+            "the session exited cleanly (exit code 0), which is a decision rather "
+            "than a crash; not resuming")
+    if exit_code in SIGTERM_SESSION_EXIT_CODES:
+        return DeathWithoutAHandoffDecision(
+            True, f"the session was killed by SIGTERM (exit code {exit_code})")
+    if exit_code in SIGKILL_SESSION_EXIT_CODES:
+        return DeathWithoutAHandoffDecision(
+            True, f"the session was killed by SIGKILL — OOM or `kill -9` "
+                  f"(exit code {exit_code})")
+    return DeathWithoutAHandoffDecision(
+        True, f"the session exited with an error status (exit code {exit_code})")
 
 
 SUPERVISOR_STATE_FILE_SUFFIX = "-supervisor-state.json"
@@ -806,6 +903,34 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
         for character in str(working_directory)
     )
     return PROJECTS_ROOT / mangled
+
+
+def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
+    """How much work a session's transcript holds, for the resume budget.
+
+    The budget's reset signal is the transcript growing (GHI 613's gate 1), and
+    this is what "growing" is measured in: assistant turns carrying text or a
+    tool call, by seat-transcript-worth-resuming.py's substantive_turn_count —
+    the project's one definition of "this session did something", already used
+    by recover-crashed-seats.py and by the by-hand resume below.
+
+    Bytes and line counts are NOT that measure, and using one would defeat the
+    budget outright: a resume passes the resume prompt as the positional
+    argument, so the harness appends a user record at every launch, and the
+    file grows by that record alone even when the session dies before it
+    replies. The budget would then reset on every resume and never stop
+    anything. substantive_turn_count also skips the harness's own synthetic
+    assistant turns — the API error notices a dying session collects, which are
+    exactly what a looping seat would produce.
+
+    A missing or unreadable transcript counts as 0, which is what it is: no
+    work seen. Under a resume the id is reused in place (launch_agent_session's
+    docstring, confirmed live 2026-08-21), so one path names every generation
+    of a resumed session's transcript.
+    """
+    transcript_path = (project_directory_for_working_directory(working_directory)
+                       / f"{session_id}.jsonl")
+    return worth_resuming.substantive_turn_count(transcript_path)
 
 
 def queue_status_line(working_directory: Path) -> str:
@@ -1548,11 +1673,22 @@ def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: s
 
 
 def supervise_sessions(settings: SupervisorSettings) -> int:
-    """Launch, watch, and reincarnate sessions until one ends without a handoff.
+    """Launch, watch, and reincarnate sessions until one ends without a handoff
+    and the ruling says to stop rather than resume it.
 
     Every stop that follows a session's end without launching a successor writes
     the exit record first (record_agent_exit_in_supervisor_state); the stop that
-    leaves a live session up for a seated supervisor does not."""
+    leaves a live session up for a seated supervisor does not. A resume is not a
+    stop: the record stays cleared while the loop runs, which is what a live
+    supervisor means by it.
+
+    A death without a handoff is resumed or stopped by the ruling of 2026-09-21
+    (GHI 613; the table is in this module's docstring and in
+    resume_or_stop_after_a_death_without_a_handoff). A resume keeps the session
+    id and the generation — it is one conversation continuing, not a
+    reincarnation — and is bounded by
+    CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET and by the no-terminal
+    refusal."""
     state = read_supervisor_state(settings.state_path)
     generation = state.get("generation", 0)
     if settings.first_prompt:
@@ -1576,11 +1712,21 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     # exists — and if the supervisor died while its agent kept running, would put
     # two processes on one session id. Adoption is how a running session is
     # picked back up; resume (nedschorus#120) is how a CRASHED session's
-    # transcript is continued, and applies to the first launch only.
-    resume_first_launch = bool(settings.resume_session_id) and adopted is None
+    # transcript is continued. Two things set this flag: the startup paths
+    # below, which resume a session that died before this supervisor started,
+    # and the death path in the loop, which resumes one that died while it was
+    # watching (GHI 613). It was called resume_first_launch while only the
+    # first launch could be a resume.
+    next_launch_resumes_the_session = bool(settings.resume_session_id) and adopted is None
+    # The resume budget, consecutive across the whole loop, so it survives every
+    # launch this call makes. The turn count is the one taken at the last
+    # resume; the next death compares against it to see whether that resume
+    # produced anything (CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET).
+    consecutive_resumes_without_new_work = 0
+    substantive_turns_at_the_last_resume = None
     if adopted:
         session_id = adopted.session_id
-    elif resume_first_launch:
+    elif next_launch_resumes_the_session:
         session_id = settings.resume_session_id
     else:
         session_id = str(uuid.uuid4())
@@ -1594,7 +1740,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     # kill the just-resumed session for a file predating it (PR #131 review,
     # finding 4). Mark any waiting handoff consumed BEFORE the resume launch —
     # the operator chose the transcript over the handoff by passing the flag.
-    if resume_first_launch and settings.handoff_path.is_file():
+    if next_launch_resumes_the_session and settings.handoff_path.is_file():
         stale_fields = parse_handoff_file(settings.handoff_path)
         stale_counter = counter_from(stale_fields)
         if stale_counter is not None and stale_counter > (state.get("consumed_counter") or 0):
@@ -1610,7 +1756,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     # previous cycle after the write but before a supervisor acted on it. Ignite
     # from it directly. Launching first and letting the wait loop find the file
     # would kill the just-born session for a handoff that predates it.
-    if adopted is None and not resume_first_launch and settings.handoff_path.is_file():
+    if adopted is None and not next_launch_resumes_the_session and settings.handoff_path.is_file():
         boot_fields = parse_handoff_file(settings.handoff_path)
         boot_counter = counter_from(boot_fields)
         consumed = state.get("consumed_counter")
@@ -1678,7 +1824,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                   f"resuming this seat's last transcript {by_hand_session_id} "
                   "rather than starting it empty")
             session_id = by_hand_session_id
-            resume_first_launch = True
+            next_launch_resumes_the_session = True
             prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
         else:
             print("handoff-supervisor: no waiting handoff and no recorded exit, and "
@@ -1715,15 +1861,17 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 settings.appended_system_prompt_file,
                 settings.appended_system_prompt_agent_part_path,
             )
-            verb = "resuming" if resume_first_launch else "launching"
+            verb = "resuming" if next_launch_resumes_the_session else "launching"
             print(f"handoff-supervisor: {verb} session {session_id} (generation {generation})")
             process = launch_agent_session(
                 settings.agent_command, session_id, settings.working_directory, prompt,
-                resume=resume_first_launch, remote_control_name=settings.agent,
+                resume=next_launch_resumes_the_session, remote_control_name=settings.agent,
                 appended_system_prompt_file=appended_system_prompt_file,
                 handoff_supervisor_agent_name=settings.agent,
             )
-            resume_first_launch = False  # recovery applies to the first launch only
+            # Each launch decides afresh: a startup resume applies to the first
+            # launch only, and the death path below sets it again for its own.
+            next_launch_resumes_the_session = False
 
         handoff_fields = wait_for_handoff(
             process, settings.handoff_path, state.get("consumed_counter"), settings.state_path, state
@@ -1731,6 +1879,44 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
         if handoff_fields is None:
             # wait_for_handoff saw poll() report the exit, which is what sets a
             # launched session's returncode; an adopted one's stays None.
+            death = resume_or_stop_after_a_death_without_a_handoff(process.returncode)
+            print(f"handoff-supervisor: {death.reason}")
+            if death.resume:
+                # Gate 1, the budget. Measured before the resume, against the
+                # count taken at the previous one: growth means that resume
+                # produced work, and the budget is handed back whole. The first
+                # death of a run has no previous resume to compare against, so
+                # it starts with the budget in hand.
+                substantive_turns = substantive_turn_count_of_session_transcript(
+                    session_id, settings.working_directory)
+                if (substantive_turns_at_the_last_resume is None
+                        or substantive_turns > substantive_turns_at_the_last_resume):
+                    consecutive_resumes_without_new_work = 0
+                if consecutive_resumes_without_new_work >= CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET:
+                    print(f"handoff-supervisor: {consecutive_resumes_without_new_work} consecutive "
+                          "resume(s) added nothing to this session's transcript — it is looping, "
+                          "and each launch costs money; not resuming again")
+                # Gate 2, the no-terminal refusal. A resumed session inherits
+                # this supervisor's stdio exactly as a successor does, so
+                # without a terminal it reads EOF at its first need for input
+                # and dies after one turn (observed 2026-08-14).
+                elif not sys.stdin.isatty():
+                    print("handoff-supervisor: this supervisor has no terminal to seat a resumed "
+                          "session on — not resuming. A seated supervisor "
+                          "(launch-claude-ubuntu / launch-claude-mac) or "
+                          "scripts/recover-crashed-seats.py picks this seat up.")
+                else:
+                    consecutive_resumes_without_new_work += 1
+                    substantive_turns_at_the_last_resume = substantive_turns
+                    print("handoff-supervisor: resuming it where it died "
+                          f"(resume {consecutive_resumes_without_new_work} of "
+                          f"{CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET} before the transcript "
+                          "has to grow again)")
+                    # The same session id and the same generation: a resume
+                    # continues one conversation rather than starting the next.
+                    prompt = RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
+                    next_launch_resumes_the_session = True
+                    continue
             record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             print("handoff-supervisor: session ended without a handoff; supervisor stopping")
             return 0
