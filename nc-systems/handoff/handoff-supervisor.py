@@ -122,12 +122,14 @@ RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
 # is accepted too because a code can reach this state file and these functions
 # from a wrapper that ran the session under a shell, and a rule that recognised
 # only one spelling would silently stop the seat on the other. Both are listed
-# in the ruling's table for the same reason (GHI 613).
+# in the ruling's table for the same reason (the 2026-09-21 ruling, cited in
+# full in this module's docstring).
 SIGTERM_SESSION_EXIT_CODES = (143, -15)
 SIGKILL_SESSION_EXIT_CODES = (137, -9)
 
 # How many consecutive resumes may produce no new work before the supervisor
-# stops resuming (user-ruled 2026-09-21, GHI 613's gate 1). This is the gate
+# stops resuming (user-ruled 2026-09-21; gate 1 of the ruling this module's
+# docstring cites in full). This is the gate
 # that matters: an unattended resume loop spends money on every launch. The
 # reset signal is the resumed session's transcript growing —
 # launch_agent_session's docstring records that --resume reuses the session id
@@ -439,7 +441,8 @@ class DeathWithoutAHandoffDecision:
 
 
 def resume_or_stop_after_a_death_without_a_handoff(exit_code) -> DeathWithoutAHandoffDecision:
-    """The ruling's table (user-ruled 2026-09-21, GHI 613), as a pure function.
+    """The ruling's table (user-ruled 2026-09-21; the ruling is cited in full in
+    this module's docstring), as a pure function.
 
     It takes the exit code and nothing else, because the exit code is the only
     thing the supervisor holds at that moment: POSIX does not tell a parent who
@@ -908,20 +911,23 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
     """How much work a session's transcript holds, for the resume budget.
 
-    The budget's reset signal is the transcript growing (GHI 613's gate 1), and
+    The budget's reset signal is the transcript growing (the ruling's gate 1), and
     this is what "growing" is measured in: assistant turns carrying text or a
     tool call, by seat-transcript-worth-resuming.py's substantive_turn_count —
     the project's one definition of "this session did something", already used
     by recover-crashed-seats.py and by the by-hand resume below.
 
-    Bytes and line counts are NOT that measure, and using one would defeat the
-    budget outright: a resume passes the resume prompt as the positional
-    argument, so the harness appends a user record at every launch, and the
-    file grows by that record alone even when the session dies before it
-    replies. The budget would then reset on every resume and never stop
-    anything. substantive_turn_count also skips the harness's own synthetic
-    assistant turns — the API error notices a dying session collects, which are
-    exactly what a looping seat would produce.
+    Bytes and line counts are NOT that measure, and one of them would hand the
+    budget back for a launch's own bookkeeping rather than for work. Every
+    launch carries its prompt into the session as a turn, which is how the
+    prompt reaches the transcript at all (first_user_turn_text in
+    seat-transcript-worth-resuming.py reads exactly that record), and a launch
+    that then fails still collects the harness's own synthetic assistant turns
+    — the "Not logged in", session-limit and 529 Overloaded notices recorded at
+    SYNTHETIC_ASSISTANT_MODEL, measured across forty days of this Mac's
+    transcripts on 2026-09-11. A looping seat produces exactly that noise, and
+    substantive_turn_count counts none of it, so the budget cannot be reset by
+    the loop it is meant to stop.
 
     A missing or unreadable transcript counts as 0, which is what it is: no
     work seen. Under a resume the id is reused in place (launch_agent_session's
@@ -1683,7 +1689,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     supervisor means by it.
 
     A death without a handoff is resumed or stopped by the ruling of 2026-09-21
-    (GHI 613; the table is in this module's docstring and in
+    (user-ruled 2026-09-21; the table is in this module's docstring and in
     resume_or_stop_after_a_death_without_a_handoff). A resume keeps the session
     id and the generation — it is one conversation continuing, not a
     reincarnation — and is bounded by
@@ -1715,7 +1721,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     # transcript is continued. Two things set this flag: the startup paths
     # below, which resume a session that died before this supervisor started,
     # and the death path in the loop, which resumes one that died while it was
-    # watching (GHI 613). It was called resume_first_launch while only the
+    # watching, under the 2026-09-21 ruling). It was called resume_first_launch
+    # while only the
     # first launch could be a resume.
     next_launch_resumes_the_session = bool(settings.resume_session_id) and adopted is None
     # The resume budget, consecutive across the whole loop, so it survives every

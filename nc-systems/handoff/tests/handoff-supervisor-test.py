@@ -1662,7 +1662,7 @@ def run_agent_exit_record_cases(workspace: Path):
         supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
     snapshots = []
     # No terminal, stated rather than inherited: exit code 9 is a death the
-    # 2026-09-21 ruling resumes (GHI 613), and the no-terminal refusal is what
+    # 2026-09-21 ruling resumes, and the no-terminal refusal is what
     # holds this case to the one launch it counts. Left to the real stdin it
     # would pass under a redirect and resume under a developer's terminal,
     # exhausting the one-session list below.
@@ -1800,9 +1800,9 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         check("BUDGET: a session with no transcript at all counts no work",
               supervisor.substantive_turn_count_of_session_transcript(
                   "no-such-session", workspace) == 0)
-        # The resume prompt rides in as a user record at every launch. Counting
-        # bytes or lines would read that alone as new work and hand the budget
-        # back on every resume, which is the defeat this measure avoids.
+        # A launch's prompt reaches the transcript as a user record — the record
+        # first_user_turn_text reads. Counting bytes or lines would read that
+        # bookkeeping as new work and hand the budget back for it.
         prompt_only = transcript_directory / "prompt-only.jsonl"
         prompt_only.write_text(
             json.dumps({"type": "user",
@@ -1834,8 +1834,9 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         `deaths` is one (exit_code, substantive_turns_written) per launch, in
         order: the code that launch dies with, and how much work it writes to
         its transcript first. Every launch also writes the prompt it was given
-        as a user record, as the harness does, so a case that writes no work
-        still grows the file.
+        as a user record — the shape a launch's prompt takes on disk — so a
+        case that writes no work still grows the file, and a budget measured in
+        bytes would pass these cases while stopping nothing.
 
         A launch past the end of the script raises: that is the runaway the
         budget exists to stop, and it must fail a case rather than spin.
