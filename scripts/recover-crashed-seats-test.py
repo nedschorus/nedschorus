@@ -2789,12 +2789,19 @@ with tempfile.TemporaryDirectory() as temporary:
           and report.startswith("exited-seat: ")
           and workspace.launches == [],
           (report_dry, report))
-    expected_launcher_word = (str(recovery.launcher_path()) if recovery.launcher_path()
+    this_machines_launcher = recovery.launcher_path()
+    expected_launcher_word = (str(this_machines_launcher) if this_machines_launcher
                               else "launch-claude-ubuntu")
+    # The root variable moves with the launcher word: each twin reads only its
+    # own name (by_hand_launch_command_for_seat), so off the Mac this case
+    # expects the box-side one, and hard-coding the shared name here cannot
+    # pass on ned-box.
+    expected_agents_root_variable = ("NEDSCHORUS_AGENTS_ROOT" if this_machines_launcher
+                                     else "NEDSCHORUS_UBUNTU_AGENTS_ROOT")
     resume_command_words = shlex.split(resume_command.replace(" (on the Mac)", ""))
     check("EXIT RECORD: the by-hand resume command parses into the launch_seat environment",
           resume_command_words[:4] == [
-              f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}",
+              f"{expected_agents_root_variable}={workspace.agents_root}",
               "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
               f"--handoff-dir {shlex.quote(str(workspace.handoffs))} --resume-session-id resume-me",
               expected_launcher_word, workspace.name],
