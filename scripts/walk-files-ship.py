@@ -283,8 +283,8 @@ def store_digests_and_sizes(copy_host, targets: list):
     for line in completed.stdout.splitlines():
         if line.startswith(STORE_LISTING_SIZE_LINE_PREFIX):
             # Read before the digest form below, which would otherwise take
-            # "size 134" for a digest. `wc -c` pads its count on some shells,
-            # so the count is stripped before it is read.
+            # "size 134" for a digest. BSD `wc` pads its count where GNU `wc`
+            # on ned-box does not, so the count is stripped before it is read.
             reported = line[len(STORE_LISTING_SIZE_LINE_PREFIX):].lstrip()
             count, _, target = reported.partition("  ")
             if count.isdigit() and target:
