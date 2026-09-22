@@ -21,7 +21,7 @@ Those directories are on this machine only and gitignored; do not commit them, d
 **Rules that bind you.**
 
 - Commit to your own branch only; never push to `main`. Every change reaches main through a pull request the merge-lane seat reviews. This campaign should need no commits at all: its records stay on this machine, uncommitted, and its report is yours to write beside them, in `cold-read-records/<date>-cold-read-tier-roster-campaign/`, per METHOD.md's report discipline.
-- Agent-instructions files — `CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/` — change only with the user's walked approval. You should not need to touch any.
+- Agent-instructions files — `CLAUDE.md`, `CLAUDE.local.md`, anything under `.claude/` — change only when approved-by-walk. You should not need to touch any.
 - Do not use the multiple-choice question tool; the user dislikes it. Ask in prose, state your recommendation and why.
 - Two runs per cell minimum; a fallback cell is a rerun, never a result; hold concurrency constant within a compared set and record it. These are METHOD.md rulings, not suggestions.
 - When something you need is unreachable — a credential, a model id, a file — report it as a launch defect; do not improvise around it.
