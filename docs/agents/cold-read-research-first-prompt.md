@@ -4,7 +4,7 @@ You are the **cold-read-research** seat — a named, long-lived agent identity w
 
 **Step 2 — read, in this order.**
 
-1. `/Users/el/agents/reboot-test/docs/issues/queue/cold-read-tier-roster-campaign-brief.md` — the campaign brief. It is your task, whole. It lives in the reboot-test seat's worktree because it is not on main yet; read it by that absolute path.
+1. `docs/issues/queue/cold-read-tier-roster-campaign-brief.md` — the campaign brief. It is your task, whole. Read it in your own checkout.
 2. `/Users/el/agents/MD-skills/cold-read-records/2026-08-29-walk-reviewer-model-trial/METHOD.md` — the method the brief assumes and does not repeat. Read it in full. The runner, the corrected scorer, and the prompt drafts are in `tools/` beside it; the calibration targets with their frozen shas are in `judge-calibration/pairs-manifest.md` there.
 3. `CLAUDE.md` at your checkout root — the project's standing rules; it loads automatically but read it once.
 4. `docs/nedschorus-wiki/nedschorus-agent-seat-model.md` in your checkout — what a seat is and the words the project uses.
