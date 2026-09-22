@@ -820,6 +820,24 @@ with tempfile.TemporaryDirectory() as root:
           "read",
           "Machines read: mac (this machine)." in garbage_out, garbage_out)
 
+    # Asked for the other machine alone, and its archive unreadable, there are
+    # no task lists at all, so the answer is the refusal. The refusal must
+    # name the machines actually read, not the machines asked for: it once
+    # said "on the machines read: ned-box" above a line saying ned-box was not
+    # read (Codex's P2 on pull request [The task viewer names only the
+    # machines it actually read](https://github.com/nedschorus/nedschorus/pull/655),
+    # carried by merge-lane-2).
+    with pretending_the_host_is("Edwards-MacBook-Air.local"):
+        _, alone_message, alone_code = run_and_code(
+            ["--seats", "--store", str(store), "--machine", "ned-box"],
+            runner=a_runner_returning(
+                stdout=b"this is not a tar archive at all"))
+    check("a refusal after the only machine asked for was unreadable names "
+          "no machine as read",
+          "No task lists on the machines read: none." in alone_message
+          and "readable archive" in alone_message and alone_code == 1,
+          (alone_message, alone_code))
+
 # A stream ssh cut short, with ssh itself exiting 0: once inside a member,
 # where tarfile raises while the members are read, and once at a member
 # boundary, where tarfile raises nothing and simply returns fewer files. Both
