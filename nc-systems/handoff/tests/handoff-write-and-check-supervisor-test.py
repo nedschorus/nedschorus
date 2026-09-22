@@ -531,7 +531,7 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
           and "would never be read here" in chained.stderr, chained.stderr)
     check("nothing was written on the chained refusal",
           borrowed.read_text(encoding="utf-8") == borrowed_body
-          and not (handoffs / "borrowed-name-handoff.md.tmp").exists())
+          and not (handoffs / "borrowed-name-handoff.md.partial").exists())
 
     # A supervised name in ANOTHER directory is not this directory's business.
     neighbour = workspace / "neighbour-seat"
