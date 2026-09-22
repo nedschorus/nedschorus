@@ -206,11 +206,19 @@ failing_models = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_MODEL", "")
 if any(model in sys.argv for model in failing_models.split(",") if model):
     sys.stderr.write("stub runtime: this model is unavailable today\n")
     sys.exit(1)
-match = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
-if match is None:
+# The report path and the cold-read-target's path are BOTH inside the record
+# since the cells were pointed at the frozen copy (2026-09-22), and both end
+# in .md. The copy is the one under <record>/target/, so it is excluded here:
+# without that, this stub writes its report over the document it was asked to
+# review, which is a defect in the stub and looks exactly like a product one.
+report_candidates = [
+    found for found in re.findall(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
+    if "/target/" not in found
+]
+if not report_candidates:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
     sys.exit(3)
-given = pathlib.Path(match.group(0))
+given = pathlib.Path(report_candidates[0])
 failing_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT")
 if failing_fragment and failing_fragment in given.name:
     sys.stderr.write("stub runtime: this cell is refused by report name\n")
@@ -262,6 +270,20 @@ edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write("The reviewer's own edit, which it should not have made.\n")
+target_match = re.search(r"[^\s\"']+cold-read-grid-test-target\.md", prompt)
+target_log = os.environ.get("COLD_READ_GRID_TEST_STUB_TARGET_LOG")
+if target_log and target_match:
+    with open(target_log, "a", encoding="utf-8") as handle:
+        handle.write(target_match.group(0) + "\n")
+if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET") and target_match:
+    # A reviewer editing the very document it was handed. The frozen copy is
+    # read-only, so this forces the mode first: the point of the case is the
+    # fingerprint catching an edit to the copy, not the mode bit stopping a
+    # determined writer.
+    given_target = pathlib.Path(target_match.group(0))
+    os.chmod(given_target, 0o644)
+    with open(given_target, "a", encoding="utf-8") as handle:
+        handle.write("The reviewer's edit to the document it was given.\n")
 sys.exit(0)
 '''
 
@@ -1077,6 +1099,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the target's bytes are frozen under target/ at its repository path",
           frozen.is_file() and frozen.read_bytes() == (repository / TARGET_RELATIVE_PATH).read_bytes(),
           f"{frozen} present={frozen.exists()}")
+    check("the frozen copy is read-only",
+          frozen.is_file() and (frozen.stat().st_mode & 0o222) == 0,
+          oct(frozen.stat().st_mode) if frozen.exists() else "absent")
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("the run prints one record: line, and it says shipped",
           len(record_lines) == 1 and record_lines[0].startswith("record: shipped:"),
@@ -1172,6 +1197,57 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the frozen target is the launch-time text, not the edited one",
           frozen.is_file() and b"reviewer's own edit" not in frozen.read_bytes()
           and b"reviewer's own edit" in (repository / TARGET_RELATIVE_PATH).read_bytes())
+
+    # --- The cells read the frozen copy, never the live document -------------
+    # USER-RULED 2026-08-28, "freeze sounds like the right solution", built
+    # 2026-09-22. Before it, every cell opened the original, so an edit
+    # part-way through a run left some reports describing the old text and
+    # some the new. The whole guarantee is this: what the reviewers were
+    # handed is a copy nothing outside the record can reach.
+    repository = build_scratch_repository(scratch, "checkout-cells-read-the-copy")
+    target_log = scratch / "cells-read-the-copy-targets.log"
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_TARGET_LOG": str(target_log)})
+    logged = target_log.read_text(encoding="utf-8").splitlines() if target_log.is_file() else []
+    record_directory = record_directory_of(repository)
+    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    check("every cell was given a path, and there is one per cell",
+          len(logged) == 6, f"{len(logged)} logged: {logged!r}")
+    # Resolved before comparing: on macOS the scratch tree lives under /tmp,
+    # which is a symbolic link to /private/tmp, and the grid resolves the
+    # cold-read-target before freezing it — so the same file is spelled two
+    # ways and a string comparison fails on a run that is correct.
+    logged_resolved = {Path(path).resolve() for path in logged}
+    check("every cell was given the frozen copy inside the record",
+          logged != [] and logged_resolved == {frozen.resolve()},
+          f"expected {frozen.resolve()}, logged {sorted(logged_resolved)!r}")
+    check("no cell was given the live document",
+          (repository / TARGET_RELATIVE_PATH).resolve() not in logged_resolved,
+          f"logged {sorted(logged_resolved)!r}")
+
+    # --- An edit to the COPY is caught, which is where the risk moved --------
+    # The records tree is gitignored, so the cell's own stray-write detector
+    # cannot see an edit to the copy: `git status` never mentions it. That is
+    # why the run fingerprints the copy as well as the original. The stub
+    # forces the read-only mode off first — the mode bit stops an accident,
+    # and this case is about the detector behind it.
+    repository = build_scratch_repository(scratch, "checkout-copy-edited")
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
+    record_directory = record_directory_of(repository)
+    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    check("an edit to the frozen copy is reported and the run exits 3",
+          result.returncode == 3
+          and result.stdout.count("TARGET CHANGED DURING RUN:") == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    check("the line names the copy that changed, not the untouched original",
+          str(frozen) in result.stdout
+          and b"edit to the document it was given" in frozen.read_bytes(),
+          repr([line for line in result.stdout.splitlines()
+                if line.startswith("TARGET CHANGED")]))
+    check("the original is untouched while the copy is what moved",
+          b"edit to the document it was given"
+          not in (repository / TARGET_RELATIVE_PATH).read_bytes())
 
     # --- Every file in the set is named for the run ------------------------
     # A report carried out of its directory, or read beside another run's,
