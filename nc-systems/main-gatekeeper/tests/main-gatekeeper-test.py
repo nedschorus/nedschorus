@@ -1098,11 +1098,35 @@ with tempfile.TemporaryDirectory() as workspace_name:
           and completed.returncode == 1, audit_payload)
 
     # --- slice 5: the repo git-config pins ----------------------------------
-    # A fresh clone fails these three, and this is the only place that tells
-    # anyone -- the requirement is otherwise in design prose and in git configs
-    # nothing distributes (README.md § Working in a fresh clone names it too,
-    # added 2026-09-22). So each detail names the value found AND the command
-    # that fixes it, in the checkout it is missing from.
+    # A clone arrives with no identity of its own, and this is the only place
+    # that tells anyone -- the requirement is otherwise in design prose and in
+    # git configs nothing distributes (README.md § Working in a fresh clone
+    # names it too, added 2026-09-21). So the detail names the value found AND
+    # all three commands that fix it, in the checkout it is missing from,
+    # whichever of the three cases failed.
+    #
+    # The local user.name and user.email are what keep a commit off the user's
+    # own name: being local, they override his global identity.
+    # user.useConfigOnly does not -- `git help config` says it instructs git to
+    # "avoid trying to guess defaults for user.email and user.name, and instead
+    # retrieve the values only from the configuration", and a global config is
+    # configuration. It turns a MISSING identity into a loud failure and blocks
+    # nothing ~/.gitconfig already answers. Measured 2026-09-21 on this Mac, in
+    # a fresh clone whose only local setting was user.useConfigOnly=true: `git
+    # var GIT_AUTHOR_IDENT` answered the user's own global identity, and a
+    # commit made there was authored as him. The first revision of these
+    # messages and of the README said the setting refused the global config --
+    # the same wrong rationale main-gatekeeper-design.md had already corrected
+    # on 2026-08-14, in its rewrite-policy classification; a reader who
+    # followed that revision passed this suite and still authored every commit
+    # as the user.
+    #
+    # These cases read git's merged configuration, not the local file, so a
+    # machine with a global identity passes the name and email cases on that
+    # alone, and no assertion here can show who would author a commit. That is
+    # what the GIT_AUTHOR_IDENT line in the detail is for: it is the reader's
+    # proof, and a green suite is not.
+    #
     # Asked of git rather than counted in `..`s: this was SCRIPT_PATH.parent
     # .parent, which was the repository root while the program lived in
     # scripts/ and became <root>/nc-systems when it moved into
@@ -1112,17 +1136,25 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # again.
     enclosing = Path(git(["rev-parse", "--show-toplevel"],
                          Path(__file__).resolve().parent).stdout.strip())
+    fresh_clone_identity_fix_instructions = (
+        f"Set all three, in that checkout, before you commit:\n"
+        f"  git -C {enclosing} config user.name <the agent-seat or host doing "
+        f"the work, never the user>\n"
+        f"  git -C {enclosing} config user.email <that name>@nedschorus.invalid\n"
+        f"  git -C {enclosing} config user.useConfigOnly true\n"
+        f"Then run: git -C {enclosing} var GIT_AUTHOR_IDENT -- if it answers "
+        f"the user's own name or address, the local identity is not set."
+    )
     for key in ("user.name", "user.email"):
         pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
         check(f"slice 5 pins {key} in the enclosing repository", bool(pinned),
-              f"{key} is unset in {enclosing}. Run: git -C {enclosing} config "
-              f"{key} <the agent-seat or host doing the work, never the user>")
+              f"{key} is unset in {enclosing}.\n"
+              f"{fresh_clone_identity_fix_instructions}")
     use_config_only = git(["config", "user.useConfigOnly"], enclosing,
                           check_result=False).stdout.strip()
     check("slice 5 pins user.useConfigOnly=true", use_config_only == "true",
-          f"user.useConfigOnly is {use_config_only or '(unset)'} in {enclosing}, "
-          f"so git may author a commit as whoever the global config names. "
-          f"Run: git -C {enclosing} config user.useConfigOnly true")
+          f"user.useConfigOnly is {use_config_only or '(unset)'} in {enclosing}.\n"
+          f"{fresh_clone_identity_fix_instructions}")
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.

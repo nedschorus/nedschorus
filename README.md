@@ -52,7 +52,7 @@ A checkout carries its own git identity, and a clone arrives without one. Set it
     git config user.email <that name>@nedschorus.invalid
     git config user.useConfigOnly true
 
-`user.useConfigOnly=true` is the half that does the work: it makes git refuse to fall through to the global config at all, so a missing identity fails at commit time instead of quietly signing someone else's name. `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py` asserts all three against the enclosing checkout, which is how a fresh clone finds out — it fails one case with the setting it found and the command that fixes it.
+The local `user.name` and `user.email` are what stop a commit being authored as the user: being local, they override the global identity. `user.useConfigOnly=true` does not block the global config — it stops git guessing an identity from the machine when no configuration carries one, so a missing identity fails loudly instead of being invented. Set all three, then confirm with `git var GIT_AUTHOR_IDENT`, which answers the identity your commits will carry: if it names the user, the local settings are not in place. `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py` checks all three against the enclosing checkout and fails with the value it found and the commands that fix it; it reads git's merged configuration, so the `git var` line above, not a green suite, is the proof.
 
 ## Status
 
