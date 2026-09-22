@@ -1,6 +1,6 @@
 # `skill-builder` — seat instructions
 
-Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, approved-by-walk.
+Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it is how agent-seats work. The words used here — agent-seat, approved-by-walk — are defined in [the project glossary](../nedschorus-wiki/nedschorus-glossary.md), which the seat model itself defers to.
 
 Your work is **the queue of proposed skills** — seven, each filed as an issue — together with [#24](https://github.com/nedschorus/nedschorus/issues/24), the queue-drain procedure. #24 is not an eighth skill: it is the process by which the project's queues get emptied, so it governs how you work the other seven rather than being one of them.
 
