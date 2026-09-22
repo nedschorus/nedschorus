@@ -2836,6 +2836,18 @@ with tempfile.TemporaryDirectory() as temporary:
     check("EXIT RECORD: off the Mac the by-hand command names launch-claude-ubuntu, on the Mac",
           box_command.endswith(f" launch-claude-ubuntu {workspace.name} (on the Mac)"),
           box_command)
+    # And it pins the assessed root under the variable THAT launcher reads.
+    # The box twin stopped reading the shared NEDSCHORUS_AGENTS_ROOT on
+    # 2026-09-21 (a Mac path in it reached the box as a mkdir of
+    # /Users/el/agents/ghi-info), so a command printed under the old name
+    # would be ignored by the launcher this line tells the operator to run,
+    # and the seat would come up at the box's own default root instead.
+    check("EXIT RECORD: the box by-hand command pins the root under the BOX-side variable",
+          box_command.startswith(
+              f"NEDSCHORUS_UBUNTU_AGENTS_ROOT={workspace.agents_root} ")
+          and "NEDSCHORUS_AGENTS_ROOT=" not in box_command.replace(
+              "NEDSCHORUS_UBUNTU_AGENTS_ROOT=", ""),
+          box_command)
 
     # With nothing to resume, the offer stands in for the ignite and names only
     # the fresh launch.

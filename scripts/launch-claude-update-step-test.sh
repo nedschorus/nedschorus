@@ -142,7 +142,14 @@ while [ $# -gt 1 ]; do shift; done
 printf '%s\n' "$1"
 EOF
 chmod +x "$STUBS/ssh"
-PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-ubuntu" seatub --no-attach > "$WORKSPACE/out-ubuntu" 2>&1
+# The capture is the launcher's own stderr as well as its stdout, so the
+# ambient NEDSCHORUS_AGENTS_ROOT is cleared for it: a shell that has one
+# exported (every seat on this Mac does, inherited from its launch) makes the
+# ubuntu launcher print the line that says it reads NEDSCHORUS_UBUNTU_AGENTS_ROOT
+# instead, and that line would land inside box_command and be run by the
+# `sh -c "$box_command"` probes below. Empty reads as unset, in the launcher's
+# ${:-} rule and in its own test for the variable alike.
+NEDSCHORUS_AGENTS_ROOT= PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-ubuntu" seatub --no-attach > "$WORKSPACE/out-ubuntu" 2>&1
 box_command=$(cat "$WORKSPACE/out-ubuntu")
 case "$box_command" in
     (*"claude update"*mkdir*) check "ubuntu box command updates, then prepares the seat" 0 ;;
@@ -254,7 +261,7 @@ assert_supervised_option_is_first() {
 # close-on-exit and never reaches the after-exit shell, so its box command
 # carries no prompt at all. Asserting on the detached string would pass an empty
 # haystack for a prompt that does not exist there.
-PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-ubuntu" seatub \
+NEDSCHORUS_AGENTS_ROOT= PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-ubuntu" seatub \
     > "$WORKSPACE/out-ubuntu-attached" 2>&1
 assert_supervised_option_is_first "ubuntu box command" "$(cat "$WORKSPACE/out-ubuntu-attached")"
 

@@ -328,13 +328,19 @@ def resupervise_box_seat(arguments) -> int:
     # ssh checks above and is then ignored at the decisive step: a non-default
     # box would be cleared, and the successor launched on the default one.
     # The directory overrides ride the same way when given (box-local paths,
-    # verbatim): the launcher reads NEDSCHORUS_AGENTS_ROOT, and its
+    # verbatim): the launcher reads NEDSCHORUS_UBUNTU_AGENTS_ROOT, and its
     # extra-arguments hook hands --handoff-dir to the box-side supervisor —
     # the same closes recover-crashed-seats.py's codex findings A/B made on
     # the mac side (user-ruled 2026-08-22: allowed overrides must work).
+    # The BOX-side name, not the shared NEDSCHORUS_AGENTS_ROOT: the ubuntu
+    # launcher stopped reading the shared one on 2026-09-21, when a Mac path
+    # in it reached the box as a mkdir of /Users/el/agents/ghi-info. Sent
+    # under the old name this override would be ignored with a warning, and
+    # --agents-root would clear one seat and launch another at the box's own
+    # default root — the split this carriage exists to prevent.
     environment = {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
     if arguments.agents_root:
-        environment["NEDSCHORUS_AGENTS_ROOT"] = arguments.agents_root
+        environment["NEDSCHORUS_UBUNTU_AGENTS_ROOT"] = arguments.agents_root
     if arguments.handoff_dir:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
             f"--handoff-dir {shlex.quote(arguments.handoff_dir)}")
@@ -360,8 +366,10 @@ def main(argv=None) -> int:
                         help="handoff directory on this machine only, not committed "
                              "(default ~/.claude/handoffs)")
     parser.add_argument("--agents-root", default="",
-                        help="where seat directories live "
-                             "(default $NEDSCHORUS_AGENTS_ROOT, else ~/agents)")
+                        help="where seat directories live (default "
+                             "$NEDSCHORUS_AGENTS_ROOT on this machine, "
+                             "$NEDSCHORUS_UBUNTU_AGENTS_ROOT for --machine ubuntu, "
+                             "else ~/agents)")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="report whether the seat is recoverable and what would happen; change nothing",

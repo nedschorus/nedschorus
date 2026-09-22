@@ -733,10 +733,21 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
     --first-prompt-file, as launch_seat passes it. On the Mac it runs
     launch-claude-mac; elsewhere it names launch-claude-ubuntu, which is run on
     the Mac and drives the box, and whose --first-prompt-file takes a box-side
-    path — which a file this tool wrote on the box is."""
+    path — which a file this tool wrote on the box is.
+
+    Each launcher is given the root variable IT reads: the Mac twin's
+    NEDSCHORUS_AGENTS_ROOT, the box twin's NEDSCHORUS_UBUNTU_AGENTS_ROOT.
+    They were one name until 2026-09-21, when a Mac path carried in the
+    shared one reached the box as a mkdir of /Users/el/agents/ghi-info. A
+    printed command naming the old one would be IGNORED by the launcher it
+    tells the operator to run, and the seat would come up at the box's own
+    default root rather than the assessed one — the split this command
+    exists to carry across."""
     launcher = launcher_path()
+    agents_root_variable = ("NEDSCHORUS_AGENTS_ROOT" if launcher is not None
+                            else "NEDSCHORUS_UBUNTU_AGENTS_ROOT")
     words = [
-        f"NEDSCHORUS_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}",
+        f"{agents_root_variable}={shlex.quote(str(seat_directory.parent))}",
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
             compose_supervisor_arguments_for_seat_launch(handoff_directory,
                                                          extra_supervisor_arguments)),

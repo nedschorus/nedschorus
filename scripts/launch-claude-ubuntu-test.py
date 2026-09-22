@@ -19,6 +19,15 @@ must arrive tilde-EXPANDED (the box shell resolves it at P1), while the
 supervisor's --cd arrives as the literal ~ path (handoff-supervisor.py
 expanduser()s it live, handoff-supervisor.py:855).
 
+The seat root is read from NEDSCHORUS_UBUNTU_AGENTS_ROOT, a BOX-side path.
+The shared NEDSCHORUS_AGENTS_ROOT is Mac-side legacy and is not read here,
+and the regression cases below are why: on 2026-09-21 that shared variable
+held /Users/el/agents in the operator's Mac terminal, the launcher spliced
+it into the box's command, and `launch-claude-ubuntu ghi-info` came back as
+"mkdir: Permission denied" with no path in it. Those cases assert on the
+string the box would have been sent, which is the only place a Mac path can
+be caught before it becomes an unhelpful error from the far side.
+
 Run: python3 scripts/launch-claude-ubuntu-test.py
 
 The suite is self-contained (this file plus launch-claude-ubuntu beside it;
@@ -188,9 +197,17 @@ class LaunchHarness:
         calls = self.captures / "python3-calls.txt"
         return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
 
-    def run(self, launcher_arguments, agents_root=None, extra_arguments=None):
+    def run(self, launcher_arguments, ubuntu_agents_root=None,
+            shared_agents_root=None, extra_arguments=None):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
-        tmux stub). Returns a dict of everything observable."""
+        tmux stub). Returns a dict of everything observable.
+
+        The two roots are separate arguments because they are separate
+        variables: ubuntu_agents_root is NEDSCHORUS_UBUNTU_AGENTS_ROOT, the
+        box-side root this launcher reads, and shared_agents_root is the
+        Mac-side legacy NEDSCHORUS_AGENTS_ROOT, which it does not. A case
+        that leaves one None leaves that variable unset, which is the only
+        way to measure the fall-through and the warning."""
         for leftover in self.captures.iterdir():
             leftover.unlink()
         environment = {key: value for key, value in os.environ.items()
@@ -198,8 +215,10 @@ class LaunchHarness:
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["LCU_TEST_DIR"] = str(self.captures)
         environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
-        if agents_root is not None:
-            environment["NEDSCHORUS_AGENTS_ROOT"] = agents_root
+        if ubuntu_agents_root is not None:
+            environment["NEDSCHORUS_UBUNTU_AGENTS_ROOT"] = ubuntu_agents_root
+        if shared_agents_root is not None:
+            environment["NEDSCHORUS_AGENTS_ROOT"] = shared_agents_root
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         launched = subprocess.run(
@@ -299,7 +318,7 @@ def main() -> int:
         # directories, silently splitting the seat.
         harness = LaunchHarness(root / "tilde-user")
         result = harness.run(["seat-u", "--no-attach"],
-                             agents_root="~alice/agents")
+                             ubuntu_agents_root="~alice/agents")
         check("tilde-user root: refused with exit 2, naming the split",
               result["launched"].returncode == 2
               and "not supported" in result["launched"].stderr
@@ -311,7 +330,7 @@ def main() -> int:
         # --- 1d. a ~/ root with a space rides the supported tilde carry ----
         harness = LaunchHarness(root / "tilde-space")
         result = harness.run(["seat-h", "--no-attach"],
-                             agents_root="~/custom agents")
+                             ubuntu_agents_root="~/custom agents")
         check("~/ root with a space: tmux -c resolves under the box home",
               result["replay"].returncode == 0
               and result["pane_directory"]
@@ -322,10 +341,89 @@ def main() -> int:
               == "~/custom agents/seat-h",
               result["supervisor_argv"])
 
+        # --- 1e. which variable names the box-side root --------------------
+        # NEDSCHORUS_UBUNTU_AGENTS_ROOT is read; the shared, Mac-side
+        # NEDSCHORUS_AGENTS_ROOT is not. THE_MAC_SIDE_ROOT is the value the
+        # operator's shell actually carried on 2026-09-21, kept verbatim so
+        # these cases fail against the exact configuration that failed.
+        THE_MAC_SIDE_ROOT = "/Users/el/agents"
+
+        harness = LaunchHarness(root / "box-side-variable")
+        box_side_root = f"{harness.home}/box fleet"
+        result = harness.run(["seat-r1", "--no-attach"],
+                             ubuntu_agents_root=box_side_root,
+                             shared_agents_root=THE_MAC_SIDE_ROOT)
+        check("box-side variable: the root it names is the root the box is told to use",
+              result["launched"].returncode == 0
+              and result["replay"].returncode == 0
+              and result["pane_directory"] == f"{box_side_root}/seat-r1"
+              and argv_value(result["supervisor_argv"], "--cd")
+              == f"{box_side_root}/seat-r1",
+              (result["pane_directory"],
+               argv_value(result["supervisor_argv"], "--cd")))
+        check("box-side variable: with it set, the shared variable reaches nothing",
+              THE_MAC_SIDE_ROOT not in result["remote"], result["remote"][:300])
+        check("box-side variable: with it set, nothing is written to stderr",
+              result["launched"].stderr == "", result["launched"].stderr[:300])
+
+        # The reported defect, as a case: the shared variable alone, holding
+        # the Mac path it holds in the fleet's environment today. Before the
+        # split it was spliced into the box command verbatim; now no part of
+        # it may reach the box.
+        harness = LaunchHarness(root / "shared-variable-only")
+        result = harness.run(["seat-r2", "--no-attach"],
+                             shared_agents_root=THE_MAC_SIDE_ROOT)
+        check("shared variable only: the launcher still reached ssh and exited 0",
+              result["launched"].returncode == 0 and result["remote"],
+              (result["launched"].returncode, result["launched"].stderr[:300]))
+        check("shared variable only: NO Mac path reaches the box (the 2026-09-21 defect)",
+              THE_MAC_SIDE_ROOT not in result["remote"]
+              and THE_MAC_SIDE_ROOT not in result["pane_directory"]
+              and not any(THE_MAC_SIDE_ROOT in token
+                          for token in result["supervisor_argv"]),
+              (result["remote"][:300], result["pane_directory"],
+               result["supervisor_argv"]))
+        check("shared variable only: the box resolves its own ~/agents instead",
+              result["replay"].returncode == 0
+              and result["pane_directory"] == f"{harness.home}/agents/seat-r2"
+              and argv_value(result["supervisor_argv"], "--cd")
+              == "~/agents/seat-r2"
+              and (harness.home / "agents" / "seat-r2").is_dir(),
+              (result["pane_directory"],
+               argv_value(result["supervisor_argv"], "--cd")))
+        check("shared variable only: ONE stderr line, naming the variable to set instead",
+              len(result["launched"].stderr.splitlines()) == 1
+              and "NEDSCHORUS_UBUNTU_AGENTS_ROOT" in result["launched"].stderr
+              and "NEDSCHORUS_AGENTS_ROOT is set" in result["launched"].stderr,
+              result["launched"].stderr[:300])
+
+        # The ~user refusal binds to the variable actually read: a ~user
+        # value in the shared name is not refused, because nothing reads it.
+        harness = LaunchHarness(root / "shared-variable-tilde-user")
+        result = harness.run(["seat-r3", "--no-attach"],
+                             shared_agents_root="~alice/agents")
+        check("shared variable only: a ~user value in it is not refused, because it is not read",
+              result["launched"].returncode == 0
+              and result["replay"].returncode == 0
+              and result["pane_directory"] == f"{harness.home}/agents/seat-r3"
+              and not (harness.workdir / "~alice").exists(),
+              (result["launched"].returncode, result["pane_directory"],
+               sorted(str(p) for p in harness.workdir.iterdir())))
+
+        # Neither variable set is the ordinary case, and it must stay silent:
+        # a line printed on every launch is a line nobody reads.
+        harness = LaunchHarness(root / "neither-variable")
+        result = harness.run(["seat-r4", "--no-attach"])
+        check("neither variable set: nothing is written to stderr",
+              result["launched"].returncode == 0
+              and result["launched"].stderr == "",
+              result["launched"].stderr[:300])
+
         # --- 2. apostrophe + space in the agents root ----------------------
         harness = LaunchHarness(root / "apostrophe-root")
         apostrophe_root = f"{harness.home}/agent's fleet"
-        result = harness.run(["seat-b", "--no-attach"], agents_root=apostrophe_root)
+        result = harness.run(["seat-b", "--no-attach"],
+                             ubuntu_agents_root=apostrophe_root)
         check("apostrophe root: the remote string still parses and runs",
               result["replay"].returncode == 0,
               (result["replay"].returncode, result["replay"].stderr[:300]))
@@ -342,7 +440,8 @@ def main() -> int:
         # --- 3. $ in the agents root is literal, not expanded --------------
         harness = LaunchHarness(root / "dollar-root")
         dollar_root = f"{harness.home}/pre$HOME-root"
-        result = harness.run(["seat-c", "--no-attach"], agents_root=dollar_root)
+        result = harness.run(["seat-c", "--no-attach"],
+                             ubuntu_agents_root=dollar_root)
         check("dollar root: $ in the path survives both parses unexpanded",
               result["replay"].returncode == 0
               and argv_value(result["supervisor_argv"], "--cd")
@@ -403,7 +502,7 @@ def main() -> int:
         # shell's cd target is the seat directory ---------------------------
         harness = LaunchHarness(root / "attached-apostrophe")
         apostrophe_root = f"{harness.home}/agent's fleet"
-        result = harness.run(["seat-g"], agents_root=apostrophe_root)
+        result = harness.run(["seat-g"], ubuntu_agents_root=apostrophe_root)
         check("attached + apostrophe root: wrapper executes and paths hold",
               result["replay"].returncode == 0
               and result["pane_directory"] == f"{apostrophe_root}/seat-g"

@@ -512,6 +512,7 @@ def run_box_forwarding_case(workspace: Path):
     class FakeOs:
         environ = {key: value for key, value in os.environ.items()
                    if key not in ("NEDSCHORUS_AGENTS_ROOT",
+                                  "NEDSCHORUS_UBUNTU_AGENTS_ROOT",
                                   "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")}
 
         @staticmethod
@@ -533,14 +534,21 @@ def run_box_forwarding_case(workspace: Path):
           and "--handoff-dir" in remote_tokens and "--agents-root" in remote_tokens,
           remote_command)
     _, _, environment = execve_calls[0]
+    # The BOX-side variable, which is the only one the ubuntu launcher reads
+    # since 2026-09-21 (a Mac path in the shared NEDSCHORUS_AGENTS_ROOT
+    # reached the box as a mkdir of /Users/el/agents/ghi-info). Under the old
+    # name this override would be ignored with a warning: the checks above
+    # would clear the seat at /box/agents and the launch would create another
+    # at the box's own default root.
     check("the ubuntu launch carries the overrides in its environment",
-          environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agents"
+          environment.get("NEDSCHORUS_UBUNTU_AGENTS_ROOT") == "/box/agents"
+          and "NEDSCHORUS_AGENTS_ROOT" not in environment
           and shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
               == ["--handoff-dir", "/box/handoffs"]
           and environment.get("NEDSCHORUS_AGENT_BOX") == "testbox",
           {key: environment.get(key) for key in
-           ("NEDSCHORUS_AGENTS_ROOT", "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS",
-            "NEDSCHORUS_AGENT_BOX")})
+           ("NEDSCHORUS_UBUNTU_AGENTS_ROOT", "NEDSCHORUS_AGENTS_ROOT",
+            "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "NEDSCHORUS_AGENT_BOX")})
 
     # PR #134 review finding 1, the box halves: an apostrophe path must
     # survive the remote shell's parse and the launcher hook's parse.
@@ -560,7 +568,7 @@ def run_box_forwarding_case(workspace: Path):
     check("apostrophe paths survive the ubuntu launcher hook's shell parse",
           shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
           == ["--handoff-dir", "/box/agent's handoffs"]
-          and environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agent's root",
+          and environment.get("NEDSCHORUS_UBUNTU_AGENTS_ROOT") == "/box/agent's root",
           environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"))
 
     fake_subprocess.calls.clear()
@@ -574,9 +582,10 @@ def run_box_forwarding_case(workspace: Path):
     check("with no overrides given, the box halves keep their own defaults",
           "--handoff-dir" not in remote_command
           and "--agents-root" not in remote_command
+          and "NEDSCHORUS_UBUNTU_AGENTS_ROOT" not in environment
           and "NEDSCHORUS_AGENTS_ROOT" not in environment
           and "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" not in environment,
-          (remote_command, environment.get("NEDSCHORUS_AGENTS_ROOT")))
+          (remote_command, environment.get("NEDSCHORUS_UBUNTU_AGENTS_ROOT")))
 
     # default_agents_root reads the launchers' own variable (the same rule as
     # recover-crashed-seats.py's twin), so the no-flag checks and the launch

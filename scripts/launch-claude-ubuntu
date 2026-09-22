@@ -7,8 +7,8 @@
 #
 # Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
 # type is the whole configuration. The agent's directory is
-# $NEDSCHORUS_AGENTS_ROOT/<name> on the box (default ~/agents/<name>), created
-# on first use. A CLAUDE.local.md in that directory supplies the agent's
+# $NEDSCHORUS_UBUNTU_AGENTS_ROOT/<name> on the box (default ~/agents/<name>),
+# created on first use. A CLAUDE.local.md in that directory supplies the agent's
 # identity; without one the agent is generic and the name is just a label.
 # choirmaster is not registered anywhere — founding step 6 puts real content in
 # its directory, and this script treats it like any other name.
@@ -53,17 +53,44 @@
 
 set -eu
 
-# AGENTS_ROOT is a BOX-side path. A leading ~ is carried to the box as its
-# $HOME; any other character — spaces and apostrophes included — travels
-# literally, escaped per parse layer below. A ~user/ form is REFUSED rather
-# than half-working: the box shell would treat the quoted value as a literal
-# directory named ~user while the fleet's Python tools expanduser() it to
-# that user's real home — one seat, silently split across two directories
-# (PR #137 review P3, user-ruled 2026-08-22: overrides either work or are
-# blocked). Agent names stay charset-checked: they ride in more places than
-# paths do.
+# AGENTS_ROOT is a BOX-side path, and it is read from
+# NEDSCHORUS_UBUNTU_AGENTS_ROOT — the box's own name for it. The shared
+# NEDSCHORUS_AGENTS_ROOT is MAC-side legacy and is NOT read here: one name
+# cannot hold two machines' paths, and only one of the two meanings can be
+# right at a time. This launcher read it until 2026-09-21, when
+# `launch-claude-ubuntu ghi-info`, typed in a Mac terminal whose environment
+# carried NEDSCHORUS_AGENTS_ROOT=/Users/el/agents, told the box to
+# `mkdir -p /Users/el/agents/ghi-info` and came back with one line —
+# "mkdir: Permission denied" — naming no path at all. The machine is in this
+# script's name because the two are otherwise indistinguishable at the call
+# site; a root variable shared with the Mac makes that distinction
+# impossible to honour, which is why the names are now separate
+# (scripts/launch-claude-mac reads NEDSCHORUS_MAC_AGENTS_ROOT, and still
+# reads the shared name after it, where its value is a Mac path and correct).
+# The same class, with the same answer, is recorded at scripts/ghi-info-ask.py:
+# its first live run spliced the Mac's expanded /Users/el/agents/ghi-info into
+# a box-side command. A path that names a machine is resolved by that machine,
+# or carried in a variable that says which machine it is for.
+#
+# A leading ~ is carried to the box as its $HOME; any other character —
+# spaces and apostrophes included — travels literally, escaped per parse
+# layer below. A ~user/ form is REFUSED rather than half-working: the box
+# shell would treat the quoted value as a literal directory named ~user while
+# the fleet's Python tools expanduser() it to that user's real home — one
+# seat, silently split across two directories (PR #137 review P3, user-ruled
+# 2026-08-22: overrides either work or are blocked). Agent names stay
+# charset-checked: they ride in more places than paths do.
+#
+# The shared name being SET is worth one line of its own, because the
+# operator who exported it believes he has configured this launcher: the
+# 2026-09-21 failure was reported as a permission error on the box, not as an
+# ignored variable. The line instructs and the launch proceeds — a launcher
+# that refuses here would block the very seat the fix exists to unblock.
 AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
-AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
+AGENTS_ROOT="${NEDSCHORUS_UBUNTU_AGENTS_ROOT:-~/agents}"
+if [ -z "${NEDSCHORUS_UBUNTU_AGENTS_ROOT:-}" ] && [ -n "${NEDSCHORUS_AGENTS_ROOT:-}" ]; then
+    echo "launch-claude-ubuntu: NEDSCHORUS_AGENTS_ROOT is set and is not read here — to move the box-side seat root, set NEDSCHORUS_UBUNTU_AGENTS_ROOT to a box-side path; this launch uses $AGENTS_ROOT on the box." >&2
+fi
 case "$AGENTS_ROOT" in
     ("~"[!/]*)
         echo "launch-claude-ubuntu: ~user agents roots are not supported — the box shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute box-side path." >&2

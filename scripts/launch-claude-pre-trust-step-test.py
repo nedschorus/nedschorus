@@ -193,9 +193,16 @@ class PreTrustSandbox:
         return sorted(path.name for path in self.decoy_tmpdir.iterdir())
 
     # --- running the launchers -----------------------------------------
-    def launcher_environment(self, agents_root) -> dict:
-        """agents_root None leaves NEDSCHORUS_AGENTS_ROOT unset, so the
-        launcher's own ~/agents default applies."""
+    def launcher_environment(self, agents_root,
+                             agents_root_variable="NEDSCHORUS_AGENTS_ROOT") -> dict:
+        """agents_root None leaves the root variable unset, so the launcher's
+        own ~/agents default applies.
+
+        Each twin reads its OWN variable, so a case must set the one the
+        launcher under it reads: the Mac's NEDSCHORUS_AGENTS_ROOT, the box's
+        NEDSCHORUS_UBUNTU_AGENTS_ROOT. They were one name until 2026-09-21,
+        when a Mac path in the shared name reached the box as
+        `mkdir -p /Users/el/agents/ghi-info`."""
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                               "CLAUDE_CODE_"))}
@@ -204,7 +211,7 @@ class PreTrustSandbox:
         environment["TMPDIR"] = str(self.decoy_tmpdir)
         environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
         if agents_root is not None:
-            environment["NEDSCHORUS_AGENTS_ROOT"] = agents_root
+            environment[agents_root_variable] = agents_root
         environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = "5"
         environment["PRE_TRUST_CAPTURES"] = str(self.captures)
         environment["PRE_TRUST_REAL_PYTHON3"] = sys.executable
@@ -223,14 +230,17 @@ class PreTrustSandbox:
     def run_ubuntu_replay(self, seat_name: str, agents_root=None):
         """The box twin: launcher -> the string it hands ssh -> that string
         run by a real /bin/sh, which is where the box-side program's own
-        parse (P1) actually happens. agents_root defaults to UNSET here, on
-        purpose: the box's own ~/agents is what a real launch uses, and the
-        trusted key then proves the box resolved ~ box-side (inside this
-        sandbox's HOME) rather than this Mac resolving it first."""
+        parse (P1) actually happens. agents_root, when given, is the BOX-side
+        NEDSCHORUS_UBUNTU_AGENTS_ROOT; it defaults to UNSET here, on purpose:
+        the box's own ~/agents is what a real launch uses, and the trusted key
+        then proves the box resolved ~ box-side (inside this sandbox's HOME)
+        rather than this Mac resolving it first."""
         launched = subprocess.run(
             [str(UBUNTU_LAUNCHER), seat_name, "--no-attach"],
             capture_output=True, text=True, check=False,
-            env=self.launcher_environment(agents_root), cwd=str(self.workdir))
+            env=self.launcher_environment(
+                agents_root, agents_root_variable="NEDSCHORUS_UBUNTU_AGENTS_ROOT"),
+            cwd=str(self.workdir))
         capture = self.captures / "ssh-argv.txt"
         remote = (capture.read_text(encoding="utf-8").splitlines()[-1]
                   if capture.is_file() else "")
