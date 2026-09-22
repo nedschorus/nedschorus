@@ -154,9 +154,18 @@ with tempfile.TemporaryDirectory() as scratch:
     occupied_wt = None
     if shutil.which("lsof"):
         occupied_wt = add_worktree("occupied-wt")
+        # The occupant blocks on stdin rather than sleeping a fixed span, so
+        # its lifetime is not a race against the suite's own runtime. It used
+        # to sleep 120 s, which is less than this suite takes whenever lsof is
+        # slow -- the load this suite's timeout note is about. The occupant
+        # then exited before --remove ran, occupied-wt was vacant, --remove
+        # reaped it, and the suite reported the reaper deleting an occupied
+        # worktree: its central promise appearing to break, from load alone.
+        # The finally below kills it; should this process die without reaching
+        # that, the pipe's write end closes, stdin reads EOF, and it exits.
         occupant = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(120)"],
-            cwd=str(occupied_wt),
+            [sys.executable, "-c", "import sys; sys.stdin.read()"],
+            cwd=str(occupied_wt), stdin=subprocess.PIPE,
         )
     else:
         print("SKIP  occupied cases: lsof is not installed on this machine")
