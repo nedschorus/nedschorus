@@ -1103,7 +1103,15 @@ with tempfile.TemporaryDirectory() as workspace_name:
     # nothing distributes (README.md § Working in a fresh clone names it too,
     # added 2026-09-22). So each detail names the value found AND the command
     # that fixes it, in the checkout it is missing from.
-    enclosing = SCRIPT_PATH.parent.parent
+    # Asked of git rather than counted in `..`s: this was SCRIPT_PATH.parent
+    # .parent, which was the repository root while the program lived in
+    # scripts/ and became <root>/nc-systems when it moved into
+    # nc-systems/main-gatekeeper/. The checks still read the same local config
+    # from a subdirectory, so nothing failed -- but the path they now print for
+    # the reader to paste was not the root, and the next move would shift it
+    # again.
+    enclosing = Path(git(["rev-parse", "--show-toplevel"],
+                         Path(__file__).resolve().parent).stdout.strip())
     for key in ("user.name", "user.email"):
         pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
         check(f"slice 5 pins {key} in the enclosing repository", bool(pinned),
