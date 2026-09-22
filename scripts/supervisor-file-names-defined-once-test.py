@@ -218,12 +218,69 @@ def suffix_definition_assignments(tree):
     passed the whole suite. Reading both from this list makes that
     disagreement impossible: whatever is exempt here is counted here, so a
     definition outside handoff-supervisor.py fails however it is written.
+
+    ANNOTATED ASSIGNMENTS COUNT (added 2026-09-22, Codex P2-1 on PR #599).
+    `HANDOFF_FILE_SUFFIX: str = "-handoff.md"` is a different node type,
+    ast.AnnAssign, and collecting only ast.Assign missed it. Measured on main
+    before this change, and the shape of the probe decides what you conclude:
+    REPLACING a plain definition with an annotated one turned the guard red
+    and looked caught, while KEEPING the plain one and adding an annotated
+    one after it passed green -- and Python keeps the last assignment, so the
+    value the supervisor actually ran with was the annotated one the guard
+    could not see. No suffix constant is written that way today; 52
+    annotated assignments live across 8 scripts, handoff-supervisor.py among
+    them, so the style is already in the file this guard parses.
+
+    An annotation with no value, `HANDOFF_FILE_SUFFIX: str`, is a
+    declaration and not a definition: it assigns nothing, exempts no string,
+    and is left out.
     """
-    return [node for node in ast.walk(tree)
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name)
-                    and target.id in SUFFIX_CONSTANTS
-                    for target in node.targets)]
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            if any(isinstance(target, ast.Name)
+                   and target.id in SUFFIX_CONSTANTS
+                   for target in node.targets):
+                found.append(node)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if (isinstance(node.target, ast.Name)
+                    and node.target.id in SUFFIX_CONSTANTS):
+                found.append(node)
+    return found
+
+
+def assigned_constant_names(node):
+    """The SUFFIX_CONSTANTS names this definition assigns.
+
+    A list, not one name: `A = B = "-x"` assigns two, and a definition that
+    names two constants is a duplicate of each.
+    """
+    if isinstance(node, ast.AnnAssign):
+        return ([node.target.id] if isinstance(node.target, ast.Name)
+                and node.target.id in SUFFIX_CONSTANTS else [])
+    return [target.id for target in node.targets
+            if isinstance(target, ast.Name) and target.id in SUFFIX_CONSTANTS]
+
+
+def definitions_by_constant(tree):
+    """Which lines define each suffix constant, in file order.
+
+    The guard used to hold values only, so two definitions of one constant
+    were visible as a value it did not expect and reported as a RENAME --
+    which told an agent to mirror the rename into SPELLED_OUT_NAMES, leaving
+    the duplicate in place and the guard hunting a name nothing uses (Codex
+    P2-2 on PR #599). Two definitions carrying the SAME string were worse
+    still: the values list simply grew, the comparison failed, and the
+    failure named no cause at all (reviewer inline comment on the same pull
+    request). Both are answered by counting the targets rather than the
+    strings.
+    """
+    by_constant = {}
+    for node in suffix_definition_assignments(tree):
+        for name in assigned_constant_names(node):
+            by_constant.setdefault(name, []).append(
+                getattr(node, "lineno", 0))
+    return by_constant
 
 
 def defined_suffix_values(tree):
@@ -350,9 +407,16 @@ check("every composing helper was found in the syntax tree",
       f"{sorted(COMPOSING_HELPERS)}; a helper that is renamed must be renamed "
       f"in COMPOSING_HELPERS here, or its body stops being checked")
 
-supervisor_defined_names = defined_suffix_values(
-    ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
-              filename=str(SUPERVISOR_SCRIPT)))
+supervisor_tree = ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
+                            filename=str(SUPERVISOR_SCRIPT))
+supervisor_defined_names = defined_suffix_values(supervisor_tree)
+
+# Counted by target, so a constant defined twice is named as a duplicate
+# whatever the two values are. Python keeps the last assignment, so the last
+# line listed is the value the supervisor runs with.
+duplicated_constants = {
+    name: lines for name, lines
+    in definitions_by_constant(supervisor_tree).items() if len(lines) > 1}
 
 unreadable_definitions = supervisor_defined_names.count(None)
 readable_definitions = sorted(value for value in supervisor_defined_names
@@ -376,8 +440,19 @@ check("the names this guard hunts are the supervisor's own, not a stale copy",
       # the comparison alone passed that suite green (measured 2026-09-21).
       # readable_definitions filters None out, so no None reaches sorted().
       not unreadable_definitions
+      and not duplicated_constants
       and readable_definitions == sorted(SPELLED_OUT_NAMES),
       f"{SUPERVISOR_SCRIPT.name} defines {readable_definitions}"
+      # Named before the rename clause, and instead of it: a constant defined
+      # twice is not a rename, and the rename remedy sends an agent to edit
+      # SPELLED_OUT_NAMES while the duplicate stays. Python keeps the last
+      # assignment, so the last line named is the one in force.
+      + ("; " + "; ".join(
+          f"{name} is defined {len(lines)} times, at line(s) "
+          f"{', '.join(str(line) for line in lines)} -- line {lines[-1]} is "
+          f"the value in force; delete the others"
+          for name, lines in sorted(duplicated_constants.items()))
+         if duplicated_constants else "")
       # Each remedy states only the cause that fired. The rename remedy used
       # to be appended whatever happened, and an agent obeying it after an
       # unreadable definition edits SPELLED_OUT_NAMES instead of the value --
@@ -388,7 +463,8 @@ check("the names this guard hunts are the supervisor's own, not a stale copy",
          f"a plain string literal" if unreadable_definitions else "")
       + (f"; SPELLED_OUT_NAMES here says {sorted(SPELLED_OUT_NAMES)} -- mirror "
          f"a rename into SPELLED_OUT_NAMES, or this guard hunts a name nothing "
-         f"uses" if readable_values_contradict_spelled_out_names else ""))
+         f"uses" if readable_values_contradict_spelled_out_names
+         and not duplicated_constants else ""))
 
 check("the suffix constants are defined in one script",
       defining == [SUPERVISOR_SCRIPT.name],
