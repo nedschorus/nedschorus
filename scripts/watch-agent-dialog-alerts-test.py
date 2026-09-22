@@ -32,6 +32,18 @@ What these cases are defending, in the order the defects actually happened
     before a line is filtered or quoted (the pty colourised a remote
     traceback, and the escapes reached the quoted snippet).
 
+The three interrupt cases failed four times in the merge lane's sweeps and
+passed alone every time, and the trigger was recorded as unidentified. The
+MECHANISM is identified: signal_and_wait() below SIGKILLs a watcher that has
+not exited within its grace window, so under load the helper itself
+manufactures all three failures at once — rc=-9 where 130 is expected, no
+"NOT WATCHING" line because the process never got to print it, and a surviving
+dialog stream because the killed watcher never reaped its child. The grace was
+15 s; it is SIGNALLED_EXIT_GRACE_SECONDS below, and the kill now says so in
+the output rather than leaving rc=-9 to be read as a handler defect. What makes
+a signalled watcher slow on a loaded machine is still unidentified, and a run
+carrying that note is still a load symptom to re-run alone.
+
 Synchronization without sleeps: the fake stream appends a timestamp per
 attempt, so a case can wait for the Nth attempt rather than guessing a
 duration — which is how "BROKEN is announced once over four attempts" is
@@ -59,6 +71,14 @@ watcher_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(watcher_module)
 
 CONTROL_DIRECTORY_VARIABLE = "WATCH_AGENT_DIALOG_ALERTS_TEST_CONTROL_DIR"
+
+# How long a signalled watcher is given to exit on its own before the helper
+# SIGKILLs it. MEASURED: an unloaded watcher exits in well under a second, and
+# the kill path is only ever reached on a machine too busy to let it. It was
+# 15 s, and at 15 s the merge lane's sweeps hit it four times (2026-09-21,
+# sequential sweeps and concurrent ones both), each time failing the same three
+# interrupt cases and each time passing when that suite was re-run alone.
+SIGNALLED_EXIT_GRACE_SECONDS = 60.0
 
 # The fake dialog stream. One attempt reads its step from plan.json (the
 # last step repeats once the plan runs out), records that it started, and
@@ -533,19 +553,26 @@ class WatcherProcess:
     def count(self, fragment):
         return sum(1 for line in self.lines if fragment in line)
 
-    def interrupt_and_wait(self, timeout=15.0):
+    def interrupt_and_wait(self, timeout=SIGNALLED_EXIT_GRACE_SECONDS):
         return self.signal_and_wait(signal.SIGINT, timeout)
 
-    def terminate_and_wait(self, timeout=15.0):
+    def terminate_and_wait(self, timeout=SIGNALLED_EXIT_GRACE_SECONDS):
         return self.signal_and_wait(signal.SIGTERM, timeout)
 
-    def signal_and_wait(self, signal_number, timeout=15.0):
+    def signal_and_wait(self, signal_number, timeout=SIGNALLED_EXIT_GRACE_SECONDS):
         self.process.send_signal(signal_number)
         try:
             returncode = self.process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             self.process.kill()
             returncode = self.process.wait()
+            # Said out loud, because this kill is what fails the cases that
+            # follow: rc=-9 read as a handler defect is what sent four sweeps
+            # looking for one.
+            print(f"NOTE  the watcher did not exit within {timeout:g}s of "
+                  f"signal {signal_number}, so this helper SIGKILLed it. The "
+                  f"cases below fail for that reason, not the watcher's "
+                  f"handler. Re-run this suite alone.")
         for thread in self._threads:
             thread.join(timeout=2)
         return returncode
