@@ -57,9 +57,11 @@ decided: the retry, the absence, the closing text and the exit code turn
 only on whether a report landed. No timeout: a cold-read-cell that hangs
 holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
 
-Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2
-bad invocation (including a cold-read-target this instrument refuses to
-review), 3 the cold-read-target changed while the cold-read-cells were
+Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
+cold-read-cell was launched (a bad invocation, a cold-read-target this
+instrument refuses to review, or a cold-read-target that could not be frozen
+into the cold-read-record), 3 the cold-read-target changed while the
+cold-read-cells were
 running, so every report in the set describes a document that no longer
 exists in the form reviewed.
 """
@@ -387,7 +389,7 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
 TARGET_CHANGED_INSTRUCTIONS = """\
 The reports are in {record_dir}, and every one of them is marked: the document's
 bytes differed between the moment the cells launched and the moment the last one
-finished, so which text any one report describes is unknown.
+finished, so this set is not a review of the document as it now stands.
 
 Do not triage this set as a review of the document. Stop editing the document
 and start a new cold-read run against the settled text.
@@ -414,22 +416,41 @@ def mark_reports_target_changed(
     possibility of reading them as a review of the file as it now stands.
     """
     # WHAT THE TWO FINGERPRINTS PROVE, and no more: the bytes differed between
-    # the moment before the cold-read-cells launched and the moment after
-    # the last one finished. They do not say when in that window the edit
-    # landed, so they cannot say that it landed while a reviewer was reading,
-    # nor which text any one report describes — the ordinary case is an edit
-    # part-way through, with some cold-read-cells having opened the file before
-    # it and some after. The marker is the durable half of this check: these
-    # cold-read-records are kept, so a sentence claiming more than the check
-    # knows would outlive the run.
+    # the moment before the cold-read-cells launched and the moment after the
+    # last one finished. They do not say when in that window the edit landed,
+    # so they cannot say that it landed while a reviewer was reading.
+    #
+    # WHICH TEXT THE REPORTS DESCRIBE turns on WHICH FILE MOVED, now that the
+    # cold-read-cells read the frozen copy. A copy that moved leaves the old
+    # unknown: the edit may have landed before a given cold-read-cell opened
+    # it or after. An original that moved leaves nothing unknown at all --
+    # every report describes the copy, whose bytes are in the cold-read-record
+    # and did not move -- and that is the ordinary case, since the operator of
+    # a /cold-read often revises the draft while the cold-read-cells run. The
+    # marker is the durable half of this check: these cold-read-records are
+    # kept, so a sentence claiming more than the check knows would outlive the
+    # run. One prefix carries both sentences, because
+    # TARGET_CHANGED_MARKER_PREFIX is fixed and the detail is free text after
+    # it: everything downstream recognises the marker either way.
+    changed_path_is_the_frozen_copy = record_dir in target.parents
+    if changed_path_is_the_frozen_copy:
+        what_the_reports_describe = (
+            "Which text any one report in this directory describes is unknown: "
+            "the edit may have landed before a given reviewer opened the file "
+            "or after."
+        )
+    else:
+        what_the_reports_describe = (
+            "Every report in this directory describes the frozen copy under "
+            "target/, which did not move; what moved is the document in the "
+            "repository."
+        )
     detail = (
         f"{target}'s bytes differed between the moment the cells launched and the "
         f"moment the last one finished — sha256 {before[:12] or 'unreadable'} then "
-        f"{after[:12] or 'unreadable'}. Which text any one report in this directory "
-        f"describes is unknown: the edit may have landed before a given reviewer "
-        f"opened the file or after. Treat this set as evidence of what reviewers "
-        f"saw, not as a review of the current file; start a new cold-read run "
-        f"against the settled document."
+        f"{after[:12] or 'unreadable'}. {what_the_reports_describe} Treat this set "
+        f"as evidence of what reviewers saw, not as a review of the current file; "
+        f"start a new cold-read run against the settled document."
     )
     mark_every_report(record_dir, f"{TARGET_CHANGED_MARKER_PREFIX} {detail} -->")
     return detail
@@ -852,9 +873,6 @@ def main() -> int:
     record_dir = make_record_dir(target, record_clock_reading())
     reference_integrity_pre_pass(target, record_dir)
 
-    print(f"Launched six reviewers against {target}. Reports appear in "
-          f"{record_dir} as each completes — read each as it arrives.")
-
     # THE COLD-READ-TARGET IS FROZEN FOR THE RUN, and since 2026-09-22 that
     # sentence is true rather than aspirational: the copy is what the six
     # cold-read-cells are given, so six reviewers reading over half an hour
@@ -870,6 +888,13 @@ def main() -> int:
               f"holds the reference check alone; delete it or leave it.",
               file=sys.stderr)
         return 2
+    # AFTER THE FREEZE, because the freeze can refuse: a run that printed
+    # "Launched six reviewers" and then "no cold-read-cell was launched" tells
+    # its reader both, and the reader has to work out which is true. Nothing
+    # above this line needs the announcement.
+    print(f"Launched six reviewers against {target}. Reports appear in "
+          f"{record_dir} as each completes — read each as it arrives.")
+
     # THE CELLS READ THE FROZEN COPY, never the live document.
     outcome = wait_for_cells(launch_cells(frozen_target, record_dir))
     # BOTH ENDS, and they answer different questions now. The copy is what was

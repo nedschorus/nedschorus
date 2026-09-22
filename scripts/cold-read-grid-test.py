@@ -444,15 +444,21 @@ with tempfile.TemporaryDirectory() as scratch:
           "the moment the cells launched" in result.stdout
           and "the moment the last one finished" in result.stdout, repr(result.stdout))
     # The two fingerprints prove the bytes differed across the window and
-    # nothing else. Claiming the edit landed *while* a reviewer was reading, or
-    # that every report describes the text as it was before the edit, is false
-    # in the ordinary case — an edit part-way through, some cells having opened
-    # the file before it and some after. These records are kept, so a marker
-    # claiming more than the check knows would outlive the run that wrote it.
+    # nothing else: they never say when in it the edit landed. These records
+    # are kept, so a marker claiming more than the check knows would outlive
+    # the run that wrote it.
     check("the line does not claim to know when in the window the edit landed",
           "while these reviews ran" not in result.stdout, repr(result.stdout))
-    check("the line does not claim every report describes the earlier text",
-          "reviews the earlier text" not in result.stdout, repr(result.stdout))
+    # WHAT MOVED HERE IS THE ORIGINAL, and the cells read the frozen copy, so
+    # which text each report describes is not unknown: it is the copy, whose
+    # bytes are in this record and did not move. Before the cells were pointed
+    # at the copy this set genuinely was a mixture and the marker said so;
+    # saying it now would be a false claim kept for as long as the record is.
+    check("a moved original does not leave which text was reviewed unknown",
+          "is unknown" not in result.stdout, repr(result.stdout))
+    check("the line names the frozen copy as what every report describes",
+          "Every report in this directory describes the frozen copy under target/"
+          in result.stdout, repr(result.stdout))
     # A moved target and a settled one call for opposite next actions, so the
     # exit-3 path must not close with the instructions to triage the set.
     check("a moved target does not get the closing instructions to triage",
@@ -494,6 +500,12 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(stamped_lines[1]))
     check("the reviewer's own text survives the marking",
           "STUB REVIEW: one restatement" in stamped_text, repr(stamped_text[:200]))
+    # stdout is read once and scrolls away; the marker line stays in the
+    # record, so the sentence has to be right on the line that lasts.
+    check("the durable marker line is the one that names the frozen copy",
+          "Every report in this directory describes the frozen copy under target/"
+          in stamped_lines[1] and "is unknown" not in stamped_lines[1],
+          repr(stamped_lines[1]))
     # The reference-integrity pre-pass carries no provenance stamp, so its
     # marker goes at the very top.
     unstamped = record_directory / "reference-check.md"
@@ -1240,14 +1252,28 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 3
           and result.stdout.count("TARGET CHANGED DURING RUN:") == 1,
           f"exit {result.returncode}; stdout={result.stdout!r}")
+    # Resolved before comparing, as the two checks in the case above are: the
+    # grid resolves the cold-read-target before freezing it, so on a machine
+    # whose temporary directory is reached through a symbolic link the same
+    # file is spelled two ways and a correct run fails this check. On a Mac
+    # the unresolved spelling happens to be a substring of the resolved one
+    # (/private/tmp/x contains /tmp/x), which is why this passed here and
+    # failed on ned-box under a symbolic-link TMPDIR.
     check("the line names the copy that changed, not the untouched original",
-          str(frozen) in result.stdout
+          str(frozen.resolve()) in result.stdout
           and b"edit to the document it was given" in frozen.read_bytes(),
           repr([line for line in result.stdout.splitlines()
                 if line.startswith("TARGET CHANGED")]))
     check("the original is untouched while the copy is what moved",
           b"edit to the document it was given"
           not in (repository / TARGET_RELATIVE_PATH).read_bytes())
+    # The copy is what the cells read, so a copy that moved leaves exactly the
+    # unknown the marker was written for: the edit may have landed before a
+    # given cell opened it or after. This is the one case that keeps that
+    # sentence, and the case above is the one that must not have it.
+    check("a moved copy does leave which text was reviewed unknown",
+          "Which text any one report in this directory describes is unknown"
+          in result.stdout, repr(result.stdout))
 
     # --- Every file in the set is named for the run ------------------------
     # A report carried out of its directory, or read beside another run's,
