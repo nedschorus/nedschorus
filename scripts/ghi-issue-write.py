@@ -884,7 +884,22 @@ def is_derived_body(body: str) -> bool:
 def validate_edit(path: Path, repository_root: Path):
     """Step 1 of `edit`, which is `create`'s check inverted: this verb wants
     a file that is already paired, and refuses one that is not rather than
-    filing it."""
+    filing it.
+
+    THE UNWRITABLE-PATH REFUSAL DOES NOT SAY "MOVE IT", because the file
+    most often at such a path is a queue note, and moving a queue note into
+    the issue's own directory makes it one of the issue's files: step 5
+    links it, and main keeps the copy under `queue/` — `paired_paths` skips
+    that directory, so no moved-from path matches it and nothing removes it
+    — leaving one document at two paths. Main holds ten queue notes named
+    for issues and an archived draft named for one. `create`'s refusal, on
+    the same file, sends its holder HERE to edit the issue's own file
+    instead, so a "move it" line here sent an agent in a circle back out.
+    Raised non-blocking on PR [Build the GHI write tool's edit
+    verb](https://github.com/nedschorus/nedschorus/pull/596) and fixed
+    2026-09-22. The move line is kept for the state that does want it — the
+    issue's own file sitting somewhere this tool does not write — under the
+    condition that says which state it is."""
     if not path.is_file():
         raise Refused(f"no such file: {path}", 64)
     text = path.read_text(encoding="utf-8")
@@ -906,8 +921,10 @@ def validate_edit(path: Path, repository_root: Path):
             "after, and in neither a queue nor an archive below them "
             "(docs/issues/46-ghi-info-agent-design.md § Where the tool may "
             "write).\n"
-            "Move this file to one of those two places and run this command "
-            "again.", 64)
+            "A queue note or an archived draft: run this command on the "
+            "issue's own file in one of those two places instead.\n"
+            "The issue's own file somewhere else: move it to one of those "
+            "two places and run this command again.", 64)
     title = first_heading(text)
     if not title:
         raise Refused(
@@ -1026,9 +1043,28 @@ def refuse_on_an_earlier_edit_still_open(repo: str, number: int,
     exists to finish it; refusing on it would wedge every later run on that
     file. GitHub is asked, as the resume path asks it.
 
-    The `ls-remote` is checked rather than left to fail open: this guard's
-    one job is not to discard an author's correction, and a network failure
-    must not read as permission to land."""
+    BOTH LOOKUPS ARE CHECKED rather than left to fail open: this guard's
+    one job is not to discard an author's correction, and a failure to ask
+    must not read as permission to land. The run stops with a 1, the exit
+    table's operating failure, and the author reruns it once gh and the
+    network answer again — nothing is pushed in the meantime, so there is
+    nothing to undo.
+
+    The `gh pr list` was the one left open, and the whole loss came back
+    through it: reproduced 2026-09-22 reviewing PR [Build the GHI write
+    tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596),
+    against a bare remote with `gh` answering HTTP 401 and git working. A
+    first edit landed and opened its pull request; a second edit of the
+    same file, made while `gh` was failing, read the failed lookup as no
+    open pull request, pushed a second branch, and failed at `gh pr
+    create`; once gh answered again the rerun took the already-pushed
+    resume path, which does not run this guard, and opened a second pull
+    request beside the first — the two branches merging clean in either
+    order and main keeping one edit's correction only. The failure is not
+    hypothetical: gh 2.46 on ned-box exits with a GraphQL deprecation
+    error on a plain `gh pr view`, reviewers were stopped by API 500 and
+    529 errors on 2026-09-21, and a token past its expiry fails every gh
+    call there is."""
     mine = [path for path in (relative, moved_from) if path]
     listed = runner(["git", "ls-remote", "--heads", "origin",
                      f"ghi-{number}-edit-*"], cwd=str(repository_root))
@@ -1038,9 +1074,7 @@ def refuse_on_an_earlier_edit_still_open(repo: str, number: int,
             continue
         found = runner(["gh", "pr", "list", "--repo", repo, "--head",
                         earlier, "--state", "open", "--json",
-                        "number,title,url,files"], check=False)
-        if found.returncode != 0:
-            continue
+                        "number,title,url,files"])
         for waiting in json.loads(found.stdout or "[]") or []:
             touched = {entry.get("path")
                        for entry in (waiting.get("files") or [])}
@@ -1121,14 +1155,22 @@ def report_no_moved_from_match(number: int, relative: str, paths, report):
     costs another seat's file.
 
     The title is left alone for the same reason: with no predecessor named,
-    nothing says the heading changed."""
+    nothing says the heading changed.
+
+    THE MESSAGE NAMES THE RENAME WITHOUT THE MOVE TOO. It read "if you
+    renamed this file as well as moving it" until 2026-09-22, while the
+    docstring above says the same code handles a rename inside
+    docs/issues/ with no move at all — so the reader whose case that was
+    read a line describing somebody else's and passed it by. The user
+    approved the wider wording on 2026-09-22, item 8 of the walk
+    ghi-write-session-open-rulings-and-concerns. What the old copy costs
+    the reader is above, not in the line: the line says what to do."""
     report(f"main holds no copy of {relative}, and no file of issue "
            f"{number} on main carries that name, so nothing is removed and "
            "this lands as a file main does not have.")
     report(f"issue {number}'s files on main: " + ", ".join(paths) +
-           ". If you renamed this file as well as moving it, main keeps the "
-           "old copy and the body will link the document twice; land the "
-           "removal of the old path yourself.")
+           ". If you renamed this file, whether or not you also moved it, "
+           "land the removal of the old path yourself.")
 
 
 # The three states step 3 can be in. Resolved before step 2 runs, because

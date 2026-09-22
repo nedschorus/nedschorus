@@ -114,7 +114,16 @@ class Recorder:
     "python" key matched nothing and every adjudication case got the default
     empty answer instead. Two cases failed loudly and three — the fail-open
     ones — passed for the wrong reason, because an unmatched call returns a
-    reply with no verdict line, which is itself a pass condition."""
+    reply with no verdict line, which is itself a pass condition.
+
+    `check` IS HONOURED, as `run` honours it: a canned answer that failed
+    raises where the tool asked for the call to be checked, and is returned
+    where the tool passed `check=False`. It was ignored until 2026-09-22,
+    so every case answering a checked call with a failure exercised the
+    fail-open path instead of the refusal — and a guard could be switched
+    to `check=False` without any case noticing, which is what let the
+    earlier-edit guard's `gh pr list` fail open uncaught. The message
+    matches `run`'s so a case may assert on either."""
 
     def __init__(self, answers=None):
         self.calls = []
@@ -126,6 +135,10 @@ class Recorder:
             if prefix in " ".join(arguments):
                 if isinstance(answer, Exception):
                     raise answer
+                if check and answer.returncode != 0:
+                    raise tool.Refused(
+                        f"{' '.join(arguments[:3])} failed: "
+                        f"{(answer.stderr or answer.stdout).strip()}", 1)
                 return answer
         return Completed()
 
@@ -713,6 +726,33 @@ def run_edit_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, refusal.code == 64, f"code {refusal.code}")
 
+    # The file most often at an unwritable path is a queue note, and this
+    # refusal used to end "Move this file to one of those two places" —
+    # which, followed on a queue note, makes it one of the issue's files:
+    # step 5 links it, and main keeps the copy under queue/, paired_paths
+    # skipping that directory, so nothing removes it. One document, two
+    # paths. `create`'s refusal sends the agent holding that same note HERE
+    # to edit the issue's own file, so the two now say the same thing.
+
+    try:
+        tool.validate_edit(
+            paired(scratch, name="570-note.md",
+                   directory="docs/issues/queue"), scratch)
+        check("a queue note is refused", False, "it was accepted")
+    except tool.Refused as note_refusal:
+        check("a queue note is not told to move itself into the issue's "
+              "own directory, which would give the issue a second copy of "
+              "one document",
+              "Move this file" not in str(note_refusal), str(note_refusal))
+        check("it is told to run the verb on the issue's own file, as "
+              "create's refusal tells its holder",
+              "run this command on the issue's own file" in str(note_refusal),
+              str(note_refusal))
+        check("and the move line is kept for the file that does want it, "
+              "under the condition that says which file that is",
+              "The issue's own file somewhere else: move it"
+              in str(note_refusal), str(note_refusal))
+
     # --- Which bodies this tool may overwrite ----------------------------
 
     check("a link list is a body the tool wrote", tool.is_derived_body(one_link))
@@ -1088,6 +1128,38 @@ def run_edit_cases(scratch: Path):
           ran_with(renamed, "git add", RENAMED_RELATIVE)
           and renamed.ran("gh pr create"), str(renamed.commands()))
 
+    # --- A rename with no move at all ------------------------------------
+    # The same code path, and the one the message used to describe somebody
+    # else's case to: it said "if you renamed this file as well as moving
+    # it", so the author who only renamed one, inside docs/issues/, read a
+    # line about a move they had not made. Widened on the user's approval,
+    # 2026-09-22, item 8 of the walk
+    # ghi-write-session-open-rulings-and-concerns.
+
+    renamed_in_place = paired(scratch, name=RENAMED_NAME)
+    renamed_in_place_relative = f"docs/issues/{RENAMED_NAME}"
+    in_place = Recorder({
+        f"git show origin/main:{renamed_in_place_relative}": Completed(
+            "", returncode=128),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{renamed_in_place_relative}": Completed(
+            "", returncode=128),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+    })
+    said_in_place = []
+    tool.edit(renamed_in_place, REPO, scratch, in_place, said_in_place.append)
+    check("a rename with no move is reported the same way, main's copy at "
+          "the old name being no more findable than after a move",
+          any(EDIT_RELATIVE in line for line in said_in_place)
+          and not in_place.ran("git rm"), str(said_in_place))
+    check("and the message reaches the author who only renamed the file, "
+          "naming the move as the case it may or may not be",
+          any("renamed this file, whether or not you also moved it" in line
+              for line in said_in_place), str(said_in_place))
+
     # --- A heading changed on a file the author also moved ---------------
     # Main holds nothing at the author's path on a move, so a comparison
     # against that path finds no heading to have changed — not on this run,
@@ -1376,6 +1448,65 @@ def run_edit_cases(scratch: Path):
           and not moved_second_edit.ran("git push")
           and not moved_second_edit.ran("gh pr create"),
           str(moved_second_edit.commands()))
+
+    # --- The guard cannot be asked, so it does not let the run past -------
+    # Both of its lookups had a case only for the answers they give when
+    # they work. A lookup that FAILS is the same loss of work again, reached
+    # by another road: read as "no earlier edit", it lets a second branch be
+    # pushed over the first. The `gh pr list` was left open until 2026-09-22
+    # and merge-lane-2 reproduced the whole sequence through it with gh
+    # answering HTTP 401 — a second branch pushed, `gh pr create` failing
+    # after it, and the rerun once gh recovered opening a second pull request
+    # beside the first, through the resume path this guard does not sit on.
+    # ned-box's own gh exits with a GraphQL deprecation error on a plain
+    # `gh pr view`, so the failing state is a state seats are in.
+    #
+    # The glob key comes first in each recorder below: the branch list and
+    # the landing-state lookup are both `git ls-remote`, and the answers are
+    # matched in order, so a bare "git ls-remote" key placed first would
+    # answer the guard's call as well.
+
+    for case_name, answers, stopped_at in [
+            ("the branch list the earlier-edit guard reads is checked, so a "
+             "failed `git ls-remote` stops the run rather than reading as "
+             "no earlier edit",
+             {"ghi-570-edit-*": Completed("", returncode=1,
+                                          stderr="fatal: unable to access"),
+              "git ls-remote": Completed("")},
+             "git ls-remote"),
+            ("and so is the pull request lookup, so a failed `gh pr list` "
+             "stops it rather than reading as no open pull request",
+             {"ghi-570-edit-*": Completed(
+                 f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+              f"--head {EARLIER_EDIT_BRANCH}": Completed(
+                  "", returncode=1, stderr="HTTP 401: Bad credentials"),
+              "git ls-remote": Completed("")},
+             "gh pr list")]:
+        unaskable = Recorder(dict(answers, **{
+            f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+            "git merge-base": Completed(BASE_REVISION + "\n"),
+            f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(
+                "# Older\n"),
+            "gh pr create": Completed("pr\n"),
+            "gh issue view": issue_json("Older", one_link),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\n")}))
+        unaskable_refusal = None
+        try:
+            tool.edit(source, REPO, scratch, unaskable, quiet)
+        except tool.Refused as refusal:
+            unaskable_refusal = refusal
+        check(case_name,
+              unaskable_refusal is not None
+              and unaskable_refusal.code == 1
+              and stopped_at in str(unaskable_refusal),
+              f"refused {getattr(unaskable_refusal, 'code', None)}: "
+              f"{str(unaskable_refusal)[:200]}" if unaskable_refusal
+              else f"it proceeded: {unaskable.commands()}")
+        check(f"and nothing is pushed when {stopped_at} cannot be asked",
+              not unaskable.ran("git worktree add")
+              and not unaskable.ran("git push")
+              and not unaskable.ran("gh pr create"),
+              str(unaskable.commands()))
 
     # --- Resuming after the pull request merged --------------------------
     # The author's own landed change is a difference between the merge base
