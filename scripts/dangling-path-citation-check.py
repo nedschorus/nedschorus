@@ -155,8 +155,22 @@ disclosure](https://github.com/nedschorus/nedschorus/issues/614).
   directory, everything. HEAD's own directory list answers the same in both,
   and HEAD is already where this direction reads removal from. The
   file-level test in paths_this_change_removed still asks the filesystem and
-  is deliberately left alone; what that costs is finding 3 of the same
-  issue, ruled disclosure and owned by its own pull request.
+  is deliberately left alone; what that costs is the paragraph below.
+
+  A CASE-ONLY RENAME IS WHAT THAT COSTS, disclosed rather than guarded.
+  paths_this_change_removed keeps a rename's old name only when that name no
+  longer exists, and it asks the filesystem: this Mac's filesystem folds
+  case, so after `Foo.py` becomes `foo.py` the old spelling still answers
+  exists(), the rename is dropped from the removed paths, and the old
+  spelling is never checked. Clean here and dangling on ned-box, whose
+  filesystem does not fold. Not the same asymmetry as the directory one
+  above -- that is the author's checkout against a fresh one, this is one
+  filesystem against another -- but the same mistake, asking the filesystem
+  where HEAD's tree answers alike on both machines, and the same fix.
+  Disclosure and not code because the trigger is plausible and has never
+  fired: measured against origin/main on 2026-09-22 over `git log
+  --diff-filter=R --name-status`, 90 rename rows, zero whose two names
+  differ only by case. Ruled 2026-09-21, finding 3 of the issue above.
 
   THE ANCESTOR AND THE FILE INSIDE IT ARE ONE FINDING, not two. A directory
   is a prefix of the files under it, so a line naming both -- "the gate is
@@ -204,9 +218,10 @@ the frozen measured data, and were taken at a different main.)
   names would have to grow every time a test was written; this does not.
   Unmoved by the directory derivation above, which touches neither direction
   of the extension test those 14 come through. The directory citations are
-  this program's other residual and are stated where they are derived, at
+  this program's second residual and are stated where they are derived, at
   "AND WHICH PATHS THE ROWS CANNOT CARRY": checked backward since
-  2026-09-21, forward only as a markdown link target.
+  2026-09-21, forward only as a markdown link target. The case-only rename
+  is the third, stated at "ASKED OF THE TREE AND NOT OF THE FILESYSTEM".
 
   THIS FILE IS NOT A TEST and is no longer exempt, which the main-checkout
   measurement above could not see because this file is not on main yet.
