@@ -1760,7 +1760,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
     that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
     a session that dies without writing a handoff is resumed, chosen by how it
-    died, under a budget of two consecutive resumes that produce no new work.
+    died, under a budget of one resume that produces no new work.
 
     The behaviour it answers: on 2026-09-21 the MD-skills seat was terminated
     with exit code 143 beside an intact 6.4 MB transcript, its supervisor wrote
@@ -1768,9 +1768,10 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     user happened to look.
 
     The budget is the case that matters, because a resume loop is unattended
-    automation that spends money on every launch. "A budget of 2" is read here
-    as two resumes: a seat whose transcript never grows gets its original
-    launch and two resumes — three launches — and the third resume is refused.
+    automation that spends money on every launch. The budget is one resume
+    (user-ruled 2026-09-22): a seat whose transcript never grows gets its
+    original launch and one resume — two launches — and the second resume is
+    refused.
     The scripted launcher below raises rather than looping when the supervisor
     asks for a launch past the script, so a budget that stopped counting fails
     these cases instead of running forever.
@@ -1898,7 +1899,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
 
     # 2. Each resuming row of the table, both spellings of each signal. With a
     # transcript that never grows, every one of them spends the budget and
-    # stops after the original launch and two resumes.
+    # stops after the original launch and one resume.
     for case, exit_code, row in (
             ("sigtermnegative", -15, "SIGTERM as subprocess reports it (-15)"),
             ("sigtermshell", 143, "SIGTERM as a shell reports it (143)"),
@@ -1932,15 +1933,15 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
           str(adopted.state))
 
     # 4. THE BUDGET STOPS A LOOP. A session that dies again and again without
-    # adding a single turn gets its launch and two resumes, and no more. The
-    # script holds four deaths, so a fourth launch would be taken rather than
+    # adding a single turn gets its launch and one resume, and no more. The
+    # script holds four deaths, so a third launch would be taken rather than
     # raising: the count below is the assertion, not merely that it stopped.
     looping = supervise_a_seat_whose_sessions_die("budget", [(-15, 0)] * 4)
-    check("BUDGET: a seat whose transcript never grows gets its launch and two resumes, no more",
-          len(looping.launches) == 3 and not looping.overran,
+    check("BUDGET: a seat whose transcript never grows gets its launch and one resume, no more",
+          len(looping.launches) == 2 and not looping.overran,
           f"{looping.launches} {looping.overran} {looping.printed[-400:]}")
-    check("BUDGET: the two launches after the first are resumes of the same session",
-          [launched[2] for launched in looping.launches] == [False, True, True]
+    check("BUDGET: the launch after the first is a resume of the same session",
+          [launched[2] for launched in looping.launches] == [False, True]
           and len({launched[0] for launched in looping.launches}) == 1,
           str(looping.launches))
     check("BUDGET: the refusal says the resumes added nothing and names the cost",
@@ -1960,17 +1961,17 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
 
     # 5. THE BUDGET RESETS. The second session does real work before dying, so
     # the resume that produced it is not a workless one and the budget comes
-    # back whole: this seat gets four launches where the looping seat got
-    # three. Without the reset a long-lived seat would eventually refuse to
+    # back whole: this seat gets three launches where the looping seat got
+    # two. Without the reset a long-lived seat would eventually refuse to
     # recover at all.
     recovered = supervise_a_seat_whose_sessions_die(
         "budgetreset", [(-15, 2), (-15, 3), (-15, 0), (-15, 0), (-15, 0)])
     check("BUDGET RESETS: a resumed session that works before dying gets the budget back",
-          len(recovered.launches) == 4 and not recovered.overran,
+          len(recovered.launches) == 3 and not recovered.overran,
           f"{recovered.launches} {recovered.overran} {recovered.printed[-400:]}")
     check("BUDGET RESETS: and it is the same session resumed each time",
           len({launched[0] for launched in recovered.launches}) == 1
-          and [launched[2] for launched in recovered.launches] == [False, True, True, True],
+          and [launched[2] for launched in recovered.launches] == [False, True, True],
           str(recovered.launches))
     check("BUDGET RESETS: the run still ends on the budget rather than running on",
           "added nothing to this session's transcript" in recovered.printed
@@ -2115,6 +2116,26 @@ def run_by_hand_resume_cases(workspace: Path):
     check("BY HAND: a waiting handoff still wins, and is not resumed over",
           resume is not True and session_id != crashed.stem,
           (session_id, resume))
+
+    # 5. --resume-session-id, the flag scripts/recover-crashed-seats.py and the
+    # login-time restart pass. No case ran it through the loop until the
+    # 2026-09-21 ruling renamed the flag it sets, so this one holds the path
+    # that rename touched: the named session is resumed, not a fresh id, and a
+    # handoff waiting on disk is marked consumed rather than igniting over it.
+    settings = settings_for("resume-session-id")
+    settings.resume_session_id = "session-named-by-recovery"
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    settings.handoff_path.write_text(
+        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+    session_id, prompt, resume = launch_once(settings)
+    check("RESUME-SESSION-ID: the first launch resumes the session the flag names",
+          session_id == "session-named-by-recovery" and resume is True,
+          (session_id, resume))
+    check("RESUME-SESSION-ID: and tells it the previous session ended without a handoff",
+          prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
+    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, not ignited over the resume",
+          supervisor.read_supervisor_state(settings.state_path).get("consumed_counter") == 4,
+          str(supervisor.read_supervisor_state(settings.state_path)))
 
 
 def run_boot_ignition_case(workspace: Path):

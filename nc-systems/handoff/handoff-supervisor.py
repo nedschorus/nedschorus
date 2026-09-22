@@ -129,14 +129,17 @@ SIGKILL_SESSION_EXIT_CODES = (137, -9)
 
 # How many consecutive resumes may produce no new work before the supervisor
 # stops resuming (user-ruled 2026-09-21; gate 1 of the ruling this module's
-# docstring cites in full). This is the gate that matters: an unattended
+# docstring cites in full). One, user-ruled 2026-09-22 where the issue read
+# both ways ("2 consecutive resumes", "no third launch"): what makes a resume
+# fail — no credits, a logged-out claude, a broken transcript — fails the
+# same way on the next try, and a one-off kill is what the first resume heals. This is the gate that matters: an unattended
 # resume loop spends money on every launch. The reset signal is the resumed
 # session's transcript growing — launch_agent_session's docstring records that
 # --resume reuses the session id in place (confirmed live 2026-08-21), so a
 # resumed session's work lands in the same transcript, and growth there is the
 # one available proof that the resume produced anything. A session that dies again having added nothing is
 # looping, and the launch after that is refused.
-CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 2
+CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
