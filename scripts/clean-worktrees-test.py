@@ -11,6 +11,18 @@ on a healthy machine, so they run the reaper with a stub lsof first on PATH.
 Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
+The classification cases run against the machine's REAL lsof, and that is the
+one way this suite can fail for a reason that is not a defect. If lsof does not
+answer within clean-worktrees.py's VACANCY_CHECK_TIMEOUT_SECONDS, every done
+worktree is kept with "the vacancy check (lsof) could not be run" — the reaper
+failing safe, correctly — and the cases that expect "done-wt: done" fail with
+it. Seen once, 2026-09-17 ~00:44Z, in a 52-suite run concurrent with five
+subagents and another suite set, against the 30 s timeout that has since become
+120. A run that fails with that phrase in its detail is a load symptom: re-run
+this suite alone before calling anything red. It is deliberately not skipped
+automatically — a suite that hides its own cases under load is worse than one
+that needs a second run.
+
 A last section covers the branch refs whose worktree is already gone: refs
 attached to nothing, refs still carrying unlanded work, refs a live worktree
 or the main checkout holds, a tag shadowing a branch name, remote-tracking
