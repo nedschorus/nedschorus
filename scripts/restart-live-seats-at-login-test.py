@@ -65,7 +65,7 @@ def write_state(handoffs: Path, seat: str, stamp=None, raw=None, written_at=None
         path.write_text(raw, encoding="utf-8")
     else:
         path.write_text(json.dumps({
-            "consumed_counter": 3, "session_id": f"{seat}-session",
+            "consumed_counter": 3, "launched_session_id": f"{seat}-session",
             "generation": 3, "last_poll_at": stamp.isoformat()}, indent=2),
             encoding="utf-8")
     if written_at is None:
@@ -350,9 +350,9 @@ with tempfile.TemporaryDirectory() as temporary:
     write_state(handoffs, "cut-off-mid-write",
                 raw='{\n  "consumed_counter": 3,\n  "sess', written_at=STOP)
     write_state(handoffs, "unparseable-stamp",
-                raw=json.dumps({"session_id": "x", "last_poll_at": "yesterday"}),
+                raw=json.dumps({"launched_session_id": "x", "last_poll_at": "yesterday"}),
                 written_at=STOP)
-    write_state(handoffs, "no-stamp", raw=json.dumps({"session_id": "x"}),
+    write_state(handoffs, "no-stamp", raw=json.dumps({"launched_session_id": "x"}),
                 written_at=STOP)
     write_state(handoffs, "naive-stamp",
                 raw=json.dumps({"last_poll_at": "2026-09-11T05:02:12"}),
@@ -382,7 +382,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # earlier (a supervisor that died before its first heartbeat leaves one).
     handoffs = root / "unreadable-long-before"
     write_state(handoffs, "anchor-seat", STOP)
-    write_state(handoffs, "abandoned-weeks-ago", raw=json.dumps({"session_id": "x"}),
+    write_state(handoffs, "abandoned-weeks-ago", raw=json.dumps({"launched_session_id": "x"}),
                 written_at=STOP - timedelta(days=21))
     anchor, seen = verdicts(handoffs)
     check("an unreadable file written weeks before the stop is not restarted",

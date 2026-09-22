@@ -44,6 +44,16 @@ Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschor
 | `entry-manifest.md` | The ledger of everything imported from the legacy system. |
 | Issues labeled `draft` | Draft issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
+## Working in a fresh clone
+
+A checkout carries its own git identity, and a clone arrives without one. Set it before the first commit, or git falls through to the machine's global identity — which on this project's Mac is the user's own account, so the commit is authored as him:
+
+    git config user.name  <the agent-seat or host doing the work, never the user>
+    git config user.email <that name>@nedschorus.invalid
+    git config user.useConfigOnly true
+
+The local `user.name` and `user.email` are what stop a commit being authored as the user: being local, they override the global identity. `user.useConfigOnly=true` does not block the global config — it stops git guessing an identity from the machine when no configuration carries one, so a missing identity fails loudly instead of being invented. Set all three, then confirm with `git var GIT_AUTHOR_IDENT`, which answers the identity your commits will carry: if it names the user, the local settings are not in place. `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py` checks all three against the enclosing checkout and fails with the value it found and the commands that fix it; it reads git's merged configuration, so the `git var` line above, not a green suite, is the proof.
+
 ## Status
 
 Founding phase, retired. The current architecture and working plan: [docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md](docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md). The boot-up plan's record: `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`.
