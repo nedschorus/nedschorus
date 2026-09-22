@@ -509,9 +509,9 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     GIT_DID_NOT_RUN: on any of them this detector degrades to exactly what it
     did before this exception existed — it reports every merge from main. A
     false report is visible to the user and corrects itself in one exchange; a
-    misbehaviour that is skipped is invisible for good (user's judgement,
-    2026-09-22). Nothing here can block a turn either way: the caller only
-    shortens a list.
+    misbehaviour that is skipped is invisible for good (the merge-lane-2 seat's
+    judgement, 2026-09-22; the user ruled the exception, not this error path).
+    Nothing here can block a turn either way: the caller only shortens a list.
     """
     remerged = run_git(["merge-tree", "--write-tree", "-X", "no-renames",
                         first_parent, second_parent], checkout, timeout=60)
@@ -544,7 +544,9 @@ def merges_from_main(checkout: Path):
     tells the two apart: parents that CONFLICT mean the author had no choice,
     which is the case the user allowed, so the merge is skipped;
     parents that merge cleanly mean the merge was unnecessary, which is the
-    banned catch-up, and it is still reported. Approved by the user 2026-09-22.
+    banned catch-up, and it is still reported. The user approved fixing the
+    hook on 2026-09-22; which test tells the two apart is the merge-lane-2
+    seat's design.
 
     MEASURED over main's own history before it was written: 81 merge commits
     sit off main's first-parent line with a second parent that is an ancestor of
@@ -552,11 +554,17 @@ def merges_from_main(checkout: Path):
     skips 17 of them and still reports 64. Fifteen of the 17 say in their own
     commit messages that they resolved a conflict, and 16 of the 17 recorded a
     tree that differs from the clean automatic merge of their parents, so the
-    author edited something while merging. That pull request's head
-    413c1afa51d4 is among the skipped, and so are both hand merges of
-    2026-09-22: PR "GHI write create verb: no second issue, no ignored git
-    failure" (605) at 3a8355a66fa7 and PR "Blocks are told apart by whose
+    author edited something while merging. Both hand merges of 2026-09-22 are
+    among the skipped: PR "GHI write create verb: no second issue, no ignored
+    git failure" (605) at 3a8355a66fa7 and PR "Blocks are told apart by whose
     words clear them" (611) at b1ba4bd102fd.
+
+    413c1afa51d4, the head of PR "A conflict is the one case a commit on top
+    cannot clear" (600), is NOT in those 81 and was measured on its own: that
+    pull request is still open, so the commit is not reachable from origin/main.
+    Re-merging its parents with -X no-renames exits 1 and writes tree
+    754e8337e110, so this rule skips it; the default strategy merges them
+    cleanly to tree 722221eb04f7, which is what the -X is there to prevent.
 
     ONE SHAPE IT STILL REPORTS FALSELY, recorded rather than fixed: a directory
     rename produces CONFLICT (file location), which only rename DETECTION can
