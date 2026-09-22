@@ -3,21 +3,12 @@
 environment the seat is launched with.
 
 The rule (PR #137 review P3, user-ruled 2026-08-22): an override either
-works or is blocked, never a third state. A literal-tilde agents root (a
-quoted export sends one) used to half-work — this launcher would mkdir a
-literal ~ directory while every fleet Python tool expanduser()s the same
-value, splitting the seat across two directories. Now ~/ resolves to $HOME
-exactly as the operator's shell would have made it, and ~user/ is refused
-outright before any side effect.
-
-Two variables name the root, and the order is the subject of its own cases:
-NEDSCHORUS_MAC_AGENTS_ROOT first, then the older shared NEDSCHORUS_AGENTS_ROOT,
-then $HOME/agents. The shared name is Mac-side legacy — the box twin stopped
-reading it on 2026-09-21, after a Mac path in it reached the box as
-`mkdir -p /Users/el/agents/ghi-info` — and it keeps working here, silently,
-because on this machine its value is a Mac path and correct. The precedence
-cases below are what make "no existing behaviour changes" a measured claim
-rather than a promise.
+works or is blocked, never a third state. A literal-tilde
+NEDSCHORUS_AGENTS_ROOT (a quoted export sends one) used to half-work — this
+launcher would mkdir a literal ~ directory while every fleet Python tool
+expanduser()s the same value, splitting the seat across two directories.
+Now ~/ resolves to $HOME exactly as the operator's shell would have made
+it, and ~user/ is refused outright before any side effect.
 
 EVERY case runs the real launcher inside a sandbox — recording stubs for
 tmux/claude/python3/git on PATH, throwaway HOME, throwaway working
@@ -149,29 +140,21 @@ class MacLaunchSandbox:
                    '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
 
-    def run(self, shared_agents_root=None, seat_name="seat-t", attach=False,
-            extra_arguments=None, mac_agents_root=None):
+    def run(self, agents_root, seat_name="seat-t", attach=False,
+            extra_arguments=None):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
-        of ambient LAUNCH_CLAUDE_* values, so the case measures its own.
-
-        Each root argument left None leaves its variable UNSET, which is the
-        only way to measure the fall-through: shared_agents_root is the older
-        NEDSCHORUS_AGENTS_ROOT, mac_agents_root is NEDSCHORUS_MAC_AGENTS_ROOT,
-        and with neither the launcher's own $HOME/agents applies."""
+        of ambient LAUNCH_CLAUDE_* values, so the case measures its own."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
         environment = {
             **{key: value for key, value in os.environ.items()
                if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                       "CLAUDE_CODE_"))},
+            "NEDSCHORUS_AGENTS_ROOT": agents_root,
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
             "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin"}
-        if shared_agents_root is not None:
-            environment["NEDSCHORUS_AGENTS_ROOT"] = shared_agents_root
-        if mac_agents_root is not None:
-            environment["NEDSCHORUS_MAC_AGENTS_ROOT"] = mac_agents_root
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         return subprocess.run(
@@ -242,55 +225,6 @@ def main() -> int:
         check("~/ root: nothing leaked into the working directory",
               not any(sandbox.workdir.iterdir()),
               sorted(str(p) for p in sandbox.workdir.iterdir()))
-
-        # --- which variable names the root, and in which order -------------
-        # NEDSCHORUS_MAC_AGENTS_ROOT first, the shared NEDSCHORUS_AGENTS_ROOT
-        # after it, $HOME/agents last. Asserted on tmux's -c value and on the
-        # directory actually created: the losing root must not be created
-        # either, since a launcher that made both would leave an empty decoy
-        # seat home beside the real one.
-        sandbox = MacLaunchSandbox(root / "mac-variable-preferred")
-        mac_root = f"{sandbox.home}/mac fleet"
-        shared_root = f"{sandbox.home}/shared fleet"
-        result = sandbox.run(shared_agents_root=shared_root,
-                             mac_agents_root=mac_root, seat_name="seat-p")
-        tmux_argv = sandbox.tmux_argv()
-        check("NEDSCHORUS_MAC_AGENTS_ROOT is preferred over the shared name",
-              result.returncode == 0
-              and any(previous == "-c" and current == f"{mac_root}/seat-p"
-                      for previous, current in zip(tmux_argv, tmux_argv[1:]))
-              and Path(f"{mac_root}/seat-p").is_dir()
-              and not Path(shared_root).exists(),
-              (result.returncode, tmux_argv, result.stderr[:300]))
-
-        sandbox = MacLaunchSandbox(root / "shared-variable-fallback")
-        shared_root = f"{sandbox.home}/shared fleet"
-        result = sandbox.run(shared_agents_root=shared_root, seat_name="seat-q")
-        tmux_argv = sandbox.tmux_argv()
-        check("with only the shared name set, it still names the root",
-              result.returncode == 0
-              and any(previous == "-c" and current == f"{shared_root}/seat-q"
-                      for previous, current in zip(tmux_argv, tmux_argv[1:]))
-              and Path(f"{shared_root}/seat-q").is_dir(),
-              (result.returncode, tmux_argv, result.stderr[:300]))
-        # No warning here, unlike the box twin: the shared name's value is a
-        # Mac path, which is correct on this machine, and a warning about a
-        # working configuration is noise.
-        check("the shared name is used without a word about it",
-              "NEDSCHORUS_MAC_AGENTS_ROOT" not in result.stderr
-              and "NEDSCHORUS_AGENTS_ROOT" not in result.stderr,
-              result.stderr[:300])
-
-        sandbox = MacLaunchSandbox(root / "neither-variable")
-        result = sandbox.run(seat_name="seat-n")
-        tmux_argv = sandbox.tmux_argv()
-        check("with neither set, the root is $HOME/agents",
-              result.returncode == 0
-              and any(previous == "-c"
-                      and current == f"{sandbox.home}/agents/seat-n"
-                      for previous, current in zip(tmux_argv, tmux_argv[1:]))
-              and (sandbox.home / "agents" / "seat-n").is_dir(),
-              (result.returncode, tmux_argv, result.stderr[:300]))
 
         # --- the update step resolves the SEAT's claude, not the ambient one
         # The launcher exports ~/.local/bin ahead of the inherited PATH before

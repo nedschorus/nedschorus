@@ -3,10 +3,9 @@
 #
 # The local twin of launch-claude-ubuntu, sharing every convention and none of
 # the SSH: the name you type is the whole configuration, the agent's directory
-# is $NEDSCHORUS_MAC_AGENTS_ROOT/<name>, else $NEDSCHORUS_AGENTS_ROOT/<name>
-# (default ~/agents/<name>), created on first use, and a CLAUDE.local.md in
-# that directory supplies the agent's identity — without one the agent is
-# generic and the name is just a label.
+# is $NEDSCHORUS_AGENTS_ROOT/<name> (default ~/agents/<name>), created on first
+# use, and a CLAUDE.local.md in that directory supplies the agent's identity —
+# without one the agent is generic and the name is just a label.
 #
 # Which twin to type: the Ubuntu box is the default home for agent work (more
 # memory, CPU and bandwidth, and it does not compete with the user's machine).
@@ -52,22 +51,7 @@
 
 set -eu
 
-# AGENTS_ROOT is a MAC-side path. NEDSCHORUS_MAC_AGENTS_ROOT names it and
-# says which machine it is for; NEDSCHORUS_AGENTS_ROOT is the older SHARED
-# name, kept here as Mac-side legacy because the value in the fleet's
-# environment today is a Mac path, which is correct on this machine and is
-# what the running seats are configured by.
-#
-# The box twin no longer reads the shared name at all (scripts/launch-claude-ubuntu
-# reads NEDSCHORUS_UBUNTU_AGENTS_ROOT, and carries this failure in full): on
-# 2026-09-21 `launch-claude-ubuntu ghi-info` was run from a Mac terminal
-# holding NEDSCHORUS_AGENTS_ROOT=/Users/el/agents, and the box was told to
-# `mkdir -p /Users/el/agents/ghi-info`, which answered "mkdir: Permission
-# denied" and named no path. One variable cannot hold two machines' paths, so
-# each machine now has its own name for its own root, and this twin warns
-# about nothing: the shared name's value works here, and a warning about a
-# working configuration is noise.
-AGENTS_ROOT="${NEDSCHORUS_MAC_AGENTS_ROOT:-${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}}"
+AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # A literal-tilde value (a quoted export sends one) is resolved or refused,
 # never half-worked (PR #137 review P3 on the twin, user-ruled 2026-08-22:
 # overrides either work or are blocked): ~/ becomes $HOME as the operator's

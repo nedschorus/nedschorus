@@ -64,9 +64,9 @@ set -eu
 # "mkdir: Permission denied" — naming no path at all. The machine is in this
 # script's name because the two are otherwise indistinguishable at the call
 # site; a root variable shared with the Mac makes that distinction
-# impossible to honour, which is why the names are now separate
-# (scripts/launch-claude-mac reads NEDSCHORUS_MAC_AGENTS_ROOT, and still
-# reads the shared name after it, where its value is a Mac path and correct).
+# impossible to honour, which is why this launcher now has its own name.
+# scripts/launch-claude-mac keeps reading the shared name, where its value
+# is a Mac path and correct; its own box-free name lands with its callers.
 # The same class, with the same answer, is recorded at scripts/ghi-info-ask.py:
 # its first live run spliced the Mac's expanded /Users/el/agents/ghi-info into
 # a box-side command. A path that names a machine is resolved by that machine,
