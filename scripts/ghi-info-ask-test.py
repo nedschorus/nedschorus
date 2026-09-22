@@ -119,7 +119,7 @@ with tempfile.TemporaryDirectory() as temporary:
           len(refresh_calls) == 1 and refresh_calls[0]["full"] is True, refresh_calls)
     state = json.loads((seat / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
     check("state persists the new session id after a cold start",
-          state["session_id"] == "sess-A", state)
+          state[ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY] == "sess-A", state)
     check("state resets counters on a cold start",
           state["closes_since_birth"] == 0 and state["recent_matches"] == [False], state)
 
@@ -127,7 +127,7 @@ with tempfile.TemporaryDirectory() as temporary:
     seat2 = root / "seat2"
     seat2.mkdir()
     ghi_ask.save_state(seat2 / ghi_ask.STATE_FILE_NAME,
-                       {"session_id": "sess-B", "closes_since_birth": 0, "recent_matches": []})
+                       {ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY: "sess-B", "closes_since_birth": 0, "recent_matches": []})
     refresh_calls = fake_refresh_queue([([7], {"7": issue(7)}, None)])
     claude_calls = fake_claude_queue([({"session_id": "sess-B", "result": "read #7"}, None)])
     answer, error = ghi_ask.ask("about #7?", False, seat2, "x/y")
@@ -144,7 +144,7 @@ with tempfile.TemporaryDirectory() as temporary:
     seat3 = root / "seat3"
     seat3.mkdir()
     ghi_ask.save_state(seat3 / ghi_ask.STATE_FILE_NAME, {
-        "session_id": "sess-OLD",
+        ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY: "sess-OLD",
         "closes_since_birth": ghi_ask.CLOSES_SINCE_BIRTH_THRESHOLD,
         "recent_matches": [],
     })
@@ -161,13 +161,35 @@ with tempfile.TemporaryDirectory() as temporary:
           answer == "read #3", (answer, error))
     state3 = json.loads((seat3 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
     check("reincarnation replaces the old session id with the new one",
-          state3["session_id"] == "sess-NEW", state3)
+          state3[ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY] == "sess-NEW", state3)
+
+    # --- a state file written before the 2026-09-22 rename still resumes ---
+    # The key moved from `session_id` to `ghi_info_session_id`; a seat whose
+    # `.ghi-info-state.json` predates the rename must resume its ghi-info
+    # session rather than silently cold-start, which would rebuild the whole
+    # mirror and lose the session's accumulated reading.
+    seat_legacy = root / "seat-legacy"
+    seat_legacy.mkdir()
+    (seat_legacy / ghi_ask.STATE_FILE_NAME).write_text(
+        json.dumps({"session_id": "sess-LEGACY", "closes_since_birth": 0,
+                    "recent_matches": []}) + "\n", encoding="utf-8")
+    refresh_calls = fake_refresh_queue([([], {}, None)])
+    claude_calls = fake_claude_queue([({"session_id": "sess-LEGACY", "result": "read #5"}, None)])
+    answer, error = ghi_ask.ask("about #5?", False, seat_legacy, "x/y")
+    check("a pre-rename state file resumes rather than cold-starting",
+          len(claude_calls) == 1 and claude_calls[0][1] == "sess-LEGACY",
+          (claude_calls, answer, error))
+    state_legacy = json.loads(
+        (seat_legacy / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8"))
+    check("the first write after a migrated read uses the new key alone",
+          state_legacy.get(ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY) == "sess-LEGACY"
+          and "session_id" not in state_legacy, state_legacy)
 
     # --- lock contention: throwaway session, nothing persisted -------------
     seat4 = root / "seat4"
     seat4.mkdir()
     ghi_ask.save_state(seat4 / ghi_ask.STATE_FILE_NAME,
-                       {"session_id": "sess-HELD", "closes_since_birth": 0, "recent_matches": []})
+                       {ghi_ask.GHI_INFO_SESSION_ID_STATE_KEY: "sess-HELD", "closes_since_birth": 0, "recent_matches": []})
     before_state_text = (seat4 / ghi_ask.STATE_FILE_NAME).read_text(encoding="utf-8")
     refresh_calls = fake_refresh_queue([([], {}, None)])
     claude_calls = fake_claude_queue([

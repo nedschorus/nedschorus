@@ -30,6 +30,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_PATH = Path(__file__).with_name("recover-crashed-seats.py")
+# The supervisor moved into nc-systems/handoff/ on 2026-09-20 and is no
+# longer a sibling of the recovery tool this suite tests.
+SUPERVISOR_SCRIPT = (SCRIPT_PATH.resolve().parent.parent
+                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 _spec = importlib.util.spec_from_file_location("recover_crashed_seats", SCRIPT_PATH)
 recovery = importlib.util.module_from_spec(_spec)
@@ -150,7 +154,7 @@ class Workspace:
 def real_subprocess_run_help():
     import subprocess
     return subprocess.run(
-        [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")), "--help"],
+        [sys.executable, str(SUPERVISOR_SCRIPT), "--help"],
         capture_output=True, text=True).stdout
 
 def patch(monkey_target, value):
@@ -399,7 +403,7 @@ def ps_confirms_supervisors(seat_supervised_by_process_id):
     """ps answers that each process id given runs the supervisor of the seat
     it maps to, and that no other process id exists."""
     recovery.supervisor.read_process_command_line = lambda process_id: (
-        (f"python3 /agents/scripts/handoff-supervisor.py --agent "
+        (f"python3 /agents/nc-systems/handoff/handoff-supervisor.py --agent "
          f"{seat_supervised_by_process_id[process_id]} --cd /agents/x", True)
         if process_id in seat_supervised_by_process_id else (None, True))
 
@@ -631,7 +635,7 @@ with tempfile.TemporaryDirectory() as temporary:
     patch("tmux_session_alive_anywhere", lambda name: (False, ""))
     state_path = workspace.handoffs / f"{workspace.name}-supervisor-state.json"
     state_path.write_text(json.dumps({
-        "session_id": "x", "generation": 1,
+        "launched_session_id": "x", "generation": 1,
         "last_poll_at": datetime.now(timezone.utc).isoformat(),
     }), encoding="utf-8")
     verdict, detail = workspace.assess()
@@ -836,7 +840,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # --- the supervisor's --resume-session-id flag --------------------------
     supervisor_spec = importlib.util.spec_from_file_location(
-        "handoff_supervisor_under_test", SCRIPT_PATH.with_name("handoff-supervisor.py"))
+        "handoff_supervisor_under_test", SUPERVISOR_SCRIPT)
     supervisor_module = importlib.util.module_from_spec(supervisor_spec)
     supervisor_spec.loader.exec_module(supervisor_module)
 
@@ -975,7 +979,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # F8: every cross-file literal the filter relies on is asserted against
     # the supervisor's actual source, so a wording change there fails HERE
     # (round-3 P3-3: the round-2 assertion covered only the first marker).
-    source = SCRIPT_PATH.with_name("handoff-supervisor.py").read_text(encoding="utf-8")
+    source = SUPERVISOR_SCRIPT.read_text(encoding="utf-8")
     check("F8: the no-handoff marker is verbatim in handoff-supervisor.py",
           "No handoff exists yet" in source
           and "No handoff exists yet" in recovery.EMPTY_SUCCESSOR_MARKERS,
@@ -1326,7 +1330,7 @@ with tempfile.TemporaryDirectory() as temporary:
         "# Handoff\nrestart-counter: 16\nnext-step: continue\n", encoding="utf-8")
     (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
         json.dumps({"consumed_counter": 16,
-                    "session_id": "successor-hit-session-limit",
+                    "launched_session_id": "successor-hit-session-limit",
                     "generation": 16}), encoding="utf-8")
     write_transcript(workspace.project_directory(), "handed-off-parent",
                      "older real work", age_seconds=7200, records=8)
@@ -1412,7 +1416,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # recovery marker reaches the successor, never what the prompt says; and
     # it composes with an empty branch-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
-    # scripts/handoff-supervisor-test.py, by the boot-recovery whole-prompt
+    # nc-systems/handoff/tests/handoff-supervisor-test.py, by the boot-recovery
     # check that pull request [the ignition prompt's sentences are constants,
     # and both branch-state call sites are pinned whole]
     # (https://github.com/nedschorus/nedschorus/pull/590) added. Look there,
@@ -1925,6 +1929,24 @@ with tempfile.TemporaryDirectory() as temporary:
               for marker in ("CLAUDE_CODE_TASK_LIST_ID",
                              "CLAUDE_CODE_ENABLE_TODO_TOOLS")),
           box_command)
+    # This branch hand-composes the supervisor's path, and it is the only
+    # branch off macOS -- launcher_path() returns None there, which is
+    # ned-box, where the seats run. The assertion resolves the path and asks
+    # the disk, rather than matching the file name the cases above match: when
+    # the supervisor moved to nc-systems/handoff/ on 2026-09-20 and this
+    # command went on composing a sibling of the recovery tool, every one of
+    # those name matches still passed, because the path that no longer existed
+    # ends with the same file name. tmux still created the session, so
+    # launch_seat returned 0 and only the come-up check caught it: every
+    # recovered seat reported LAUNCHED BUT DID NOT COME UP.
+    composed_supervisor = next(
+        (Path(token) for token in box_tokens
+         if token.endswith("handoff-supervisor.py")), None)
+    check("the box branch runs the supervisor at the path it really lives at",
+          composed_supervisor is not None
+          and composed_supervisor.is_file()
+          and composed_supervisor.resolve() == SUPERVISOR_SCRIPT.resolve(),
+          (str(composed_supervisor), str(SUPERVISOR_SCRIPT)))
 
     # PR #134 review finding 1: an apostrophe in an operator's directory path
     # must survive the one shell parse each composed value gets — the
@@ -2166,7 +2188,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     import subprocess as real_subprocess
     completed = real_subprocess.run(
-        [sys.executable, str(SCRIPT_PATH.with_name("handoff-supervisor.py")),
+        [sys.executable, str(SUPERVISOR_SCRIPT),
          "--agent", "x", "--resume-session-id", "a", "--adopt-session-id", "b",
          "--adopt-process-id", "1"],
         capture_output=True, text=True)
@@ -2683,7 +2705,7 @@ with tempfile.TemporaryDirectory() as temporary:
     def record_an_agent_exit(workspace, exit_code):
         state_path = workspace.handoffs / f"{workspace.name}-supervisor-state.json"
         recovery.supervisor.record_agent_exit_in_supervisor_state(
-            state_path, {"consumed_counter": None, "session_id": "resume-me",
+            state_path, {"consumed_counter": None, "launched_session_id": "resume-me",
                          "generation": 3}, exit_code)
         return recovery.supervisor.read_supervisor_state(state_path)[
             recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
@@ -2715,7 +2737,7 @@ with tempfile.TemporaryDirectory() as temporary:
     capture_launches(workspace)
     write_transcript(workspace.project_directory(), "resume-me", "real work", records=4)
     (workspace.handoffs / f"{workspace.name}-supervisor-state.json").write_text(
-        json.dumps({"consumed_counter": None, "session_id": "resume-me", "generation": 3}),
+        json.dumps({"consumed_counter": None, "launched_session_id": "resume-me", "generation": 3}),
         encoding="utf-8")
     verdict, detail = workspace.assess()
     check("EXIT RECORD: a seat with no exit record is still resumed",
@@ -3136,7 +3158,7 @@ with tempfile.TemporaryDirectory() as temporary:
             f"resume-{name}", "real work", records=4)
         recovery.supervisor.record_agent_exit_in_supervisor_state(
             workspace.handoffs / f"{name}-supervisor-state.json",
-            {"consumed_counter": None, "session_id": f"resume-{name}", "generation": 3},
+            {"consumed_counter": None, "launched_session_id": f"resume-{name}", "generation": 3},
             exit_code)
     all_dead()
     capture_launches(workspace)

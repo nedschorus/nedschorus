@@ -18,7 +18,7 @@ The launcher shipped, and the work grew from "reach an agent by name" into how t
 
 ## Seat supervision: reincarnation, recovery, and why live adoption is not built (2026-08-19)
 
-A seat reincarnates only while a supervisor watches it. `scripts/handoff-supervisor.py` waits for the handoff file the agent writes, ends the spent session, and starts its successor on the same terminal. A session started any other way — `claude` or `claude --continue` typed by hand — has no supervisor and can never reincarnate. A seat can also *become* unsupervised: the supervisor is a separate process and can die while its agent keeps working, which is what happened on 2026-08-18 when two Mac seats ran unwatched for about 25 hours.
+A seat reincarnates only while a supervisor watches it. `nc-systems/handoff/handoff-supervisor.py` waits for the handoff file the agent writes, ends the spent session, and starts its successor on the same terminal. A session started any other way — `claude` or `claude --continue` typed by hand — has no supervisor and can never reincarnate. A seat can also *become* unsupervised: the supervisor is a separate process and can die while its agent keeps working, which is what happened on 2026-08-18 when two Mac seats ran unwatched for about 25 hours.
 
 Two defects behind that incident were fixed on 2026-08-19.
 
@@ -47,7 +47,7 @@ Claude Code has a first-class mechanism for naming an agent, found by reading th
 
 1. **It is not a label.** The named definition supplies the session's system prompt and its tool restrictions. Agent identity currently lives in a `CLAUDE.local.md` in the agent's home, a different mechanism with different reach; an agent definition would partly duplicate or replace it.
 2. **It is instruction-bearing text.** An agent definition is an injected system prompt, so it falls inside the reviewed class designated on issue [Review-system design requirements learned from the legacy gate — dormant until a class of work first requires review](https://github.com/nedschorus/nedschorus/issues/31) and is created only through the user's walk.
-3. **It must be re-passed on every relaunch.** The harness warns that a resume without the flag silently drops the definition's tool restrictions. `scripts/handoff-supervisor.py` relaunches the agent on every reincarnation, so the supervisor would have to carry the flag or the identity evaporates at the first handoff — silently, which is the dangerous part.
+3. **It must be re-passed on every relaunch.** The harness warns that a resume without the flag silently drops the definition's tool restrictions. `nc-systems/handoff/handoff-supervisor.py` relaunches the agent on every reincarnation, so the supervisor would have to carry the flag or the identity evaporates at the first handoff — silently, which is the dangerous part.
 
 Recorded while wiring the status line, which is where `agent.name` surfaced.
 
@@ -63,7 +63,7 @@ SSH alone cannot reconnect to a running process: a process's terminal belongs to
 
 `new-session -A` attaches to the session named `<name>` when it exists and creates it when it does not, which is the requested behavior exactly. Closing the iTerm2 window detaches; the agent keeps working; the same command reattaches.
 
-This also settles the open question recorded against the seat move in `docs/cross-project/fast-handoff-design.md`: inside tmux the supervisor is the pane's own process, so every successor it launches inherits the pane's terminal and is visible on reattach. The detached-supervisor stdio problem does not arise in this topology.
+This also settles the open question recorded against the seat move in `nc-systems/handoff/handoff-design.md`: inside tmux the supervisor is the pane's own process, so every successor it launches inherits the pane's terminal and is visible on reattach. The detached-supervisor stdio problem does not arise in this topology.
 
 ## Where per-agent identity lives (user-ruled 2026-08-07)
 

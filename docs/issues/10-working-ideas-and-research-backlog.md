@@ -486,7 +486,7 @@ the many-parts overview rule) written into § Draft document and directory
 structure with four duplicate bullets folded there; the steward ideal to
 issue [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) as a
 candidate domain-expert duty; the scrub-duty enumeration to
-issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2); two
+issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2); two
 entries recognized as landed (the artifact-lifecycle promote path; the
 no-junk-drawer disposal machinery); one already dispersed (memory-to-page
 pointing, issue [Runtime-behavior research bundle: instruction compression + deliberate scrub, instruction precedence, output styles, context clearing, names reviewer, memory maintenance](https://github.com/nedschorus/nedschorus/issues/29)
@@ -534,7 +534,7 @@ walk; the org-vs-artifact-rules distinction — enforced structurally).
   permanent junk drawer.
   — processed 2026-07-27 → landed (artifact-lifecycle no-stateless-piles +
   the handoff scrub step), PLUS a sentence on
-  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per docs/cross-project/fast-handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2): the
+  issue [Build fast-handoff (renames to handoff at entry) — script, skill, dogfood, per nc-systems/handoff/handoff-design.md](https://github.com/nedschorus/nedschorus/issues/2): the
   scrub-step build enumerates its standing maintenance duties from the
   specs that name the scrub, so the set is explicit in the built skill.
 - Decide whether a memory should point to one general page or a specific system

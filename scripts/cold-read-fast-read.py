@@ -595,7 +595,7 @@ def attach_sentences_and_coverage(report_text: str, sentences: dict,
 # A bare issue, pull request or task number: `#` and digits, with whatever
 # repository name is glued to its front (`nedschorus#418`,
 # `nedschorus/nedschorus#418`), because each is a number where CLAUDE.md wants
-# a type word and a title. A repository name may not start after a word
+# an ID-type and a name. A repository name may not start after a word
 # character or any of `& / . : -`, so no piece of a URL's path becomes one. A
 # bare `#` may not follow `&` or a word character, which keeps an HTML entity
 # (`&#123;`) and a URL's fragment (`https://x.com/page#12`) out and still finds
@@ -632,7 +632,7 @@ def bare_references_section(references: list) -> str:
     if not references:
         lines.append("- None.")
     else:
-        lines.append("Replace each with its type word and its title, as a link "
+        lines.append("Replace each with its ID-type and its name, as a link "
                      "when it can be opened: write PR [its title](its URL), "
                      "not PR #426.")
         lines.append("")

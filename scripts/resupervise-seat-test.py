@@ -25,6 +25,9 @@ import tempfile
 from pathlib import Path
 
 RESUPERVISE_SCRIPT = Path(__file__).with_name("resupervise-seat.py")
+# The supervisor moved into nc-systems/handoff/ on 2026-09-20.
+SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
+                     / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
 
@@ -94,7 +97,7 @@ def run_already_consumed_case(workspace: Path):
     asked to be retired.
     """
     write_handoff(workspace, "consumed", counter=4)
-    write_state(workspace, "consumed", {"consumed_counter": 4, "session_id": "s"})
+    write_state(workspace, "consumed", {"consumed_counter": 4, "launched_session_id": "s"})
     result = run_resupervise(workspace, "consumed", "--dry-run")
     check("an already-consumed handoff refuses",
           result.returncode == 1, result.stdout + result.stderr)
@@ -122,7 +125,7 @@ def run_live_supervisor_case(workspace: Path):
     supervisor_module = load_supervisor()
     write_handoff(workspace, "watched", counter=1)
     supervisor_module.stamp_heartbeat(
-        workspace / "watched-supervisor-state.json", {"session_id": "s"}
+        workspace / "watched-supervisor-state.json", {"launched_session_id": "s"}
     )
     stub_directory = workspace / "looks-like-a-supervisor"
     stub_directory.mkdir(parents=True, exist_ok=True)
@@ -159,7 +162,7 @@ def run_live_supervisor_case(workspace: Path):
 def load_supervisor():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "handoff_supervisor", RESUPERVISE_SCRIPT.with_name("handoff-supervisor.py")
+        "handoff_supervisor", SUPERVISOR_SCRIPT
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -176,7 +179,7 @@ def run_stale_heartbeat_case(workspace: Path):
     write_handoff(workspace, "stale", counter=2)
     write_state(workspace, "stale", {
         "consumed_counter": 1,
-        "session_id": "s",
+        "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     result = run_resupervise(workspace, "stale", "--dry-run")
@@ -212,13 +215,20 @@ def run_missing_launcher_case(workspace: Path):
     isolated.mkdir()
     copied = isolated / "resupervise-seat.py"
     copied.write_text(RESUPERVISE_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
-    # handoff-supervisor.py imports the shared judgement of which transcript is
-    # worth resuming, so the isolated copy needs that module beside it too
-    # (issue 242 change 5).
-    for sibling in ("handoff-supervisor.py", "seat-transcript-worth-resuming.py"):
-        (isolated / sibling).write_text(
-            RESUPERVISE_SCRIPT.with_name(sibling).read_text(encoding="utf-8"), encoding="utf-8"
-        )
+    # resupervise-seat.py imports handoff-supervisor.py, which since 2026-09-20
+    # lives at nc-systems/handoff/ and itself imports the shared judgement of
+    # which transcript is worth resuming from scripts/ (issue 242 change 5).
+    # Both are resolved from the repository root, so the isolated copy needs
+    # the repository's SHAPE around it rather than two files beside it.
+    supervisor_home = workspace / "nc-systems" / "handoff"
+    supervisor_home.mkdir(parents=True)
+    (supervisor_home / "handoff-supervisor.py").write_text(
+        SUPERVISOR_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    scripts_home = workspace / "scripts"
+    scripts_home.mkdir(parents=True, exist_ok=True)
+    (scripts_home / "seat-transcript-worth-resuming.py").write_text(
+        RESUPERVISE_SCRIPT.with_name("seat-transcript-worth-resuming.py")
+        .read_text(encoding="utf-8"), encoding="utf-8")
     write_handoff(workspace, "nolauncher", counter=1)
     result = subprocess.run(
         [sys.executable, str(copied), "nolauncher",
@@ -296,7 +306,7 @@ def run_end_to_end_case(workspace: Path):
     session = "resupervise-seat-test-seat"
     write_handoff(workspace, session, counter=9)
     write_state(workspace, session, {
-        "consumed_counter": 8, "session_id": "s",
+        "consumed_counter": 8, "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     created = subprocess.run(
@@ -357,7 +367,7 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
     session = "resupervise-seat-test-own-server"
     write_handoff(workspace, session, counter=9)
     write_state(workspace, session, {
-        "consumed_counter": 8, "session_id": "s",
+        "consumed_counter": 8, "launched_session_id": "s",
         "last_poll_at": "2026-08-18T00:00:00+00:00",
     })
     created = subprocess.run(

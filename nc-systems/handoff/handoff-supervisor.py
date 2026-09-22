@@ -2,7 +2,7 @@
 """Run one agent session and reincarnate it when it writes a handoff.
 
 The handoff system's supervisor (specification:
-docs/cross-project/fast-handoff-design.md). One supervisor per agent, run in
+nc-systems/handoff/handoff-design.md). One supervisor per agent, run in
 that agent's console. It owns the whole reincarnation cycle because an agent
 cannot exit itself: /clear and /exit are unavailable to it, and self-SIGTERM
 trips the safety classifier.
@@ -63,9 +63,18 @@ from typing import Optional
 # two programs cannot call one seat's transcripts two different things (issue
 # 242's change 5). The convention — importlib for a module whose filename has
 # hyphens — is scripts/cold-read-cell-common.py's.
+# This file sits at nc-systems/handoff/, so the repository root is two
+# directories up; parents[2] names that depth once instead of chaining .parent
+# three times. Every path below that leaves this system is derived from it,
+# because a sibling lookup is what breaks when a system moves: before the move
+# to nc-systems/handoff/ the three paths below were with_name() calls that
+# happened to be right only while this file lived in scripts/.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
+
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    Path(__file__).with_name("seat-transcript-worth-resuming.py"))
+    SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -83,7 +92,10 @@ RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
 
 TASKS_ROOT = Path.home() / ".claude" / "tasks"
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
-EXTRACTOR_PATH = Path(__file__).with_name("handoff-extract-conversation.py")
+# The extractor stays in scripts/ until every live supervisor runs from this
+# directory: a supervisor resolves this path at import, so a running one
+# would lose it the moment the file moved. It joins this system in step 2.
+EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
@@ -97,7 +109,7 @@ GENERATIONS_KEPT = 2
 # resupervise-seat.py, so putting it in the launchers would leave a recovered
 # seat silently running without it. One place, every path.
 DEFAULT_APPENDED_SYSTEM_PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "docs" / "agents"
+    REPOSITORY_ROOT / "docs" / "agents"
     / "seat-session-appended-system-prompt.md"
 )
 
@@ -178,7 +190,7 @@ BRANCH_STATE_INSTRUCTION = (
 # hoisted here: an equality pin can only hold a constant, and text composed at
 # a call site lands outside every pin the test file has.
 SUPERVISOR_POINTER_SENTENCE = (
-    "This session was launched by scripts/handoff-supervisor.py, which "
+    "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
     "watches this seat and composed this prompt — read it if you need to "
     "investigate the handoff mechanism."
 )
@@ -230,7 +242,7 @@ def parse_handoff_file(handoff_path: Path) -> dict:
     One field may span lines: `next-step-verbatim`, whose value is the opening
     marker followed by the successor's instruction verbatim, ended by a line
     that is exactly the terminator (R20; format in
-    docs/cross-project/fast-handoff-design.md). The writer appends that block
+    nc-systems/handoff/handoff-design.md). The writer appends that block
     last, after every computed field, so the lines inside it cannot shadow a
     real field — first occurrence still wins, and the real fields came first.
 
@@ -277,14 +289,46 @@ def parse_handoff_file(handoff_path: Path) -> dict:
     return fields
 
 
+# The session this supervisor LAUNCHED, which is not the same thing as the
+# session running now. It is written only at a launch, so a session that takes
+# over the worktree mid-life leaves it naming a session that has ended, until
+# the next launch overwrites it.
+#
+# It was called "session_id" until 2026-09-21, and that name is what went
+# wrong. This seat read it as "the session", twice told the user consequences
+# that followed from that reading, and both were false: crash recovery does not
+# consult it (seat-transcript-worth-resuming.py picks the newest transcript by
+# mtime), and ghi-info-ask.py is not a second consumer of it -- that program
+# keeps its OWN unrelated session under an identical key in its own
+# .ghi-info-state.json, and the collision of the two bare names is what produced
+# the false claim. Renamed on the user's ruling at item 12 of walk
+# md-skills-seat-open-decisions-2026-09-20: the field is marked provisional by
+# being named for what it holds, because a key name travels with the data into
+# every file and reader while a comment stays at one site.
+LAUNCHED_SESSION_ID_STATE_KEY = "launched_session_id"
+# Read-only, for state files written before the rename. read_supervisor_state
+# migrates it in, every write after that uses the new key alone, so a state file
+# converts on the first read a renamed supervisor gives it. Removable once no
+# live seat carries a state file older than 2026-09-21.
+LEGACY_SESSION_ID_STATE_KEY = "session_id"
+
+
+def fresh_supervisor_state() -> dict:
+    return {"consumed_counter": None, LAUNCHED_SESSION_ID_STATE_KEY: None, "generation": 0}
+
+
 def read_supervisor_state(state_path: Path) -> dict:
     if not state_path.is_file():
-        return {"consumed_counter": None, "session_id": None, "generation": 0}
+        return fresh_supervisor_state()
     try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
         print("handoff-supervisor: unreadable state file; starting fresh", file=sys.stderr)
-        return {"consumed_counter": None, "session_id": None, "generation": 0}
+        return fresh_supervisor_state()
+    if (LAUNCHED_SESSION_ID_STATE_KEY not in state
+            and LEGACY_SESSION_ID_STATE_KEY in state):
+        state[LAUNCHED_SESSION_ID_STATE_KEY] = state.pop(LEGACY_SESSION_ID_STATE_KEY)
+    return state
 
 
 def write_supervisor_state(state_path: Path, state: dict) -> None:
@@ -1589,7 +1633,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                     record_agent_exit_in_supervisor_state(settings.state_path, state, None)
                     return 0
             generation += 1
-            retiring_session_id = state.get("session_id")
+            retiring_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
             successor_session_id, ignition_plan = (
                 carry_over_to_successor(settings, retiring_session_id, boot_fields, generation)
                 if retiring_session_id else (None, None)
@@ -1641,7 +1685,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                   f"nothing worth resuming ({by_hand_detail}); starting fresh")
 
     while True:
-        state.update({"session_id": session_id, "generation": generation})
+        state.update({LAUNCHED_SESSION_ID_STATE_KEY: session_id,
+                      "generation": generation})
         clear_agent_exit_record_from_supervisor_state(state)
         write_supervisor_state(settings.state_path, state)
 

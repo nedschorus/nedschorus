@@ -3,7 +3,7 @@
 
 Two programs need this judgement. scripts/recover-crashed-seats.py has always
 needed it: it picks the transcript a crashed seat is resumed from.
-scripts/handoff-supervisor.py needs it since issue 242's change 5, so that a
+nc-systems/handoff/handoff-supervisor.py needs it since issue 242's change 5, so that a
 by-hand `launch-claude-mac <seat>` resumes a crashed seat instead of minting an
 empty session.
 
@@ -140,6 +140,13 @@ def newest_real_transcript(project_directory: Path):
     """
     if not project_directory.is_dir():
         return None, f"no harness project directory at {project_directory}"
+    # The st_mtime sort is load-bearing, not incidental: it is what makes
+    # "newest" mean the session written to most recently, and the walk below
+    # relies on the order to find the first transcript that is not an
+    # empty-successor. A session id sorts by its uuid, which is not time, and
+    # a directory listing has no defined order at all, so neither can replace
+    # this. The cost of losing it is silent: the function still returns a
+    # transcript, just not the one the seat was last working in.
     candidates = sorted(
         project_directory.glob("*.jsonl"),
         key=lambda item: item.stat().st_mtime,

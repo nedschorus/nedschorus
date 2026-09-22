@@ -1,6 +1,6 @@
 # `ghi` — seat instructions
 
-Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, walked approval, handoff.
+Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, approved-by-walk, handoff.
 
 Your work is **GitHub-issue knowledge and the tooling around it**. "GHI" is this project's shorthand for a GitHub issue. Most of this seat's work shares one doctrine — how the project decides what becomes an issue, what goes in a GHI-MD (`docs/issues/<n>-<slug>.md`), and what waits in a queue — and one design document, `docs/issues/46-ghi-info-agent-design.md`. Do not use the doctrine as a test of what belongs to you; use the issues this brief assigns: #46 and its companions #41 and #42.
 
@@ -35,7 +35,7 @@ Two rulings to know before touching it:
 
 The `ghi-write` skill (`.claude/skills/ghi-write/`) is live and governs issue writes: filing, editing a body, commenting, closing, and the `draft` label that carries queue membership. Read the skill for the current list rather than trusting this sentence; its trigger is any write that touches a GitHub issue. Note that the skill tells callers to ask ghi-info first, through `scripts/ghi-info-ask.py`, and to fall back when that ask fails; the ask script exists, so the fallback covers only an ask that fails. The skill still names the unbuilt write tool: its comment step routes through the tool's comment verb, and until #46 builds the tool, plain `gh issue comment` naming the event kind is the interim path. Its edit step is plain `gh issue edit`; it does not name `scripts/ghi-issue-body-edit.py`.
 
-`ghi-write` is yours to change, but it lives under `.claude/`, which makes it an agent-instructions file: it changes only with the user's walked approval, recorded by quoting his words into `.walk-approved` and guarded by `.claude/hooks/instruction-file-guard.py`, and it also takes the /cold-read full run. The guard blocks the edit itself, not the commit, so draft a change under `docs/agents/queue/`, where `ghi-write` routes agent-instructions drafts, and edit the skill only after the walk. The same holds for the redirect hook you will build under `.claude/hooks/` and for its wiring in `.claude/settings.json`.
+`ghi-write` is yours to change, but it lives under `.claude/`, which makes it an agent-instructions file: it changes only when approved-by-walk, with his words quoted into `.walk-approved` and guarded by `.claude/hooks/instruction-file-guard.py`, and it also takes the /cold-read full run. The guard blocks the edit itself, not the commit, so draft a change under `docs/agents/queue/`, where `ghi-write` routes agent-instructions drafts, and edit the skill only after the walk. The same holds for the redirect hook you will build under `.claude/hooks/` and for its wiring in `.claude/settings.json`.
 
 ## The companions
 
@@ -48,7 +48,7 @@ Issues carry state; GHI-MDs (`docs/issues/<n>-<slug>.md`) carry substance; queue
 
 ## Boundaries
 
-The launcher (`scripts/launch-claude-ubuntu`) and the supervisor (`scripts/handoff-supervisor.py`) belong to the `fleet` seat; if run-agent needs changes in them, tell the user rather than editing them yourself. Routing work to another seat is the user's call, so tell him; the exception is announcing your pull request to merge-lane, once. Skill *builds* belong to the `skill-builder` seat; `ghi-write` is the exception noted above, because it is issue machinery rather than a general skill.
+The launcher (`scripts/launch-claude-ubuntu`) and the supervisor (`nc-systems/handoff/handoff-supervisor.py`) belong to the `fleet` seat; if run-agent needs changes in them, tell the user rather than editing them yourself. Routing work to another seat is the user's call, so tell him; the exception is announcing your pull request to merge-lane, once. Skill *builds* belong to the `skill-builder` seat; `ghi-write` is the exception noted above, because it is issue machinery rather than a general skill.
 
 ## First action
 

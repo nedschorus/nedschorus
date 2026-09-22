@@ -47,7 +47,7 @@ passing review.
   clone is its own workspace, never "the reference" — where any mechanical
   test disagrees with that definition, the definition governs (pinned
   2026-08-17). The test the guards use lives in the guard scripts.
-- **Walked approval** — the user's approval given item by item, not one
+- **Approved-by-walk** — approved by the user item by item, not by one
   yes to a bundle (`docs/nedschorus-wiki/nedschorus-agent-seat-model.md` § The words this
   model uses).
 - **The gatekeeper** — `nc-systems/main-gatekeeper/main-gatekeeper.py`, the main-gatekeeper:
@@ -81,7 +81,7 @@ enforcement programs that implement them. Deliberately excluded: workflow
 governance content (the cold read's cells, ghi-write's routing, walk conduct),
 prose-quality rules, and communication conventions. Coverage is bounded by
 the sweep that built the inventory — the agent-seats' briefs
-(`docs/agents/*-instructions.md`), `docs/cross-project/fast-handoff-design.md`,
+(`docs/agents/*-instructions.md`), `nc-systems/handoff/handoff-design.md`,
 and agent-seat `CLAUDE.local.md` files were not swept.
 
 Reach, so nothing below is assumed to protect more than it does: every
@@ -255,7 +255,7 @@ session's own state.
 
 **R9. One name = one seat; a handoff refuses a foreign claim — built-live
 (PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72), merged 2026-08-17).**
-`scripts/handoff-write-and-check-supervisor.py`: handoffs stamp
+`nc-systems/handoff/handoff-write-and-check-supervisor.py`: handoffs stamp
 `written-in:`; a writer whose directory differs is refused; `--claim`
 overrides deliberately, the typed flag in the transcript being the audit
 trail. The accident it kills: two same-name sessions overwrote a handoff
@@ -267,7 +267,7 @@ carry no stamp; directory basenames are not globally unique across machines
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
-**R10. Agent-instructions files change only with walked approval —
+**R10. Agent-instructions files change only when approved-by-walk —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, and `.claude/` (minus `worktrees/` and `jobs/`) block
@@ -404,12 +404,12 @@ reaches the seconds class (R9's guard closed that class).
 
 **R20. The handoff channel preserves structure end to end — BUILT
 (PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedschorus/nedschorus/pull/108), merged 2026-08-20; fix ruled 2026-08-18).** Both ends: the
-writer (`scripts/handoff-write-and-check-supervisor.py`) emits a
+writer (`nc-systems/handoff/handoff-write-and-check-supervisor.py`) emits a
 delimited multi-line block and the reader
-(`scripts/handoff-supervisor.py`) parses it — a reader-only fix could not
+(`nc-systems/handoff/handoff-supervisor.py`) parses it — a reader-only fix could not
 have restored newlines already destroyed. The format specification, and
 the exact-terminator trade it records, live in
-`docs/cross-project/fast-handoff-design.md`, given a cold read before the build
+`nc-systems/handoff/handoff-design.md`, given a cold read before the build
 per design-first.
 
 ### Q5 — What piles up, and who sweeps it?
@@ -483,7 +483,7 @@ rulings; listed here to keep the numbering complete.
 | R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
 | R9 | One name = one seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
-| R10 | Instruction files need walked approval | block | built-live; shell gap ruled unguarded |
+| R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
 | R13 | PR process + deputization | text (process) | built-live; deputization in CLAUDE.md, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
@@ -522,7 +522,7 @@ pull request.
    (ruling and reopen trigger at R1).
 2. **R20** — the handoff both-ends structure fix — LANDED (PR [handoff: a multi-line next step survives the channel end to end (R20)](https://github.com/nedschorus/nedschorus/pull/108),
    merged 2026-08-20; design section given a cold read in
-   `fast-handoff-design.md` first, per design-first).
+   `handoff-design.md` first, per design-first).
 3. **R25** — the dead-registration report line in `clean-worktrees.py` —
    LANDED (PR [clean-worktrees: one report line names dead registrations and the prune command (R25)](https://github.com/nedschorus/nedschorus/pull/112), merged 2026-08-20), with the review discussion
    permanent on the pull request.

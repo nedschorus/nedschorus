@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for handoff-write-and-check-supervisor.py.
 
-Run: python3 scripts/handoff-write-and-check-supervisor-test.py
+Run: python3 nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -14,7 +14,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).with_name("handoff-write-and-check-supervisor.py")
+# This suite sits at nc-systems/handoff/tests/; the system it tests is one
+# directory up. A with_name() lookup here would resolve inside tests/.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+
+SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-write-and-check-supervisor.py"
 
 _spec = importlib.util.spec_from_file_location("handoff_write_and_check_supervisor", SCRIPT_PATH)
 writer = importlib.util.module_from_spec(_spec)
@@ -91,7 +95,7 @@ def handoff_text(workspace: Path, agent: str) -> str:
 def run_multi_line_next_step_cases(workspace: Path):
     """R20: a multi-line next step survives, without changing what old readers see.
 
-    Format in docs/cross-project/fast-handoff-design.md. `next-step:` stays the
+    Format in nc-systems/handoff/handoff-design.md. `next-step:` stays the
     collapsed single line every existing reader handles; a verbatim block is
     appended LAST when, and only when, the text spans lines.
     """
@@ -268,7 +272,7 @@ def run_liveness_report_cases(workspace: Path):
     # sixty seconds), and telling an
     # agent to stop and wait for a supervisor that has died is the worst way to
     # be wrong here: it waits forever. So the watcher has to be real.
-    writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"session_id": "s"})
+    writer.supervisor.stamp_heartbeat(workspace / "tester-supervisor-state.json", {"launched_session_id": "s"})
     stub_directory = workspace / "looks-like-a-supervisor"
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "handoff-supervisor.py"
@@ -471,7 +475,7 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
     # Now a supervisor answers for the seat's own name. THIS is the incident.
     (handoffs / "supervised-seat-supervisor-state.json").write_text(
         json.dumps({"consumed_counter": 41, "generation": 40,
-                    "session_id": "3e2a550f-adcf-4282-b033-2e6c0bb78aa4",
+                    "launched_session_id": "3e2a550f-adcf-4282-b033-2e6c0bb78aa4",
                     "last_poll_at": "2026-09-15T23:57:57.174524+00:00"}),
         encoding="utf-8")
 
@@ -527,7 +531,7 @@ def run_seat_name_the_supervisor_does_not_answer_to_cases(workspace: Path):
           and "would never be read here" in chained.stderr, chained.stderr)
     check("nothing was written on the chained refusal",
           borrowed.read_text(encoding="utf-8") == borrowed_body
-          and not (handoffs / "borrowed-name-handoff.md.tmp").exists())
+          and not (handoffs / "borrowed-name-handoff.md.partial").exists())
 
     # A supervised name in ANOTHER directory is not this directory's business.
     neighbour = workspace / "neighbour-seat"
@@ -1145,7 +1149,7 @@ def run_seat_name_and_directory_from_the_handoff_supervisor_cases(workspace: Pat
           and parent_fields.get("written-in") == str(parent), str(parent_fields))
     writer.supervisor.write_supervisor_state(
         child_route_handoffs / f"{parent_name}-supervisor-state.json",
-        {"consumed_counter": 1, "session_id": parent_session_id, "generation": 1})
+        {"consumed_counter": 1, "launched_session_id": parent_session_id, "generation": 1})
     parent_bytes = parent_handoff.read_bytes() if parent_handoff.is_file() else b""
     child_write = write_from(child, child_route_handoffs, "the child's next step\n",
                              parent_environment, home=empty_home,

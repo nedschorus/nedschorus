@@ -2,7 +2,7 @@
 """Tell a session to write its handoff once context runs low.
 
 The handoff system's auto-trigger (specification:
-docs/cross-project/fast-handoff-design.md). Wire it as a Stop hook in
+nc-systems/handoff/handoff-design.md). Wire it as a Stop hook in
 settings.json; it runs at every turn boundary.
 
 Stop-hook stdin does not carry the context window, so the used share is

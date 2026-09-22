@@ -72,6 +72,22 @@ the title GitHub holds, with the heading left where the author wrote it,
 and the Reader cases read that line back out of the staged file. The issue
 and number counts a case quotes were read from nedschorus/nedschorus the
 same week.
+
+Produced the same way on 2026-09-21, for the cases added that day: a main
+carrying this source already landed under an issue number, the same content
+landed under a different number, a queue file sitting beside them under
+`docs/issues/` and belonging to no issue, and the exit codes git really
+gives — 0 with empty output for a directory or a path that is not on the
+revision, 128 for a revision that does not exist, for a path outside the
+checkout and for a fetch from a remote that is not there, and 128 from `git
+rev-parse --show-toplevel` outside every checkout.
+
+Produced the same way on 2026-09-22, for the cases added that day: numbered
+files sitting below `docs/issues/` rather than directly in it — 11 of them
+on main that day, under `queue/` and `archived/` — `git show` exiting 0 at a
+path a listing of the same commit just named and 128 at a path that commit
+does not have, and `git rev-parse --verify origin/main` answering with one
+hash and exiting 0.
 """
 
 import contextlib
@@ -96,6 +112,15 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+# origin/main resolved to one commit, which is what every read of main in
+# a create is made at. Recorders answer the resolution with this, so a case
+# can assert that a listing and the reads that follow it name the same
+# commit, and a case that wants a failed resolution overrides the key.
+MAIN_COMMIT = "5f0fd4c5ebc6a44d8d9acbf9cccf83a6b78de43d"
+MAIN_COMMIT_CALL = "git rev-parse --verify origin/main"
+PAIRED_LISTING_CALL = f"git ls-tree -r --name-only {MAIN_COMMIT} docs/issues/"
 
 
 class Completed:
@@ -123,11 +148,17 @@ class Recorder:
     fail-open path instead of the refusal — and a guard could be switched
     to `check=False` without any case noticing, which is what let the
     earlier-edit guard's `gh pr list` fail open uncaught. The message
-    matches `run`'s so a case may assert on either."""
+    matches `run`'s so a case may assert on either.
+
+    Resolving origin/main is answered for every case, because every create
+    does it before reading main and a case that has nothing paired there
+    still makes the call. A case that wants that resolution to fail passes
+    its own answer under the same key."""
 
     def __init__(self, answers=None):
         self.calls = []
-        self.answers = answers or {}
+        self.answers = {MAIN_COMMIT_CALL: Completed(MAIN_COMMIT + "\n"),
+                        **(answers or {})}
 
     def __call__(self, arguments, timeout=None, cwd=None, check=True):
         self.calls.append(list(arguments))
@@ -169,7 +200,33 @@ def quiet(_line):
     pass
 
 
+def parsed_issue_value(frontmatter_line):
+    """The `issue:` value read the way a YAML parser reads a double-quoted
+    scalar. A value that is not quoted is not a scalar at all — it opens a
+    flow sequence and raises, which is the defect the quoting fixed — so
+    that is handed back as text and fails the case rather than killing the
+    suite."""
+    try:
+        return json.loads(frontmatter_line.split(": ", 1)[1])
+    except ValueError as failure:
+        return f"unparsable: {failure}"
+
+
 def run_cases(scratch: Path):
+
+    def refusal_from_creating(source_path, recorder):
+        """create(), with a refusal handed back as text rather than raised.
+
+        A case that says the tool goes ON is only a case if a refusal fails
+        it by name. Raised, it escapes run_cases instead and the suite dies
+        with a traceback, which says a guard fired but not which case it
+        broke."""
+        try:
+            tool.create(source_path, REPO, scratch, recorder, quiet)
+            return ""
+        except tool.Refused as refusal:
+            return f"refused: {refusal}"
+
     # --- The pure parts, which decide the title, the slug and the key ----
 
     check("frontmatter is skipped and the first heading becomes the title",
@@ -269,10 +326,16 @@ def run_cases(scratch: Path):
     check("the title comes from the file, not the caller",
           any(TITLE in " ".join(call) for call in first.calls
               if call[:3] == ["gh", "issue", "create"]))
-    check("main is fetched before the commit is made",
-          first.commands().index("git fetch origin")
-          < first.commands().index("git worktree add"),
-          str(first.commands()))
+    # Between the filing and the commit, not merely somewhere before it.
+    # The duplicate check fetches at the top of the run and adjudication
+    # sits between the two, which can take minutes, so only a fetch after
+    # the filing makes the worktree's "cut from a just-fetched main" true.
+    ordered = first.commands()
+    check("main is fetched between the filing and the commit, so the "
+          "worktree is cut from a main that is current",
+          "git fetch origin" in ordered[ordered.index("gh issue create"):
+                                        ordered.index("git worktree add")],
+          str(ordered))
     check("the worktree is detached, so the run makes no branch to leave",
           first.ran("git worktree add --quiet --detach")
           and not any("-b" in call for call in first.calls
@@ -326,8 +389,47 @@ def run_cases(scratch: Path):
 
     line = tool.issue_frontmatter_line(REPO, 570, "A title")
     check("the issue line cites by title and link, never a bare number",
-          line == "issue: [A title](https://github.com/nedschorus/nedschorus/issues/570)",
+          line == 'issue: "[A title](https://github.com/nedschorus/nedschorus/issues/570)"',
           repr(line))
+
+    # The value is quoted because unquoted it is not YAML: it opens with `[`,
+    # so a parser reads a flow sequence and raises at the `](`. A parser is
+    # not imported to prove that — the suite runs under a stdlib with no YAML
+    # in it — so the case pins the shape a double-quoted scalar has.
+    value = line.split(": ", 1)[1]
+    check("the value is a double-quoted scalar, not a bare flow sequence",
+          value.startswith('"') and value.endswith('"')
+          and not value.startswith("["), repr(value))
+    check("and it parses back to the link it carries",
+          parsed_issue_value(line)
+          == "[A title](https://github.com/nedschorus/nedschorus/issues/570)",
+          repr(value))
+
+    awkward = tool.issue_frontmatter_line(
+        REPO, 570, 'He said "no" \\ then left')
+    check("a title holding a quote or a backslash is escaped inside them",
+          parsed_issue_value(awkward)
+          == '[He said "no" \\ then left]'
+             '(https://github.com/nedschorus/nedschorus/issues/570)',
+          repr(awkward))
+
+    accented = tool.issue_frontmatter_line(REPO, 570, "Naïve café")
+    check("and a non-ASCII title stays itself rather than being escaped",
+          "Naïve café" in accented, repr(accented))
+
+    # A file the tool filed before this change carries the unquoted shape.
+    # It corrects itself the next time the tool writes to it, and only while
+    # the rewriter finds the line by its key rather than by the shape of its
+    # value. (Measured 2026-09-21: of the 50 paths under docs/issues/ on
+    # main, 25 are paired and none carries an `issue:` line at all, the
+    # create verb having filed nothing that has merged yet. So there is
+    # nothing to correct today and everything to correct tomorrow.)
+    old_shape = ("---\nissue: [A title](https://github.com/nedschorus/"
+                 "nedschorus/issues/570)\nstatus: draft\n---\n\n# T\n")
+    corrected = tool.with_issue_frontmatter(old_shape, REPO, 570, "A title")
+    check("a line written in the old unquoted shape is corrected, not doubled",
+          corrected.count("issue:") == 1 and line in corrected
+          and "status: draft" in corrected, repr(corrected[:150]))
 
     for case_name, source_text, expectation in [
             ("a file with frontmatter gains the line and keeps its own keys",
@@ -370,10 +472,13 @@ def run_cases(scratch: Path):
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
-        "git show": Completed("", returncode=1),
+        # A file main has under a paired name, and not this source. Read
+        # as a failure — which is what this answered until 2026-09-22 — the
+        # listed path below cannot be read at all, and the run stops.
+        "git show": Completed("---\nissue: [x](https://example.invalid/1)\n"
+                              "---\n\n# Someone else's file\n"),
         "git ls-remote": Completed(""),
-        "git ls-tree -r --name-only origin/main docs/issues/": Completed(
-            "docs/issues/570-a.md\n"),
+        PAIRED_LISTING_CALL: Completed("docs/issues/570-a.md\n"),
         "gh pr create": Completed("pr\n"),
     }, None)
     tool.create(source, REPO, scratch, reader, quiet)
@@ -395,7 +500,7 @@ def run_cases(scratch: Path):
             "https://github.com/nedschorus/nedschorus/issues/570\n"),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
-        "git ls-tree -r --name-only origin/main docs/issues/": Completed(""),
+        PAIRED_LISTING_CALL: Completed(""),
         "git ls-tree": Completed("for-frontmatter.md\n"),
         "gh pr create": Completed("pr\n"),
     })
@@ -479,6 +584,260 @@ def run_cases(scratch: Path):
     check("a body is never linked to a file that is not on main",
           done is False and not unlanded.ran("gh issue edit"),
           str(unlanded.commands()))
+
+    # --- Resuming, where the pairing key cannot reach ---------------------
+    # A finished filing leaves no key anywhere and a source the tool did not
+    # move is still on disk, so the key alone lets a rerun file a second
+    # issue. Main is asked instead, forward: what would this source become
+    # if it were filed under the number each paired file carries.
+
+    LISTING = (LANDED + "\n"
+               + "docs/issues/571-a-statusline-that-drops-its-branch-name.md\n"
+               + "docs/issues/queue/statusline-drops-branch.md\n")
+
+    already_landed = Recorder({
+        "gh issue list": Completed("[]"),
+        "git ls-tree": Completed(LISTING),
+        "git show": Completed(STAGED),
+    })
+    try:
+        tool.create(source, REPO, scratch, already_landed, quiet)
+        check("a source already on main under an issue is refused", False,
+              "it was accepted")
+    except tool.Refused as refusal:
+        check("a source already on main under an issue is refused",
+              refusal.code == 64, f"code {refusal.code}")
+        check("and the refusal names the landed path and the edit verb",
+              LANDED in str(refusal) and "edit verb" in str(refusal),
+              str(refusal))
+        check("and it files nothing, lands nothing and asks ghi-info nothing",
+              not already_landed.ran("gh issue create")
+              and not already_landed.ran("git worktree add")
+              and not already_landed.ran(ASK),
+              str(already_landed.commands()))
+    check("and the check reads main freshly rather than trusting the disk",
+          already_landed.ran("git fetch origin main"),
+          str(already_landed.commands()))
+    # The ref moves. This clone's worktrees share one set of remote-tracking
+    # refs, so another seat's fetch can carry origin/main from under a run
+    # between the listing and the reads, and a path listed from one commit
+    # is then read from another. Resolved once, both name the same tree.
+    check("and the listing and its reads are pinned to the one commit",
+          already_landed.ran(PAIRED_LISTING_CALL)
+          and already_landed.ran(f"git show {MAIN_COMMIT}:{LANDED}"),
+          str(already_landed.commands()))
+    ordered = already_landed.commands()
+    check("and the commit is resolved after the fetch, not before it",
+          ordered.index("git fetch origin")
+          < ordered.index("git rev-parse --verify"),
+          str(ordered))
+
+    # The comparison is computed under the number the PATH carries. The same
+    # content landed under a different issue is a different file, and must
+    # not stop this one being filed.
+    landed_elsewhere = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+        "git ls-tree": Completed(LISTING),
+        "git show": Completed(
+            tool.with_issue_frontmatter(FILE_TEXT, REPO, 999, TITLE)),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    refused_wrongly = refusal_from_creating(source, landed_elsewhere)
+    check("the same content staged under another number is not this file",
+          not refused_wrongly
+          and landed_elsewhere.count("gh issue create") == 1,
+          refused_wrongly or str(landed_elsewhere.commands()))
+
+    # `docs/issues/` also holds the queue, whose files carry no number and
+    # belong to no issue. Read as paired, one would be compared under a
+    # number that does not exist.
+    queue_only = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+        "git ls-tree": Completed("docs/issues/queue/statusline.md\n"),
+        "git show": Completed(STAGED),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    refused_wrongly = refusal_from_creating(source, queue_only)
+    check("a queue file beside the paired ones is not read as paired",
+          not refused_wrongly and queue_only.count("gh issue create") == 1
+          and not queue_only.ran(":docs/issues/queue/"),
+          refused_wrongly or str(queue_only.commands()))
+
+    # `-r` descends, so a numbered file in a subdirectory is listed too, and
+    # it is named for its issue without being paired with it: step 4 lands
+    # every file it files as a direct child of docs/issues/. Read as paired,
+    # each one cost a `git show` every create — 11 of them on main as it
+    # stood on 2026-09-22 — and this source would be refused under a number
+    # no file on main holds it under.
+    nested_number = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+        "git ls-tree": Completed(
+            "docs/issues/queue/570-a-statusline-drops-its-branch.md\n"
+            "docs/issues/archived/570-an-older-copy.md\n"),
+        "git show": Completed(STAGED),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    refused_wrongly = refusal_from_creating(source, nested_number)
+    check("a numbered file below docs/issues/ is not read as paired",
+          not refused_wrongly
+          and nested_number.count("gh issue create") == 1
+          and not nested_number.ran(":docs/issues/queue/")
+          and not nested_number.ran(":docs/issues/archived/"),
+          refused_wrongly or str(nested_number.commands()))
+
+    # A path a successful listing of this same commit just named cannot be
+    # absent from it, so a `git show` that exits non-zero there is git
+    # failing. Read as an absence — which is what None was until
+    # 2026-09-22 — it differs from what this source would become, the loop
+    # goes on, and the run files the second issue this check exists to stop.
+    unreadable = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+        "git ls-tree": Completed(LISTING),
+        "git show": Completed("", returncode=128,
+                              stderr="fatal: path does not exist"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    try:
+        tool.create(source, REPO, scratch, unreadable, quiet)
+        check("a listed path that cannot be read stops the run", False,
+              "it went on and filed "
+              f"{unreadable.count('gh issue create')} issue(s)")
+    except tool.Refused as refusal:
+        check("a listed path that cannot be read stops the run",
+              refusal.code == 1, f"code {refusal.code}")
+        check("and it files no second issue on the way past the failure",
+              not unreadable.ran("gh issue create"),
+              str(unreadable.commands()))
+
+    # --- An edit made mid-filing, which moves the key off its own issue ---
+
+    IN_FLIGHT = ('[{"number": 570, "title": "' + TITLE + '", '
+                 '"body": "Filing in progress, pairing key ghipairOTHER."}]')
+    # The whole sentence, not a fragment of it. It is what keeps an author
+    # out of the one case neither check sees — an edited source rerun after
+    # the merge — so the words are the guard and the case pins all of them.
+    INSTRUCTION = ("Wait for the merge, then apply your edit to the landed "
+                   "file with the edit verb, and do not rerun create on this "
+                   "file.")
+    edited = written(scratch, "edited-mid-filing.md",
+                     FILE_TEXT.replace("Body.", "Body, edited."))
+
+    in_flight = Recorder({
+        "gh issue list": Completed(IN_FLIGHT),
+        "gh pr list": Completed(
+            '[{"number": 9, "title": "GHI-MD for issue 570: ' + TITLE + '", '
+            '"url": "https://github.com/x/y/pull/9"}]'),
+    })
+    try:
+        tool.create(edited, REPO, scratch, in_flight, quiet)
+        check("an edit made while its own filing is in flight is refused",
+              False, "it was accepted")
+    except tool.Refused as refusal:
+        check("an edit made while its own filing is in flight is refused",
+              refusal.code == 64, f"code {refusal.code}")
+        check("and the refusal names the issue and the pull request to wait "
+              "for",
+              "https://github.com/nedschorus/nedschorus/issues/570"
+              in str(refusal)
+              and "https://github.com/x/y/pull/9" in str(refusal),
+              str(refusal))
+        check("and it instructs, in the words that cover the case neither "
+              "check sees",
+              INSTRUCTION in str(refusal), str(refusal))
+        check("and nothing is filed, landed or adjudicated",
+              not in_flight.ran("gh issue create")
+              and not in_flight.ran("git worktree add")
+              and not in_flight.ran(ASK),
+              str(in_flight.commands()))
+    check("and the check costs no issue list of its own",
+          in_flight.count("gh issue list") == 1,
+          str(in_flight.commands()))
+
+    # A run that died between step 3 and its push leaves the issue in flight
+    # with no pull request on it. The refusal still has to instruct.
+    no_pull_request = Recorder({
+        "gh issue list": Completed(IN_FLIGHT),
+        "gh pr list": Completed("[]"),
+    })
+    try:
+        tool.create(edited, REPO, scratch, no_pull_request, quiet)
+        check("an in-flight filing with no pull request yet still refuses",
+              False, "it was accepted")
+    except tool.Refused as refusal:
+        check("an in-flight filing with no pull request yet still refuses",
+              refusal.code == 64 and "No pull request" in str(refusal)
+              and INSTRUCTION in str(refusal), str(refusal))
+
+    # `gh pr list` exits non-zero on an expired token, a rate limit and an
+    # unreachable network. Read as "none open", the refusal names a state
+    # nobody looked up and sends the author to wait for a pull request that
+    # may already be open.
+    lookup_failed = Recorder({
+        "gh issue list": Completed(IN_FLIGHT),
+        "gh pr list": Completed("", returncode=1,
+                                stderr="gh: could not authenticate"),
+    })
+    try:
+        tool.create(edited, REPO, scratch, lookup_failed, quiet)
+        check("a filing in flight refuses even when the lookup fails", False,
+              "it was accepted")
+    except tool.Refused as refusal:
+        check("a filing in flight refuses even when the lookup fails",
+              refusal.code == 64 and INSTRUCTION in str(refusal),
+              str(refusal))
+        check("and it says the lookup failed rather than that none is open",
+              "Looking up the pull request carrying its file failed"
+              in str(refusal) and "No pull request" not in str(refusal),
+              str(refusal))
+
+    # Both halves are required. A title alone cannot refuse: adjudication
+    # fails open, so two open issues can carry one title, and the design
+    # rejected title matching for exactly that reason.
+    finished_same_title = Recorder({
+        "gh issue list": Completed(
+            '[{"number": 570, "title": "' + TITLE + '", '
+            '"body": "- [570-a.md](https://github.com/x/y/blob/main/a.md)"}]'),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+        "git ls-tree": Completed(""),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    refused_wrongly = refusal_from_creating(edited, finished_same_title)
+    check("an open issue of the same title whose filing finished does not "
+          "refuse",
+          not refused_wrongly
+          and finished_same_title.count("gh issue create") == 1,
+          refused_wrongly or str(finished_same_title.commands()))
+
+    other_heading = Recorder({
+        "gh issue list": Completed(
+            '[{"number": 570, "title": "Some other heading", '
+            '"body": "Filing in progress, pairing key ghipairOTHER."}]'),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/572\n"),
+        "git ls-tree": Completed(""),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+    })
+    refused_wrongly = refusal_from_creating(edited, other_heading)
+    check("a filing in flight under another heading does not refuse",
+          not refused_wrongly and other_heading.count("gh issue create") == 1,
+          refused_wrongly or str(other_heading.commands()))
 
     # --- After the merge, when filing moved the source --------------------
     # Step 4 moves a source that was already tracked on main, so the merge
@@ -588,6 +947,99 @@ def run_cases(scratch: Path):
               and not nothing_written.ran("git worktree add")
               and not nothing_written.ran("gh issue edit"),
               str(nothing_written.commands()))
+
+    # --- Step 5's git raises instead of reading a failure as an answer ----
+    # A failed fetch and a main with nothing paired leave the same empty
+    # list, and the report then tells the author no file is on main yet —
+    # which, the fetch having failed, the run cannot know. The exit codes
+    # here are git's own: 128 from a fetch whose remote is not there, 128
+    # from ls-tree given a revision that does not exist, and 0 with empty
+    # output from ls-tree given a directory that is simply not on the
+    # revision, which is why a non-zero exit is safe to treat as a failure.
+
+    failed_fetch = Recorder({
+        "git fetch": Completed("", returncode=128,
+                               stderr="fatal: could not read from remote"),
+        "git ls-tree": Completed(LANDED + "\n"),
+    })
+    try:
+        tool.link_body(REPO, 570, scratch, failed_fetch, quiet, LANDED)
+        check("a failed fetch stops step 5 rather than reporting an empty "
+              "main", False, "it went on")
+    except tool.Refused as refusal:
+        check("a failed fetch stops step 5 rather than reporting an empty "
+              "main",
+              refusal.code == 1 and not failed_fetch.ran("gh issue edit"),
+              f"code {refusal.code}, {failed_fetch.commands()}")
+
+    failed_list = Recorder({
+        "git ls-tree": Completed("", returncode=128,
+                                 stderr="fatal: Not a valid object name"),
+    })
+    try:
+        tool.link_body(REPO, 570, scratch, failed_list, quiet, LANDED)
+        check("a failed list stops step 5 the same way", False, "it went on")
+    except tool.Refused as refusal:
+        check("a failed list stops step 5 the same way",
+              refusal.code == 1 and not failed_list.ran("gh issue edit"),
+              f"code {refusal.code}, {failed_list.commands()}")
+
+    nothing_paired = Recorder({"git ls-tree": Completed("")})
+    check("but a main with nothing paired is still an answer, not a failure",
+          tool.link_body(REPO, 570, scratch, nothing_paired, quiet,
+                         LANDED) is False
+          and not nothing_paired.ran("gh issue edit"),
+          str(nothing_paired.commands()))
+
+    # --- Where the checkout is looked for ---------------------------------
+    # Through the shared `run`, so that function's docstring is true of this
+    # call too, and with check off, so a path outside a checkout keeps this
+    # program's own refusal and its 64 rather than `run`'s generic 1.
+
+    rooted = Recorder({"git rev-parse": Completed("/x/y\n")})
+    try:
+        found = tool.repository_root_of(scratch, rooted)
+        detail = str(rooted.commands())
+    except tool.Refused as refusal:
+        found, detail = None, f"refused: {refusal}"
+    check("the checkout is found through the shared run, not around it",
+          found == Path("/x/y")
+          and rooted.ran("git rev-parse --show-toplevel"), detail)
+
+    unrooted = Recorder({
+        "git rev-parse": Completed(
+            "", returncode=128,
+            stderr="fatal: not a git repository (or any of the parent "
+                   "directories): .git")})
+    try:
+        tool.repository_root_of(scratch, unrooted)
+        check("a path outside every checkout keeps this program's refusal",
+              False, "it was accepted")
+    except tool.Refused as refusal:
+        check("a path outside every checkout keeps this program's refusal",
+              refusal.code == 64 and "not inside a git checkout"
+              in str(refusal), f"code {refusal.code}, {refusal}")
+
+    # --- A bad command line -----------------------------------------------
+    # argparse exits 2 of its own accord, and this program documents no 2.
+    # 64 is what every other wrong input to it gets. Usage text and message
+    # stay argparse's; only the code moves. These reach neither git nor gh.
+
+    for case_name, argv in [
+            ("no verb at all is a bad invocation, not argparse's 2", []),
+            ("an unknown flag is a bad invocation", ["--bogus"]),
+            ("a verb missing its path is a bad invocation", ["create"]),
+            ("an unknown verb is a bad invocation", ["frobnicate", "x.md"])]:
+        complaint = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(complaint):
+                tool.main(argv)
+            check(case_name, False, "argparse did not exit")
+        except SystemExit as exit_code:
+            check(case_name, exit_code.code == 64, f"code {exit_code.code}")
+            check(f"  and argparse's own usage text survives ({argv})",
+                  "usage:" in complaint.getvalue(),
+                  repr(complaint.getvalue()[:120]))
 
 
 # --- The edit verb ------------------------------------------------------
