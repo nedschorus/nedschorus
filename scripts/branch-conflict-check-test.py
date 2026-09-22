@@ -132,19 +132,45 @@ case("a conflict exits 1", status == CHECK.EXIT_CONFLICT)
 case("a conflict says CONFLICT", lines[0].startswith("VERDICT: CONFLICT"))
 case("a conflict says what to do about it", "by hand" in lines[0])
 
-# A merge-tree status that is neither 0 nor 1. git 2.55.0 exits 129 for an
-# option it does not know and 128 for unrelated histories, measured 2026-09-22,
-# and until this case every case answered 0 or 1, so rewriting the
-# classification to `status == 1` left the whole suite green.
+# A merge-tree status that is neither 0 nor 1 is NO ANSWER, not a conflict.
+# git 2.55.0 exits 129 for an option it does not know and 128 for unrelated
+# histories, measured 2026-09-22; a read-only object database is a third
+# trigger, because --write-tree creates temporary data, and there merge-tree
+# exits 128 on a merge that is actually clean.
 #
-# This pins the SAFETY PROPERTY ONLY: such a status is never reported as no
-# conflict. Whether it should stay a CONFLICT or become its own exit-2 "no
-# trustworthy answer" is an open question with the user, so the case asserts
-# nothing about which, and passes either way.
-status, lines = run(fake_runner(merge_tree_status=129))
-case("a merge-tree status that is neither 0 nor 1 is never reported CLEAN",
-     status != CHECK.EXIT_NO_CONFLICT
-     and not lines[0].startswith("VERDICT: CLEAN"))
+# The open question these cases used to leave is RULED (user, 2026-09-22): such
+# a status exits 2, the program's existing "no trustworthy answer" code. So the
+# safety-only assertion below is now tightened to name the exit it must take.
+for no_answer_status in (128, 129, 2, 127):
+    status, lines = run(fake_runner(merge_tree_status=no_answer_status))
+    case("merge-tree status %d exits 2, not a conflict" % no_answer_status,
+         status == CHECK.EXIT_BAD_INVOCATION)
+    case("merge-tree status %d is never reported CLEAN" % no_answer_status,
+         not lines[0].startswith("VERDICT: CLEAN"))
+    case("merge-tree status %d is never reported CONFLICT" % no_answer_status,
+         not lines[0].startswith("VERDICT: CONFLICT"))
+    case("merge-tree status %d never issues the hand-merge instruction"
+         % no_answer_status,
+         not any("into the branch by hand" in line for line in lines))
+    case("merge-tree status %d names the status git returned" % no_answer_status,
+         str(no_answer_status) in lines[0])
+
+# The hand-merge instruction is the damage this prevents: before the ruling a
+# 128 printed CONFLICT carrying it, sending an agent to resolve a conflict that
+# does not exist. 0 and 1 keep their meanings, asserted above.
+status, lines = run(fake_runner(merge_tree_status=128))
+case("a no-answer status says the run gave no verdict",
+     lines[0].startswith("UNANSWERED:"))
+case("a no-answer status tells the agent not to hand-merge on it",
+     "Do not merge by hand" in lines[0])
+
+# GitHub is not consulted when git could not answer: the run returns before the
+# pull-request branch, so no gh call is made and no verdict can overrule a
+# non-answer.
+log = []
+status, lines = run(fake_runner(merge_tree_status=128, log=log), pull_request=1)
+case("a no-answer status does not consult GitHub",
+     not any(c[:1] == ["gh"] for c in log))
 
 # --- UNKNOWN: measured at eight of nine open pull requests after main moved ---
 status, lines = run(

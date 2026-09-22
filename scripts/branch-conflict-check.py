@@ -115,6 +115,10 @@ EXIT_NO_CONFLICT = 0
 EXIT_CONFLICT = 1
 EXIT_BAD_INVOCATION = 2
 
+# git merge-tree's own exit statuses, which are not this program's exit codes.
+MERGE_TREE_CLEAN = 0
+MERGE_TREE_CONFLICT = 1
+
 
 def run(command):
     """Run a command, returning (exit status, stdout stripped). Never raises."""
@@ -145,14 +149,27 @@ def resolve_commit(rev, runner=run):
     return out if status == 0 and out else None
 
 
-def git_says_conflict(base_hash, head_hash, runner=run):
-    """True when git finds a real conflict merging head into base.
+def merge_tree_exit_status(base_hash, head_hash, runner=run):
+    """git merge-tree's exit status: 0 clean, 1 conflict, anything else no answer.
 
-    Both arguments must already be resolved hashes, so a nonzero status here
-    means a conflict and nothing else.
+    git reserves 1 for "the merge completed and found conflicts". Every other
+    nonzero status means git could not complete the merge at all, so there is
+    no verdict to report in either direction. Three triggers are known. Measured
+    on this Mac, git 2.55.0, 2026-09-22: 128 for unrelated histories, and 129
+    for an option git does not recognise. The third is a read-only object
+    database, because --write-tree creates temporary data to write the result
+    into: merge-tree then exits 128 on a merge that is in fact clean.
+
+    Returning the status rather than a bool is what lets the caller tell a
+    conflict from a merge git could not attempt. Until 2026-09-22 this returned
+    `status != 0`, so a 128 printed a CONFLICT verdict carrying the hand-merge
+    instruction and sent an agent to resolve a conflict that does not exist
+    (user-ruled 2026-09-22; raised independently by the Codex review cell, by
+    merge-lane-2 in review 5281571823, and by a mutation run which found that
+    changing this line to `status == 1` left all 35 cases of the day green).
     """
     status, _ = runner(["git", "merge-tree", "--write-tree", base_hash, head_hash])
-    return status != 0
+    return status
 
 
 def github_head_commit(pull_request, runner=run):
@@ -225,7 +242,17 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             "fetch it before trusting any conflict answer" % head
         ]
 
-    conflict = git_says_conflict(base_hash, head_hash, runner)
+    merge_status = merge_tree_exit_status(base_hash, head_hash, runner)
+    if merge_status not in (MERGE_TREE_CLEAN, MERGE_TREE_CONFLICT):
+        return EXIT_BAD_INVOCATION, [
+            "UNANSWERED: git merge-tree exited %d merging %s into %s; only %d "
+            "(clean) and %d (conflict) are verdicts. Check that both commits "
+            "are present and share history, and that the object database is "
+            "writable, then rerun. Do not merge by hand on this result."
+            % (merge_status, head_hash[:12], base_hash[:12],
+               MERGE_TREE_CLEAN, MERGE_TREE_CONFLICT)
+        ]
+    conflict = merge_status == MERGE_TREE_CONFLICT
 
     if pull_request is not None:
         github_head = github_head_commit(pull_request, runner)
