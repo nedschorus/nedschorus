@@ -233,7 +233,8 @@ confused. Walk items 14 and 15 answered it, and both landed:
 - `/Users/el/.claude/CLAUDE.md` gained the one-bullet form as its third bullet (item 14).
 - The project's `CLAUDE.md` gained the same bullet without its ruling-date tail (item 15),
   through a pull request authored by the merge account and approved by an independent
-  reviewer. It is line 8 on main today, with "type word" since renamed to "link-type".
+  reviewer. It is line 8 on main today, with "type word" since renamed to "link-type" and then,
+  on 2026-09-22, to "ID-type".
 
 **The full table still goes into this skill either way** — that was stated in the walk item
 itself. The one-bullet form in the two instruction files is the always-on summary; the table
