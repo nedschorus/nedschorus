@@ -261,16 +261,9 @@ the directory exists in the log-store, but it is not in that README.
   one line ends with the minutes' citation, and a line opening `FAILED` or
   `REFUSED` is shown to the user as it is. The draft, the suggestions and the
   walk text are add-only, refused by name if a later run offers different
-  bytes, with one exception: a walk text the run only added to, its stored
-  copy an exact byte prefix of the local one, is replaced instead, because an
-  approval-walk's walk text grows as its items are presented and shipping
-  mid-walk and again at the close is ordinary (user-ruled 2026-09-21, item 3
-  of the approval-walk `md-skills-seat-questions-and-concerns-2026-09-21`);
-  every other difference in it is still refused. The minutes and the
-  dispositions are replaced, each displaced copy's sha256 announced on stderr
-  (user-ruled 2026-09-18, because both are updated after the close), and a
-  replaced walk text is announced on the same kind of line. The local copies
-  stay in `docs/walk/`.
+  bytes; the minutes and the dispositions are replaced, each displaced copy's
+  sha256 announced on stderr (user-ruled 2026-09-18, because both are updated
+  after the close). The local copies stay in `docs/walk/`.
 
 - **A seat's shared files** go to `seats/<agent-seat name>/`, the one kind
   organized by producer rather than by kind, through
