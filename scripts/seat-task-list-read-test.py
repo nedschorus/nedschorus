@@ -752,6 +752,28 @@ with tempfile.TemporaryDirectory() as root:
           "not read",
           "Machines read: mac (this machine)." in down_out, down_out)
 
+    # A seat that lives on the machine that could not be read. Denying it as
+    # absent would be the silent wrong answer in the form a citation-follower
+    # meets it.
+    with pretending_the_host_is("Edwards-MacBook-Air.local"):
+        _, denied_while_down = run(
+            ["--seat", "merge-lane-2", "--store", str(store),
+             "--machine", "both"], runner=unreachable)
+        _, denied_while_up = run(
+            ["--seat", "no-such-seat-anywhere", "--store", str(store),
+             "--machine", "both"],
+            runner=a_runner_returning(stdout=BOX_TAR))
+    check("a seat is not denied as absent while the machine it may be on "
+          "went unread: the refusal carries what was not read",
+          "No task list for 'merge-lane-2'" in denied_while_down
+          and "ssh exited 255" in denied_while_down
+          and "ssh nedlern@ned-box true" in denied_while_down,
+          denied_while_down)
+    check("and a refusal on a run that read everything carries no such "
+          "line, so the check above is not passing on noise",
+          "No task list for 'no-such-seat-anywhere'" in denied_while_up
+          and "could not be read" not in denied_while_up, denied_while_up)
+
     # GNU tar exits 1 for "file changed as we read it" while writing a
     # COMPLETE archive -- 53 of 60 runs on ned-box while tasks were being
     # created, measured 2026-09-22. Discarding that archive would report a

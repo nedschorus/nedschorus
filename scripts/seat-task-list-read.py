@@ -314,18 +314,19 @@ def read_task_lists(machines, store, scratch, runner):
     return sorted(locations), problems, machines_read
 
 
-def task_lists_or_refuse(locations, machines, problems):
+def task_lists_or_refuse(locations, machines):
     """The task lists found, or the refusal that says none were.
 
     Defined once and called by every entry path. It was written out twice
     once before, and mutation testing showed only one copy was pinned by a
-    case: emptying the other one left every case green.
+    case: emptying the other one left every case green. What could not be
+    read is added to this and to every other refusal in one place, in main.
     """
     if locations:
         return locations
-    raise SystemExit("\n".join(
-        [f"No task lists on the machines read: "
-         f"{', '.join(machine_shown(m) for m in machines)}."] + problems))
+    raise SystemExit(
+        f"No task lists on the machines read: "
+        f"{', '.join(machine_shown(m) for m in machines)}.")
 
 
 def seat_of(list_id):
@@ -664,17 +665,24 @@ def main(argv=None, runner=None):
             prefix="seat-task-list-read-") as scratch:
         locations, problems, machines_read = read_task_lists(
             machines, store, Path(scratch), runner)
-        task_lists = task_lists_or_refuse(locations, machines, problems)
+        try:
+            task_lists = task_lists_or_refuse(locations, machines)
 
-        if arguments.seats:
-            unreadable_seen = report_seats(task_lists)
-        elif arguments.every_task_list:
-            unreadable_seen = report_every_task_list(task_lists, arguments)
-        else:
-            wanted = (arguments.seat
-                      or os.environ.get(LIST_ID_VARIABLE) or None)
-            location = resolve_task_list(task_lists, wanted)
-            unreadable_seen = report_one_task_list(location, arguments)
+            if arguments.seats:
+                unreadable_seen = report_seats(task_lists)
+            elif arguments.every_task_list:
+                unreadable_seen = report_every_task_list(
+                    task_lists, arguments)
+            else:
+                wanted = (arguments.seat
+                          or os.environ.get(LIST_ID_VARIABLE) or None)
+                location = resolve_task_list(task_lists, wanted)
+                unreadable_seen = report_one_task_list(location, arguments)
+        except SystemExit as refusal:
+            # Every refusal carries what could not be read, in one place: a
+            # seat missing from an answer because its machine was never
+            # reached must not read as a seat that does not exist.
+            raise SystemExit("\n".join([str(refusal.code)] + problems))
 
         print(machines_read_line(machines_read))
         print_problems(problems)
