@@ -129,13 +129,12 @@ SIGKILL_SESSION_EXIT_CODES = (137, -9)
 
 # How many consecutive resumes may produce no new work before the supervisor
 # stops resuming (user-ruled 2026-09-21; gate 1 of the ruling this module's
-# docstring cites in full). This is the gate
-# that matters: an unattended resume loop spends money on every launch. The
-# reset signal is the resumed session's transcript growing —
-# launch_agent_session's docstring records that --resume reuses the session id
-# in place (confirmed live 2026-08-21), so a resumed session's work lands in
-# the same transcript and growth there is the one available proof that the
-# resume produced anything. A session that dies again having added nothing is
+# docstring cites in full). This is the gate that matters: an unattended
+# resume loop spends money on every launch. The reset signal is the resumed
+# session's transcript growing — launch_agent_session's docstring records that
+# --resume reuses the session id in place (confirmed live 2026-08-21), so a
+# resumed session's work lands in the same transcript, and growth there is the
+# one available proof that the resume produced anything. A session that dies again having added nothing is
 # looping, and the launch after that is refused.
 CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 2
 
@@ -1720,10 +1719,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
     # picked back up; resume (nedschorus#120) is how a CRASHED session's
     # transcript is continued. Two things set this flag: the startup paths
     # below, which resume a session that died before this supervisor started,
-    # and the death path in the loop, which resumes one that died while it was
-    # watching, under the 2026-09-21 ruling). It was called resume_first_launch
-    # while only the
-    # first launch could be a resume.
+    # and the death path in the loop, which resumes one that died while it
+    # was watching (the 2026-09-21 ruling). It was called resume_first_launch
+    # while only the first launch could be a resume.
     next_launch_resumes_the_session = bool(settings.resume_session_id) and adopted is None
     # The resume budget, consecutive across the whole loop, so it survives every
     # launch this call makes. The turn count is the one taken at the last
