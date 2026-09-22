@@ -321,6 +321,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and "git rebase origin/main" not in pushed_warning, pushed_warning)
     check("and told its next topic starts from origin/main",
           "git checkout -b <name> origin/main" in pushed_warning, pushed_warning)
+    # A commit on top cannot clear a conflict with main, so advice offering
+    # only that move dead-ends a seat whose pull request conflicts (user-ruled
+    # 2026-09-21). Measured that day: nothing in this suite held the advice
+    # text at all, so stripping the clause left every case here green.
+    check("and told the one route out of a conflict with main",
+          "conflict with main is cleared by one hand-made merge" in pushed_warning,
+          pushed_warning)
     check("the pushed warning is also one line",
           pushed_warning != "" and "\n" not in pushed_warning, repr(pushed_warning))
     check("two commits on main touching the file are counted as two",
