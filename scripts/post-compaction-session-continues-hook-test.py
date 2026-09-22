@@ -449,6 +449,23 @@ with tempfile.TemporaryDirectory() as workspace:
     finally:
         hook.turns_within_injected_tail_ceiling = original_ceiling
 
+    # The render is the last step of recovered_tail and was the one statement
+    # outside its try blocks, so a raise there escaped a function whose
+    # docstring promises never to raise, and main()'s handler would return 0
+    # having emitted nothing -- the session losing the continue instruction,
+    # not merely the tail. Unreachable through the real extractor, which always
+    # yields {"voice", "text"} dicts; a separate program with other callers.
+    original_render = hook.render_turns
+    try:
+        hook.render_turns = raise_instead
+        tail = hook.recovered_tail(str(ordinary))
+        check("a render that fails costs the tail, not the instruction",
+              tail == "" and hook.TAIL_HEADING not in hook.injected_context(tail)
+              and hook.CONTINUE_INSTRUCTION_LINES[0] in hook.injected_context(tail),
+              f"the recovered tail was {tail[:120]!r}")
+    finally:
+        hook.render_turns = original_render
+
     original_injected_context = hook.injected_context
     original_payload_reader = hook.hook_payload_from_stdin
     try:
