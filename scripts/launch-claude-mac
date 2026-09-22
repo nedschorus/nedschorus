@@ -155,8 +155,12 @@ command -v claude >/dev/null 2>&1 || {
     exit 2
 }
 
-# Update Claude Code before starting the seat: launch is the fleet's one
-# update moment — every fresh agent starts current. Background auto-update
+# Update Claude Code before starting the seat, so a fresh agent starts
+# current. Launch is no longer the fleet's ONLY update moment: since
+# 2026-09-22 handoff-supervisor.py updates before every session it launches,
+# which covers the handoff restart, crash recovery and the login restart
+# (see update_agent_binary there). This step stays because a launcher starts
+# a seat the supervisor has not reached yet. Background auto-update
 # is off via DISABLE_AUTOUPDATER in the checked-in .claude/settings.json
 # (user-ruled 2026-08-22: with launch-time updates, the mid-session update
 # banner is clutter); that switch leaves this explicit `claude update`
