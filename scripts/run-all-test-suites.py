@@ -45,6 +45,77 @@ text can be trusted to mean pass or fail. Each suite runs as
 stdout and stderr together into its own log file. A suite that starts
 `python3` itself gets whatever PATH finds, not --python.
 
+THE ENVIRONMENT EACH SUITE IS LAUNCHED WITH is this program's own, less the
+variables that redirect where git reads and writes. They are stripped
+because 21 suites on main build a scratch repository with `git init` and
+none of them checks that it worked: the pattern checks `commit`'s return
+code, not `init`'s. With GIT_DIR set, `git -C <scratch> init` re-initialises
+the repository GIT_DIR names and exits 0, no repository is created at
+<scratch>, and every later `git -C <scratch> ...` call lands in that other
+repository while the suite prints PASS. On 2026-09-22 this put 14 commits by
+a test identity onto a live seat's branch, cut that branch's tree from 293
+files to 2, and overwrote the `user.name` and `user.email` shared by every
+worktree of that clone. Filed as nedschorus#639, whose "Next action" item 1
+is this change. scripts/find-deleted-path-across-backups-test.py:793 already
+did `env.pop("GIT_DIR", None)` for itself; this generalises it to every
+suite, and needs nothing of the suites' authors.
+
+STRIPPED, each measured on ned-box with git 2.53.0 on 2026-09-22 by running
+the suites' own init/config/add/commit pattern against a throwaway victim
+repository. Each writes into the victim, every command exiting 0:
+
+  GIT_DIR                 the victim gains the commit, its tracked set is
+                          replaced, and its `user.name` is overwritten; no
+                          repository exists at <scratch> afterwards
+  GIT_WORK_TREE           alone it makes `git -C <scratch> init` exit 128,
+                          but this program's cwd is the checkout's top
+                          directory, and there a bare `git add -A` stages
+                          the named tree into the CHECKOUT's index and
+                          stages its own files as deleted, exit 0 throughout
+  GIT_INDEX_FILE          the victim's index is replaced by the scratch
+                          repository's tree, so the victim's tracked set
+                          changes with nothing said
+  GIT_OBJECT_DIRECTORY    the scratch repository's objects are written into
+                          the victim, and the scratch repository cannot read
+                          its own commit back once the variable is gone
+  GIT_COMMON_DIR          the victim's `user.name` is overwritten and its
+                          object store written into — the config half of the
+                          2026-09-22 damage on its own
+  GIT_ALTERNATE_OBJECT_DIRECTORIES
+                          nothing is written, but the scratch repository
+                          resolves objects that live in the other repository
+                          and stops resolving them once the variable is
+                          gone, so a suite can assert over a repository it
+                          does not hold
+
+NOT STRIPPED, and why, measured the same day the same way:
+
+  GIT_NAMESPACE           contained. Refs still land at refs/heads/<branch>
+                          on disk, HEAD resolves with the variable gone, and
+                          `git branch --list` answers with it still set. It
+                          renames refs inside one repository; it does not
+                          reach another one.
+  GIT_CEILING_DIRECTORIES stripping it would widen, not narrow, where git
+                          looks. It bounds the upward walk that discovers a
+                          repository: measured, a `git -C <scratch>` under
+                          an unrelated outer repository exits 128 with the
+                          ceiling set and finds that outer repository with it
+                          gone. Removing it is the wrong direction.
+
+Everything else in the environment is passed through unchanged, so a suite
+that reads a variable of its own still gets it.
+
+WHAT THIS DOES NOT COVER, stated because it is the case that caused the
+2026-09-22 damage: a suite a person or an agent runs DIRECTLY is not
+launched by this program and is not protected by this. The durable answer is
+nedschorus#639's "Next action" item 2 — a scratch repository that asserts
+itself after `git init` — which is an open design question across 21 files
+and is not this change. Nor does this cover this program's OWN git calls:
+measured 2026-09-22, with GIT_DIR set, `git -C <top> ls-files` lists the
+other repository's files and exits 0, so the suite list itself can be wrong
+while `rev-parse --show-toplevel` still answers <top>. Reported with
+nedschorus#639 rather than fixed here.
+
 SKIPPED CASES are reported from text, because no exit code carries them: a
 suite that skips a case still exits 0. Measured 2026-09-21: no suite uses
 unittest's skip machinery, and the four that can skip
@@ -107,6 +178,19 @@ PROGRAM = "run-all-test-suites"
 
 TEST_SUITE_PATHSPEC = "*-test.py"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
+
+# Stripped from the environment each suite is launched with; the docstring
+# says what each one was measured to do, and why GIT_NAMESPACE and
+# GIT_CEILING_DIRECTORIES are deliberately not here.
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+)
+
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
 REPORT_FILE_NAME = "report.txt"
 
@@ -227,11 +311,22 @@ def skipped_case_lines(log_file):
     return [line for line in text.splitlines() if SKIPPED_CASE_LINE.match(line)]
 
 
+def environment_without_git_redirecting_variables():
+    """This program's environment, less the variables that send a suite's git
+    commands into whatever repository the environment names. A fresh dict per
+    call, because suites are launched from several threads at once."""
+    environment = dict(os.environ)
+    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
+        environment.pop(variable, None)
+    return environment
+
+
 def run_one_suite(top, interpreter, suite, log_dir):
     log_file = log_path_for(log_dir, suite)
     started = time.monotonic()
     with open(log_file, "wb") as log:
         completed = subprocess.run([interpreter, "-u", suite], cwd=str(top),
+                                   env=environment_without_git_redirecting_variables(),
                                    stdin=subprocess.DEVNULL, stdout=log,
                                    stderr=subprocess.STDOUT, check=False)
     return {
