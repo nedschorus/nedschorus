@@ -80,7 +80,7 @@ SYNTHETIC_ASSISTANT_MODEL = "<synthetic>"
 def first_user_turn_text(transcript_path: Path) -> str:
     """The first non-meta user turn's text, or "" when none is readable."""
     try:
-        with transcript_path.open(encoding="utf-8") as stream:
+        with transcript_path.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 try:
                     record = json.loads(line)
@@ -107,10 +107,15 @@ def substantive_turn_count(transcript_path: Path) -> int:
     seat shape (PR #131 review round 3, finding 2: text-only counting wrote
     off a successor whose work was 12 tool calls and one reply). The
     harness's own turns are not counted (SYNTHETIC_ASSISTANT_MODEL): on
-    2026-09-10 a session-limit notice was a successor's only "reply"."""
+    2026-09-10 a session-limit notice was a successor's only "reply".
+
+    Decoding replaces rather than raises: the handoff-supervisor reads this on
+    a session's death path, before the exit record is written, and a
+    transcript cut off inside a multibyte character must cost its last line,
+    not the record."""
     count = 0
     try:
-        with transcript_path.open(encoding="utf-8") as stream:
+        with transcript_path.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 try:
                     record = json.loads(line)
