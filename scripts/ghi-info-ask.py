@@ -38,9 +38,9 @@ error is not stuck — the ghi-write skill's fallback ladder covers a failed
 ask by design.
 
 Session lifecycle (design § The ghi-info session): no process outlives one
-ask. Every call is a fresh `claude -p`, resumed by session id read from
-`.ghi-info-state.json` in the seat directory, cold-started when no session
-is stored or a reincarnation trigger fires (closes-since-birth, the stale-match
+ask. Every call is a fresh `claude -p`, resumed by the session id under
+`ghi_info_session_id` in `.ghi-info-state.json` in the seat directory,
+cold-started when no session is stored or a reincarnation trigger fires (closes-since-birth, the stale-match
 rate, transcript size, or the share of context in use — the named constants
 below). Reincarnating is this script's job alone: the project's handoff hook
 stays silent in the sessions it runs (run_claude). Reincarnation means: one
@@ -289,8 +289,28 @@ def find_unexpected_closed_pointers(reply_text: str, cache: dict, include_closed
     return unique
 
 
+# The key under which `.ghi-info-state.json` holds the id of the ghi-info
+# session this program cold-started and resumes. A bare `session_id` does not
+# say whose session: this program runs inside a calling agent's session, and
+# launches another, so a reader of the state file had two candidates and no way
+# to choose. Renamed on the user's ruling at item 5 of walk
+# md-skills-seat-questions-and-concerns-2026-09-21, which followed the same
+# rename in the handoff-supervisor (PR "The supervisor's state names the session
+# it launched, not \"the session\"").
+#
+# NOT the same key as the one `claude -p` returns in its JSON: that one is the
+# agent-binary's own output contract, read as `reply["session_id"]` below, and
+# renaming it here would break the read.
+GHI_INFO_SESSION_ID_STATE_KEY = "ghi_info_session_id"
+# Read-only, for state files written before the rename. load_state migrates it
+# in, every write after that uses the new key alone, so a state file converts on
+# the first read this program gives it. Removable once no seat carries a
+# `.ghi-info-state.json` older than 2026-09-22.
+LEGACY_SESSION_ID_STATE_KEY = "session_id"
+
+
 def default_state() -> dict:
-    return {"session_id": None, "closes_since_birth": 0, "recent_matches": []}
+    return {GHI_INFO_SESSION_ID_STATE_KEY: None, "closes_since_birth": 0, "recent_matches": []}
 
 
 def load_state(state_path: Path) -> dict:
@@ -300,6 +320,9 @@ def load_state(state_path: Path) -> dict:
         return default_state()
     merged = default_state()
     merged.update({key: state[key] for key in merged if key in state})
+    if (merged[GHI_INFO_SESSION_ID_STATE_KEY] is None
+            and state.get(LEGACY_SESSION_ID_STATE_KEY) is not None):
+        merged[GHI_INFO_SESSION_ID_STATE_KEY] = state[LEGACY_SESSION_ID_STATE_KEY]
     return merged
 
 
@@ -370,10 +393,10 @@ def should_recycle(state: dict, seat_dir: Path, projects_root: Path):
     if stale_count >= STALE_MATCH_THRESHOLD:
         return True, (f"{stale_count} stale matches in the last {len(recent)} "
                       f"answers (threshold {STALE_MATCH_THRESHOLD})")
-    size = transcript_size_bytes(seat_dir, state.get("session_id"), projects_root)
+    size = transcript_size_bytes(seat_dir, state.get(GHI_INFO_SESSION_ID_STATE_KEY), projects_root)
     if size is not None and size >= TRANSCRIPT_SIZE_THRESHOLD_BYTES:
         return True, f"transcript {size} bytes (threshold {TRANSCRIPT_SIZE_THRESHOLD_BYTES})"
-    transcript_path = transcript_path_for(seat_dir, state.get("session_id"), projects_root)
+    transcript_path = transcript_path_for(seat_dir, state.get(GHI_INFO_SESSION_ID_STATE_KEY), projects_root)
     used = (threshold_hook.context_used_percentage_from_transcript(str(transcript_path))
             if transcript_path is not None else None)
     if used is not None and used >= CONTEXT_USED_PERCENTAGE_THRESHOLD:
@@ -615,7 +638,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     # the routine delta first would fetch the entire corpus TWICE on
     # every first run — the delta has no cutoff to search from without a
     # cache, so it is itself a full fetch.
-    has_session = locked and state.get("session_id")
+    has_session = locked and state.get(GHI_INFO_SESSION_ID_STATE_KEY)
     changed = []
     recycle, recycle_reason = False, None
 
@@ -661,7 +684,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         session_id = cold_reply["session_id"]
         resume_prompt = compose_resume_ask_prompt(question, include_closed, [], False)
     else:
-        session_id = state["session_id"]
+        session_id = state[GHI_INFO_SESSION_ID_STATE_KEY]
         resume_prompt = compose_resume_ask_prompt(question, include_closed, changed, True)
 
     answer_reply, error = turn(resume_prompt, session_id)
@@ -687,7 +710,7 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     if locked:
         if cold_starting:
             state = default_state()
-        state["session_id"] = session_id
+        state[GHI_INFO_SESSION_ID_STATE_KEY] = session_id
         recent = state.get("recent_matches", [])
         recent.append(stale)
         state["recent_matches"] = recent[-STALE_MATCH_WINDOW:]
