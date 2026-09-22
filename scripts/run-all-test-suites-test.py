@@ -22,6 +22,7 @@ Run: python3 scripts/run-all-test-suites-test.py   (exit 0 = all passed)
 
 import fcntl
 import importlib.util
+import json
 import os
 import pathlib
 import subprocess
@@ -65,6 +66,80 @@ SKIPS_TWO = ("print('SKIP  end-to-end: tmux is not installed')\n"
              "print('all cases passed')\n")
 KILLED_BY_SIGTERM = "os.kill(os.getpid(), signal.SIGTERM)\ntime.sleep(5)\n"
 
+# A suite that needs a git repository, written the way the 21 suites on main
+# that need one are written: build it with `git init` in a scratch directory,
+# configure an identity, commit — and never check that `init` worked. It
+# writes down what it saw and what it built, so the case can tell a suite
+# that built its own repository from one that wrote into somebody else's.
+# nedschorus#639.
+BUILDS_A_SCRATCH_REPOSITORY = f'''import json, subprocess, tempfile
+here = pathlib.Path(os.environ["{RAN_FILE_VARIABLE}"]).parent
+scratch = tempfile.mkdtemp(dir=str(here), prefix="the-suite-s-own-repository-")
+
+
+def git(*arguments):
+    return subprocess.run(["git", "-C", scratch, "-c", "core.hooksPath=/dev/null",
+                           "-c", "commit.gpgsign=false", *arguments],
+                          capture_output=True, text=True, check=False)
+
+
+git("init", "-q")
+git("config", "user.name", "the suite's test identity")
+git("config", "user.email", "suite-test@nedschorus.invalid")
+pathlib.Path(scratch, "the-suite-s-own-file.txt").write_text("the suite's work\\n")
+git("add", "-A")
+git("commit", "-q", "-m", "the suite's own commit")
+
+# A child this suite gives GIT_DIR of its own must still get it: that is the
+# fixture pattern scripts/cold-read-grid-test.py and
+# scripts/cold-read-cell-common-test.py are built on.
+child = dict(os.environ)
+child["GIT_DIR"] = str(here / "the-child-s-own-git-directory")
+child_saw = subprocess.run(
+    [sys.executable, "-c", "import os; print(os.environ.get('GIT_DIR', 'unset'))"],
+    env=child, capture_output=True, text=True, check=False)
+
+pathlib.Path(here, "what-the-suite-saw.json").write_text(json.dumps(dict(
+    git_variables_seen=sorted(name for name in os.environ if name.startswith("GIT_")),
+    repository_built_at_its_own_scratch=pathlib.Path(scratch, ".git").is_dir(),
+    a_variable_that_is_not_git_s=os.environ.get("{RENDEZVOUS_WAIT_VARIABLE}", "unset"),
+    git_dir_the_child_was_given=child_saw.stdout.strip(),
+)))
+'''
+
+VICTIM_IDENTITY = "the victim's own identity"
+
+
+def make_victim_repository(root, suite_path):
+    """A throwaway repository standing in for the live checkout an ambient
+    GIT_DIR names, so a case can see whether a suite's git commands landed in
+    it. Given a committing identity of its own in its local config, because
+    overwriting that is the part of nedschorus#639 that outlives the run.
+
+    It tracks `suite_path` under that name because the program's own
+    `git ls-files` resolves through GIT_DIR too, so the suite list it reads is
+    the victim's. That is the 2026-09-22 incident's own shape — a second clone
+    of the same project, with the same paths in it — and it is what lets this
+    case reach the thing it is about, which is the environment the program
+    launches a suite WITH."""
+    victim = root / "victim"
+    victim.mkdir()
+    git(victim, "init", "-q", "-b", "main")
+    git(victim, "config", "user.name", VICTIM_IDENTITY)
+    git(victim, "config", "user.email", "victim@nedschorus.invalid")
+    (victim / suite_path).write_text("the victim's copy, which is never run\n")
+    git(victim, "add", "-A")
+    git(victim, "commit", "-q", "-m", "the victim's own commit")
+    return victim
+
+
+def victim_state(victim):
+    return dict(
+        tracked=sorted(git(victim, "ls-files").stdout.split()),
+        commits=git(victim, "rev-list", "--count", "--all").stdout.strip(),
+        identity=git(victim, "config", "--local", "user.name").stdout.strip(),
+    )
+
 
 def rendezvous(mine, theirs):
     """Passes only when the other suite is running at the same time."""
@@ -104,11 +179,17 @@ def make_repo(root, tracked, untracked=None, commit=True):
     return repo
 
 
-def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20"):
-    """The program run against root/repo with its own lock and log directory."""
+def run(root, *arguments, checkout=None, lock_file=None, rendezvous_seconds="20",
+        environment_extra=None):
+    """The program run against root/repo with its own lock and log directory.
+
+    environment_extra goes into the environment the PROGRAM is launched with,
+    which is how a case gives the program's own process an ambient variable
+    and then asks what its suites saw."""
     environment = dict(os.environ)
     environment[RAN_FILE_VARIABLE] = str(root / "ran.txt")
     environment[RENDEZVOUS_WAIT_VARIABLE] = rendezvous_seconds
+    environment.update(environment_extra or {})
     command = [sys.executable, str(PROGRAM),
                "--checkout", str(checkout if checkout is not None else root / "repo"),
                "--log-dir", str(root / "logs"),
@@ -326,8 +407,81 @@ with tempfile.TemporaryDirectory() as scratch:
     check("-j 0 is refused, exit 2", result.returncode == 2 and ran(root) == [],
           (result.returncode, result.stderr))
 
-# --- The defaults -------------------------------------------------------------
+# --- The environment each suite is launched with: no git redirection ---------
+# nedschorus#639. The program's OWN process is given an ambient GIT_DIR
+# pointing at a throwaway victim repository — the one variable measured to
+# reach every one of the 21 suites that build a scratch repository, and the
+# one that did the 2026-09-22 damage. A suite the program launches must not
+# see it, must get a real repository of its own, and must leave the victim
+# alone.
+#
+# Against the program without this change, this case fails with the suite
+# reporting GIT_DIR among the variables it saw, no repository at its own
+# scratch path, and the victim carrying the suite's commit and identity.
+SUITE_THAT_BUILDS_A_REPOSITORY = "builds-a-repository-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {SUITE_THAT_BUILDS_A_REPOSITORY: BUILDS_A_SCRATCH_REPOSITORY})
+    victim = make_victim_repository(root, SUITE_THAT_BUILDS_A_REPOSITORY)
+    before = victim_state(victim)
+    result = run(root, environment_extra={"GIT_DIR": str(victim / ".git")})
+    saw_file = root / "what-the-suite-saw.json"
+    saw = json.loads(saw_file.read_text()) if saw_file.exists() else {}
+    check("a suite launched by the program sees no ambient GIT_DIR the program has",
+          "GIT_DIR" not in saw.get("git_variables_seen", ["GIT_DIR"]),
+          (saw.get("git_variables_seen"), result.stdout, result.stderr))
+    check("so a suite that builds a scratch repository really gets one",
+          saw.get("repository_built_at_its_own_scratch") is True, saw)
+    check("and the repository the ambient GIT_DIR named is untouched",
+          victim_state(victim) == before, (before, victim_state(victim)))
+    check("the victim keeps the committing identity its own config pins",
+          victim_state(victim)["identity"] == VICTIM_IDENTITY, victim_state(victim))
+    check("a variable that is not git's is passed through to the suite unchanged",
+          saw.get("a_variable_that_is_not_git_s") == "20", saw)
+    check("a suite that gives its own child GIT_DIR still does — the cold-read fixture",
+          saw.get("git_dir_the_child_was_given")
+          == str(root / "the-child-s-own-git-directory"), saw)
+    check("the suite still exits 0, so none of the above is read off a failure",
+          result.returncode == 0, (result.returncode, result.stdout, result.stderr))
+
+# --- Which variables are stripped, and which are deliberately kept -----------
+# The five beyond GIT_DIR cannot be driven through a whole run: each of them
+# also redirects the program's OWN `git ls-files` and `rev-parse`, so a run
+# carrying them refuses at exit 2 before any suite is launched (measured
+# 2026-09-22; the program's docstring records it as a limit). They are pinned
+# here at the seam they act on instead. GIT_NAMESPACE and
+# GIT_CEILING_DIRECTORIES are checked as KEPT, because deciding against them
+# was a measured decision and widening the list later should trip a case.
 module = load_program_module()
+every_variable = {
+    "GIT_DIR": "/elsewhere/.git", "GIT_WORK_TREE": "/elsewhere",
+    "GIT_INDEX_FILE": "/elsewhere/.git/index",
+    "GIT_OBJECT_DIRECTORY": "/elsewhere/.git/objects",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/elsewhere/.git/objects",
+    "GIT_COMMON_DIR": "/elsewhere/.git",
+    "GIT_NAMESPACE": "a-namespace", "GIT_CEILING_DIRECTORIES": "/elsewhere",
+    "A_VARIABLE_THAT_IS_NOT_GIT_S": "kept",
+}
+was = dict(os.environ)
+try:
+    os.environ.update(every_variable)
+    stripped_environment = module.environment_without_git_redirecting_variables()
+finally:
+    os.environ.clear()
+    os.environ.update(was)
+check("every variable measured to redirect where git reads and writes is stripped",
+      [name for name in every_variable if name in stripped_environment]
+      == ["GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES", "A_VARIABLE_THAT_IS_NOT_GIT_S"],
+      [name for name in every_variable if name in stripped_environment])
+check("GIT_NAMESPACE is kept: measured contained inside one repository",
+      stripped_environment.get("GIT_NAMESPACE") == "a-namespace")
+check("GIT_CEILING_DIRECTORIES is kept: stripping it would widen where git looks",
+      stripped_environment.get("GIT_CEILING_DIRECTORIES") == "/elsewhere")
+check("the rest of the environment is passed through, not rebuilt",
+      stripped_environment.get("A_VARIABLE_THAT_IS_NOT_GIT_S") == "kept"
+      and stripped_environment.get("PATH") == os.environ.get("PATH"))
+
+# --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
 check("--checkout defaults to the checkout this program is in",
       pathlib.Path(defaults.checkout) == SCRIPTS_DIR.parent, defaults.checkout)
