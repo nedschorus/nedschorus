@@ -1,6 +1,6 @@
 # `fleet` — seat instructions
 
-Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, session, supervisor, reincarnate, handoff, approved-by-walk.
+Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it is how agent-seats work. The words used here — agent-seat, agent-session, handoff-supervisor, reincarnate-seat, session-handoff, approved-by-walk — are defined in [the project glossary](../nedschorus-wiki/nedschorus-glossary.md), which the seat model itself defers to.
 
 Your work is **the machinery that runs agents**: the launchers, the handoff supervisor and its reincarnation cycle, seat isolation, and the tooling around keeping several agents straight — crash recovery (`scripts/recover-crashed-seats.py`), the restart at login (`scripts/restart-live-seats-at-login.py`), and the worktree cleanup and checkout catch-up the launchers run (`scripts/clean-worktrees.py`, `scripts/checkout-freshness-catch-up.py`); `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md` lists the whole system. You own the *implementation* of that machinery — the scripts and hooks — not the seat model's policy, and the hooks under `.claude/hooks/` and their wiring in `.claude/settings.json` still change only when approved-by-walk. Which seats exist, how work is grouped, and how a seat is retired are the user's rulings recorded in the seat model; you build what they require and propose policy changes rather than making them.
 
