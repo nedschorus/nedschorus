@@ -44,6 +44,16 @@ Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschor
 | `entry-manifest.md` | The ledger of everything imported from the legacy system. |
 | Issues labeled `draft` | Draft issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
+## Working in a fresh clone
+
+A checkout carries its own git identity, and a clone arrives without one. Set it before the first commit, or git falls through to the machine's global identity — which on this project's Mac is the user's own account, so the commit is authored as him:
+
+    git config user.name  <the agent-seat or host doing the work, never the user>
+    git config user.email <that name>@nedschorus.invalid
+    git config user.useConfigOnly true
+
+`user.useConfigOnly=true` is the half that does the work: it makes git refuse to fall through to the global config at all, so a missing identity fails at commit time instead of quietly signing someone else's name. `nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py` asserts all three against the enclosing checkout, which is how a fresh clone finds out — it fails one case with the setting it found and the command that fixes it.
+
 ## Status
 
 Founding phase, retired. The current architecture and working plan: [docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md](docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md). The boot-up plan's record: `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`.

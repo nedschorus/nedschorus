@@ -1098,14 +1098,23 @@ with tempfile.TemporaryDirectory() as workspace_name:
           and completed.returncode == 1, audit_payload)
 
     # --- slice 5: the repo git-config pins ----------------------------------
+    # A fresh clone fails these three, and this is the only place that tells
+    # anyone -- the requirement is otherwise in design prose and in git configs
+    # nothing distributes (README.md § Working in a fresh clone names it too,
+    # added 2026-09-22). So each detail names the value found AND the command
+    # that fixes it, in the checkout it is missing from.
     enclosing = SCRIPT_PATH.parent.parent
     for key in ("user.name", "user.email"):
         pinned = git(["config", key], enclosing, check_result=False).stdout.strip()
-        check(f"slice 5 pins {key} in the enclosing repository", bool(pinned), key)
+        check(f"slice 5 pins {key} in the enclosing repository", bool(pinned),
+              f"{key} is unset in {enclosing}. Run: git -C {enclosing} config "
+              f"{key} <the agent-seat or host doing the work, never the user>")
     use_config_only = git(["config", "user.useConfigOnly"], enclosing,
                           check_result=False).stdout.strip()
     check("slice 5 pins user.useConfigOnly=true", use_config_only == "true",
-          use_config_only or "(unset)")
+          f"user.useConfigOnly is {use_config_only or '(unset)'} in {enclosing}, "
+          f"so git may author a commit as whoever the global config names. "
+          f"Run: git -C {enclosing} config user.useConfigOnly true")
 
     # --import takes 'none' or nothing; any other value is a malformed field,
     # not a slice boundary, now that the entry checkpoint is built.
