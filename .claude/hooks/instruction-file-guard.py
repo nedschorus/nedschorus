@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Soft block on modifying instruction files (user-walked 2026-08-07, nedschorus#45).
+"""User-block on modifying instruction files (user-walked 2026-08-07, nedschorus#45).
 
 Wired as a PreToolUse hook on Edit, Write, and NotebookEdit. Instruction
 files — CLAUDE.md, per-agent CLAUDE.local.md identity files, and everything
@@ -9,12 +9,20 @@ cannot stop that (rules are context, not enforcement, and file creation
 never triggers them — probed 2026-08-07), so the block lives at the tool
 call, where it also catches creation.
 
-Soft block, not a wall: the deny message teaches the sanctioned path and
+User-block, not a wall: the deny message teaches the sanctioned path and
 names the override. An edit the user has already approved passes once by
 writing the user's exact approval words into .walk-approved at the root of
 the session's own checkout; the marker is consumed by the passing call. The
 override is deliberately self-serve — the audit value is the visible, quoted
 approval in the marker and the transcript, not tamper-proofing.
+
+Classed a user-block rather than a soft-block (user-ruled 2026-09-21, walk
+open-questions-concerns-and-recommendations-2026-09-21, item 2). The three
+kinds are told apart by whose words clear the block: a soft-block takes the
+agent's own reasoning, this one takes the user's, a hard-block takes neither.
+The glossary had defined soft-block as a hook refusal cleared by a reason the
+agent supplies, which no hook here has ever implemented — so an agent blocked
+by this one could read the glossary and conclude it need only state a reason.
 
 Root resolution (reworked 2026-08-17; rider 6 of
 docs/issues/queue/45-session-seat-and-isolation-riders.md, user-walked in the
