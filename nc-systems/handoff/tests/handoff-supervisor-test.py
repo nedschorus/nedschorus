@@ -375,7 +375,7 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "noterm", "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
     check("dont-restart without a terminal exits cleanly, not on EOFError",
@@ -408,7 +408,7 @@ def run_first_prompt_file_cases(workspace: Path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
          "--handoff-dir", str(workspace / "prompt-handoffs"),
-         "--agent-command", str(stub_agent),
+         "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0",
          "--first-prompt-file", str(workspace / "no-such-prompt.txt")],
         capture_output=True, text=True, check=False, timeout=30,
     )
@@ -418,7 +418,7 @@ def run_first_prompt_file_cases(workspace: Path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
          "--handoff-dir", str(workspace / "prompt-handoffs"),
-         "--agent-command", str(stub_agent),
+         "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0",
          "--first-prompt-file", str(prompt_path)],
         capture_output=True, text=True, check=False, timeout=30,
     )
@@ -1496,7 +1496,7 @@ def run_no_seat_recycle_refusal_case(workspace: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "noseat", "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
     check("a handoff without a seat stops the supervisor cleanly",
@@ -1584,7 +1584,7 @@ def run_agent_exit_record_cases(workspace: Path):
         before = datetime.now(timezone.utc).replace(microsecond=0)
         result = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
-             "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+             "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
         )
         state = supervisor.read_supervisor_state(state_path)
@@ -1623,7 +1623,7 @@ def run_agent_exit_record_cases(workspace: Path):
     stub_agent.chmod(0o755)
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=90,
     )
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
@@ -1912,7 +1912,7 @@ def run_boot_ignition_case(workspace: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "bootignite", "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
     check("boot with an unconsumed handoff exits cleanly after the ignition session",
@@ -1989,7 +1989,7 @@ def run_appended_system_prompt_cases(workspace: Path):
         finished = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
              "--handoff-dir", str(handoff_directory),
-             "--agent-command", str(stub_agent)] + extra_arguments,
+             "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"] + extra_arguments,
             capture_output=True, text=True, check=False,
             stdin=subprocess.DEVNULL, timeout=60,
         )
@@ -2197,7 +2197,7 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     environment["NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"] = "decoy-outer-session"
     subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(seat_directory),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False,
         stdin=subprocess.DEVNULL, timeout=60, env=environment,
     )
@@ -2608,6 +2608,105 @@ check("the extractor is still under scripts/, not inside this system",
 check("the appended-system-prompt default resolves under docs/agents",
       supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH.is_file(),
       str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH))
+
+# -- the agent binary is updated immediately before each launch ---------------
+# User-ruled 2026-09-22. A handoff restart passed no update moment, so a
+# long-lived seat drifted behind the published Claude Code while background
+# auto-update stayed off by the 2026-08-22 ruling (R16). update_agent_binary
+# carries the whole reasoning; these cases pin its behaviour and its wiring.
+
+
+def an_agent_recording_its_invocations(directory, body="exit 0"):
+    """A stub agent that appends the arguments of every invocation to a file."""
+    log = Path(directory) / "invocations"
+    path = Path(directory) / "recording-agent"
+    path.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "' + str(log) + '"\n' + body + "\n",
+        encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def invocations_of(directory):
+    log = Path(directory) / "invocations"
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    agent = an_agent_recording_its_invocations(update_workspace)
+
+    supervisor.update_agent_binary(str(agent), 0)
+    check("a zero update timeout runs no update at all",
+          invocations_of(update_workspace) == [],
+          str(invocations_of(update_workspace)))
+
+    supervisor.update_agent_binary(str(agent), 30)
+    check("the update invokes the agent command with the update subcommand",
+          invocations_of(update_workspace) == ["update"],
+          str(invocations_of(update_workspace)))
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # A hung update is killed at the timeout and the launch proceeds. The
+    # launchers allow 120s for a real download; 1s here bounds the case.
+    agent = an_agent_recording_its_invocations(update_workspace, body="sleep 30")
+    started = time.monotonic()
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        supervisor.update_agent_binary(str(agent), 1)
+    elapsed = time.monotonic() - started
+    check("a hung update is killed at the timeout rather than blocking the launch",
+          elapsed < 15, f"{elapsed:.1f}s")
+    check("a killed update says so, because the supervisor is what killed it",
+          "was stopped" in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # A non-zero status is deliberately silent: the agent prints its own
+    # diagnosis, so a paraphrase here would add nothing and could mislead.
+    agent = an_agent_recording_its_invocations(update_workspace, body="exit 3")
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        supervisor.update_agent_binary(str(agent), 30)
+    check("a failing update is silent and does not raise",
+          captured.getvalue() == "", captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # An agent command that cannot be run at all must not stop the seat coming
+    # back, which is what catching OSError is for.
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        supervisor.update_agent_binary(
+            str(Path(update_workspace) / "no-such-command"), 30)
+    check("an agent command that cannot be run is reported, not raised",
+          "could not be run" in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # The wiring. launch_agent_session is the ONE site every restart path
+    # reaches a session through: the supervisor's relaunch after a handoff,
+    # recover-crashed-seats.py, and the login restart, which goes through
+    # recovery. An adopted session never passes through here, which is what
+    # keeps the update off the adopted path structurally rather than by
+    # where the call happens to sit.
+    agent = an_agent_recording_its_invocations(update_workspace)
+    supervisor.launch_agent_session(
+        str(agent), "session-without-update", Path(update_workspace), "prompt",
+        update_timeout_seconds=0).wait()
+    check("launching with the update switched off invokes no update",
+          "update" not in invocations_of(update_workspace),
+          str(invocations_of(update_workspace)))
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    agent = an_agent_recording_its_invocations(update_workspace)
+    supervisor.launch_agent_session(
+        str(agent), "session-with-update", Path(update_workspace), "prompt",
+        update_timeout_seconds=30).wait()
+    check("a launch updates the binary before it starts the session",
+          invocations_of(update_workspace)[:1] == ["update"],
+          str(invocations_of(update_workspace)))
+
+check("the update timeout defaults to the launchers' own 120 seconds",
+      supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS == 120,
+      str(supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS))
+
 
 if "--canary" in sys.argv:
     print("\n-- live pre-seed canaries (launching real sessions) --")

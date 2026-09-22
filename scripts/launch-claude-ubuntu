@@ -210,8 +210,11 @@ if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND $(escape_remote_double_quote_context "$LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS")"
 fi
 
-# Update Claude Code on the box before starting the seat: launch is the
-# fleet's one update moment — every fresh agent starts current. Background
+# Update Claude Code on the box before starting the seat, so a fresh agent
+# starts current. Launch is no longer the fleet's ONLY update moment: since
+# 2026-09-22 handoff-supervisor.py updates before every session it launches,
+# which covers the handoff restart, crash recovery and the login restart
+# (see update_agent_binary there). Background
 # auto-update is off via DISABLE_AUTOUPDATER in the checked-in
 # .claude/settings.json (user-ruled 2026-08-22: with launch-time updates,
 # the mid-session update banner is clutter); that switch leaves this

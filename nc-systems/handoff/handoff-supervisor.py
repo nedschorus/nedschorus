@@ -1222,11 +1222,81 @@ def appended_system_prompt_file_for_launch(source_path: str, agent_part_path: Pa
     return os.path.abspath(agent_part_path)
 
 
+AGENT_BINARY_UPDATE_TIMEOUT_SECONDS = 120
+
+
+def update_agent_binary(agent_command: str, timeout_seconds: int) -> None:
+    """Bring the agent binary up to date, just before a session is launched.
+
+    WHY THIS IS HERE AT ALL (user-ruled 2026-09-22, this Mac). The two
+    launchers update at launch (scripts/launch-claude-mac, scripts/launch-
+    claude-ubuntu), and background auto-update is off fleet-wide by the
+    2026-08-22 ruling recorded as R16 in docs/nedschorus-wiki/nedschorus-
+    fleet-git-worktree-working-model.md: DISABLE_AUTOUPDATER=1 in the
+    checked-in .claude/settings.json, because with launch-time updates the
+    mid-session "update available" banner is clutter. That left a seam. A
+    seat is restarted far more often by a handoff than by a launcher, and a
+    handoff restart passed no update moment at all, so a long-lived seat
+    drifted and nothing said so. Measured when the user asked why: both
+    machines sat on Claude Code 2.1.278 with 2.1.280 published, the Mac's
+    symlink dated two days earlier at its last launcher launch.
+
+    WHY IT IS CALLED FROM launch_agent_session RATHER THAN THE SUPERVISE
+    LOOP. Every restart path in the fleet reaches a session through this one
+    function, and only through it: the supervisor's own relaunch after a
+    handoff, scripts/recover-crashed-seats.py (which launches this
+    supervisor, not a bare agent), and the login restart, which reaches the
+    seat through recovery. Placing the update here covers all three from one
+    site. It also makes "never on the adopted path" structural rather than a
+    convention about where the call sits: an adopted session was launched by
+    somebody else and never passes through here, and changing the binary
+    under a working agent is the one thing this must not do.
+
+    WHY IT IS SAFE TO SWAP THE BINARY AT THIS MOMENT. A running session pins
+    its own version directory in CLAUDE_CODE_EXECPATH and installed versions
+    are retained on disk, so updating changes nothing for any session already
+    running on this machine, this supervisor's previous agent included. The
+    handoff moment is in fact the safest one available: the retiring session
+    has ended and the successor has not started.
+
+    WHY A NON-ZERO STATUS IS SILENT. `claude update` prints its own diagnosis
+    whenever it runs to completion, so a paraphrase here would add nothing and
+    could mislead -- the failure that actually happened in this fleet was a
+    refusal to overwrite a Homebrew-managed copy, which printed its reason and
+    exited 0, so an exit-code branch would not have caught it either
+    (scripts/launch-claude-mac, 2026-08-31). The timeout is the one case this
+    function reports, because it is the one case it causes: the command is
+    killed mid-flight and says nothing itself.
+
+    An update never blocks a launch. A seat that cannot update must still come
+    back, so every failure here falls through to launching on what is
+    installed.
+    """
+    if not timeout_seconds:
+        return
+    print(f"handoff-supervisor: checking for a {agent_command} update")
+    try:
+        subprocess.run([agent_command, "update"], timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        print(
+            f"handoff-supervisor: the update was still running after "
+            f"{timeout_seconds}s and was stopped; launching on the installed version",
+            file=sys.stderr,
+        )
+    except OSError as error:
+        print(
+            f"handoff-supervisor: the update could not be run ({error}); "
+            f"launching on the installed version",
+            file=sys.stderr,
+        )
+
+
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
                          remote_control_name: str = "",
                          appended_system_prompt_file: str = "",
-                         handoff_supervisor_agent_name: str = ""):
+                         handoff_supervisor_agent_name: str = "",
+                         update_timeout_seconds: int = 0):
     """Start one interactive session, inheriting this console's terminal.
 
     resume=True launches `--resume <id>` instead of `--session-id <id>`: the
@@ -1269,6 +1339,7 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     other two only in the session whose CLAUDE_CODE_SESSION_ID matches it: a
     child `claude` the session starts inherits all three but has its own id
     (PR #414 review, 2026-09-16)."""
+    update_agent_binary(agent_command, update_timeout_seconds)
     flag = "--resume" if resume else "--session-id"
     command = [agent_command, flag, session_id]
     if remote_control_name:
@@ -1434,6 +1505,11 @@ class SupervisorSettings:
     # The file whose part below its first `---` line is appended to each launched
     # session's system prompt; "" launches without it.
     appended_system_prompt_file: str = ""
+    # Seconds allowed for the `<agent_command> update` that runs immediately
+    # before each launch; 0 switches the update off, which is what the tests
+    # pass so a stub agent is never invoked as an updater. See
+    # update_agent_binary for why the update is here at all.
+    agent_update_timeout_seconds: int = AGENT_BINARY_UPDATE_TIMEOUT_SECONDS
     # A real annotation, not a string: this module is loaded by importlib in the
     # threshold hook and the tests, where a forward reference cannot resolve.
     adopted_session: Optional[AdoptedSession] = None
@@ -1722,6 +1798,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 resume=resume_first_launch, remote_control_name=settings.agent,
                 appended_system_prompt_file=appended_system_prompt_file,
                 handoff_supervisor_agent_name=settings.agent,
+                update_timeout_seconds=settings.agent_update_timeout_seconds,
             )
             resume_first_launch = False  # recovery applies to the first launch only
 
@@ -1801,6 +1878,11 @@ def main(argv=None) -> int:
     parser.add_argument("--cd", default=".", help="the agent's worktree")
     parser.add_argument("--handoff-dir", default="~/.claude/handoffs", help="handoff directory on this machine only, not committed")
     parser.add_argument("--agent-command", default="claude", help="the CLI to launch")
+    parser.add_argument(
+        "--agent-update-timeout-seconds", type=int,
+        default=AGENT_BINARY_UPDATE_TIMEOUT_SECONDS,
+        help="seconds allowed for the agent update run before each launch; "
+             "0 skips the update")
     parser.add_argument(
         "--agent-append-system-prompt-file",
         default=str(DEFAULT_APPENDED_SYSTEM_PROMPT_PATH),
@@ -1897,6 +1979,7 @@ def main(argv=None) -> int:
         working_directory=working_directory,
         handoff_directory=handoff_directory,
         agent_command=arguments.agent_command,
+        agent_update_timeout_seconds=arguments.agent_update_timeout_seconds,
         first_prompt=arguments.first_prompt,
         resume_session_id=arguments.resume_session_id,
         appended_system_prompt_file=appended_system_prompt_file,
