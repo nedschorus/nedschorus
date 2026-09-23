@@ -1,0 +1,89 @@
+#!/bin/sh
+# Refuses a commit made inside a Claude session when its author or its
+# committer is the user's own address or the unconfigured-agent tripwire.
+#
+# Why (user-approved 2026-09-22, the walk
+# ghi-write-session-open-rulings-and-concerns item 7, part 4 of the design;
+# re-confirmed 2026-09-23, the reboot-test meta-walk item 3). Every worktree
+# of a clone shares one .git/config, and any agent's `git config user.name`
+# rewrote the author for every seat at once. Measured 2026-09-22: one seat's
+# commits went out that day as identity-probe, as reviewer, and once as
+# `identity-probe <junk@lerner1.com>` — the user's own address, on an agent's
+# commit, on a public pull request. Parts 1 and 2 of the design move each
+# seat's identity into its launcher's environment (scripts/launch-claude-mac
+# and scripts/launch-claude-ubuntu export GIT_AUTHOR_* and GIT_COMMITTER_* as
+# <seat> and <seat>@nedschorus.invalid). Part 3 replaces the shared config's
+# identity with a tripwire, `unconfigured-agent
+# <unconfigured-agent@nedschorus.invalid>`, rather than stripping it: with no
+# identity in the clone's config, git falls back to the Mac's ~/.gitconfig,
+# which is the user's own name and junk@lerner1.com — the leak made worse.
+# This hook is part 4: whatever the environment or the config holds, an
+# agent's commit never goes out under the user's address, and a session
+# started without the launcher is stopped at its first commit instead of
+# publishing under the tripwire.
+#
+# The refused addresses are the user's own, each seen on commits in this
+# repository's history: junk@lerner1.com (the Mac's ~/.gitconfig, and the
+# 2026-09-22 leak), ned@lerner1.com (commits by the reboot-test, merge-lane
+# and nedlern identities), and nedlerner@yahoo.com (the merging account's
+# GitHub identity). GitHub's own merge commits carry that last address and
+# are right to: they are made on GitHub's servers and never pass through a
+# local hook, so they are out of this hook's reach by construction, not by
+# an exemption.
+#
+# Only commits made inside a Claude session are checked — one whose
+# environment carries CLAUDE_CODE_SESSION_ID or CLAUDE_CODE_BRIDGE_SESSION_ID,
+# the same two variables scripts/git-client-side-hooks/prepare-commit-msg
+# keys on. A commit the user types in his own terminal is his, under his own
+# name, and is not this hook's business.
+#
+# Reach: git runs pre-commit for `git commit`, including --amend, and
+# scripts/git-client-side-hooks/pre-merge-commit runs this same check for a
+# merge commit made by `git merge`. `git rebase` and `git cherry-pick` run
+# neither hook; they keep each commit's original author, and take the
+# committer from the same environment the launcher sets. `git commit
+# --no-verify` skips it, as it skips every pre-commit hook.
+#
+# Installed once per clone with prepare-commit-msg, by the same core.hooksPath
+# (see that file's header); the reference checkout stays on main, so every
+# seat's worktree runs main's copy.
+#
+# THE TRIPWIRE IS A SEPARATE, LATER STEP, taken only on the user's go after
+# every live seat has been relaunched by a launcher that carries the exports
+# above. A seat launched before then commits with whatever the shared config
+# holds, so writing the tripwire first would stop every such seat at its
+# next commit. The step, once per clone:
+#   Mac:     git -C /Users/el/Projects/nedschorus config user.name unconfigured-agent
+#            git -C /Users/el/Projects/nedschorus config user.email unconfigured-agent@nedschorus.invalid
+#   ned-box: git -C /home/nedlern/Projects/nedschorus config user.name unconfigured-agent
+#            git -C /home/nedlern/Projects/nedschorus config user.email unconfigured-agent@nedschorus.invalid
+# It also means a commit the user types by hand in a clone would be authored
+# unconfigured-agent, since the clone's config outranks ~/.gitconfig; he
+# would pass --author or `git -c user.name=... -c user.email=...` for one.
+#
+# The refusal printed below is instruction only; this header is where the
+# reasons live (CLAUDE.md, user-ruled 2026-09-18).
+
+if [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -z "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" ]; then
+    exit 0
+fi
+
+refused_identity=""
+for role in AUTHOR COMMITTER; do
+    identity="$(git var "GIT_${role}_IDENT" 2>/dev/null)" || continue
+    # "Name <email> 1727000000 +0000" -> the email, lowercased.
+    email="$(printf '%s\n' "$identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p' | tr 'A-Z' 'a-z')"
+    case "$email" in
+        (junk@lerner1.com|ned@lerner1.com|nedlerner@yahoo.com|unconfigured-agent@nedschorus.invalid)
+            refused_identity="${identity% * *}"
+            break ;;
+    esac
+done
+
+[ -z "$refused_identity" ] && exit 0
+
+echo "git commit refused: this commit would be made by $refused_identity, the user's own address or the unconfigured-agent tripwire." >&2
+echo "If this session is a seat, relaunch it with launch-claude-mac or launch-claude-ubuntu, which set its git identity, then commit again." >&2
+echo "If you cannot relaunch, export GIT_AUTHOR_NAME and GIT_COMMITTER_NAME as the seat's name and GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL as <seat name>@nedschorus.invalid, then commit again." >&2
+echo "Do not change user.name or user.email in git config: every seat on this machine shares that file." >&2
+exit 1
