@@ -268,6 +268,15 @@ def build_argument_parser(
         help="document path, relative to the repo root or absolute",
     )
     parser.add_argument(
+        "--target-origin", metavar="PATH",
+        help="the file --target was copied from, when --target is a frozen "
+             "copy; the prompt then tells the reviewer to resolve the "
+             "document's relative references from this file's directory, "
+             "since nothing else was copied beside the target. Relative to "
+             "the repo root or absolute; not required to exist, so a retry "
+             "still runs after the original moved.",
+    )
+    parser.add_argument(
         "--report", required=True,
         help="file the reviewer writes its findings to; the caller names it, "
              "and a run that leaves it absent or empty fails",
@@ -362,8 +371,38 @@ def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
     return prompt_file
 
 
+def resolve_target_origin(target_origin_argument) -> typing.Optional[pathlib.Path]:
+    """The --target-origin path, made absolute the way --target is, or None.
+    Its existence is not checked: it only names a directory to resolve
+    references from, and refusing a retry because the original moved would
+    lose a report over a file the reviewer never opens."""
+    if not target_origin_argument:
+        return None
+    origin = pathlib.Path(target_origin_argument)
+    return origin if origin.is_absolute() else REPO_ROOT / origin
+
+
+def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -> str:
+    """The instruction appended to the prompt when the target is a frozen
+    copy. Appended, not a template placeholder, so every template -- the
+    passes' own and any --prompt-file draft -- carries it unchanged.
+
+    The resolution order is the reference pre-pass's (cold-read-grid.py's
+    reference_integrity_pre_pass): the repository root first, then the
+    original's directory. This repository mostly cites paths from the root,
+    so naming only the original's directory sent the common case astray."""
+    return (
+        f"\n\n{target} is a frozen copy of {target_origin}. Read the copy for "
+        f"the document's text. Resolve each relative path the document "
+        f"references from the repository root, {REPO_ROOT}, and when it does "
+        f"not exist there, from {target_origin.parent}, the original's "
+        f"directory. Never resolve one from the copy's directory.\n"
+    )
+
+
 def compose_prompt(
     cell: str, target: pathlib.Path, report: pathlib.Path, prompt_file=None,
+    target_origin=None,
 ) -> str:
     """The exact text the model receives.
 
@@ -376,16 +415,22 @@ def compose_prompt(
     cell's own under PROMPTS_DIR; the substitution is the same either way. It
     is how a draft prompt is trialled through the ordinary launcher (see
     --prompt-file in `build_argument_parser`).
+
+    `target_origin`, when given, is the file `target` was frozen from, and
+    `target_origin_paragraph` is appended so relative references resolve.
     """
     template_path = (prompt_file if prompt_file is not None
                      else PROMPTS_DIR / f"{cell}.md")
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
-    return (
+    prompt = (
         template_path.read_text(encoding="utf-8")
         .replace("{TARGET_PATH}", str(target))
         .replace("{REPORT_PATH}", str(report))
     )
+    if target_origin is not None:
+        prompt += target_origin_paragraph(target, target_origin)
+    return prompt
 
 
 class WriteDetectorUnavailable(Exception):
@@ -1275,7 +1320,8 @@ def run_cell(
         report = resolve_report_path(args.report)
         prompt_file = (
             resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
-        prompt = compose_prompt(args.cell, target, report, prompt_file)
+        prompt = compose_prompt(args.cell, target, report, prompt_file,
+                                resolve_target_origin(args.target_origin))
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)

@@ -215,11 +215,19 @@ failing_models = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_MODEL", "")
 if any(model in sys.argv for model in failing_models.split(",") if model):
     sys.stderr.write("stub runtime: this model is unavailable today\n")
     sys.exit(1)
-match = re.search(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
-if match is None:
+# The report path and the cold-read-target's path are BOTH inside the record
+# since the cells were pointed at the frozen copy (2026-09-22), and both end
+# in .md. The copy is the one under <record>/target/, so it is excluded here:
+# without that, this stub writes its report over the document it was asked to
+# review, which is a defect in the stub and looks exactly like a product one.
+report_candidates = [
+    found for found in re.findall(r"[^\s\"']+cold-read-records/[^\s\"']+\.md", prompt)
+    if "/target/" not in found
+]
+if not report_candidates:
     sys.stderr.write("stub runtime: no report path found in the prompt\n")
     sys.exit(3)
-given = pathlib.Path(match.group(0))
+given = pathlib.Path(report_candidates[0])
 failing_fragment = os.environ.get("COLD_READ_GRID_TEST_STUB_FAILING_REPORT_NAME_FRAGMENT")
 if failing_fragment and failing_fragment in given.name:
     sys.stderr.write("stub runtime: this cell is refused by report name\n")
@@ -271,6 +279,24 @@ edited_path = os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_PATH")
 if edited_path:
     with open(edited_path, "a", encoding="utf-8") as handle:
         handle.write("The reviewer's own edit, which it should not have made.\n")
+target_match = re.search(r"[^\s\"']+cold-read-grid-test-target\.md", prompt)
+target_log = os.environ.get("COLD_READ_GRID_TEST_STUB_TARGET_LOG")
+if target_log and target_match:
+    with open(target_log, "a", encoding="utf-8") as handle:
+        handle.write(target_match.group(0) + "\n")
+prompt_log = os.environ.get("COLD_READ_GRID_TEST_STUB_PROMPT_LOG")
+if prompt_log:
+    with open(prompt_log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(prompt) + "\n")
+if os.environ.get("COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET") and target_match:
+    # A reviewer editing the very document it was handed. The frozen copy is
+    # read-only, so this forces the mode first: the point of the case is the
+    # fingerprint catching an edit to the copy, not the mode bit stopping a
+    # determined writer.
+    given_target = pathlib.Path(target_match.group(0))
+    os.chmod(given_target, 0o644)
+    with open(given_target, "a", encoding="utf-8") as handle:
+        handle.write("The reviewer's edit to the document it was given.\n")
 sys.exit(0)
 '''
 
@@ -408,15 +434,21 @@ with tempfile.TemporaryDirectory() as scratch:
           "the moment the cells launched" in result.stdout
           and "the moment the last one finished" in result.stdout, repr(result.stdout))
     # The two fingerprints prove the bytes differed across the window and
-    # nothing else. Claiming the edit landed *while* a reviewer was reading, or
-    # that every report describes the text as it was before the edit, is false
-    # in the ordinary case — an edit part-way through, some cells having opened
-    # the file before it and some after. These records are kept, so a marker
-    # claiming more than the check knows would outlive the run that wrote it.
+    # nothing else: they never say when in it the edit landed. These records
+    # are kept, so a marker claiming more than the check knows would outlive
+    # the run that wrote it.
     check("the line does not claim to know when in the window the edit landed",
           "while these reviews ran" not in result.stdout, repr(result.stdout))
-    check("the line does not claim every report describes the earlier text",
-          "reviews the earlier text" not in result.stdout, repr(result.stdout))
+    # WHAT MOVED HERE IS THE ORIGINAL, and the cells read the frozen copy, so
+    # which text each report describes is not unknown: it is the copy, whose
+    # bytes are in this record and did not move. Before the cells were pointed
+    # at the copy this set genuinely was a mixture and the marker said so;
+    # saying it now would be a false claim kept for as long as the record is.
+    check("a moved original does not leave which text was reviewed unknown",
+          "is unknown" not in result.stdout, repr(result.stdout))
+    check("the line names the frozen copy as what every report describes",
+          "Every report in this directory describes the frozen copy under target/"
+          in result.stdout, repr(result.stdout))
     # A moved target and a settled one call for opposite next actions, so the
     # exit-3 path must not close with the instructions to triage the set.
     check("a moved target does not get the closing instructions to triage",
@@ -458,6 +490,12 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(stamped_lines[1]))
     check("the reviewer's own text survives the marking",
           "STUB REVIEW: one restatement" in stamped_text, repr(stamped_text[:200]))
+    # stdout is read once and scrolls away; the marker line stays in the
+    # record, so the sentence has to be right on the line that lasts.
+    check("the durable marker line is the one that names the frozen copy",
+          "Every report in this directory describes the frozen copy under target/"
+          in stamped_lines[1] and "is unknown" not in stamped_lines[1],
+          repr(stamped_lines[1]))
     # The reference-integrity pre-pass carries no provenance stamp, so its
     # marker goes at the very top.
     unstamped = record_directory / "reference-check.md"
@@ -1063,6 +1101,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the target's bytes are frozen under target/ at its repository path",
           frozen.is_file() and frozen.read_bytes() == (repository / TARGET_RELATIVE_PATH).read_bytes(),
           f"{frozen} present={frozen.exists()}")
+    check("the frozen copy is read-only",
+          frozen.is_file() and (frozen.stat().st_mode & 0o222) == 0,
+          oct(frozen.stat().st_mode) if frozen.exists() else "absent")
     record_lines = [line for line in result.stdout.splitlines() if line.startswith("record: ")]
     check("the run prints one record: line, and it says shipped",
           len(record_lines) == 1 and record_lines[0].startswith("record: shipped:"),
@@ -1158,6 +1199,113 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the frozen target is the launch-time text, not the edited one",
           frozen.is_file() and b"reviewer's own edit" not in frozen.read_bytes()
           and b"reviewer's own edit" in (repository / TARGET_RELATIVE_PATH).read_bytes())
+
+    # --- The cells read the frozen copy, never the live document -------------
+    # USER-RULED 2026-08-28, "freeze sounds like the right solution", built
+    # 2026-09-22. Before it, every cell opened the original, so an edit
+    # part-way through a run left some reports describing the old text and
+    # some the new. The whole guarantee is this: what the reviewers were
+    # handed is a copy nothing outside the record can reach.
+    repository = build_scratch_repository(scratch, "checkout-cells-read-the-copy")
+    target_log = scratch / "cells-read-the-copy-targets.log"
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_TARGET_LOG": str(target_log)})
+    logged = target_log.read_text(encoding="utf-8").splitlines() if target_log.is_file() else []
+    record_directory = record_directory_of(repository)
+    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    check("every cell was given a path, and there is one per cell",
+          len(logged) == 6, f"{len(logged)} logged: {logged!r}")
+    # Resolved before comparing: on macOS the scratch tree lives under /tmp,
+    # which is a symbolic link to /private/tmp, and the grid resolves the
+    # cold-read-target before freezing it — so the same file is spelled two
+    # ways and a string comparison fails on a run that is correct.
+    logged_resolved = {Path(path).resolve() for path in logged}
+    check("every cell was given the frozen copy inside the record",
+          logged != [] and logged_resolved == {frozen.resolve()},
+          f"expected {frozen.resolve()}, logged {sorted(logged_resolved)!r}")
+    check("no cell was given the live document",
+          (repository / TARGET_RELATIVE_PATH).resolve() not in logged_resolved,
+          f"logged {sorted(logged_resolved)!r}")
+
+    # --- Relative references resolve from the original's directory ----------
+    # Only the document is copied into the record, so a link it makes to a
+    # sibling -- `../issues/x.md` -- reaches nothing beside the copy. Both
+    # reviews of 2026-09-23 blocked on this: the cells lost the context the
+    # author linked, while the reference pre-pass, which resolves against the
+    # original, marked the same links ok. Each prompt must name the original
+    # and its directory as the place relative references resolve from.
+    repository = build_scratch_repository(scratch, "checkout-cells-told-the-origin")
+    prompt_log = scratch / "cells-told-the-origin-prompts.log"
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_PROMPT_LOG": str(prompt_log)})
+    prompts = ([json.loads(line) for line in prompt_log.read_text(encoding="utf-8").splitlines()]
+               if prompt_log.is_file() else [])
+    original = (repository / TARGET_RELATIVE_PATH).resolve()
+    record_directory = record_directory_of(repository)
+    frozen = (record_directory / "target" / TARGET_RELATIVE_PATH).resolve()
+
+    def names_path(prompt, path):
+        # Either spelling: the grid resolves the target, the scratch path may
+        # be reached through a symbolic link.
+        return any(str(candidate) in prompt
+                   for candidate in {path, Path(os.path.realpath(path))})
+
+    check("every cell's prompt names the original as what the copy was frozen from",
+          len(prompts) == 6 and all(
+              names_path(prompt, frozen) and names_path(prompt, original)
+              and "is a frozen copy of" in prompt for prompt in prompts),
+          f"{len(prompts)} prompts; first={prompts[:1]!r}")
+    check("every cell's prompt says relative references resolve from the original's directory",
+          len(prompts) == 6 and all(
+              f"from {original.parent}, the original's directory" in prompt
+              for prompt in prompts),
+          f"expected directory {original.parent}; first={prompts[:1]!r}")
+    root_phrase = f"from the repository root, {repository.resolve()},"
+    check("every cell's prompt resolves a path from the repository root before the original's directory",
+          len(prompts) == 6 and all(
+              root_phrase in prompt
+              and prompt.index(root_phrase)
+              < prompt.index(f"from {original.parent}, the original's directory")
+              for prompt in prompts),
+          f"expected root {repository.resolve()}; first={prompts[:1]!r}")
+
+    # --- An edit to the COPY is caught, which is where the risk moved --------
+    # The records tree is gitignored, so the cell's own stray-write detector
+    # cannot see an edit to the copy: `git status` never mentions it. That is
+    # why the run fingerprints the copy as well as the original. The stub
+    # forces the read-only mode off first — the mode bit stops an accident,
+    # and this case is about the detector behind it.
+    repository = build_scratch_repository(scratch, "checkout-copy-edited")
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
+    record_directory = record_directory_of(repository)
+    frozen = record_directory / "target" / TARGET_RELATIVE_PATH
+    check("an edit to the frozen copy is reported and the run exits 3",
+          result.returncode == 3
+          and result.stdout.count("TARGET CHANGED DURING RUN:") == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+    # Resolved before comparing, as the two checks in the case above are: the
+    # grid resolves the cold-read-target before freezing it, so on a machine
+    # whose temporary directory is reached through a symbolic link the same
+    # file is spelled two ways and a correct run fails this check. On a Mac
+    # the unresolved spelling happens to be a substring of the resolved one
+    # (/private/tmp/x contains /tmp/x), which is why this passed here and
+    # failed on ned-box under a symbolic-link TMPDIR.
+    check("the line names the copy that changed, not the untouched original",
+          str(frozen.resolve()) in result.stdout
+          and b"edit to the document it was given" in frozen.read_bytes(),
+          repr([line for line in result.stdout.splitlines()
+                if line.startswith("TARGET CHANGED")]))
+    check("the original is untouched while the copy is what moved",
+          b"edit to the document it was given"
+          not in (repository / TARGET_RELATIVE_PATH).read_bytes())
+    # The copy is what the cells read, so a copy that moved leaves exactly the
+    # unknown the marker was written for: the edit may have landed before a
+    # given cell opened it or after. This is the one case that keeps that
+    # sentence, and the case above is the one that must not have it.
+    check("a moved copy does leave which text was reviewed unknown",
+          "Which text any one report in this directory describes is unknown"
+          in result.stdout, repr(result.stdout))
 
     # --- Every file in the set is named for the run ------------------------
     # A report carried out of its directory, or read beside another run's,

@@ -14,11 +14,33 @@ Usage:
 
 The cold-read-record holds one report per cold-read-cell, the reference-check
 file, and under target/ the exact bytes reviewed at the cold-read-target's own
-repository path (frozen at launch, the same read that fingerprints it). At the
+repository path (frozen at launch, the same read that fingerprints it).
+
+THE FROZEN COPY IS WHAT THE COLD-READ-CELLS READ, and it is read-only
+(user-ruled 2026-08-28). Every cell used to open the live document, so an edit
+part-way through a run left some reports describing the old text and some the
+new, with nothing in the record saying which — the 2026-08-24 failure that
+marked a whole set COMPROMISED. Detecting that was the earlier answer and it
+could be silenced: a stray edit reverted mid-run, which the /cold-read skill
+tells the operator to do, restores the original bytes and both endpoint
+fingerprints match. Reading a copy removes the failure instead of detecting it.
+Consequences a reader should expect: a report's `path:line` citations name the
+copy's path inside the cold-read-record, which is where the text it reviewed
+is; each cold-read-cell is also given the original's path (`--target-origin`)
+and told to resolve the document's relative references from the original's
+directory, because only the document itself is copied and a link such as
+`../issues/x.md` has nothing beside the copy to reach -- the reference
+pre-pass resolves those links against the original too, so the record and the
+reviewers agree on what a link names (asked for by both reviews of 2026-09-23);
+and the run fingerprints BOTH the copy and the original at the end, because
+the records tree is gitignored and an edit to the copy would otherwise be
+invisible to the cold-read-cell's `git status` stray-write detector. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
 scripts/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
 one line is printed as `record:`; a shipping failure is reported, never fatal
-(user-ruled 2026-09-07).
+(user-ruled 2026-09-07). The one run that ships nothing is the one that could
+not freeze the target: it exits 2 before any cold-read-cell launches, so its
+record holds the reference check alone and no report to keep.
 
 WHEN A COLD-READ-CELL FAILS (nedschorus#413; the design, user-reviewed
 2026-09-16 and 2026-09-17, is
@@ -43,9 +65,11 @@ decided: the retry, the absence, the closing text and the exit code turn
 only on whether a report landed. No timeout: a cold-read-cell that hangs
 holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
 
-Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2
-bad invocation (including a cold-read-target this instrument refuses to
-review), 3 the cold-read-target changed while the cold-read-cells were
+Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
+cold-read-cell was launched (a bad invocation, a cold-read-target this
+instrument refuses to review, or a cold-read-target that could not be frozen
+into the cold-read-record), 3 the cold-read-target changed while the
+cold-read-cells were
 running, so every report in the set describes a document that no longer
 exists in the form reviewed.
 """
@@ -303,6 +327,21 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
     cold-read-record with reports but not the text they reviewed). ""
     when the file cannot be read, as the fingerprint function returns, and
     then nothing is frozen.
+
+    THE COPY IS WHAT THE COLD-READ-CELLS READ (user-ruled 2026-08-28: "freeze
+    sounds like the right solution"), which is a second job for the same file
+    and the reason it is made read-only here. Before that ruling was built,
+    every cell opened the live document and an edit part-way through a run left
+    some reports describing the old text and some the new, with nothing saying
+    which was which. The copy removes that: an edit to the original during a
+    run reaches no reviewer.
+
+    Read-only because the records tree is gitignored, so an edit to the copy is
+    invisible to the cold-read-cell's stray-write detector, which reads `git
+    status`. Without the mode bit the failure the ruling removes would simply
+    move from the original to the copy, and be harder to see there. The bit
+    stops an accident, which is this fleet's failure mode; the run also
+    fingerprints the copy at the end, which is what catches one anyway.
     """
     try:
         content = target.read_bytes()
@@ -311,6 +350,7 @@ def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> str:
     frozen = record_names.frozen_target_path(target, record_dir)
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_bytes(content)
+    frozen.chmod(0o444)
     return hashlib.sha256(content).hexdigest()
 
 
@@ -360,7 +400,7 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
 TARGET_CHANGED_INSTRUCTIONS = """\
 The reports are in {record_dir}, and every one of them is marked: the document's
 bytes differed between the moment the cells launched and the moment the last one
-finished, so which text any one report describes is unknown.
+finished, so this set is not a review of the document as it now stands.
 
 Do not triage this set as a review of the document. Stop editing the document
 and start a new cold-read run against the settled text.
@@ -387,22 +427,41 @@ def mark_reports_target_changed(
     possibility of reading them as a review of the file as it now stands.
     """
     # WHAT THE TWO FINGERPRINTS PROVE, and no more: the bytes differed between
-    # the moment before the cold-read-cells launched and the moment after
-    # the last one finished. They do not say when in that window the edit
-    # landed, so they cannot say that it landed while a reviewer was reading,
-    # nor which text any one report describes — the ordinary case is an edit
-    # part-way through, with some cold-read-cells having opened the file before
-    # it and some after. The marker is the durable half of this check: these
-    # cold-read-records are kept, so a sentence claiming more than the check
-    # knows would outlive the run.
+    # the moment before the cold-read-cells launched and the moment after the
+    # last one finished. They do not say when in that window the edit landed,
+    # so they cannot say that it landed while a reviewer was reading.
+    #
+    # WHICH TEXT THE REPORTS DESCRIBE turns on WHICH FILE MOVED, now that the
+    # cold-read-cells read the frozen copy. A copy that moved leaves the old
+    # unknown: the edit may have landed before a given cold-read-cell opened
+    # it or after. An original that moved leaves nothing unknown at all --
+    # every report describes the copy, whose bytes are in the cold-read-record
+    # and did not move -- and that is the ordinary case, since the operator of
+    # a /cold-read often revises the draft while the cold-read-cells run. The
+    # marker is the durable half of this check: these cold-read-records are
+    # kept, so a sentence claiming more than the check knows would outlive the
+    # run. One prefix carries both sentences, because
+    # TARGET_CHANGED_MARKER_PREFIX is fixed and the detail is free text after
+    # it: everything downstream recognises the marker either way.
+    changed_path_is_the_frozen_copy = record_dir in target.parents
+    if changed_path_is_the_frozen_copy:
+        what_the_reports_describe = (
+            "Which text any one report in this directory describes is unknown: "
+            "the edit may have landed before a given reviewer opened the file "
+            "or after."
+        )
+    else:
+        what_the_reports_describe = (
+            "Every report in this directory describes the frozen copy under "
+            "target/, which did not move; what moved is the document in the "
+            "repository."
+        )
     detail = (
         f"{target}'s bytes differed between the moment the cells launched and the "
         f"moment the last one finished — sha256 {before[:12] or 'unreadable'} then "
-        f"{after[:12] or 'unreadable'}. Which text any one report in this directory "
-        f"describes is unknown: the edit may have landed before a given reviewer "
-        f"opened the file or after. Treat this set as evidence of what reviewers "
-        f"saw, not as a review of the current file; start a new cold-read run "
-        f"against the settled document."
+        f"{after[:12] or 'unreadable'}. {what_the_reports_describe} Treat this set "
+        f"as evidence of what reviewers saw, not as a review of the current file; "
+        f"start a new cold-read run against the settled document."
     )
     mark_every_report(record_dir, f"{TARGET_CHANGED_MARKER_PREFIX} {detail} -->")
     return detail
@@ -534,16 +593,21 @@ def start_attempt(command: list, report_path: pathlib.Path, attempt: int,
     return CellAttempt(report_path, command, attempt, process, stderr_path, "")
 
 
-def launch_cells(target: pathlib.Path, record_dir: pathlib.Path) -> dict:
-    """Start all six cold-read-cells in parallel, each on its first attempt.
-    Returns {report_path: CellAttempt}."""
+def launch_cells(target: pathlib.Path, record_dir: pathlib.Path,
+                 target_origin: pathlib.Path) -> dict:
+    """Start all six cold-read-cells in parallel, each on its first attempt,
+    on `target` -- the frozen copy -- with `target_origin`, the live document
+    it was copied from, named so the cell resolves relative references from
+    the original's directory. Returns {report_path: CellAttempt}."""
     running = {}
     for runtime, launcher in CELL_LAUNCHERS.items():
         for cell_pass, tier, effort in GRID_CELL_ROSTER:
             report_path = cell_report_path(record_dir, runtime, cell_pass, tier)
             stderr_path = record_dir / (report_path.name + ".stderr.log")
             command = [str(launcher), "--cell", cell_pass, "--tier", tier,
-                       "--target", str(target), "--report", str(report_path)]
+                       "--target", str(target),
+                       "--target-origin", str(target_origin),
+                       "--report", str(report_path)]
             # A roster effort is the cold-read-grid's pin for that
             # cold-read-cell, passed on the command line where the launcher
             # honors it exactly, with no fallback to its tier map.
@@ -825,23 +889,47 @@ def main() -> int:
     record_dir = make_record_dir(target, record_clock_reading())
     reference_integrity_pre_pass(target, record_dir)
 
+    # THE COLD-READ-TARGET IS FROZEN FOR THE RUN, and since 2026-09-22 that
+    # sentence is true rather than aspirational: the copy is what the six
+    # cold-read-cells are given, so six reviewers reading over half an hour
+    # cannot disagree because the document moved under them. The fingerprints
+    # no longer carry that guarantee; they report whether anything moved.
+    target_before = freeze_target(target, record_dir)
+    frozen_target = record_names.frozen_target_path(target, record_dir)
+    if not target_before or not frozen_target.is_file():
+        print(f"cold-read-grid: could not freeze {target} into {frozen_target}; "
+              f"no cold-read-cell was launched. The frozen copy is what the "
+              f"reviewers read, so a run without it has no guarantee to offer. "
+              f"The record directory {record_dir} was created before this and "
+              f"holds the reference check alone; delete it or leave it.",
+              file=sys.stderr)
+        return 2
+    # AFTER THE FREEZE, because the freeze can refuse: a run that printed
+    # "Launched six reviewers" and then "no cold-read-cell was launched" tells
+    # its reader both, and the reader has to work out which is true. Nothing
+    # above this line needs the announcement.
     print(f"Launched six reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 
-    # THE COLD-READ-TARGET IS FROZEN FOR THE RUN, and this is how the
-    # cold-read-grid knows whether it stayed frozen: the bytes are
-    # fingerprinted the moment before the cold-read-cells start and again the
-    # moment after the last one finishes. Eight reviewers reading one file over
-    # half an hour cannot themselves be stopped from disagreeing if the file
-    # moves under them; what this can do is refuse to let the resulting set
-    # pass for a review of the current document.
-    target_before = freeze_target(target, record_dir)
-    outcome = wait_for_cells(launch_cells(target, record_dir))
+    # THE CELLS READ THE FROZEN COPY, never the live document.
+    outcome = wait_for_cells(launch_cells(frozen_target, record_dir, target))
+    # BOTH ENDS, and they answer different questions now. The copy is what was
+    # read, so a copy that moved is the serious one: it is the old mixed-set
+    # failure relocated, and it is invisible to the stray-write detector
+    # because the records tree is gitignored. The original moving no longer
+    # reaches any reviewer, but it still means the document triage is about to
+    # be done against is not the one reviewed — which is the same instruction
+    # to the reader either way, so it carries the same marker rather than a
+    # new one nothing downstream would recognise.
     target_after = target_content_fingerprint(target)
-    target_changed = target_before != target_after
+    frozen_after = target_content_fingerprint(frozen_target)
+    changed_path, changed_after = (
+        (frozen_target, frozen_after) if frozen_after != target_before
+        else (target, target_after))
+    target_changed = target_before != target_after or target_before != frozen_after
     if target_changed:
         detail = mark_reports_target_changed(
-            record_dir, target, target_before, target_after)
+            record_dir, changed_path, target_before, changed_after)
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
 
     launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)

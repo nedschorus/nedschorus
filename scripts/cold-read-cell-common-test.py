@@ -1281,9 +1281,13 @@ with tempfile.TemporaryDirectory() as scratch:
                        if received_prompt_path.is_file() else "")
     check("the model receives the draft's text, not the cell's own template",
           "DRAFT PROMPT MARKER" in received_prompt, repr(received_prompt[:200]))
+    # Either spelling: a macOS temporary directory is reached through a
+    # symbolic link (/var -> /private/var), and the cell resolves the target.
+    def named_in_prompt(path):
+        return str(path) in received_prompt or str(path.resolve()) in received_prompt
     check("{TARGET_PATH} and {REPORT_PATH} are substituted in the draft too",
-          str(repository / TARGET_RELATIVE_PATH) in received_prompt
-          and str(report) in received_prompt
+          named_in_prompt(repository / TARGET_RELATIVE_PATH)
+          and named_in_prompt(report)
           and "{TARGET_PATH}" not in received_prompt
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
@@ -1292,6 +1296,65 @@ with tempfile.TemporaryDirectory() as scratch:
           f"prompt_file={draft_prompt_relative_path} " in stamp, repr(stamp))
     check("target= is still the last field with prompt_file= present",
           stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # --target-origin: the cold-read-grid hands each cell a frozen copy and
+    # names the original, and the prompt must tell the reviewer to resolve
+    # relative references from the original's directory, since nothing else
+    # is copied beside the target. The origin is given relative, so the case
+    # also shows it is made absolute the way --target is; it names a file
+    # that does not exist, because a retry after the original moved must
+    # still run.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "target-origin", "claude")
+    received_prompt_path = scratch / "target-origin-received.txt"
+    origin_relative_path = "docs/elsewhere/cold-read-cell-common-test-origin.md"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "dump_prompt": str(received_prompt_path)}},
+        report, "--target-origin", origin_relative_path,
+    )
+    check("a cell given --target-origin naming no file still succeeds",
+          result.returncode == 0, f"exit {result.returncode}; stderr={result.stderr!r}")
+    received_prompt = (received_prompt_path.read_text(encoding="utf-8")
+                       if received_prompt_path.is_file() else "")
+    # Resolved: the cell makes both paths absolute from its own repository
+    # root, which is the resolved spelling, and a macOS temporary directory is
+    # reached through a symbolic link (/var -> /private/var).
+    origin = repository.resolve() / origin_relative_path
+    check("the prompt names the target as a frozen copy of the origin, made absolute",
+          f"{repository.resolve() / TARGET_RELATIVE_PATH} is a frozen copy of {origin}."
+          in received_prompt,
+          repr(received_prompt[-400:]))
+    check("the prompt says relative references resolve from the origin's directory",
+          f"from {origin.parent}, the original's directory" in received_prompt,
+          repr(received_prompt[-400:]))
+    # Root first: this repository mostly cites paths from its root
+    # (`scripts/foo.py`), which the origin's directory would send astray; the
+    # order is the reference pre-pass's.
+    root_phrase = f"from the repository root, {repository.resolve()},"
+    origin_phrase = f"from {origin.parent}, the original's directory"
+    check("the prompt resolves a path from the repository root before the origin's directory",
+          root_phrase in received_prompt and origin_phrase in received_prompt
+          and received_prompt.index(root_phrase) < received_prompt.index(origin_phrase),
+          repr(received_prompt[-400:]))
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    report = report_path_for(repository, "no-target-origin", "claude")
+    received_prompt_path = scratch / "no-target-origin-received.txt"
+    result = run_claude_cell(
+        repository, stubs,
+        {"*": {"report": "STUB REVIEW: one restatement\n",
+               "dump_prompt": str(received_prompt_path)}},
+        report,
+    )
+    received_prompt = (received_prompt_path.read_text(encoding="utf-8")
+                       if received_prompt_path.is_file() else "")
+    check("without --target-origin the prompt carries no frozen-copy paragraph",
+          result.returncode == 0 and received_prompt != ""
+          and "is a frozen copy of" not in received_prompt,
+          f"exit {result.returncode}; {received_prompt[-300:]!r}")
 
     # Without the flag the cell reads its own template and stamps no
     # prompt_file= field: an absent field reads as "the pinned prompt", which
