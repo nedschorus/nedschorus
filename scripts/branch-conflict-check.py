@@ -85,6 +85,28 @@ GitHub CONFLICTING, which would then read CLEAN, the exact false answer this
 program exists to prevent. The stale-value window is the UNKNOWN window, and the
 poll above already covers it.
 
+THE FETCH MUST MOVE THE BASE. A fetch only helps when the base it compares
+against is one the fetch updates. `git fetch origin` moves refs/remotes/origin/*
+and nothing else, so `--base main` -- a local branch -- is fetched past but never
+refreshed, and the answer is about wherever main was left (raised by the Codex
+review cell on PR 635 after its merge, and put to the user as superwalk item 10,
+ruled "y" 2026-09-23). So with fetching on, --base must name a branch of the
+remote being fetched, checked by its full ref name after the fetch; a local
+branch, a tag or a bare hash is refused, because none of them moved. With
+--no-fetch nothing is checked: that flag is the caller's statement that the base
+is already what it wants, which is also how a pinned commit or a local branch is
+asked about on purpose, and the output already discloses it.
+
+GITHUB MUST BE ANSWERING ABOUT THE SAME BASE BRANCH. A pull request's
+mergeability is computed against the branch it targets, its baseRefName. When
+that is not the branch --base names -- a pull request stacked on another branch,
+or a mistyped --pull-request number -- GitHub's CONFLICTING is about a different
+merge, so it cannot overrule git (same Codex review, same ruling). This compares
+branch NAMES, not commits: the reasons baseRefOid cannot be bound are in WHY THE
+BASE IS NOT BOUND THE SAME WAY, above, and they do not apply to the name, which
+does not lag. A --base that names no branch (a bare hash under --no-fetch) cannot
+be matched to any pull request, so GitHub is not consulted and the output says so.
+
 WHAT EACH MESSAGE INSTRUCTS, AND WHY. Every message an agent acts on is one
 instruction per line, each with the condition it applies under; the reasons live
 here, where maintainers read them (CLAUDE.md, user-ruled 2026-09-18 on the
@@ -95,6 +117,11 @@ the walk "merge-lane rulings owed and concerns", item 1).
     confident wrong answer (WHY IT FETCHES BEFORE IT ANSWERS, above). The
     --no-fetch line is conditioned on the base already being current, because
     that is the only case in which skipping the fetch is safe.
+  - UNMATCHED: a --base the fetch does not move gives a confident answer
+    about old code (THE FETCH MUST MOVE THE BASE, above). The first line says
+    which remote's branch to name instead, because that is the usual intent;
+    the second covers asking about a local branch or a pinned commit on
+    purpose, which is what --no-fetch is for.
   - UNRESOLVED (base or head): a rev that does not resolve is either mistyped or
     not fetched, and each gets its own line. It is caught before merge-tree
     because merge-tree would report it as a conflict (exit 1).
@@ -121,15 +148,17 @@ Usage:
                                    [--no-fetch] [--fetch-remote NAME]
 
   --head           defaults to HEAD. Any rev git understands; resolved first.
-  --base           defaults to origin/main.
+  --base           defaults to origin/main. With fetching on, it must be a
+                   branch of --fetch-remote, such as origin/main.
   --pull-request   also ask GitHub, and let it overrule git -- but only when
-                   GitHub's pushed head is the commit --head resolved to.
+                   GitHub's pushed head is the commit --head resolved to and
+                   the pull request targets the branch --base names.
   --no-fetch       skip the fetch; the base is whatever the checkout already has.
   --fetch-remote   remote to fetch, default origin.
 
 Output: one VERDICT line, plus GITHUB and DISCLOSURE lines when they apply.
 Exit codes: 0 no conflict, 1 conflict, 2 no trustworthy answer (bad invocation,
-unresolvable rev, or a fetch that failed).
+unresolvable rev, a --base the fetch does not move, or a fetch that failed).
 """
 
 import argparse
@@ -178,6 +207,34 @@ def resolve_commit(rev, runner=run):
     """
     status, out = runner(["git", "rev-parse", "--verify", "--quiet", rev + "^{commit}"])
     return out if status == 0 and out else None
+
+
+def full_ref_name(rev, runner=run):
+    """The full ref name rev abbreviates, such as refs/remotes/origin/main.
+
+    Empty when rev is a bare hash or an expression that names no ref; None
+    when git could not answer, which the resolve step then reports.
+    """
+    status, out = runner(["git", "rev-parse", "--symbolic-full-name", rev])
+    return out if status == 0 else None
+
+
+def base_branch_name(full_ref, remote):
+    """The branch a full ref name is, as GitHub names a pull request's base.
+
+    refs/remotes/<remote>/main and refs/heads/main are both main. None for
+    anything that is not a branch, which no pull request can target.
+    """
+    if not full_ref:
+        return None
+    if full_ref.startswith("refs/heads/"):
+        return full_ref[len("refs/heads/"):]
+    if full_ref.startswith("refs/remotes/"):
+        rest = full_ref[len("refs/remotes/"):]
+        if rest.startswith(remote + "/"):
+            return rest[len(remote) + 1:]
+        return rest.split("/", 1)[1] if "/" in rest else None
+    return None
 
 
 def merge_tree_exit_status(base_hash, head_hash, runner=run):
@@ -230,6 +287,15 @@ def github_head_commit(pull_request, runner=run):
     return out if status == 0 and out else None
 
 
+def github_base_branch(pull_request, runner=run):
+    """The branch the pull request targets, or None when gh could not answer."""
+    status, out = runner([
+        "gh", "pr", "view", str(pull_request),
+        "--json", "baseRefName", "-q", ".baseRefName",
+    ])
+    return out if status == 0 and out else None
+
+
 def github_mergeable(pull_request, runner=run, sleep=time.sleep,
                      reads=GITHUB_UNKNOWN_READS,
                      sleep_seconds=GITHUB_UNKNOWN_SLEEP_SECONDS):
@@ -252,6 +318,41 @@ def github_mergeable(pull_request, runner=run, sleep=time.sleep,
         if attempt < reads:
             sleep(sleep_seconds)
     return verdict or "UNKNOWN", reads
+
+
+def github_verdict_for_base(pull_request, base, base_branch, lines,
+                            runner=run, sleep=time.sleep,
+                            reads=GITHUB_UNKNOWN_READS,
+                            sleep_seconds=GITHUB_UNKNOWN_SLEEP_SECONDS):
+    """GitHub's mergeability, only when the pull request targets base_branch.
+
+    Returns (verdict, reads) as github_mergeable does, or (False, 0) after
+    appending the lines that say why GitHub was not consulted. Checked before
+    the poll, for the same reason as the head: a verdict about another merge
+    cannot count and is not worth waiting for.
+    """
+    if base_branch is None:
+        lines.append(
+            "GITHUB: not consulted -- --base %s names no branch, so no pull "
+            "request's mergeability is about it" % base)
+        lines.append(
+            "DISCLOSURE: this verdict is git's alone. Say so in the pull "
+            "request.")
+        return False, 0
+    github_base = github_base_branch(pull_request, runner)
+    if github_base is None:
+        return None, 1
+    if github_base != base_branch:
+        lines.append(
+            "GITHUB: not consulted -- pull request %d targets %s, not the %s "
+            "that --base %s names" % (pull_request, github_base, base_branch,
+                                      base))
+        lines.append(
+            "DISCLOSURE: GitHub's mergeability is about merging into %s, so it "
+            "cannot overrule git about merging into %s; this verdict is git's "
+            "alone. Say so in the pull request." % (github_base, base))
+        return False, 0
+    return github_mergeable(pull_request, runner, sleep, reads, sleep_seconds)
 
 
 def unresolved_lines(side, rev):
@@ -283,6 +384,19 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
         lines.append(
             "DISCLOSURE: --no-fetch, so %s is whatever this checkout already "
             "had; a stale base gives a confident wrong answer." % base)
+
+    base_full_ref = full_ref_name(base, runner)
+    if (fetch and base_full_ref is not None
+            and not base_full_ref.startswith("refs/remotes/%s/" % remote)):
+        return EXIT_BAD_INVOCATION, [
+            "UNMATCHED: --base %s is not a branch of %s, the remote this run "
+            "fetched, so the fetch did not move it; do not act on any conflict "
+            "answer until a run succeeds." % (base, remote),
+            "If you meant %s's branch, rerun with --base %s/<branch>."
+            % (remote, remote),
+            "If you meant %s exactly as this checkout has it, rerun with "
+            "--no-fetch." % base,
+        ]
 
     base_hash = resolve_commit(base, runner)
     if base_hash is None:
@@ -327,13 +441,14 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
                 % (pull_request, commit_label(github_head, runner),
                    commit_label(head_hash, runner)))
         else:
-            verdict, taken = github_mergeable(
-                pull_request, runner, sleep, reads, sleep_seconds)
+            verdict, taken = github_verdict_for_base(
+                pull_request, base, base_branch_name(base_full_ref, remote),
+                lines, runner, sleep, reads, sleep_seconds)
             if verdict is None:
                 lines.append(
                     "GITHUB: could not be asked (gh failed) -- git's answer "
                     "stands")
-            else:
+            elif verdict is not False:
                 lines.append("GITHUB: %s after %d read(s)" % (verdict, taken))
                 if verdict == "UNKNOWN":
                     lines.append(
