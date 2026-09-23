@@ -20,6 +20,17 @@ trap 'rm -rf "$WORKSPACE"' EXIT
 STUBS="$WORKSPACE/stubs"
 mkdir -p "$STUBS" "$WORKSPACE/home" "$WORKSPACE/agents"
 
+# The sandbox HOME gets the seat token the launcher looks for. This suite
+# measures the UPDATE step, and two of its cases turn on whether the launcher
+# wrote ANYTHING to stderr ("a failing update produces no launcher-written
+# warning"); without a token file the launcher writes its missing-credential
+# warning on every launch, which is correct behaviour and a false negative
+# here. Not a credential — those cases live in launch-claude-mac-test.py.
+mkdir -p "$WORKSPACE/home/.config/nedschorus"
+printf 'update-step-test-placeholder-not-a-credential\n' \
+    > "$WORKSPACE/home/.config/nedschorus/mac-claude.token"
+chmod 600 "$WORKSPACE/home/.config/nedschorus/mac-claude.token"
+
 # Stubs. `claude update` behavior comes from CLAUDE_UPDATE_MODE: hang, fail,
 # or ok — each leaves a marker so a test can assert whether update ran.
 cat > "$STUBS/claude" << 'EOF'

@@ -121,6 +121,29 @@ case "$AGENT_NAME" in
     (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
+# Which GitHub account a box seat acts as — the twin of the same block in
+# scripts/launch-claude-mac, where the ruling it applies (credential ruling
+# C4 in nc-systems/main-gatekeeper/main-gatekeeper-design.md: each agent host
+# holds a fine-grained token for this repository only, never a classic
+# all-repository token and never the `workflow` scope) and the measured
+# defect it closes are written out in full. The default here is the BOX's
+# account. Measured on the box 2026-09-22: `gh` is logged in as
+# `ubuntu-claude` — the right identity already — but with a CLASSIC token
+# carrying read:org, repo and workflow, and there is no
+# `ubuntu-claude.token` file on the box at all, only copies of
+# `mac-claude.token` and `ned-review-merge.token`. So until that file is
+# written, every box launch takes the warning branch below by design.
+#
+# Charset-checked for the same two reasons as the Mac twin: the value is
+# spliced into a command that crosses BOTH parses, and letters, digits, -
+# and _ need no escaping at either; and an override either works or is
+# blocked, never a third state (user-ruled 2026-08-22).
+SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-ubuntu-claude}"
+case "$SEAT_GITHUB_ACCOUNT" in
+    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-ubuntu: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
+esac
+SEAT_GITHUB_TOKEN_FILE_UNDER_HOME=".config/nedschorus/$SEAT_GITHUB_ACCOUNT.token"
+
 # Every operator value spliced into the remote command is escaped for the
 # parses it actually crosses (PR #134's review arc: hand-written quotes here
 # broke on an apostrophe, and the ssh command's double-quote wrapper expanded
@@ -183,7 +206,45 @@ AGENT_DIRECTORY_SUPERVISOR=$(escape_remote_double_quote_context "$(escape_single
 # The one-time store migration and the prefixed id, box-side, both inside
 # the pane command because $HOME here is the BOX's home at P2 — same rename
 # and same never-overwrite rule as the Mac twin (user-ruled 2026-08-29).
+#
+# The seat's own GitHub credential, box-side — the twin of the same block
+# in scripts/launch-claude-mac, where the mechanism is written out in full.
+# The one thing that is the BOX's, and the reason both twins read the file
+# with `IFS= read -r` rather than `$(cat ...)`: this pane command crosses
+# TWO parses, and a `$(...)` reaching the box's login shell at P1 is run
+# THERE — the box would substitute the token into the string it then hands
+# tmux, which is a `ps` listing on the box carrying the credential for as
+# long as the seat lives. Measured 2026-09-22 against this suite's
+# tmux-argv capture, which is the post-P1 text: with `$(cat ...)` the token
+# stands in it; with the read below it does not, and the value is present
+# only in the supervisor's environment. A redirection has no such
+# behaviour: `<` is an ordinary character inside P1's double-quote context
+# and a redirection at P2, where the seat's own shell performs the read.
+#
+# The leading `unset GH_TOKEN` makes the prepare step's warning true rather
+# than nearly true: the seat's account is decided by this launcher, never
+# inherited from whatever shell the pane was started under.
+#
+# The override variable itself needs no unset on this side, where the Mac
+# twin needs one: nothing here exports it to the box. ssh forwards no
+# environment, and the value reaches the box only as text inside the
+# composed command — the same reason this twin does not unset the
+# extra-arguments hook variable either.
+#
+# The `if` keeps GH_TOKEN UNSET rather than empty when the file is absent,
+# which is the box's ordinary state today — `gh` falls back to its keyring
+# login on an unset variable and fails outright on an empty one. It
+# re-checks box-side what the prepare step's warning checks box-side a
+# moment earlier; the check that decides is this one, in the seat's own
+# shell. \$HOME is escaped so the BOX's home is the one resolved, exactly
+# as the task-list migration line beside it does, and SEAT_GITHUB_ACCOUNT
+# needs no escaping at either parse (charset-checked above).
+#
+# The after-exit shell inherits this export, as it inherits the task-list
+# pin, and for the same reason: the `claude --continue` it offers is the
+# same seat, and a `gh` typed there is the seat acting.
 SUPERVISOR_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
+unset GH_TOKEN; if [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ]; then IFS= read -r GH_TOKEN < \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\"; export GH_TOKEN; fi; \
 if [ -d \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" ] && [ ! -e \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\" ]; then mv \"\$HOME/.claude/tasks/$AGENT_NAME-tasks\" \"\$HOME/.claude/tasks/nedschorus-$AGENT_NAME-tasks\"; fi; \
 export CLAUDE_CODE_TASK_LIST_ID='nedschorus-$AGENT_NAME-tasks'; \
 export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
@@ -321,6 +382,40 @@ PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/script
 # (ff-only, never a merge). A stale copy of this script freshens the
 # checkout that carries its replacement, so the next launch runs current.
 PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus 2>/dev/null || true; }"
+
+# A missing token file WARNS and launches anyway, rather than refusing
+# (user-ruled 2026-09-22): the box holds no `ubuntu-claude.token` today, and
+# a launcher that refused would take every box seat down at once over a
+# credential that is an improvement, not a prerequisite. The warning is loud
+# because the fallback is the defect this change exists to close.
+#
+# It rides the PREPARE step rather than the pane command, which is where the
+# Mac twin differs and why: this launcher runs on the Mac and cannot see the
+# box's filesystem, so the check has to happen box-side — and of the two
+# box-side places, only this one reaches the operator. The prepare step runs
+# in the ssh command, so its stderr comes back down the connection to the
+# terminal that typed the launch, on the attached and the detached path
+# alike; a warning inside the pane command would land in the seat's tmux
+# pane, which a detached launch leaves nobody watching. An attach onto a
+# seat that is already running skips this step, correctly: nothing is being
+# started, so no credential is being chosen.
+#
+# Brace-grouped and always 0: the `&&` chain above joins the update, the
+# trust mark and the checkout, and an un-grouped step that reported a
+# missing file as a failure would abort the launch — the failure mode the
+# SEAT_SOCKET_SELECTION_COMMAND comment below records, from PR [Per-seat
+# tmux servers: one server per seat, so one crash cannot kill a machine's
+# whole fleet](https://github.com/nedschorus/nedschorus/pull/122) review
+# P2-3.
+PREPARE_COMMAND="$PREPARE_COMMAND && { [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ] || { \
+echo \"launch-claude-ubuntu: ============================================================\" >&2; \
+echo \"launch-claude-ubuntu: NO SEAT TOKEN — $AGENT_NAME will NOT act as $SEAT_GITHUB_ACCOUNT\" >&2; \
+echo \"launch-claude-ubuntu:   account wanted: $SEAT_GITHUB_ACCOUNT\" >&2; \
+echo \"launch-claude-ubuntu:   file looked in: \$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME (on the box)\" >&2; \
+echo \"launch-claude-ubuntu:   GH_TOKEN stays unset, so gh and git act as the keyring login gh holds on the box\" >&2; \
+echo \"launch-claude-ubuntu:   write the fine-grained token for that account to that file on the box, mode 600, then relaunch this seat\" >&2; \
+echo \"launch-claude-ubuntu:   or export NEDSCHORUS_SEAT_GITHUB_ACCOUNT naming an account whose token file is there\" >&2; \
+echo \"launch-claude-ubuntu: ============================================================\" >&2; }; }"
 
 # Per-seat tmux servers on the box (2026-08-21): every seat runs on its OWN
 # tmux server, socket `-L <name>`, because a machine's single shared server

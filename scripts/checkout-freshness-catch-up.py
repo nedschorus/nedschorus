@@ -147,6 +147,16 @@ NOT_FOR_THE_USER_ADVICE = (
 # agent should care where that is not self-evident (user, 2026-09-15: "explain
 # which files should be updated (and perhaps why, unless that is obvious)").
 # A file's category is decided by path, and the first match wins.
+#
+# nc-systems/ holds the project's systems kept whole — a system's code, its
+# tests and its design of record in one directory — so a change there is
+# neither a loose script nor a document the agent merely cites: the design it
+# builds to may have moved under it. Until 2026-09-22 the directory matched no
+# category and fell to the catch-all, which reported it to every seat under
+# the least informative label available. Observed live that day, when
+# nc-systems/handoff/handoff-design.md changed on main and this hook reported
+# it as "other files". Placed above scripts/ because a system kept whole
+# outranks a loose script, per "most consequential first" above.
 DRIFT_PATH_CATEGORIES = (
     ("your standing instructions",
      lambda path: path == "CLAUDE.md" or path.endswith("/CLAUDE.md")),
@@ -154,6 +164,8 @@ DRIFT_PATH_CATEGORIES = (
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
      lambda path: path.startswith(".claude/hooks/") or path == ".claude/settings.json"),
+    ("systems you build on, code and design of record",
+     lambda path: path.startswith("nc-systems/")),
     ("scripts your tests run against",
      lambda path: path.startswith("scripts/")),
     ("documents you may cite",

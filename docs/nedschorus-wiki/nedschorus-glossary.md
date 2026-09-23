@@ -44,7 +44,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **link-only-GHI** — a GHI whose body, once filing has finished, is the links to its GHI-MDs and nothing else: no summary, no excerpt, no prose. While create-GHI is still filing it, the body is that operation's placeholder. GitHub keeps the state only GitHub can keep — open or closed, labels, comments — and the GHI-MD keeps the text, so there is one copy of every fact and the two cannot disagree (user-ruled 2026-09-15; the name is the user's, 2026-09-21, replacing "link-only", which named neither what was link-only nor what it governed).
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
-- **merge-lane** — the agent-seat on the user's Mac that reviews and merges PRs until the main-gatekeeper is live.
+- **merge-lane** — the role that reviews and merges every PR into main, held by the agent-seat merge-lane-2 on ned-box.
 - **NC** — this project, NedsChorus.
 - **objection-overruled** — the record of a review objection that the user overruled.
 - **project-term** — a name with a meaning specific to this project and used by more than one of its systems or subsystems, listed in this glossary: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat. A word this glossary does not list is not a project-term; a term one system uses alone is a system-term.
