@@ -4,12 +4,17 @@
 Run: python3 scripts/file-name-collision-warning-hook-test.py
 Prints one line per case and exits non-zero if any case fails.
 
-Every case but the last runs against a throwaway repository under a
-temporary directory. The last case is different in kind: it asserts the
-property on THIS repository -- that no two tracked files share a name -- and
-is the half of the ruling a hook cannot cover, because a file created by
-git mv, by a shell copy, or by a program that writes its own files never
-passes through the Edit or Write tools.
+Most cases run the hook as a program against a throwaway repository under a
+temporary directory. The timeout cases also import it as a module, because
+what arguments it hands subprocess.run, and what it does when a call times
+out, cannot be seen from outside the process.
+
+The last case is different in kind: it asserts the property on THIS
+repository -- that no two tracked files share a name -- and is the half of
+the ruling a hook cannot cover, because a file created by git mv, by a shell
+copy, or by a program that writes its own files never passes through the
+Edit or Write tools. It runs over a planted collision in a throwaway
+repository first, for the reason below.
 
 THE FIRST CASE IS THE POSITIVE ONE, deliberately. A check that has never
 been shown able to say "something here" is worth nothing when it says
@@ -17,15 +22,30 @@ been shown able to say "something here" is worth nothing when it says
 the instrument proves it can warn before any case asserts silence.
 """
 
+import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from contextlib import redirect_stdout
+from pathlib import Path, PurePath
 
 SCRIPT_PATH = Path(__file__).with_name("file-name-collision-warning-hook.py")
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+
+# The hook as a module as well as a program: the timeout cases below ask what
+# arguments it hands subprocess.run and what it does when a call times out,
+# neither of which is visible from outside the process.
+HOOK_MODULE_SPEC = importlib.util.spec_from_file_location(
+    "file_name_collision_warning_hook", SCRIPT_PATH)
+HOOK_MODULE = importlib.util.module_from_spec(HOOK_MODULE_SPEC)
+HOOK_MODULE_SPEC.loader.exec_module(HOOK_MODULE)
+
+# Named here rather than read from the hook: a test that asks the code under
+# test which names are exempt cannot notice the set changing.
+EXEMPT_FILE_NAMES_IN_TEST = {"skill.md", "readme.md", ".gitkeep"}
 
 failures = []
 
@@ -108,6 +128,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     commit_file(repository, "scripts/cold-read-grid.py")
     commit_file(repository, "scripts/only-one-of-these.py")
+    # A tracked name carrying uppercase, which the repository really has --
+    # AGENTS.md, CLAUDE.md, engineering-code-review-SKILL.md. Without one,
+    # only the fold on the written side is ever exercised.
+    commit_file(repository, "docs/Design-To-Main-Notes.md")
     commit_file(repository, ".claude/skills/walk-me-through/SKILL.md")
     commit_file(repository, "docs/README.md")
     commit_file(repository, "nc-queue/.gitkeep")
@@ -129,13 +153,29 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           warned.returncode == 0, str(warned.returncode))
 
     # --- the two instructions, each with its condition -------------------
+    # The wording the user approved on 2026-09-22 has a break at each
+    # instruction boundary, and CLAUDE.md asks for one instruction to a line
+    # in text an agent reads at the moment it acts. Until 2026-09-23 the
+    # three arrived as one physical line, which substring assertions could
+    # not see, so the count is pinned here and the lines are read by index.
+    warning_lines = warning.split("\n")
+    check("the warning arrives as three lines, one instruction to a line",
+          len(warning_lines) == 3, repr(warning))
+    padded_warning_lines = warning_lines + ["", "", ""]
+    check("line 1 is the fact, and it names both paths",
+          padded_warning_lines[0].startswith("file-name-collision-warning: "
+                                             "you wrote"),
+          repr(padded_warning_lines[0]))
     check("line 2 tells a mover to delete the old path, naming it",
-          "If you are moving the file, delete scripts/cold-read-grid.py "
-          "in this change." in warning, warning)
+          padded_warning_lines[1] == "If you are moving the file, delete "
+          "scripts/cold-read-grid.py in this change.",
+          repr(padded_warning_lines[1]))
     check("line 3 points at CLAUDE.md's naming rule instead of restating it",
-          "rename the one you just wrote by CLAUDE.md's naming rule" in warning
+          padded_warning_lines[2].startswith(
+              "If both files are meant to exist, rename the one you just "
+              "wrote by CLAUDE.md's naming rule")
           and "3 or 4 parts" not in warning and "three or four" not in warning,
-          warning)
+          repr(padded_warning_lines[2]))
 
     # --- silence, each for its own reason --------------------------------
     fresh = write_file(repository, "scripts/nothing-shares-this-name.py")
@@ -170,11 +210,118 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a session seated outside any checkout is silent",
           silent(run_hook(hook_payload(not_a_repository, loose_file))))
 
-    # --- the Mac's filesystem ignores case, ned-box does not -------------
+    # --- letter case: two files, or one file spelled two ways ------------
+    # The positive pair comes first: both sides of the comparison are folded,
+    # so each side gets a case whose tracked fixture carries the uppercase.
+    # Then the distinction that is not about case at all -- whether there are
+    # two files -- which the filesystem answers and the platform does not.
     cased = write_file(repository, "nc-systems/Cold-Read-Grid.PY")
-    check("a name differing only in letter case warns",
+    check("a written name differing only in letter case warns",
           agent_text(run_hook(hook_payload(repository, cased))) != "",
-          "case-insensitive comparison did not fire")
+          "the fold on the WRITTEN side did not fire")
+
+    lowercased = write_file(repository, "nc-systems/design-to-main-notes.md")
+    check("a TRACKED name differing only in letter case warns",
+          agent_text(run_hook(hook_payload(repository, lowercased))) != "",
+          "the fold on the TRACKED side did not fire")
+
+    # One file named twice, not two files. On a filesystem that folds case
+    # -- the Mac's does, ned-box's does not -- this write lands on the
+    # tracked file, so the directory still holds one entry and there is no
+    # collision. Which branch runs is read off the disk, not off the
+    # platform and not off the hook's own answer.
+    variant = repository / "scripts" / "Only-One-Of-These.py"
+    variant.write_text("case variant\n", encoding="utf-8")
+    entries_after_the_variant_write = set(os.listdir(repository / "scripts"))
+    variant_result = run_hook(hook_payload(repository, variant))
+    if "Only-One-Of-These.py" in entries_after_the_variant_write:
+        check("a case variant is a second file where case is kept, and warns",
+              agent_text(variant_result) != "",
+              f"two entries on disk, hook said {variant_result.stdout!r}")
+    else:
+        check("a case variant is the same file where case is folded, "
+              "and is silent",
+              silent(variant_result),
+              f"one entry on disk, hook said {variant_result.stdout!r}")
+
+    # --- a slow git may not cost the turn ---------------------------------
+    # The hook runs at every Edit and every Write, so each git call is
+    # bounded. The recorder runs the hook in process and delegates to the
+    # real subprocess.run, so it sees every git call the file makes --
+    # including one a later change adds.
+    recorded_git_calls = []
+    real_subprocess_run = subprocess.run
+
+    def recording_subprocess_run(*arguments, **keywords):
+        if arguments and arguments[0] and arguments[0][0] == "git":
+            recorded_git_calls.append(keywords)
+        return real_subprocess_run(*arguments, **keywords)
+
+    original_stdin = sys.stdin
+    recorded_stdout = io.StringIO()
+    HOOK_MODULE.subprocess.run = recording_subprocess_run
+    try:
+        sys.stdin = io.StringIO(
+            json.dumps(hook_payload(repository, colliding)))
+        with redirect_stdout(recorded_stdout):
+            in_process_exit_code = HOOK_MODULE.main()
+    finally:
+        HOOK_MODULE.subprocess.run = real_subprocess_run
+        sys.stdin = original_stdin
+
+    # THE POSITIVE HALF: the recorder saw the git calls. Without it the next
+    # case would pass over an empty list, which is the very defect the last
+    # case in this file was fixed for.
+    check("the recorder sees the hook's git calls (rev-parse, check-ignore, "
+          "ls-files)",
+          len(recorded_git_calls) == 3, f"{len(recorded_git_calls)} recorded")
+    check("the hook run in process still warns and still exits 0",
+          "file-name-collision-warning" in recorded_stdout.getvalue()
+          and in_process_exit_code == 0,
+          repr(recorded_stdout.getvalue()))
+    check("every git call the hook makes carries a positive timeout",
+          bool(recorded_git_calls) and all(
+              isinstance(call.get("timeout"), (int, float))
+              and not isinstance(call.get("timeout"), bool)
+              and call["timeout"] > 0 for call in recorded_git_calls),
+          repr([call.get("timeout") for call in recorded_git_calls]))
+
+    # A timeout raises subprocess.TimeoutExpired, which is a SubprocessError
+    # and NOT an OSError, so passing timeout= without naming it in the except
+    # clauses would turn a slow git into a traceback.
+    answered_listing = HOOK_MODULE.git_output(["ls-files", "-z"], repository)
+    check("git_output returns git's answer when git answers",
+          answered_listing is not None
+          and "scripts/cold-read-grid.py" in answered_listing,
+          repr(answered_listing))
+    check("is_ignored answers True for a path .gitignore covers",
+          HOOK_MODULE.is_ignored(PurePath("docs/walk/cold-read-grid.py"),
+                                 repository))
+
+    def timing_out_subprocess_run(*arguments, **keywords):
+        raise subprocess.TimeoutExpired(cmd=["git"], timeout=1)
+
+    def answer_or_the_escape(call):
+        """What the call returned, or the exception it let past. A timeout
+        that escapes is this suite's finding to report, not its own crash."""
+        try:
+            return call()
+        except subprocess.TimeoutExpired:
+            return "subprocess.TimeoutExpired escaped the hook"
+
+    HOOK_MODULE.subprocess.run = timing_out_subprocess_run
+    try:
+        timed_out_listing = answer_or_the_escape(
+            lambda: HOOK_MODULE.git_output(["ls-files", "-z"], repository))
+        timed_out_ignore = answer_or_the_escape(
+            lambda: HOOK_MODULE.is_ignored(
+                PurePath("docs/walk/cold-read-grid.py"), repository))
+    finally:
+        HOOK_MODULE.subprocess.run = real_subprocess_run
+    check("a git call that times out is git failing, not git saying nothing",
+          timed_out_listing is None, repr(timed_out_listing))
+    check("a check-ignore that times out is caught, not raised at the agent",
+          timed_out_ignore is False, repr(timed_out_ignore))
 
     # --- malformed payloads cost nothing and say nothing ------------------
     check("a payload that is not JSON exits 0 and prints nothing",
@@ -193,19 +340,86 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(run_hook(empty_path)))
 
 # --- the half a hook cannot cover: this repository, as it stands ---------
-listing = subprocess.run(["git", "ls-files", "-z"], cwd=str(REPOSITORY_ROOT),
-                         capture_output=True, text=True, check=False)
-names = {}
-for tracked in listing.stdout.split("\0"):
-    if tracked:
-        names.setdefault(Path(tracked).name.lower(), []).append(tracked)
-exempt_names = {"skill.md", "readme.md", ".gitkeep"}
-collisions = {name: paths for name, paths in names.items()
-              if len(paths) > 1 and name not in exempt_names}
-check("no two tracked files in this repository share a name",
-      not collisions,
-      "; ".join(f"{name}: {', '.join(paths)}"
-                for name, paths in sorted(collisions.items())))
+# THE POSITIVE CASE COMES FIRST here too, and until 2026-09-23 it did not
+# exist: git ls-files was run with its return code unread, so a repository
+# that could not be listed produced no names, no collisions, and a PASS over
+# zero files. A failure to look and a look that found nothing read the same.
+# tracked_name_collisions() now raises on both, and a planted collision in a
+# throwaway repository is what shows it can still say "something here".
+def tracked_name_collisions(repository_root: Path):
+    """(every tracked name, the names belonging to more than one file).
+
+    Raises when git does not answer and when it lists nothing: the hook
+    draws that same line in git_output(), where None is "git failed" and
+    never "git found nothing", and this case is worth nothing without it.
+    """
+    listed = subprocess.run(["git", "ls-files", "-z"],
+                            cwd=str(repository_root), capture_output=True,
+                            text=True, check=False)
+    if listed.returncode != 0:
+        raise RuntimeError(
+            f"git ls-files exited {listed.returncode} in {repository_root}: "
+            f"{listed.stderr.strip()}")
+    names = {}
+    for tracked in listed.stdout.split("\0"):
+        if tracked:
+            names.setdefault(Path(tracked).name.lower(), []).append(tracked)
+    if not names:
+        raise RuntimeError(
+            f"git ls-files listed no tracked file in {repository_root}")
+    return names, {name: paths for name, paths in names.items()
+                   if len(paths) > 1 and name not in EXEMPT_FILE_NAMES_IN_TEST}
+
+
+with tempfile.TemporaryDirectory() as planted_temporary_directory:
+    planted = Path(planted_temporary_directory).resolve() / "checkout"
+    planted.mkdir()
+    git(["init", "-q", "-b", "main"], planted)
+    git(["config", "user.email", "test@example.invalid"], planted)
+    git(["config", "user.name", "file-name-collision test"], planted)
+    commit_file(planted, "scripts/named-twice-on-purpose.py")
+    commit_file(planted, "nc-systems/named-twice-on-purpose.py")
+    commit_file(planted, "docs/README.md")
+    commit_file(planted, "nc-queue/README.md")
+    planted_failure = ""
+    planted_names, planted_collisions = {}, {}
+    try:
+        planted_names, planted_collisions = tracked_name_collisions(planted)
+    except RuntimeError as unanswered:
+        planted_failure = str(unanswered)
+    check("the repository-wide check reports a planted collision",
+          sorted(planted_collisions) == ["named-twice-on-purpose.py"]
+          and sorted(planted_collisions["named-twice-on-purpose.py"]) == [
+              "nc-systems/named-twice-on-purpose.py",
+              "scripts/named-twice-on-purpose.py"],
+          planted_failure or repr(planted_collisions))
+    check("the repository-wide check lets the exempt names repeat",
+          "readme.md" in planted_names
+          and "readme.md" not in planted_collisions,
+          planted_failure or repr(sorted(planted_names)))
+
+    unlistable = Path(planted_temporary_directory).resolve() / "not-a-checkout"
+    unlistable.mkdir()
+    try:
+        tracked_name_collisions(unlistable)
+    except RuntimeError as unanswered:
+        check("a repository git cannot list is a failure, not a clean result",
+              "git ls-files exited" in str(unanswered), str(unanswered))
+    else:
+        check("a repository git cannot list is a failure, not a clean result",
+              False, "tracked_name_collisions returned instead of raising")
+
+try:
+    tracked_names, collisions = tracked_name_collisions(REPOSITORY_ROOT)
+except RuntimeError as unanswered:
+    check("no two tracked files in this repository share a name", False,
+          str(unanswered))
+else:
+    check("no two tracked files in this repository share a name",
+          not collisions,
+          f"over {len(tracked_names)} names: " + "; ".join(
+              f"{name}: {', '.join(paths)}"
+              for name, paths in sorted(collisions.items())))
 
 print()
 if failures:

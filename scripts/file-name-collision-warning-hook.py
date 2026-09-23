@@ -41,6 +41,13 @@ WHAT IT CANNOT SEE, stated so nobody reads more into a silent run:
     flag, so the warning says "you wrote", and an agent that keeps editing
     an unresolved collision is told again each time. The collision is still
     true, so repeating it is not a false report.
+  - A tracked path written back in different letter case where the
+    filesystem folds case -- the Mac's does, ned-box's does not. There the
+    write lands on the tracked file and there is one file, not two, so
+    there is no collision to report and this hook is silent. It said the
+    opposite until 2026-09-23, naming the file just written as the one to
+    delete; is_the_same_file_on_this_filesystem() below is the fix, and it
+    asks the filesystem rather than the platform.
 
 Input: the PostToolUse payload on stdin.
 Output: one hookSpecificOutput.additionalContext line, or nothing.
@@ -59,15 +66,26 @@ from pathlib import Path, PurePath
 # suite case, which is the point: it is added deliberately, not by drift.
 EXEMPT_FILE_NAMES = frozenset({"skill.md", "readme.md", ".gitkeep"})
 
+# This runs at every Edit and every Write, so no call here may hang a turn --
+# the standard scripts/obsolete-file-edit-warning-hook.py sets for the hook
+# beside this one in the same PostToolUse block. Three git calls at most, all
+# of them local reads that measure at about 50 ms together, and the harness
+# kills the hook at the 30 seconds .claude/settings.json registers. A hung git
+# therefore costs a bounded wait and one silent run.
+GIT_CALL_TIMEOUT_SECONDS = 10
+
 
 def git_output(arguments, cwd: Path):
     """stdout of a git call, or None if git could not answer. None is git
     failing, not git answering "nothing" -- every caller treats it as
-    silence rather than as an empty result."""
+    silence rather than as an empty result. A timeout is git failing too:
+    subprocess.TimeoutExpired is a SubprocessError, not an OSError, so it is
+    named here rather than covered by it."""
     try:
         finished = subprocess.run(["git", *arguments], cwd=str(cwd),
-                                  capture_output=True, text=True, check=False)
-    except (OSError, ValueError):
+                                  capture_output=True, text=True, check=False,
+                                  timeout=GIT_CALL_TIMEOUT_SECONDS)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
     if finished.returncode != 0:
         return None
@@ -103,26 +121,53 @@ def is_ignored(relative_path: PurePath, checkout: Path) -> bool:
     try:
         finished = subprocess.run(
             ["git", "check-ignore", "-q", "--", str(relative_path)],
-            cwd=str(checkout), capture_output=True, text=True, check=False)
-    except (OSError, ValueError):
+            cwd=str(checkout), capture_output=True, text=True, check=False,
+            timeout=GIT_CALL_TIMEOUT_SECONDS)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
     return finished.returncode == 0
 
 
+def is_the_same_file_on_this_filesystem(tracked: str, written: PurePath,
+                                        checkout: Path) -> bool:
+    """True when two repository-relative paths name ONE file here.
+
+    The filesystem is asked, not the platform: samefile compares device and
+    inode, which is the question itself. A tracked path written back in
+    different letter case is ONE file where case is folded, because the
+    write lands on the tracked file, and TWO files where it is not -- and
+    the same hook runs on both machines.
+
+    A path that cannot be stat'ed -- a tracked file absent from the working
+    tree -- counts as a second file, which is what it is wherever case is
+    not folded, and what this hook reported before it asked at all.
+    """
+    if tracked == str(written):
+        return True
+    try:
+        return (checkout / tracked).samefile(checkout / written)
+    except (OSError, ValueError):
+        return False
+
+
 def tracked_paths_sharing_name(relative_path: PurePath, checkout: Path):
-    """Every OTHER tracked file whose name matches, letter case ignored --
-    the Mac's filesystem ignores case, so two names that differ only in case
-    are a collision there and not on ned-box. None when git could not
-    answer."""
+    """Every OTHER tracked file whose name matches, letter case ignored.
+
+    Case is ignored on both sides because the move check this guards
+    searches for a name, and a name is searched for the way it is read, not
+    the way it is spelled. The name comparison comes first so the filesystem
+    is asked about the handful of paths that match rather than about all of
+    them. None when git could not answer.
+    """
     listing = git_output(["ls-files", "-z"], checkout)
     if listing is None:
         return None
     wanted = relative_path.name.lower()
-    written = str(relative_path)
     return sorted(
         tracked for tracked in listing.split("\0")
-        if tracked and tracked != written
-        and PurePath(tracked).name.lower() == wanted)
+        if tracked and PurePath(tracked).name.lower() == wanted
+        and not is_the_same_file_on_this_filesystem(
+            tracked, relative_path, checkout))
 
 
 def collision_warning_line(relative_path: PurePath, others) -> str:
@@ -134,8 +179,8 @@ def collision_warning_line(relative_path: PurePath, others) -> str:
     moved_from = others[0] if len(others) == 1 else "the file you moved from"
     return (
         f"file-name-collision-warning: you wrote {relative_path}; "
-        f"the name {relative_path.name} is already {already}. "
-        f"If you are moving the file, delete {moved_from} in this change. "
+        f"the name {relative_path.name} is already {already}.\n"
+        f"If you are moving the file, delete {moved_from} in this change.\n"
         f"If both files are meant to exist, rename the one you just wrote by "
         f"CLAUDE.md's naming rule, and update what you have already written "
         f"to point at the new name.")
