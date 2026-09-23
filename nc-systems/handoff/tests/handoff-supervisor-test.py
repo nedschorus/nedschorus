@@ -13,6 +13,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import contextlib
 import dataclasses
+import fcntl
 import importlib.util
 import inspect
 import io
@@ -22,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -3005,6 +3007,47 @@ def invocations_of(directory):
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
+# Every update case below takes the machine-wide update lock, so the lock is
+# pointed into a directory of this suite's own for the rest of the file: a
+# suite run must neither wait on this machine's real updates nor delay them.
+update_lock_sandbox = tempfile.TemporaryDirectory()
+supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
+    Path(update_lock_sandbox.name) / "agent-binary-update.lock")
+sandboxed_update_lock_path = (
+    supervisor.agent_binary_update_under_lock.agent_binary_update_lock_path())
+
+
+class AnotherUpdateHoldsTheLock:
+    """Hold the update lock from this test, as another update would, releasing
+    it after release_after_seconds (None: held until the block ends). The
+    release marker is written BEFORE the lock is released, so an update that
+    ran only after taking the lock always sees it."""
+
+    def __init__(self, lock_path, release_marker, release_after_seconds=None):
+        self.lock_path = Path(lock_path)
+        self.release_marker = Path(release_marker)
+        self.release_after_seconds = release_after_seconds
+        self.timer = None
+
+    def release(self):
+        self.release_marker.write_text("released", encoding="utf-8")
+        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file = open(self.lock_path, "a")
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if self.release_after_seconds is not None:
+            self.timer = threading.Timer(self.release_after_seconds, self.release)
+            self.timer.start()
+        return self
+
+    def __exit__(self, *exception):
+        if self.timer is not None:
+            self.timer.join()
+        self.lock_file.close()
+
+
 with tempfile.TemporaryDirectory() as update_workspace:
     agent = an_agent_recording_its_invocations(update_workspace)
 
@@ -3074,6 +3117,85 @@ with tempfile.TemporaryDirectory() as update_workspace:
         update_timeout_seconds=30).wait()
     check("a launch updates the binary before it starts the session",
           invocations_of(update_workspace)[:1] == ["update"],
+          str(invocations_of(update_workspace)))
+
+# -- every update on a machine runs under one lock ------------------------------
+# User-approved 2026-09-22 (superwalk item 2). A login restart starts one
+# supervisor about 6 s after the last, and each first launch runs `claude
+# update`, so two could overlap. scripts/agent-binary-update-under-lock.py
+# carries the reasoning; these cases pin the supervisor's side of it.
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    release_marker = Path(update_workspace) / "released"
+    agent = an_agent_recording_its_invocations(
+        update_workspace,
+        body=f'if [ -e "{release_marker}" ]; then echo after-release; '
+             f'else echo before-release; fi >> "{update_workspace}/order"')
+    captured = io.StringIO()
+    with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path, release_marker,
+                                   release_after_seconds=1.5):
+        with contextlib.redirect_stderr(captured):
+            supervisor.update_agent_binary(str(agent), 30)
+    order_log = Path(update_workspace) / "order"
+    order = order_log.read_text(encoding="utf-8").splitlines() if order_log.exists() else []
+    check("an update started while another holds the lock waits, then runs",
+          invocations_of(update_workspace) == ["update"] and order == ["after-release"],
+          str((invocations_of(update_workspace), order)))
+    check("an update waiting for the lock says so",
+          "handoff-supervisor: waiting for another update on this machine to finish"
+          in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    agent = an_agent_recording_its_invocations(update_workspace)
+    captured = io.StringIO()
+    with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path,
+                                   Path(update_workspace) / "released"):
+        started = time.monotonic()
+        with contextlib.redirect_stderr(captured):
+            supervisor.update_agent_binary(str(agent), 1)
+        elapsed = time.monotonic() - started
+    check("a lock held past the limit skips the update rather than blocking the launch",
+          invocations_of(update_workspace) == [] and elapsed < 15,
+          f"{invocations_of(update_workspace)} after {elapsed:.1f}s")
+    check("the skipped update is reported in one line naming the limit",
+          "handoff-supervisor: another update on this machine was still running "
+          "after 1s; skipping this update and launching on the installed version\n"
+          in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # Timeout 0 is --agent-update-timeout-seconds 0, which every supervisor
+    # case in this file passes: it must skip the update entirely, lock
+    # included. Held lock: returning at once proves it neither waited nor
+    # reported. Fresh path: the lock file never even being created proves it
+    # was never opened.
+    agent = an_agent_recording_its_invocations(update_workspace)
+    captured = io.StringIO()
+    with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path,
+                                   Path(update_workspace) / "released"):
+        started = time.monotonic()
+        with contextlib.redirect_stderr(captured):
+            supervisor.update_agent_binary(str(agent), 0)
+        elapsed = time.monotonic() - started
+    check("a zero timeout does not wait on a held lock, and says nothing",
+          elapsed < 0.5 and captured.getvalue() == ""
+          and invocations_of(update_workspace) == [],
+          f"{elapsed:.2f}s {captured.getvalue()!r} {invocations_of(update_workspace)}")
+    unused_lock_path = Path(update_workspace) / "unused-lock" / "agent-binary-update.lock"
+    supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
+        unused_lock_path)
+    try:
+        supervisor.update_agent_binary(str(agent), 0)
+        supervisor.launch_agent_session(
+            str(agent), "session-zero-timeout", Path(update_workspace), "prompt",
+            update_timeout_seconds=0).wait()
+    finally:
+        supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
+            sandboxed_update_lock_path)
+    check("a zero timeout takes no lock: the lock file is never created",
+          not unused_lock_path.exists() and not unused_lock_path.parent.exists(),
+          str(unused_lock_path))
+    check("a zero timeout runs no update, directly or through a launch",
+          "update" not in invocations_of(update_workspace),
           str(invocations_of(update_workspace)))
 
 check("the update timeout defaults to the launchers' own 120 seconds",

@@ -288,25 +288,35 @@ fi
 # preparation with `&&` — a non-zero update would take the home directory,
 # the worktree and the seat with it.
 #
-# The launcher writes no warning of its own except on the timeout: `claude
-# update` prints its own diagnosis whenever it runs to completion, and the
-# warning removed on 2026-08-31 could not see the failure that actually
-# happened. The twin carries that case in full. The timeout is the exception
-# both twins keep, because a killed command says nothing and the launcher is
-# what killed it; GNU timeout reports 124 for that, measured. The limit is 120
-# seconds, raised from 45 (user-ruled 2026-08-31), because a slow but WORKING
-# update killed at the limit leaves the box silently on its old version; the
-# limit bounds a hung update rather than racing a real download.
+# The update runs under the machine-wide lock in
+# scripts/agent-binary-update-under-lock.py, box-side, which the box's
+# supervisors take too, so no two updates on the box overlap (user-approved
+# 2026-09-22): a login restart otherwise starts one supervisor's update
+# about 6 s after the last. That file owns the timeout as well, replacing
+# GNU timeout here, and says why: kept outside it, timeout would kill the
+# Python holding the lock and orphan a still-running update. One budget
+# covers waiting for the lock and running the update together.
 #
-# The final `if` returns 0 when its condition is false, so the `&&` chain
-# below is unaffected either way — the same job `|| true` did before.
+# The launcher writes no warning of its own: `claude update` prints its own
+# diagnosis whenever it runs to completion, and the warning removed on
+# 2026-08-31 could not see the failure that actually happened. The twin
+# carries that case in full. The helper reports only what it causes,
+# prefixed with this launcher's name: an update it killed at the limit, a
+# wait for the lock, and an update it skipped because the lock stayed held
+# past the limit. The limit is 120 seconds, raised from 45 (user-ruled
+# 2026-08-31), because a slow but WORKING update killed at the limit leaves
+# the box silently on its old version; the limit bounds a hung update rather
+# than racing a real download. A limit of 0 skips the update.
+#
+# The brace group with `|| true` is one && operand that always succeeds, so
+# the chain below is unaffected by the update's status.
 # The twin does the same locally, at scripts/launch-claude-mac.
 UPDATE_COMMAND="export PATH=\"\$HOME/.local/bin:\$PATH\"; \
 echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
-UPDATE_TIMEOUT=\${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120}; \
-UPDATE_STATUS=0; \
-timeout \$UPDATE_TIMEOUT claude update || UPDATE_STATUS=\$?; \
-if [ \$UPDATE_STATUS -eq 124 ]; then echo \"launch-claude-ubuntu: the update was still running after \${UPDATE_TIMEOUT}s and was stopped; launching on the installed version\" >&2; fi"
+{ python3 \$HOME/Projects/nedschorus/scripts/agent-binary-update-under-lock.py \
+--program-name launch-claude-ubuntu \
+--timeout-seconds \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120} \
+-- claude update || true; }"
 
 # Pre-trust the agent directory on the box: a fresh directory otherwise stops
 # at Claude's one-time folder-trust dialog, which a detached launch can never

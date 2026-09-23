@@ -103,6 +103,15 @@ _worth_resuming_spec = importlib.util.spec_from_file_location(
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
+# The machine-wide lock every `claude update` in the fleet runs under, so the
+# launchers and this supervisor update one at a time (update_agent_binary).
+_agent_binary_update_under_lock_spec = importlib.util.spec_from_file_location(
+    "agent_binary_update_under_lock",
+    SCRIPTS_DIRECTORY / "agent-binary-update-under-lock.py")
+agent_binary_update_under_lock = importlib.util.module_from_spec(
+    _agent_binary_update_under_lock_spec)
+_agent_binary_update_under_lock_spec.loader.exec_module(agent_binary_update_under_lock)
+
 # The first turn a resumed session gets when no first prompt was given. One
 # definition, because two paths reach it: --resume-session-id, which only
 # recover-crashed-seats.py passes, and the by-hand resume below. Its opening is
@@ -1397,31 +1406,27 @@ def update_agent_binary(agent_command: str, timeout_seconds: int) -> None:
     could mislead -- the failure that actually happened in this fleet was a
     refusal to overwrite a Homebrew-managed copy, which printed its reason and
     exited 0, so an exit-code branch would not have caught it either
-    (scripts/launch-claude-mac, 2026-08-31). The timeout is the one case this
-    function reports, because it is the one case it causes: the command is
-    killed mid-flight and says nothing itself.
+    (scripts/launch-claude-mac, 2026-08-31). What this function reports is only
+    what it causes: a timeout, where the command is killed mid-flight and
+    says nothing itself, and an update skipped or delayed by the lock below.
 
     An update never blocks a launch. A seat that cannot update must still come
     back, so every failure here falls through to launching on what is
     installed.
+
+    WHY IT RUNS UNDER A LOCK (user-approved 2026-09-22). The update runs under
+    the machine-wide lock in scripts/agent-binary-update-under-lock.py, which
+    both launchers take too, so no two updates on one machine overlap -- a
+    login restart otherwise starts one supervisor's update about 6 s after
+    the last. timeout_seconds bounds the wait and the run together, and that
+    file carries the reasoning, the lock's path and every line it prints.
+    A zero timeout returns before the lock is touched.
     """
     if not timeout_seconds:
         return
     print(f"handoff-supervisor: checking for a {agent_command} update")
-    try:
-        subprocess.run([agent_command, "update"], timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        print(
-            f"handoff-supervisor: the update was still running after "
-            f"{timeout_seconds}s and was stopped; launching on the installed version",
-            file=sys.stderr,
-        )
-    except OSError as error:
-        print(
-            f"handoff-supervisor: the update could not be run ({error}); "
-            f"launching on the installed version",
-            file=sys.stderr,
-        )
+    agent_binary_update_under_lock.run_agent_binary_update_under_lock(
+        [agent_command, "update"], timeout_seconds, "handoff-supervisor")
 
 
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
