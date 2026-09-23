@@ -280,3 +280,5 @@ Four generations of a headless essay-writing agent; three auto-triggered reincar
 ## Open question — attached to the seat move
 
 **Where the successor's output goes in an interactive pane.** A self-started supervisor is detached, its output going to `<agent>-supervisor.log`, so the successor it launches inherits that rather than the terminal the person is watching — correct headless, wrong for a console pane. Recommendation: panes run their supervisor directly (the supervisor as parent), leaving adoption as the bootstrap and recovery path. Settle before the seat move.
+
+**Pinned to what landed:** commit [40afb38](https://github.com/nedschorus/nedschorus/commit/40afb3882d9e4c3de7705898f0965708252689fe) on 2026-09-23 — the handoff system's code as merged by PR [Each handoff removes the finished worktrees and merged branches](https://github.com/nedschorus/nedschorus/pull/664).

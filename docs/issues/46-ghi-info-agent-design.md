@@ -1,5 +1,5 @@
 ---
-status: landed design; build tracked in issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)
+status: design
 design-as-of: 2026-08-11
 ---
 
@@ -262,3 +262,5 @@ Each with its failure branch (item 7 is a plain measurement and carries none):
 7. Comment-fetch cost at real volume (measured once: 0.42 s for one issue with comments).
 
 **Constants** live as named values at the top of the owning script — no config file in version 1; starting values, tuned in live use: closes-since-birth reincarnation threshold 20; stale-match 2 in the last 10 answers; transcript threshold set at build from NM's working values; ask timeout 5 minutes, inside the hook budget; one drift recheck per ask.
+
+**Pinned to what landed:** commit [b9d8b4e](https://github.com/nedschorus/nedschorus/commit/b9d8b4e9e4ce8af26269dc03d1df325fe16051bb) on 2026-09-22 — `scripts/ghi-info-ask.py` as merged by PR [ghi-info-ask's state key names the session it holds](https://github.com/nedschorus/nedschorus/pull/637).

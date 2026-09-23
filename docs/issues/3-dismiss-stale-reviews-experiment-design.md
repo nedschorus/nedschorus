@@ -77,3 +77,5 @@ that the mechanism of the change is understood and reversible. The second half �
 what happens to the PR process when an approval is dismissed mid-review — is the
 merge-lane exercise, and the decision to enable the setting on main is the
 user's, not this document's.
+
+**Pinned to what landed:** commit [b965517](https://github.com/nedschorus/nedschorus/commit/b9655170cebbbaa78e361b7b4aeef6f3e3a31089) on 2026-09-06 — `scripts/protection-experiment-dismiss-stale-reviews.py` as last changed, by PR [Sweep bare project words to the glossary's names (docs/wiki/project-vocabulary-glossary.md)](https://github.com/nedschorus/nedschorus/pull/259).
