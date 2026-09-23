@@ -687,6 +687,52 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
 
 
 # ---------------------------------------------------------------------------
+# A reference whose fetch failed must not read as up to date. It computed
+# "0 behind" off refs the failed fetch never updated, and returned without a
+# word (user-approved fix, 2026-09-17, backlog-recheck walk item 1, fix 11).
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as reference_fetch_scratch:
+    tmp = Path(reference_fetch_scratch)
+    origin = tmp / "origin-repo"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    configure_identity(origin)
+    commit_file(origin, "shared.txt", "first\n", "first commit")
+    reference = tmp / "reference-clone"
+    git(["clone", "-q", str(origin), str(reference)], tmp)
+    configure_identity(reference)
+    seat = tmp / "seat-worktree"
+    git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
+
+    # origin moves on, and then cannot be reached: local refs still say 0 behind.
+    commit_file(origin, "unseen.txt", "unseen\n", "a commit the failed fetch never saw")
+    git(["remote", "set-url", "origin", str(tmp / "no-such-remote")], reference)
+
+    unreachable_hook = run_catch_up(["--cwd", str(seat)])
+    check("a reference whose fetch failed tells the user its 0 behind may be stale",
+          "reference checkout" in display_text(unreachable_hook)
+          and "fetch failed at" in display_text(unreachable_hook),
+          unreachable_hook.stdout + unreachable_hook.stderr)
+    check("and says it once, not at every turn end while the fetch keeps failing",
+          display_text(run_catch_up(["--cwd", str(seat)])) == "")
+    unreachable_operator = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    unreachable_operator_again = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("--reference-pull reports the failed fetch every time",
+          "fetch failed at" in unreachable_operator.stdout
+          and "fetch failed at" in unreachable_operator_again.stdout,
+          unreachable_operator.stdout + unreachable_operator_again.stdout)
+
+    git(["remote", "set-url", "origin", str(origin)], reference)
+    reachable_hook = run_catch_up(["--cwd", str(seat)])
+    check("once the fetch works again the reference catches up and the failure is not repeated",
+          (reference / "unseen.txt").exists() and "fetch failed" not in display_text(reachable_hook),
+          reachable_hook.stdout)
+    check("and the failure's reason key is cleared",
+          "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
+
+
+# ---------------------------------------------------------------------------
 # changed_here_versus_main: the line names what MOVED, never a fixed list of
 # categories. The first draft asserted "your tests, hooks, skills and documents
 # here are older than main" at every printing; on the seat that built it, ten
