@@ -500,6 +500,97 @@
       "stderr": "",
       "stored": false,
       "note": "byte-identical to nedschorus-nedschorus-667-reviews-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves that file for this call"
+    },
+    {
+      "file": "nedschorus-nedschorus-687-pr-view-state.json",
+      "command": [
+        "gh",
+        "pr",
+        "view",
+        "687",
+        "--repo",
+        "nedschorus/nedschorus",
+        "--json",
+        "headRefOid,mergeStateStatus,reviewDecision,isDraft"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:12Z",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "file": "nedschorus-nedschorus-687-reviews-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/687/reviews",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:13Z",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "file": "nedschorus-nedschorus-687-reviews-channel-first-page-only.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/687/reviews"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:13Z",
+      "exit_code": 0,
+      "stderr": "",
+      "stored": false,
+      "note": "byte-identical to nedschorus-nedschorus-687-reviews-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves nedschorus-nedschorus-687-reviews-channel-paginated.json for this call"
+    },
+    {
+      "file": "nedschorus-nedschorus-687-inline-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/687/comments",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:14Z",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "file": "nedschorus-nedschorus-687-inline-channel-first-page-only.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/pulls/687/comments"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:14Z",
+      "exit_code": 0,
+      "stderr": "",
+      "stored": false,
+      "note": "byte-identical to nedschorus-nedschorus-687-inline-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves nedschorus-nedschorus-687-inline-channel-paginated.json for this call"
+    },
+    {
+      "file": "nedschorus-nedschorus-687-issue-channel-paginated.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/687/comments",
+        "--paginate"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:14Z",
+      "exit_code": 0,
+      "stderr": ""
+    },
+    {
+      "file": "nedschorus-nedschorus-687-issue-channel-first-page-only.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/687/comments"
+      ],
+      "captured_at_utc": "2026-09-23T23:48:15Z",
+      "exit_code": 0,
+      "stderr": "",
+      "stored": false,
+      "note": "byte-identical to nedschorus-nedschorus-687-issue-channel-paginated.json when captured (the channel is under one page); not stored, and the suite serves nedschorus-nedschorus-687-issue-channel-paginated.json for this call"
     }
   ]
 }

@@ -38,7 +38,18 @@ refused an approval by ned-review-merge, which refused both shapes the chain
 produced on 2026-09-23: pull request 665, approved only by ned-review-merge, and
 667, approved by mac-claude and then by ned-review-merge. The user ruled F4 out
 2026-09-23. Both live-chain cases pass on those captures, and the mutation that
-re-adds the filter turns both red.
+re-adds the filter turns 665 red. 667 is not its target: with the filter back,
+667 pins mac-claude's approval, and the merge account's own later approval is
+within F2's bound below, so it passes.
+
+THE THIRD LIVE-CHAIN CASE IS A PULL REQUEST THE MERGE ACCOUNT OPENED. GitHub
+refuses an approval from the author, so on PR 687 mac-claude approved (the pin)
+and ned-review-merge then posted its review as COMMENTED, and the chain passed
+that review's time as reviewed-since. Bounded by the pin alone, F2 refused it
+and so did every earlier reviewed-since (the review counted as new). The bound
+is now the later of the pin and the merge account's own latest review; the
+mutation back to the pin alone turns the case red, and two neighbouring 687
+cases hold the rest of F2 and F5 in place on the same capture.
 
 The mutation section reruns named cases against a mutated COPY of the gate in a
 scratch directory, one mutation per fix, and requires each to go red. The file
@@ -304,6 +315,46 @@ def case_live_chain_second_approval_by_merge_account(gate):
     return passed_pinned_to(run, "667", own["commit_id"]), run.summary()
 
 
+PR_687_REVIEWS = "nedschorus-nedschorus-687-reviews-channel-paginated.json"
+
+
+def pr_687_routes():
+    routes = {"state": {"stdout_file": str(arranged_state(
+        "nedschorus-nedschorus-687-pr-view-state.json", mergeStateStatus=CLEAN))}}
+    routes.update(captured_channel_routes("reviews", "nedschorus-nedschorus-687-reviews-channel"))
+    routes.update(captured_channel_routes("inline", "nedschorus-nedschorus-687-inline-channel"))
+    routes.update(captured_channel_routes("issue", "nedschorus-nedschorus-687-issue-channel"))
+    return routes
+
+
+def case_live_chain_merge_account_opened_the_pull_request(gate):
+    """PR 687 as the chain gates it: the merge account opened it, so it cannot
+    approve. mac-claude approved (the pin), then the merge account posted its
+    required COMMENTED review, and reviewed-since is that review."""
+    pin = review(PR_687_REVIEWS, 5297823520)
+    own = review(PR_687_REVIEWS, 5297826635)
+    run = run_gate(gate, "687", pin["commit_id"], own["submitted_at"], pr_687_routes())
+    return passed_pinned_to(run, "687", pin["commit_id"]), run.summary()
+
+
+def case_687_since_at_the_approval_counts_the_merge_accounts_review(gate):
+    """The same channel with reviewed-since at the approval: the merge account's
+    later review is new activity, as every account's is (F5)."""
+    pin = review(PR_687_REVIEWS, 5297823520)
+    run = run_gate(gate, "687", pin["commit_id"], pin["submitted_at"], pr_687_routes())
+    return refused_with(run, "687", "1 NEW review(s)"), run.summary()
+
+
+def case_687_since_after_the_merge_accounts_review(gate):
+    """reviewed-since one second after the merge account's own latest review is
+    still later than anything it did, and refuses (F2)."""
+    pin = review(PR_687_REVIEWS, 5297823520)
+    own = review(PR_687_REVIEWS, 5297826635)
+    run = run_gate(gate, "687", pin["commit_id"], one_second_after(own["submitted_at"]),
+                   pr_687_routes())
+    return refused_with(run, "687", "is later than"), run.summary()
+
+
 def case_b1_inline_beyond_first_page(gate):
     # reviewed-since is the newest timestamp on the captured first page, so every
     # new comment is on page two: 24 of them.
@@ -356,7 +407,7 @@ def one_second_after(timestamp):
 def case_b3_since_after_the_approval(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, one_second_after(BASE_APPROVAL["submitted_at"]),
                    base_routes())
-    return refused_with(run, BASE_PR, "is later than the approving review"), run.summary()
+    return refused_with(run, BASE_PR, "is later than"), run.summary()
 
 
 def case_b4_since_with_an_offset(gate):
@@ -553,6 +604,12 @@ CASES = [
      case_live_chain_merge_account_only_approval),
     ("LIVE CHAIN: PR 667 as the chain gates it, since = ned-review-merge's later approval, passes",
      case_live_chain_second_approval_by_merge_account),
+    ("LIVE CHAIN: PR 687, opened by the merge account, since = its COMMENTED review after "
+     "mac-claude's approval, passes", case_live_chain_merge_account_opened_the_pull_request),
+    ("F2 PR 687 with reviewed-since at the approval counts the merge account's later review",
+     case_687_since_at_the_approval_counts_the_merge_accounts_review),
+    ("F2 PR 687 with reviewed-since after the merge account's own latest review refuses",
+     case_687_since_after_the_merge_accounts_review),
     ("B1 an inline comment beyond the first page of 30 is counted", case_b1_inline_beyond_first_page),
     ("B1 an issue comment beyond the first page of 30 is counted", case_b1_issue_beyond_first_page),
     ("B1 a review beyond the first page of 30 is counted", case_b1_reviews_beyond_first_page),
@@ -622,15 +679,20 @@ MUTATIONS = [
       case_b1_reviews_beyond_first_page, case_b2_pin_beyond_first_page]),
     ("F2 without the reviewed-since bound",
      [('[ "$since_ok" = "true" ] || fail', '[ "$since_ok" = "true" ] || true')],
-     [case_b3_since_after_the_approval]),
+     [case_b3_since_after_the_approval, case_687_since_after_the_merge_accounts_review]),
     ("F3 without the reviewed-since format check",
      [('*) cannot "reviewed-since must be exactly', '*) : "reviewed-since must be exactly')],
      [case_b4_since_with_an_offset]),
+    ("F2 bounded by the pin alone, without the merge account's own latest review",
+     [("'[$approved] + [.[][] | select(.user.login == $merge_account and .submitted_at != null)",
+       "'[$approved] + [.[][] | select(false)")],
+     [case_live_chain_merge_account_opened_the_pull_request]),
     ("F4's merge-account filter re-added to the pin",
      [('select(.state == "APPROVED")',
        'select(.state == "APPROVED" and .user.login != "ned-review-merge")')],
-     [case_live_chain_merge_account_only_approval,
-      case_live_chain_second_approval_by_merge_account]),
+     # 665 alone: with the filter back, 667 pins mac-claude's approval and the
+     # merge account's own later approval is within F2's bound, so it passes.
+     [case_live_chain_merge_account_only_approval]),
     ("F5 with the merge account's reviews excluded again",
      [('select(.id != $approval_id and', 'select(.user.login != "ned-review-merge" and .id != $approval_id and')],
      [case_b6_merge_accounts_later_findings]),

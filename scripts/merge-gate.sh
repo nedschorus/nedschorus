@@ -37,11 +37,26 @@
 # is absent from older gh releases -- ned-box ran 2.46.0 when this was written;
 # jq -s over a captured here-string is equivalent and portable.
 #
-# WHY SINCE IS BOUNDED BY THE APPROVAL (F2). SINCE was caller-supplied and
-# unbounded, so `$(date -u +%FT%TZ)` -- "since now" -- turned all three activity
-# checks into no-ops. A caller cannot have read everything since a moment LATER
-# than the approval it is merging on, so a SINCE after the approving review's
-# submitted_at is refused rather than trusted.
+# WHY SINCE IS BOUNDED (F2). SINCE was caller-supplied and unbounded, so
+# `$(date -u +%FT%TZ)` -- "since now" -- turned all three activity checks into
+# no-ops. SINCE may be no later than the last moment the merge account
+# demonstrably acted on the pull request: the pinned approval, or the merge
+# account's own latest submitted review if that is later. Anything later is
+# refused rather than trusted.
+#
+# The second half exists for pull requests the merge account itself opened.
+# GitHub refuses an approval from a pull request's author, so there mac-claude
+# approves (the pin) and the merge account then posts its required review as
+# COMMENTED. Bounded by the pin alone, that flow was refused at every SINCE: at
+# or before the approval its own review counted as new activity, after the
+# approval SINCE was out of bounds. The last nine pull requests the merge
+# account opened before 2026-09-23T23:45Z, 616 to 687, all have this shape (PR
+# 687 is the case in the suite). What this allows: a SINCE at the merge account's own latest review,
+# so activity by any account between the pin and that review is not counted --
+# the same trust the ordinary flow already places in SINCE, which is the merge
+# account's own approval there. A review with findings from any account still
+# counts when it lands after SINCE, and a CHANGES_REQUESTED still refuses
+# through reviewDecision.
 #
 # WHY THE FORMAT IS STRICT (F3). Timestamps were compared as strings inside jq,
 # where an RFC 3339 SINCE carrying a positive offset under-counts to a FALSE PASS.
@@ -83,7 +98,7 @@ cannot()  { echo "GATE COULD NOT RUN: $*" >&2; exit 2; }
 [ $# -eq 3 ] || cannot "usage: merge-gate.sh <pr-number> <expected-head-sha> <reviewed-since-iso8601>"
 PR=$1; EXPECTED=$2; SINCE=$3
 
-command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH -- every check below depends on it"
+command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then rerun the gate."
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH"
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
@@ -135,14 +150,21 @@ approval_at=$(jq -r '.submitted_at' <<<"$approval")
 approver=$(jq -r '.user.login' <<<"$approval")
 [ -n "$approved_sha" ] && [ "$approved_sha" != "null" ] || fail "the approving review records no commit_id to pin to"
 
-# "Since now" made every activity check below a no-op.
-since_ok=$(jq -n --arg since "$SINCE" --arg approved "$approval_at" \
-  '($since | fromdateiso8601) <= ($approved | fromdateiso8601)')
-[ $? -eq 0 ] || cannot "could not compare reviewed-since against the approval time"
-[ "$since_ok" = "true" ] || fail "reviewed-since $SINCE is later than the approving review at $approval_at -- nothing can have been read since a moment after the approval"
+# "Since now" made every activity check below a no-op (F2). A PENDING review has
+# no submitted_at and is left out of the bound.
+bound_at=$(jq -s -r --arg merge_account "$MERGE_ACCOUNT" --arg approved "$approval_at" \
+  '[$approved] + [.[][] | select(.user.login == $merge_account and .submitted_at != null)
+                          | .submitted_at]
+   | max_by(fromdateiso8601)' <<<"$reviews_raw")
+[ $? -eq 0 ] || cannot "could not parse the review channel"
+since_ok=$(jq -n --arg since "$SINCE" --arg bound "$bound_at" \
+  '($since | fromdateiso8601) <= ($bound | fromdateiso8601)')
+[ $? -eq 0 ] || cannot "could not compare reviewed-since against $bound_at"
+[ "$since_ok" = "true" ] || fail "reviewed-since $SINCE is later than $bound_at, the approval or the merge account's own latest review. Rerun with a reviewed-since no later than $bound_at."
 
 [ "$head" = "$EXPECTED" ] || fail "head moved: reviewed $EXPECTED, now $head"
-[ "$approved_sha" = "$head" ] || fail "the approval covers $approved_sha but the head is now $head -- re-review at the new head; merging would land code no approval covered"
+# Merging past this would land code no approval covered.
+[ "$approved_sha" = "$head" ] || fail "the approval covers $approved_sha but the head is now $head. Review and approve $head before merging."
 [ "$draft" = "false" ]    || fail "pull request is a draft"
 [ "$decision" = "APPROVED" ] || fail "reviewDecision is $decision, not APPROVED"
 case "$merge_state" in
@@ -178,5 +200,7 @@ reviews=$(jq -s --arg since "$SINCE" --argjson approval_id "$approval_id" \
 [ "$reviews" -eq 0 ] || fail "$reviews NEW review(s) since $SINCE -- read them before merging"
 
 echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approval_at, $decision, $merge_state, no new channel activity since $SINCE"
-echo "MERGE WITH THIS EXACT COMMAND -- the pin is what makes the approval binding:"
+# The pin (--match-head-commit) is what makes the approval binding: GitHub
+# refuses the merge if the head has moved since the approval.
+echo "MERGE WITH THIS EXACT COMMAND:"
 echo "  gh pr merge $PR --repo $REPO --merge --delete-branch --match-head-commit $approved_sha"

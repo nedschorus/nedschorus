@@ -220,7 +220,13 @@ Three rules the project learned on 2026-09-21 and this run must follow:
   the gate, so F4 refused most real merges. The user ruled it out 2026-09-23.
   Two live-chain cases, built from pull requests 665 and 667 as the chain gated
   them, assert the gate passes them and replace B5; a mutation re-adding the
-  filter turns both red.
+  filter turns 665 red.
+- **F2's bound includes the merge account's own latest review** (fix round,
+  2026-09-23, merge-lane-2's review of PR 691). On a pull request the merge
+  account opened, mac-claude approves and the merge account then posts a
+  COMMENTED review; bounded by the pin alone the gate refused that flow at every
+  reviewed-since. A live-chain case built from PR 687 passes, a mutation back to
+  the pin-only bound turns it red, and two more 687 cases hold F2 and F5.
 - **The mutation check runs inside the suite**, against a mutated copy in a
   scratch directory. The file under test is never modified, so the
   commit-before-mutating rule holds by construction. The control runs after the
