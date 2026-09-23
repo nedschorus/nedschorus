@@ -263,7 +263,8 @@ def assigned_constant_names(node):
 
 
 def definitions_by_constant(tree):
-    """Which lines define each suffix constant, in file order.
+    """Where each suffix constant is defined: (line, is a module-level
+    statement) per definition, sorted, in file order.
 
     The guard used to hold values only, so two definitions of one constant
     were visible as a value it did not expect and reported as a RENAME --
@@ -274,13 +275,89 @@ def definitions_by_constant(tree):
     failure named no cause at all (reviewer inline comment on the same pull
     request). Both are answered by counting the targets rather than the
     strings.
+
+    A DEFINITION IS MODULE-LEVEL WHEN IT IS A STATEMENT OF THE MODULE BODY,
+    and every definition is counted whether it is or not. Counting only
+    module-level statements would drop the shape that matters most: a second
+    copy in a class body, whose two equal values cancel in the rename
+    comparison, so the failure falls back to the bare value list with no
+    remedy clause at all -- finding 3 of PR #599 coming back for that shape
+    (reviewer of the pull request [A suffix constant defined twice is named
+    as a duplicate, annotation
+    included](https://github.com/nedschorus/nedschorus/pull/643),
+    2026-09-22).
+
+    WHICH LINE IS IN FORCE IS A QUESTION ONLY WHEN EVERY DEFINITION IS
+    MODULE-LEVEL, which is why the scope is carried here rather than
+    recomputed where the failure is written. Python keeps the last
+    module-level assignment, so with every definition at module level the
+    last line is the value the supervisor runs with; it is not the last line
+    otherwise, because a class attribute and a function local never rebind
+    the module name and a module-level `if` rebinds it only when its branch
+    runs. Measured at the head of that pull request: a class-body copy of
+    HANDOFF_FILE_SUFFIX added after the module constant was reported as
+    "line 390 is the value in force; delete the others", and an agent
+    obeying that sentence deletes line 388 -- the suite then prints "all
+    cases passed" while handoff_file_path() raises NameError. Reproduced
+    here 2026-09-23 for the class attribute, the function local and the
+    module-level `if`.
+
+    Sorted, because ast.walk is breadth-first rather than file-ordered: a
+    nested definition ABOVE a module-level one came back listed after it, so
+    the last line named was neither the last in the file nor the one in
+    force (second inline finding of the same review).
     """
+    module_level = {id(node) for node in tree.body}
     by_constant = {}
     for node in suffix_definition_assignments(tree):
+        definition = (getattr(node, "lineno", 0), id(node) in module_level)
         for name in assigned_constant_names(node):
-            by_constant.setdefault(name, []).append(
-                getattr(node, "lineno", 0))
-    return by_constant
+            by_constant.setdefault(name, []).append(definition)
+    return {name: sorted(definitions)
+            for name, definitions in by_constant.items()}
+
+
+def duplicate_definition_clause(name, definitions):
+    """The failure clause for one constant this file defines more than once.
+
+    It names which line to keep only when the answer is provable: every
+    definition a module-level statement, and no two of them on one line.
+    Otherwise it says how many definitions there are and where they sit, and
+    asks for one definition at module level without naming which to keep --
+    saying less than the guard can prove is what an agent cannot be misled
+    by, and the deletion it was being sent to make was the module constant
+    itself.
+
+    The one-binding-per-line condition is the chained form,
+    HANDOFF_FILE_SUFFIX = HANDOFF_FILE_SUFFIX = "-handoff.md": two bindings
+    on one line, which used to print "at line(s) 388, 388 -- line 388 is the
+    value in force; delete the others" and send an agent to delete a line
+    the message had not named (third inline finding of the review of the
+    pull request above). The lines are named once each here and the count
+    stays the number of bindings, so that form is still caught and now reads
+    as what it is.
+    """
+    module_level_lines = sorted({line for line, at_module_level in definitions
+                                 if at_module_level})
+    other_lines = sorted({line for line, at_module_level in definitions
+                          if not at_module_level})
+    where = []
+    if module_level_lines:
+        where.append("at module level on line(s) "
+                     + ", ".join(str(line) for line in module_level_lines))
+    if other_lines:
+        where.append("not at module level on line(s) "
+                     + ", ".join(str(line) for line in other_lines))
+    one_binding_per_line = (len(definitions)
+                            == len({line for line, _ in definitions}))
+    if other_lines or not one_binding_per_line:
+        remedy = ("delete every definition but one, and leave that one at "
+                  "module level")
+    else:
+        remedy = (f"delete every definition but the one at line "
+                  f"{module_level_lines[-1]}, the value in force")
+    return (f"{name} is defined {len(definitions)} times, "
+            + ", ".join(where) + f" -- {remedy}")
 
 
 def defined_suffix_values(tree):
@@ -412,11 +489,15 @@ supervisor_tree = ast.parse(SUPERVISOR_SCRIPT.read_text(encoding="utf-8"),
 supervisor_defined_names = defined_suffix_values(supervisor_tree)
 
 # Counted by target, so a constant defined twice is named as a duplicate
-# whatever the two values are. Python keeps the last assignment, so the last
-# line listed is the value the supervisor runs with.
+# whatever the two values are, and wherever the second one sits. Each
+# definition arrives with the line it is on and whether it is a module-level
+# statement; duplicate_definition_clause() below is what turns the pair into
+# a remedy, and it asks which line is in force only when every definition is
+# module-level.
 duplicated_constants = {
-    name: lines for name, lines
-    in definitions_by_constant(supervisor_tree).items() if len(lines) > 1}
+    name: definitions
+    for name, definitions in definitions_by_constant(supervisor_tree).items()
+    if len(definitions) > 1}
 
 unreadable_definitions = supervisor_defined_names.count(None)
 readable_definitions = sorted(value for value in supervisor_defined_names
@@ -445,13 +526,10 @@ check("the names this guard hunts are the supervisor's own, not a stale copy",
       f"{SUPERVISOR_SCRIPT.name} defines {readable_definitions}"
       # Named before the rename clause, and instead of it: a constant defined
       # twice is not a rename, and the rename remedy sends an agent to edit
-      # SPELLED_OUT_NAMES while the duplicate stays. Python keeps the last
-      # assignment, so the last line named is the one in force.
+      # SPELLED_OUT_NAMES while the duplicate stays.
       + ("; " + "; ".join(
-          f"{name} is defined {len(lines)} times, at line(s) "
-          f"{', '.join(str(line) for line in lines)} -- line {lines[-1]} is "
-          f"the value in force; delete the others"
-          for name, lines in sorted(duplicated_constants.items()))
+          duplicate_definition_clause(name, definitions)
+          for name, definitions in sorted(duplicated_constants.items()))
          if duplicated_constants else "")
       # Each remedy states only the cause that fired. The rename remedy used
       # to be appended whatever happened, and an agent obeying it after an
