@@ -1,0 +1,50 @@
+#!/bin/sh
+# Refuses to push a branch that conflicts with main, and lets every other push
+# through. The work is done by scripts/git-client-side-hooks-pre-push-conflict-check.py,
+# whose docstring has the reasons, the provenance and what is and is not
+# checked. This file only guards the way into it.
+#
+# Installed by the same per-clone core.hooksPath as prepare-commit-msg, an
+# absolute path into the clone's reference checkout, which stays on main, so
+# every seat's worktree runs main's copy:
+#   Mac:      /Users/el/Projects/nedschorus/scripts/git-client-side-hooks
+#   ned-box:  /home/nedlern/Projects/nedschorus/scripts/git-client-side-hooks
+# (both set in the clone's own .git/config, not globally; checked 2026-09-23).
+#
+# A pre-push hook that exits non-zero stops the push, and this one runs on
+# every push from every seat on the machine. So it fails open: it exits 1
+# only when the Python file asks for a refusal with its own status, 10, and
+# 0 on everything else. That includes python3 missing from PATH, the Python
+# file missing, and the Python file failing, whatever its status. The file
+# is written in sh rather than Python because a hook whose `#!` names a
+# missing interpreter makes git stop every push.
+#
+# A branch of this file that returns early drains stdin first, so git never
+# writes the refs into a closed pipe. Git ignores that error for pre-push,
+# but a stray failure path is not worth depending on.
+
+hook_directory=$(dirname "$0")
+conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check.py"
+refuse_push_status=10
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "pre-push: the conflict check did not run (no python3 on PATH); the push goes ahead unchecked." >&2
+    cat >/dev/null
+    exit 0
+fi
+if [ ! -f "$conflict_check" ]; then
+    echo "pre-push: the conflict check did not run ($conflict_check is missing); the push goes ahead unchecked." >&2
+    cat >/dev/null
+    exit 0
+fi
+
+python3 "$conflict_check" "$@"
+conflict_check_status=$?
+if [ "$conflict_check_status" -eq "$refuse_push_status" ]; then
+    exit 1
+fi
+if [ "$conflict_check_status" -ne 0 ]; then
+    echo "pre-push: the conflict check failed (exit $conflict_check_status); the push goes ahead unchecked." >&2
+    cat >/dev/null
+fi
+exit 0
