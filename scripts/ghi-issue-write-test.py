@@ -521,6 +521,33 @@ def run_cases(scratch: Path):
     check("a source that is not on main is not removed",
           not untracked.ran("git rm"), str(untracked.commands()))
 
+    # A failed look at main is not "not on main". Read that way, which is
+    # what this did until 2026-09-22, step 4 copies a source it should move
+    # and the document lands at two paths. git's own exit code for
+    # ls-tree given a revision that does not exist is 128.
+    failed_tracking = Recorder({
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/570\n"),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "origin/main for-frontmatter.md": Completed(
+            "", returncode=128,
+            stderr="fatal: Not a valid object name origin/main"),
+        "gh pr create": Completed("pr\n"),
+    })
+    try:
+        tool.create(source, REPO, scratch, failed_tracking, quiet)
+        check("a failed look at main stops step 4 rather than copying the "
+              "source", False, str(failed_tracking.commands()))
+    except tool.Refused as refusal:
+        check("a failed look at main stops step 4 rather than copying the "
+              "source",
+              refusal.code == 1 and not failed_tracking.ran("git commit")
+              and not failed_tracking.ran("git push")
+              and failed_tracking.ran("git worktree remove"),
+              f"code {refusal.code}, {failed_tracking.commands()}")
+
     # --- Resuming: the property the design promises -----------------------
 
     resumed = Recorder({
