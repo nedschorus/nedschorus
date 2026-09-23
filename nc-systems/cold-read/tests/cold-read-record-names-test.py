@@ -7,7 +7,7 @@ cold-read-fast-read, the cold-read-restater-judge-runner and the record
 shipper -- and the cold-read-cells' shared module looks for the frozen
 target. Each used to hold its own copy of the names, so a rename had seven
 places to find and nothing failed when it missed one. They now come from
-scripts/cold-read-record-names.py (user-ruled 2026-09-19, walk
+nc-systems/cold-read/cold-read-record-names.py (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4).
 
 `frozen_target_path`, the path built under the frozen copy's directory name,
@@ -74,7 +74,7 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
     `if "target" in directory.name` passes.
   * one join onto the frozen copy's directory with nothing beneath it:
     `(directory / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir()`, which
-    is how scripts/cold-read-cell-common.py asks whether a cold-read-record
+    is how nc-systems/cold-read/cold-read-cell-common.py asks whether a cold-read-record
     froze its cold-read-target. Asking after the directory is not composing a
     path inside it. Measured.
   * the frozen path composed in another shape: `record_dir.joinpath(...)`, or
@@ -98,7 +98,7 @@ Only the cold-read family is checked. scripts/sanity-check-attacks.py and
 scripts/design-to-main/design-to-main-state-tables.py name their own record
 kinds, which are theirs to name.
 
-Run: python3 scripts/cold-read-record-names-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-record-names-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -106,9 +106,10 @@ import ast
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS_DIRECTORY = REPO_ROOT / "scripts"
-NAMES_MODULE = SCRIPTS_DIRECTORY / "cold-read-record-names.py"
+# This suite sits in nc-systems/cold-read/tests/, three directories below the root.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+SYSTEM_DIRECTORY = REPO_ROOT / "nc-systems" / "cold-read"
+NAMES_MODULE = SYSTEM_DIRECTORY / "cold-read-record-names.py"
 # The records directory's name, as it reads on disk. Matched as a substring
 # of a path join's string operand, because `"cold-read-records/<name>"`
 # spells the name out as surely as `"cold-read-records"` alone.
@@ -152,7 +153,7 @@ def check(case_name, condition, detail=""):
 
 def cold_read_scripts():
     """The cold-read family's programs, the shared module itself excluded."""
-    return sorted(path for path in SCRIPTS_DIRECTORY.glob("cold-read-*.py")
+    return sorted(path for path in SYSTEM_DIRECTORY.glob("cold-read-*.py")
                   if not path.name.endswith("-test.py") and path != NAMES_MODULE)
 
 
@@ -292,7 +293,7 @@ def builds_a_path_under_the_frozen_target(node):
     That is `frozen_target_path` and nothing else, so it is found without
     asking what the function around it is called. Joining onto the constant
     once and stopping there asks whether the directory exists, which
-    scripts/cold-read-cell-common.py does and which this leaves alone.
+    nc-systems/cold-read/cold-read-cell-common.py does and which this leaves alone.
     """
     return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
             and isinstance(node.left, ast.BinOp)

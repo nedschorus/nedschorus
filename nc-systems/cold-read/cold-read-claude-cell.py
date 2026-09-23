@@ -2,14 +2,14 @@
 """Run one Claude cold-read-cell against a cold-read-target.
 
 One invocation = one cold-read-cell — the twin of the Codex cold-read-cell
-launcher (scripts/cold-read-codex-cell.py). Everything the two do apart
-from invoking their model lives in scripts/cold-read-cell-common.py and is
+launcher (nc-systems/cold-read/cold-read-codex-cell.py). Everything the two do apart
+from invoking their model lives in nc-systems/cold-read/cold-read-cell-common.py and is
 imported by both, so the legs cannot drift. Read that file for the report
 contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  scripts/cold-read-claude-cell.py --cell restate --tier second \\
+  nc-systems/cold-read/cold-read-claude-cell.py --cell restate --tier second \\
       --target docs/drafts/foo.md \\
       --report cold-read-records/foo-2026-01-01/claude-restate-second.md
 
@@ -19,7 +19,7 @@ to stderr and nothing to stdout.
 Exit codes: 0 a model produced a report; 1 every model in the cold-read-tier's
 chain failed to produce one; 64 this program refused the invocation and never
 launched a model, naming its own fix. 64 rather than the conventional 2 for the
-reason written beside EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py,
+reason written beside EXIT_BAD_INVOCATION in nc-systems/cold-read/cold-read-cell-common.py,
 which both cold-read-cells share.
 
 WHY A CLAUDE COLD-READ-CELL'S STAMP CARRIES NO `tokens=` FIELD. Every stamp
@@ -28,7 +28,7 @@ record `tokens=` because the Codex CLI prints a total. The Claude CLI prints
 no equivalent, so there is no figure to record and the field is omitted rather
 than filled with a zero -- an omitted field reads as "not reported", a zero
 would read as "this cold-read-cell cost nothing". If the CLI starts printing a
-"tokens used" line, the shared parser in scripts/cold-read-cell-common.py picks
+"tokens used" line, the shared parser in nc-systems/cold-read/cold-read-cell-common.py picks
 it up with no change here.
 """
 
@@ -57,7 +57,7 @@ PROGRAM = "cold-read-claude-cell"
 # WHY THE `second` COLD-READ-TIER IS FABLE, NOT SONNET (user-ruled
 # 2026-09-04). This tier was called `floor` until the user renamed it on
 # 2026-09-20; the rename's provenance is written once, at TIER_CHOICES in
-# scripts/cold-read-cell-common.py. Sonnet was cut as a reviewer in the
+# nc-systems/cold-read/cold-read-cell-common.py. Sonnet was cut as a reviewer in the
 # 2026-08-29 walk-reviewer model trial ("cut as reviewer
 # (bottom of every ranking)", METHOD.md of that trial under
 # ~/agents/MD-skills/cold-read-records/2026-08-29-walk-reviewer-model-trial/;
@@ -110,10 +110,10 @@ PROGRAM = "cold-read-claude-cell"
 # opus special? I don't think it should be"): the cold-read-grid retries the
 # cell once on the same model, reports the report absent like any other, and
 # when every Claude cell is absent for one agent-binary-wide cause says once
-# that the agent-binary is down (scripts/cold-read-grid.py).
+# that the agent-binary is down (nc-systems/cold-read/cold-read-grid.py).
 #
 # Every cold-read-tier on both runtimes is therefore a single-entry chain. The
-# tuple shape and the shared chain loop in scripts/cold-read-cell-common.py
+# tuple shape and the shared chain loop in nc-systems/cold-read/cold-read-cell-common.py
 # stay: the loop is what clears the report path before an attempt and after
 # a failed last one, which is needed with one model as with two, and a second
 # entry is one line if a ruling ever wants one. The cold-read-grid's FELL BACK
@@ -236,7 +236,7 @@ def model_family_name(model: str) -> str:
 #
 #   account-limit  "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
 #       line 2 of nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-10-design-to-main-test-writing-agent-instructions/2026-09-10-design-to-main-test-writing-agent-instructions--claude-hunt-good.md.stderr.log,
-#       from scripts/cold-read-grid.py launching this program on the Mac,
+#       from nc-systems/cold-read/cold-read-grid.py launching this program on the Mac,
 #       2026-09-10. Agent-binary-wide: the same limit fails every Claude cell.
 #       The detail is the rest of the line, "resets 8:50pm (America/Los_Angeles)".
 #   model-limit    "You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue."

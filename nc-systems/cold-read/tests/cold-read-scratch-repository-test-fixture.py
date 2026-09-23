@@ -8,9 +8,9 @@ scripts/run-all-test-suites.py, which finds suites with
 has no cases. The same ending keeps scripts/design-to-main/tests/
 design-to-main-test-fixture.py out of that list.
 
-WHY A COPY OF scripts/ RATHER THAN AN IMPORT. The cold-read cells derive
+WHY A COPY OF nc-systems/cold-read/ RATHER THAN AN IMPORT. The cold-read cells derive
 the repository root -- the tree their stray-write detector runs
-`git status` over -- from their own path. Copying the scripts into a
+`git status` over -- from their own path. Copying the system into a
 scratch tree is the only way to point that at a throwaway repository, so
 every one of these suites runs its cell out of a copy.
 
@@ -34,7 +34,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
+# This fixture sits in nc-systems/cold-read/tests/; the system it copies is
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 
 # The seed commit's author. One fixed name rather than a parameter: nothing
 # reads it, and it points a scratch checkout left behind by a crashed run
@@ -57,19 +59,20 @@ def commit_seeded_cold_read_scratch_repository(repository):
     """Turn a seeded scratch tree into the git repository a cell runs in.
 
     Call it AFTER writing this suite's own seed files into `repository`:
-    it copies scripts/ in, writes the ignore file, and commits the whole
+    it copies nc-systems/cold-read/ in, writes the ignore file, and commits the whole
     tree, seed files included, as `seed`. Returns `repository`.
     """
-    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # The whole nc-systems/cold-read/ directory, __pycache__ aside, so a shared module
     # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
     # md-skills-seat-open-decisions-2026-09-20 item 3).
-    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
+    shutil.copytree(SYSTEM_DIRECTORY, repository / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     git(repository, "init", "-b", "main")
-    # Auto maintenance off: with the whole scripts/ directory committed, git
+    # Auto maintenance off: with the whole scripts/ directory committed (as it
+    # was until the cold read moved into nc-systems/cold-read/ on 2026-09-23), git
     # 2.55 repacks this repository in the background, and its temporary files
     # race the deletion of these throwaway checkouts — measured 2026-09-20,
     # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.

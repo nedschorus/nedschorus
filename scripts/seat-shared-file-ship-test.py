@@ -32,7 +32,7 @@ import tempfile
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "seat-shared-file-ship.py"
-RECORD_SHIP = SCRIPTS_DIR / "cold-read-record-ship.py"
+RECORD_SHIP = SCRIPTS_DIR.parent / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 SEAT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 RULED_RECORDS_DESTINATION = (

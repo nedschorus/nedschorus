@@ -32,12 +32,12 @@ WHAT IS PINNED HERE.
     the way they do on the other legs.
 
 Each case builds a throwaway git repository holding a copy of the cell
-scripts, as scripts/cold-read-cell-common-test.py does, and runs the launcher
+scripts, as nc-systems/cold-read/tests/cold-read-cell-common-test.py does, and runs the launcher
 inside it with the stub first on PATH. The stub is driven by
 COLD_READ_AGY_CELL_TEST_STUB_PLAN, a JSON map from model id to what that
 attempt should do.
 
-Run: python3 scripts/cold-read-agy-cell-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-agy-cell-test.py
 """
 
 import importlib.util
@@ -50,15 +50,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPTS_DIR.parent
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 TARGET_RELATIVE_PATH = "docs/drafts/cold-read-agy-cell-test-target.md"
 
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
-    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
@@ -155,7 +157,7 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(report_path)
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "cold-read-agy-cell.py"),
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"),
          "--cell", "fast-clarify", "--tier", tier,
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],

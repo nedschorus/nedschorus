@@ -29,11 +29,11 @@
 # EXPECTED AFTER A FIX: the grid reports those cells as failures, and its
 # closing instructions do not invite triage of reports that do not exist.
 #
-# Usage: sh scripts/cold-read-empty-report-reproduction.sh
+# Usage: sh nc-systems/cold-read/cold-read-empty-report-reproduction.sh
 
 set -eu
 
-REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -55,7 +55,7 @@ trap 'rm -rf "$WORK"; rm -f "$TARGET"' EXIT
 
 echo "running the grid with stub runtimes that exit 0 and print nothing"
 set +e
-PATH="$WORK/stub-bin:$PATH" python3 "$REPO_ROOT/scripts/cold-read-grid.py" \
+PATH="$WORK/stub-bin:$PATH" python3 "$REPO_ROOT/nc-systems/cold-read/cold-read-grid.py" \
     --target "$TARGET_NAME" > "$WORK/grid.out" 2>&1
 GRID_EXIT=$?
 set -e

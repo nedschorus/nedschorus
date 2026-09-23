@@ -28,9 +28,9 @@ Recall is not rows over 33. Row 22 was ruled not a defect, so 32 rows score, and
 
 The weight means **consequence if the draft is obeyed as written**, not how likely a reader is to misread. One row misled all four restaters and still rates 3, because the misreading changes no write.
 
-`scripts/cold-read-reviewer-score.py` reads the weights out of the list rather than holding a copy, so the list is the single source of the ruler.
+`nc-systems/cold-read/cold-read-reviewer-score.py` reads the weights out of the list rather than holding a copy, so the list is the single source of the ruler.
 
-**One number differs from the records published before 2026-09-10, deliberately.** Those reported flat recall over 33 rows, because they predate the ruling that row 22 is not a defect. This program divides by the 32 scored rows, so its flat recall reads one to three points higher for the same reviewer. **Every weighted figure is unchanged**, and the weighted figure is the one to read. The per-reviewer weights, the best four-reviewer union at 100 of 102, and the single unfound row are all pinned by `scripts/cold-read-reviewer-score-test.py` against what those records published, so the scoring math cannot drift under them unnoticed.
+**One number differs from the records published before 2026-09-10, deliberately.** Those reported flat recall over 33 rows, because they predate the ruling that row 22 is not a defect. This program divides by the 32 scored rows, so its flat recall reads one to three points higher for the same reviewer. **Every weighted figure is unchanged**, and the weighted figure is the one to read. The per-reviewer weights, the best four-reviewer union at 100 of 102, and the single unfound row are all pinned by `nc-systems/cold-read/tests/cold-read-reviewer-score-test.py` against what those records published, so the scoring math cannot drift under them unnoticed.
 
 ## The citations here are frozen, and every checker must skip this directory
 

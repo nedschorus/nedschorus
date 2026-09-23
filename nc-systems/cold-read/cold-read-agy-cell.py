@@ -2,15 +2,15 @@
 """Run one Antigravity (`agy`) cold-read-cell against a cold-read-target.
 
 One invocation = one cold-read-cell — the third leg beside the Claude
-cold-read-cell launcher (scripts/cold-read-claude-cell.py) and the Codex
-cold-read-cell launcher (scripts/cold-read-codex-cell.py). Everything the three
-do apart from invoking their model lives in scripts/cold-read-cell-common.py
+cold-read-cell launcher (nc-systems/cold-read/cold-read-claude-cell.py) and the Codex
+cold-read-cell launcher (nc-systems/cold-read/cold-read-codex-cell.py). Everything the three
+do apart from invoking their model lives in nc-systems/cold-read/cold-read-cell-common.py
 and is imported by all of them, so the legs cannot drift. Read that file for
 the report contract, the write-detection rule, and why the reviewer writes a
 file rather than answering in chat.
 
 Usage:
-  scripts/cold-read-agy-cell.py --cell fast-clarify --tier fast \\
+  nc-systems/cold-read/cold-read-agy-cell.py --cell fast-clarify --tier fast \\
       --target docs/walk/foo-draft.md \\
       --report cold-read-records/foo-2026-01-01/fast-read.md
 
@@ -23,7 +23,7 @@ because the binary is not on PATH (the common module names that on stderr
 and lets the chain advance, so a 1 always means "no review was produced");
 64 this program refused the invocation and never launched agy, naming its
 own fix. 64 rather than the conventional 2 for the reason written beside
-EXIT_BAD_INVOCATION in scripts/cold-read-cell-common.py, which every
+EXIT_BAD_INVOCATION in nc-systems/cold-read/cold-read-cell-common.py, which every
 cold-read-cell shares.
 
 WHAT THIS LEG IS FOR (user-ruled 2026-09-07 at the cold-read-research seat,
@@ -66,7 +66,7 @@ the threshold with no file written fails, as on the other legs.
 WHY THIS LEG'S STAMP CARRIES NO `tokens=` FIELD. The Antigravity CLI prints
 no "tokens used" line the way the Codex CLI does, so the field is omitted
 rather than filled with a zero; if it starts printing one, the shared parser in
-scripts/cold-read-cell-common.py picks it up with no change here.
+nc-systems/cold-read/cold-read-cell-common.py picks it up with no change here.
 """
 
 import importlib.util

@@ -38,10 +38,10 @@ handling-design.md carried `design-as-of: 2026-09-17` and described code that
 landed on 2026-09-18 in pull request [cold-read-grid: a failed cell is
 retried once and reported with its cause, and every run closes with one
 closing text](https://github.com/nedschorus/nedschorus/pull/508), merged as
-02f4ede. Nobody edited the document; scripts/cold-read-grid.py moved
+02f4ede. Nobody edited the document; nc-systems/cold-read/cold-read-grid.py moved
 underneath it. By 2026-09-20 seven of its line-number citations named files
 that had changed since its stamp, and six of the seven pointed at code that
-was no longer there. The seventh, scripts/cold-read-codex-cell.py lines
+was no longer there. The seventh, nc-systems/cold-read/cold-read-codex-cell.py lines
 108-111, still held the TIER_TO_CODEX_MODEL_CHAIN block it named: that file
 changed after the stamp, but those four lines did not move. That is the limit
 of what this program knows, and why its finding says the cited file changed
@@ -65,13 +65,14 @@ Markdown line as the file they cite:
   measured on the 413 document: widening it to "the one code file the line
   names", the rule scripts/md-drift-lint.py's own number check uses, bound
   `lines 166-213` -- which names STUB_MODEL_RUNTIME in
-  scripts/cold-read-grid-test.py -- to scripts/cold-read-fast-read-test.py,
+  nc-systems/cold-read/tests/cold-read-grid-test.py -- to nc-systems/cold-read/tests/cold-read-fast-read-test.py,
   the only code file that line happened to name. A wrong file in a finding
   is worse than no finding. The cost of the narrow rule is that a phrase
   with no file on its own line is not attributable and is not checked; in
   the 413 document that lost `line 375` and `lines 591-643`, and widening to
-  the paragraph would have bound `line 375` to scripts/cold-read-cell-
-  common.py from the bullet above it, which is the wrong file again.
+  the paragraph would have bound `line 375` to
+  nc-systems/cold-read/cold-read-cell-common.py from the bullet above it,
+  which is the wrong file again.
 
 A number is only ever checked against a CODE file (md-drift-lint's
 CODE_SOURCE_EXTENSIONS). The name of this program says code, and a line
@@ -182,7 +183,7 @@ neither reaches the status check. The hole this closes is in the rider's
 purpose, not in today's tree.
 
 REUSE. scripts/md-drift-lint.py is imported by path, the way
-scripts/walk-files-ship.py imports scripts/cold-read-record-ship.py, and its
+scripts/walk-files-ship.py imports nc-systems/cold-read/cold-read-record-ship.py, and its
 citation reading is called rather than repeated, so its rulings hold here: a
 backticked name with no directory is not checked (user-ruled 2026-09-17), a
 leading "/" is repo-root-relative, a path the repository deliberately does
@@ -315,7 +316,7 @@ _last_change_cache = {}
 
 def load_md_drift_lint():
     """The drift lint as a module, imported by path the way
-    scripts/walk-files-ship.py imports scripts/cold-read-record-ship.py: its
+    scripts/walk-files-ship.py imports nc-systems/cold-read/cold-read-record-ship.py: its
     file name is not an identifier, and its citation reading is this
     program's."""
     path = SCRIPTS_DIRECTORY / "md-drift-lint.py"

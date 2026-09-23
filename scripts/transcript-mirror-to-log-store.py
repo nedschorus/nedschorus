@@ -28,7 +28,7 @@ HOW. `rsync -a` of each source into its place, over ssh in batch mode with a
 connect timeout from the Mac, never `--delete`: a transcript that vanishes
 locally stays in the store. This is a mirror, not a record -- a live
 session's transcript grows between runs and rsync sends the delta -- so the
-no-overwrite rule scripts/cold-read-record-ship.py applies to cold-read
+no-overwrite rule nc-systems/cold-read/cold-read-record-ship.py applies to cold-read
 records does not apply here. Two things rsync meets on a live tree are
 expected and not failures: files that vanish between its listing and its
 transfer (a scratch project directory removed by a session ending; exit 24

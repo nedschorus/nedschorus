@@ -75,7 +75,7 @@ SANITY_CHECK_RECORD_SHIPPER_SCRIPT = pathlib.Path(__file__).with_name(
 # they read as a real sanity check of a real document; found in review of
 # nedschorus#453, the change that gave the runner its shipper. Every run now
 # ships into a temporary directory of its own instead, the way
-# scripts/cold-read-grid-test.py contains its own runs: the store is real and
+# nc-systems/cold-read/tests/cold-read-grid-test.py contains its own runs: the store is real and
 # the copy is the real rsync, only the destination is scratch. The override
 # names the cold-read kind because the shipper picks its own kind beside it,
 # so records land in <scratch>/sanity-check-records/. It is set here, at
@@ -1161,7 +1161,7 @@ def main():
     # not available, so it should fall back to opus in that case"), so the cell
     # tries Fable 5.1 and falls back to Opus 5. The three ways an attempt can
     # produce no review are the house chain's (run_model_chain in
-    # scripts/cold-read-cell-common.py). No model is called: subprocess.run is
+    # nc-systems/cold-read/cold-read-cell-common.py). No model is called: subprocess.run is
     # replaced for the length of these cases and answers per model.
     runner_chain = load_runner()
     fable, opus = runner_chain.CLAUDE_MODEL_CHAIN

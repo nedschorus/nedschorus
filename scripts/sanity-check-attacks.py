@@ -2,7 +2,7 @@
 """Run a sanity-check: independent audits, each on both runtimes, over one document.
 
 The sanity-check is this project's second review instrument, separate from
-the cold read (`scripts/cold-read-grid.py`, the prose-and-clarity review) and
+the cold read (`nc-systems/cold-read/cold-read-grid.py`, the prose-and-clarity review) and
 never part of it. Three audits, each in its own
 fresh context:
 
@@ -180,7 +180,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIRECTORY_NAME = "sanity-check-records"
 RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # The record reaches the log-store by program, not by an agent remembering to
-# run one (nedschorus#392), the way scripts/cold-read-grid.py ships its own.
+# run one (nedschorus#392), the way nc-systems/cold-read/cold-read-grid.py ships its own.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
 
 # The sanctioned working space, one directory per cell, inside the run's own
@@ -216,7 +216,7 @@ IGNORED_PATH_STATUS_CODE = "!!"
 # case"), so Opus 5 stands behind it and ends the chain.
 #
 # WHAT COUNTS AS A FAILURE WORTH FALLING BACK FROM follows the house chain,
-# run_model_chain in scripts/cold-read-cell-common.py: a model that exits
+# run_model_chain in nc-systems/cold-read/cold-read-cell-common.py: a model that exits
 # non-zero, cannot be launched at all, or exits 0 having written nothing are
 # one event — no review was produced — so the chain advances on all three.
 # That module is not imported here: it is built around the cold-read cell's
@@ -443,7 +443,7 @@ def run_claude(prompt: str) -> tuple:
             continue
         # The runtime's own words survive every ending, the house chain's rule
         # (BOTH STREAMS ARE CAPTURED, in run_model_chain,
-        # scripts/cold-read-cell-common.py). A CLI that is logged out or out of
+        # nc-systems/cold-read/cold-read-cell-common.py). A CLI that is logged out or out of
         # credits explains itself on one of these streams and nowhere else, so
         # discarding them leaves "WARNING: <model> failed (exit 1)" as the whole
         # account of why -- the 54-byte cold-read log of 2026-08-23, which is
@@ -746,7 +746,7 @@ def provenance_line(runtime: str, model: str, attack: str, target: str,
     `fallback_from=` appears only when an earlier model in a chain produced
     no review, so a degraded cell is visible in the record and not only in
     the run's output. Both follow the cold-read cells' stamp
-    (stamp_provenance in scripts/cold-read-cell-common.py), and so does the
+    (stamp_provenance in nc-systems/cold-read/cold-read-cell-common.py), and so does the
     order of the line's first four fields: `runtime=`, `model=`,
     `fallback_from=` when present, `effort=`. After those the two stamps
     differ: `cli=`, `attack=` and `isolation=` are this runner's own;
@@ -1048,7 +1048,7 @@ def ship_record(record_dir: pathlib.Path) -> str:
 
     Never raises, and never changes the run's exit code: the shipper's outcome
     is reported, not enforced (nedschorus#392; the same shape as
-    scripts/cold-read-grid.py's ship_record). A sanity check that found
+    nc-systems/cold-read/cold-read-grid.py's ship_record). A sanity check that found
     something and could not reach ned-box has still found it, and the record
     stays on disk for a later run.
     """

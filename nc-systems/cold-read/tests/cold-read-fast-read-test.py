@@ -56,17 +56,17 @@ WHAT IS PINNED HERE.
     entities, URLs and their fragments are not bare numbers.
 
 Each case that launches the read builds a throwaway git repository holding a
-copy of the scripts, as scripts/cold-read-cell-common-test.py does, so the
+copy of the scripts, as nc-systems/cold-read/tests/cold-read-cell-common-test.py does, so the
 read's repository root -- and with it the docs/walk and cold-read-records
 paths the rule names -- is the scratch tree. The one exception is the case
 that compares the embedded template against the skill's prompt file: both of
 those files live in the real checkout, so it reads them there. A stub `agy`
 first on PATH stands in for the model, driven by
-COLD_READ_AGY_CELL_TEST_STUB_PLAN the way scripts/cold-read-agy-cell-test.py
+COLD_READ_AGY_CELL_TEST_STUB_PLAN the way nc-systems/cold-read/tests/cold-read-agy-cell-test.py
 drives its stub, plus a counter file so the stub can fail the first N
 launches and succeed after.
 
-Run: python3 scripts/cold-read-fast-read-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-fast-read-test.py
 """
 
 import importlib.util
@@ -81,13 +81,15 @@ import tempfile
 import datetime
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPTS_DIR.parent
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
-    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
@@ -114,13 +116,13 @@ LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 def script_under_test_module():
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "cold_read_fast_read_under_test", SCRIPTS_DIR / "cold-read-fast-read.py")
+        "cold_read_fast_read_under_test", SYSTEM_DIRECTORY / "cold-read-fast-read.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-# Each pair is (constant name in scripts/cold-read-fast-read.py, path of the
+# Each pair is (constant name in nc-systems/cold-read/cold-read-fast-read.py, path of the
 # prompt file that constant is a derived copy of, relative to the repository
 # root). One pair today, because only the fast cell has a second copy of its
 # prompt: the user's ruling that the reviewer's instructions live in the .py
@@ -211,7 +213,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
         ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = record_clock
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "cold-read-fast-read.py"),
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
         capture_output=True, text=True, check=False, env=environment,
     )
@@ -473,7 +475,7 @@ with tempfile.TemporaryDirectory() as scratch:
               f"{len(source_bytes)} bytes"
               f"{'' if source_file.is_file() else ' (NO SUCH FILE)'}. "
               "DERIVED COPY, a verbatim copy of that file kept in step by "
-              f"hand: scripts/cold-read-fast-read.py, constant "
+              f"hand: nc-systems/cold-read/cold-read-fast-read.py, constant "
               f"{constant_name}, {len(derived_copy_bytes)} bytes. "
               "The dependency runs one way only, and the script alone does "
               f"not say which way: {prompt_file_relative} is the source and "
@@ -616,7 +618,7 @@ with tempfile.TemporaryDirectory() as scratch:
 # cases need no cell, no model and no scratch checkout.
 import importlib.util as _importlib_util
 _spec = _importlib_util.spec_from_file_location(
-    "cold_read_fast_read", SCRIPTS_DIR / "cold-read-fast-read.py")
+    "cold_read_fast_read", SYSTEM_DIRECTORY / "cold-read-fast-read.py")
 _fast_read = _importlib_util.module_from_spec(_spec)
 _spec.loader.exec_module(_fast_read)
 sentence_id_markup = _fast_read.sentence_id_markup

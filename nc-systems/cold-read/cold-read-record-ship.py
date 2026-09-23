@@ -2,8 +2,8 @@
 """Ship one cold-read-record to the log-store on ned-box.
 
 Usage:
-  scripts/cold-read-record-ship.py <record directory>
-  scripts/cold-read-record-ship.py --all
+  nc-systems/cold-read/cold-read-record-ship.py <record directory>
+  nc-systems/cold-read/cold-read-record-ship.py --all
 
 WHAT THE LOG-STORE IS (user-ruled 2026-09-07, walk
 docs/walk/cold-read-records-branch-and-agent-instructions-queue.md): the
@@ -87,9 +87,9 @@ store's root is written when absent -- it says what the store is and that
 cold-read-records dated before 2026-09-08 predate the frozen cold-read-target
 -- from the text in this file.
 
-WHO CALLS IT. scripts/cold-read-grid.py at the end of every run, whatever the
+WHO CALLS IT. nc-systems/cold-read/cold-read-grid.py at the end of every run, whatever the
 outcome; the agent after writing triage.md (the cold-read skill's step
-7); scripts/cold-read-fast-read.py when it writes into cold-read-records/.
+7); nc-systems/cold-read/cold-read-fast-read.py when it writes into cold-read-records/.
 A shipping failure never fails the cold read: the caller prints this
 program's one line and goes on. `--all` ships every directory under
 cold-read-records/ in this checkout, continuing past a refused or failed one
@@ -131,12 +131,13 @@ import subprocess
 import sys
 import tempfile
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# This file sits in nc-systems/cold-read/, two directories below the root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy (user-ruled 2026-09-19, walk
 # file-naming-and-location-standards-cold-read-findings, item 4). The
 # convention -- importlib for a module whose filename has hyphens -- is
-# scripts/cold-read-cell-common.py's.
+# nc-systems/cold-read/cold-read-cell-common.py's.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -155,10 +156,10 @@ DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 # rule 4 above. Held here because this program is the one that compares a
 # record's files by name; it is matched as the record directory's own
 # top-level file, so the frozen cold-read-target's own copy of a file by this
-# name is add-only like the rest of that directory. scripts/cold-read-grid.py
+# name is add-only like the rest of that directory. nc-systems/cold-read/cold-read-grid.py
 # names the same file in the prose it hands the agent, which is prose naming a
 # file rather than a second definition of a path a program builds -- the
-# distinction scripts/cold-read-record-names-test.py draws.
+# distinction nc-systems/cold-read/tests/cold-read-record-names-test.py draws.
 TRIAGE_FILE_REPLACED_IN_THE_STORE = "triage.md"
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
@@ -207,7 +208,7 @@ here. Read it in the nedschorus repository, which this machine also clones:
 docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md
 
 To change this file, edit STORE_README in
-scripts/cold-read-record-ship.py. The next shipment rewrites this file
+nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file
 whenever it differs from that text, so an edit made here is lost.
 """
 

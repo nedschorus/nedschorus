@@ -89,7 +89,7 @@ sometimes updated status file". The rules are PER FILE:
     with the files still on disk; ssh runs in batch mode with a connect
     timeout. Shipping is the only thing between a walk's rulings and their
     loss, so a failure to ship is never a clean result -- the rule
-    report_stray_writes states in scripts/cold-read-cell-common.py.
+    report_stray_writes states in nc-systems/cold-read/cold-read-cell-common.py.
 
 The minutes' citation at the end of the stdout line is the minutes' still,
 never the dispositions': the minutes are the record of the rulings and what a
@@ -100,7 +100,7 @@ delivered, and again if the walk is reopened and closed. The one stdout line
 ends with the minutes' citation in scp form, which is the link that closing
 sentence wants.
 
-WHAT THIS IS: the THIRD CALLER of scripts/cold-read-record-ship.py, imported by
+WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
 scripts/sanity-check-record-ship.py import it, so the store's location, the ssh
 and rsync invocations and the store's README stay defined in one place (the
@@ -139,7 +139,7 @@ WALK_KIND_DIRECTORY = "walk"
 # scp-form destination is split. The convention -- importlib for a module
 # whose filename has hyphens -- is scripts/seat-shared-file-ship.py's.
 _shipper_spec = importlib.util.spec_from_file_location(
-    "cold_read_record_ship", REPO_ROOT / "scripts" / "cold-read-record-ship.py")
+    "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 

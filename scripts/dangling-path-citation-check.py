@@ -444,7 +444,7 @@ def repository_root_directories(repository_root: pathlib.Path) -> tuple:
 
 def load_md_drift_lint():
     """The drift lint as a module, imported by path the way
-    scripts/walk-files-ship.py imports scripts/cold-read-record-ship.py: its
+    scripts/walk-files-ship.py imports nc-systems/cold-read/cold-read-record-ship.py: its
     file name is not an identifier, and its checks are this program's."""
     path = SCRIPTS_DIRECTORY / "md-drift-lint.py"
     specification = importlib.util.spec_from_file_location("md_drift_lint", path)

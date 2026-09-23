@@ -91,8 +91,8 @@ git("add", "-A")
 git("commit", "-q", "-m", "the suite's own commit")
 
 # A child this suite gives GIT_DIR of its own must still get it: that is the
-# fixture pattern scripts/cold-read-grid-test.py and
-# scripts/cold-read-cell-common-test.py are built on.
+# fixture pattern nc-systems/cold-read/tests/cold-read-grid-test.py and
+# nc-systems/cold-read/tests/cold-read-cell-common-test.py are built on.
 child = dict(os.environ)
 child["GIT_DIR"] = str(here / "the-child-s-own-git-directory")
 child_saw = subprocess.run(

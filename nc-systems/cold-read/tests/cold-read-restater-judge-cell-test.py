@@ -38,12 +38,12 @@ WHAT IS PINNED HERE.
     --effort names one.
 
 Each case builds a throwaway git repository holding a copy of the cell
-scripts, as scripts/cold-read-agy-cell-test.py does, and runs the launcher
+scripts, as nc-systems/cold-read/tests/cold-read-agy-cell-test.py does, and runs the launcher
 inside it with the stub first on PATH. The stub is driven by
 COLD_READ_RESTATER_JUDGE_CELL_TEST_STUB_PLAN, a JSON map from model id to
 what that attempt should do.
 
-Run: python3 scripts/cold-read-restater-judge-cell-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-restater-judge-cell-test.py
 """
 
 import importlib.util
@@ -56,12 +56,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
-    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
@@ -200,7 +202,7 @@ def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
         prompt_file = write_stub_prompt_file(repository)
     command = [
         sys.executable,
-        str(repository / "scripts" / "cold-read-restater-judge-cell.py"),
+        str(repository / "nc-systems" / "cold-read" / "cold-read-restater-judge-cell.py"),
         "--restater", restater, "--report", str(report_path),
         "--prompt-file", str(prompt_file),
     ]
@@ -314,7 +316,7 @@ with tempfile.TemporaryDirectory() as scratch:
     environment["COLD_READ_RESTATER_JUDGE_CELL_TEST_STUB_REPORT_PATH"] = str(report)
     omitted = subprocess.run(
         [sys.executable,
-         str(repository / "scripts" / "cold-read-restater-judge-cell.py"),
+         str(repository / "nc-systems" / "cold-read" / "cold-read-restater-judge-cell.py"),
          "--restater", RESTATER_CLASS, "--report", str(report),
          "--case", *THREE_CASES[0]],
         capture_output=True, text=True, check=False, env=environment)

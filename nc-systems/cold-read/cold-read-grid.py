@@ -10,7 +10,7 @@ into a cold-read-record named
 instructions printed for the reviewing agent as reviews land.
 
 Usage:
-  scripts/cold-read-grid.py --target docs/drafts/foo.md
+  nc-systems/cold-read/cold-read-grid.py --target docs/drafts/foo.md
 
 The cold-read-record holds one report per cold-read-cell, the reference-check
 file, and under target/ the exact bytes reviewed at the cold-read-target's own
@@ -36,7 +36,7 @@ and the run fingerprints BOTH the copy and the original at the end, because
 the records tree is gitignored and an edit to the copy would otherwise be
 invisible to the cold-read-cell's `git status` stray-write detector. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
-scripts/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
+nc-systems/cold-read/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
 one line is printed as `record:`; a shipping failure is reported, never fatal
 (user-ruled 2026-09-07). The one run that ships nothing is the one that could
 not freeze the target: it exits 2 before any cold-read-cell launches, so its
@@ -44,13 +44,13 @@ record holds the reference check alone and no report to keep.
 
 WHEN A COLD-READ-CELL FAILS (nedschorus#413; the design, user-reviewed
 2026-09-16 and 2026-09-17, is
-docs/issues/413-cold-read-grid-cell-failure-handling-design.md). Every
+nc-systems/cold-read/cold-read-grid-cell-failure-handling-design.md). Every
 cold-read-cell whose attempt ends without a landed report is retried once,
 at once, with the same model -- no cold-read-cell is special (user-ruled
 2026-09-11) -- and the first attempt's log is kept as
 `<report file name>.attempt-1.stderr.log`. Each failed attempt is reported
 with its CAUSE, the `cause:` line the cold-read-cell program prints
-(scripts/cold-read-cell-common.py, classify_failed_attempt) or, when it left
+(nc-systems/cold-read/cold-read-cell-common.py, classify_failed_attempt) or, when it left
 none, one the cold-read-grid names itself: `RETRYING:` at the first failure,
 `FAILED (exit N):` at the second, after which the report is ABSENT. When
 every cold-read-cell of one agent-binary has landed or is absent for the same
@@ -86,12 +86,13 @@ import sys
 import time
 import typing
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# This file sits in nc-systems/cold-read/, two directories below the root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy (user-ruled 2026-09-19, walk
 # file-naming-and-location-standards-cold-read-findings, item 4). The
 # convention -- importlib for a module whose filename has hyphens -- is
-# scripts/cold-read-cell-common.py's.
+# nc-systems/cold-read/cold-read-cell-common.py's.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -100,15 +101,15 @@ _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
 # cold-read-cell launchers, one per runtime.
 CELL_LAUNCHERS = {
-    "claude": REPO_ROOT / "scripts" / "cold-read-claude-cell.py",
-    "codex": REPO_ROOT / "scripts" / "cold-read-codex-cell.py",
+    "claude": pathlib.Path(__file__).with_name("cold-read-claude-cell.py"),
+    "codex": pathlib.Path(__file__).with_name("cold-read-codex-cell.py"),
 }
 # The program that copies a finished cold-read-record to the log-store on
 # ned-box (user-ruled 2026-09-07: cold-read-records are logs, not system, and
 # never enter git). Run at the end of every cold-read-full-run, whatever the
 # outcome; its one line is printed and the run goes on, because a store that
 # cannot be reached is no reason to lose a review that landed.
-RECORD_SHIPPER = REPO_ROOT / "scripts" / "cold-read-record-ship.py"
+RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
 # The cold-read-cells' shared module, loaded the way the cold-read-cells
 # load it, for the status phrases it pins. Imported rather than copied so
 # the cold-read-grid and the cold-read-cells cannot drift on the words the
@@ -225,7 +226,7 @@ important to least.{record_absences}
 
 This record was shipped to the log-store on ned-box when the run ended (the
 `record:` line above says whether it arrived); once triage.md is written,
-run `scripts/cold-read-record-ship.py {record_dir}` so it joins the reports
+run `nc-systems/cold-read/cold-read-record-ship.py {record_dir}` so it joins the reports
 there. cold-read-records/ stays gitignored: never commit it. Leave {record_dir}
 in place once the work it served has landed — these records are kept, not
 deleted: like other logs they are useful for analysis later (user-ruled
@@ -248,9 +249,9 @@ where they live."""
 # about which draft each read was. Both accepted at the walk, since the name
 # is now shared with the walk that rules on the read (item 6) and has to be
 # short enough to type. The code implementing it is not restated:
-# scripts/cold-read-record-names.py holds it, and this program and
-# scripts/cold-read-fast-read.py both import it, so the two cannot drift
-# apart. scripts/cold-read-record-names-test.py fails a program that writes
+# nc-systems/cold-read/cold-read-record-names.py holds it, and this program and
+# nc-systems/cold-read/cold-read-fast-read.py both import it, so the two cannot drift
+# apart. nc-systems/cold-read/tests/cold-read-record-names-test.py fails a program that writes
 # its own copy back. The files inside the record carry none of this name
 # (item 5): the directory says which read, the file says which agent ran
 # which attack.
@@ -382,7 +383,7 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
     deleted or made unreadable mid-run yields "", which differs from any real
     digest and so counts as a change.
 
-    `path_content_fingerprint` in scripts/cold-read-cell-common.py is the same
+    `path_content_fingerprint` in nc-systems/cold-read/cold-read-cell-common.py is the same
     idea applied to every path in the working tree, and the name here echoes
     it deliberately. The two stay separate because the cold-read-grid launches
     the cold-read-cell scripts as programs and never loads that module, and
@@ -506,7 +507,7 @@ def cell_report_path(
     `codex-hunt-second.md`, and a cold-read-cell of the first run that wrote
     nothing could have the second run's correctly placed report recovered as
     its own. That case is now met where it arises, in the cold-read-cell's
-    near-miss recovery (scripts/cold-read-cell-common.py,
+    near-miss recovery (nc-systems/cold-read/cold-read-cell-common.py,
     recover_near_miss_report), which never takes a file from a directory the
     instrument built. THE GAP THAT LEAVES, seen and left open (user-ruled
     2026-09-18, walk docs/walk/skill-sentences-and-shipper-questions-2026-09-18,

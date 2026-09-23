@@ -4,15 +4,15 @@
 One invocation = one restater class judged. It takes that restater's
 restatements beside the rough drafts they came from, the perfect versions and
 the scrubbed defect lists, launches the two ruled judge runs in parallel
-through scripts/cold-read-restater-judge-cell.py, and writes their two reports
+through nc-systems/cold-read/cold-read-restater-judge-cell.py, and writes their two reports
 and one combined result into a cold-read-record of this restater's own --
 its own, and no earlier judging's: the default directory name takes a -2, -3
-suffix when the day's name is taken, the way scripts/cold-read-grid.py's
+suffix when the day's name is taken, the way nc-systems/cold-read/cold-read-grid.py's
 `make_record_dir` does, because the shared module clears a report path before
 every run and a second judging on one name would delete the first's reports.
 
 Usage:
-  scripts/cold-read-restater-judge-runner.py --restater gemini-3.8-flash-low \\
+  nc-systems/cold-read/cold-read-restater-judge-runner.py --restater gemini-3.8-flash-low \\
       --prompt-file <the judge's instructions> \\
       --case <rough draft> <perfect version> <defect list> <restatement> \\
       --case ... --case ...
@@ -110,12 +110,13 @@ import subprocess
 import sys
 import time
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# This file sits in nc-systems/cold-read/, two directories below the root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy (user-ruled 2026-09-19, walk
 # file-naming-and-location-standards-cold-read-findings, item 4). The
 # convention -- importlib for a module whose filename has hyphens -- is
-# scripts/cold-read-cell-common.py's.
+# nc-systems/cold-read/cold-read-cell-common.py's.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -151,7 +152,7 @@ PROGRAM = "cold-read-restater-judge-runner"
 JUDGE_RUNS = 2
 
 # The launcher's own refusal code (EXIT_BAD_INVOCATION in
-# scripts/cold-read-cell-common.py), which this program also uses for its own
+# nc-systems/cold-read/cold-read-cell-common.py), which this program also uses for its own
 # refusal.
 EXIT_BAD_INVOCATION = cell_common.EXIT_BAD_INVOCATION
 
@@ -239,7 +240,7 @@ def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
     two sets must not land on each other.
 
     THE SUFFIX LOOP IS WHY THIS FUNCTION CREATES THE DIRECTORY, and it is
-    `make_record_dir`'s in scripts/cold-read-grid.py, followed rather than
+    `make_record_dir`'s in nc-systems/cold-read/cold-read-grid.py, followed rather than
     reinvented: the first free name of `<base>`, `<base>-2`, `<base>-3` wins,
     and `mkdir` is called with no `exist_ok`, so the name this returns is one
     no other judging has written into. The date and the class alone were not

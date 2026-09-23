@@ -87,7 +87,7 @@ from typing import Optional
 # recover-crashed-seats.py makes, from the one module that defines it, so the
 # two programs cannot call one seat's transcripts two different things (issue
 # 242's change 5). The convention — importlib for a module whose filename has
-# hyphens — is scripts/cold-read-cell-common.py's.
+# hyphens — is nc-systems/cold-read/cold-read-cell-common.py's.
 # This file sits at nc-systems/handoff/, so the repository root is two
 # directories up; parents[2] names that depth once instead of chaining .parent
 # three times. Every path below that leaves this system is derived from it,

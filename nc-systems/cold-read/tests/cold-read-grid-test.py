@@ -28,7 +28,7 @@ WHAT IS PINNED HERE.
 
   - A failed cell is retried once, with the same model, and no cell is
     special (user-ruled 2026-09-11; the design is
-    docs/issues/413-cold-read-grid-cell-failure-handling-design.md, whose
+    nc-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, whose
     section 8 lists the cases below). The first failure prints RETRYING:
     with the attempt's cause and keeps the attempt-1 log; a retry that
     lands prints saved: and its log is deleted; a retry that fails prints
@@ -99,7 +99,7 @@ WHAT IS PINNED HERE.
     as a prefix, added because two cold-read runs going at once in one
     checkout each held a file of every one of those names and a cell's
     near-miss recovery could take the other run's; that case is now met in
-    the recovery itself (scripts/cold-read-cell-common-test.py pins it). The
+    the recovery itself (nc-systems/cold-read/tests/cold-read-cell-common-test.py pins it). The
     cases below assert the bare names on every file in the set.
 
   - A record directory is named `<file stem>-<YYYY-MM-DD>`, or
@@ -118,7 +118,7 @@ WHAT IS PINNED HERE.
     so is a name ending in none of them, because a check that refused every
     target would pass every refusal case.
 
-Run: python3 scripts/cold-read-grid-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-grid-test.py
 """
 
 import datetime
@@ -132,14 +132,16 @@ import tempfile
 import time
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPTS_DIR.parent
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
-    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+    SYSTEM_DIRECTORY / "tests" / "cold-read-scratch-repository-test-fixture.py")
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
@@ -351,7 +353,7 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         repository.parent / "stub-attempt-counts" / repository.name / str(time.time_ns()))
     environment.update(environment_overrides or {})
     return subprocess.run(
-        [sys.executable, str(repository / "scripts" / "cold-read-grid.py"),
+        [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-grid.py"),
          "--target", target_relative_path],
         capture_output=True, text=True, check=False, env=environment,
     )
@@ -545,7 +547,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stdout))
 
     # --- Every failure case below, in the design's terms ---------------------
-    # docs/issues/413-cold-read-grid-cell-failure-handling-design.md, section
+    # nc-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, section
     # 8. The real limit texts (section 4) are the fixtures: line 2 of the two
     # kept logs it cites, and the 2026-09-18 logged-out capture on ned-box.
     SESSION_LIMIT_LINE = "You've hit your session limit · resets 8:50pm (America/Los_Angeles)"
@@ -788,7 +790,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # other: retried, then absent as program-unstartable, which is not
     # agent-binary-wide; the run goes on rather than ending in a traceback.
     repository = build_scratch_repository(scratch, "checkout-unstartable")
-    (repository / "scripts" / "cold-read-claude-cell.py").chmod(0o644)
+    (repository / "nc-systems" / "cold-read" / "cold-read-claude-cell.py").chmod(0o644)
     result = run_grid(repository, stubs)
     failed_lines = lines_opening(result, "FAILED")
     check("an unstartable program is RETRYING then FAILED (exit none) as program-unstartable",
@@ -1019,7 +1021,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # each read was. The grid is loaded in-process for the name function
     # alone, which is handed its clock; nothing runs.
     grid_spec = importlib.util.spec_from_file_location(
-        "cold_read_grid_under_test", SCRIPTS_DIR / "cold-read-grid.py")
+        "cold_read_grid_under_test", SYSTEM_DIRECTORY / "cold-read-grid.py")
     grid_module = importlib.util.module_from_spec(grid_spec)
     grid_spec.loader.exec_module(grid_module)
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
@@ -1114,7 +1116,7 @@ with tempfile.TemporaryDirectory() as scratch:
           == sorted(p.relative_to(record_directory) for p in record_directory.rglob("*") if p.is_file()),
           f"store={sorted(str(p) for p in store_copy.rglob('*'))}")
     check("the closing text names the ship command for after triage.md",
-          f"scripts/cold-read-record-ship.py {record_directory.resolve()}" in result.stdout
+          f"nc-systems/cold-read/cold-read-record-ship.py {record_directory.resolve()}" in result.stdout
           and "gitignored" in result.stdout and "user-ruled 2026-08-14" not in result.stdout,
           result.stdout[-900:])
     check("a settled run that shipped still exits 0",
@@ -1148,7 +1150,7 @@ with tempfile.TemporaryDirectory() as scratch:
         environment = dict(os.environ)
         environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(repository / SCRATCH_LOG_STORE_RELATIVE)
         return subprocess.run(
-            [sys.executable, str(repository / "scripts" / "cold-read-record-ship.py"),
+            [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
              str(record_directory)],
             capture_output=True, text=True, check=False, env=environment)
 

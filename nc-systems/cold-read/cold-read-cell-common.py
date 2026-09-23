@@ -68,7 +68,7 @@ provenance stamp recorded what the cold-read-cell was asked to do but nothing
 about what the doing cost -- so `duration_s=`, and `tokens=` where the runtime
 reports one, are now stamped alongside the model and the cold-read-tier.
 
-A THIRD LEG, 2026-09-07: scripts/cold-read-agy-cell.py runs the Antigravity
+A THIRD LEG, 2026-09-07: nc-systems/cold-read/cold-read-agy-cell.py runs the Antigravity
 CLI (`agy`) and pins the fast cold-read-tier (user-ruled that day, after
 measurements: gemini-3.8-flash at medium). It is built on this module
 exactly as the other two are, and it adds one seam the others leave
@@ -79,7 +79,7 @@ the quirk is the runtime's; the writing, stamping and announcing stay here
 so the leg cannot drift.
 
 A CALLER THAT IS NOT A COLD-READ-CELL LAUNCHER, 2026-09-07:
-scripts/cold-read-restater-judge-cell.py, the restater judge the user ruled
+nc-systems/cold-read/cold-read-restater-judge-cell.py, the restater judge the user ruled
 2026-09-05. It reads four files per case rather than one cold-read-target, so
 it cannot use `run_cell`'s argument surface or `compose_prompt`; what it does
 use is everything from the composed prompt onwards -- `run_model_chain` and
@@ -108,14 +108,15 @@ import importlib.util
 # module so no program keeps its own copy (user-ruled 2026-09-19, walk
 # file-naming-and-location-standards-cold-read-findings, item 4). The
 # convention -- importlib for a module whose filename has hyphens -- is
-# scripts/cold-read-cell-common.py's.
+# nc-systems/cold-read/cold-read-cell-common.py's.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# This file sits in nc-systems/cold-read/, two directories below the root.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 # ONE PROMPT PER PASS, READ BY BOTH AGENT-BINARIES. For three days in
@@ -134,12 +135,12 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 # per the same day's qualifier): a concise sentence-level restatement, then
 # concise criterion-tagged stumble and coverage findings. It is run singly
 # -- one cold-read-cell against one walk item -- never by the cold-read-grid,
-# whose roster is scripts/cold-read-grid.py's own. `terminology` (user-ruled
+# whose roster is nc-systems/cold-read/cold-read-grid.py's own. `terminology` (user-ruled
 # 2026-09-05) is the cold-read-grid's second pass: the cold-read-target's
 # terms against five criteria.
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # The restater judge is deliberately absent from that list. Its pass token,
-# `restater-judge`, is a constant in scripts/cold-read-restater-judge-cell.py,
+# `restater-judge`, is a constant in nc-systems/cold-read/cold-read-restater-judge-cell.py,
 # which parses its own arguments and composes its own prompt because a judge
 # run reads four files per case rather than one cold-read-target: a
 # cold-read-cell asked for that pass through a --target launcher would
@@ -149,7 +150,7 @@ CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # subset its own tier map names, and its --tier accepts only that
 # subset (see `build_argument_parser`): `fast` (user-ruled 2026-09-07:
 # gemini-3.8-flash at medium, replacing gpt-5.6-terra at low) is pinned by
-# scripts/cold-read-agy-cell.py alone, and `deep` and `second` by the Claude
+# nc-systems/cold-read/cold-read-agy-cell.py alone, and `deep` and `second` by the Claude
 # and Codex launchers alone, so no launcher can be asked for a cold-read-tier
 # it has no model for.
 # `judge` is absent for the same reason `restater-judge` is absent from
@@ -169,7 +170,7 @@ CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # cell that beats it on no target and still contributes unique findings --
 # the 2026-09-03 tier-roster campaign found Fable beats Opus on nothing, and
 # adding it lifted pair coverage 0.83 -> 0.89 at no extra wall clock (the
-# figures and their citations are in scripts/cold-read-claude-cell.py, beside
+# figures and their citations are in nc-systems/cold-read/cold-read-claude-cell.py, beside
 # the pins they justify). Nothing ran wrong under the old names; the name
 # misled a reader, and it had misled him.
 # COLD-READ-RECORDS ALREADY IN THE LOG-STORE KEEP THEIR OLD FILENAMES --
@@ -289,7 +290,7 @@ def build_argument_parser(
              "effort is answering the question the tier map exists to answer, "
              "and quietly running the mapped level instead would defeat the "
              "request. The fast tier's own launcher "
-             "(scripts/cold-read-agy-cell.py) pins medium; on the Claude and "
+             "(nc-systems/cold-read/cold-read-agy-cell.py) pins medium; on the Claude and "
              "Codex launchers a low-effort run goes through this flag.",
     )
     parser.add_argument(
@@ -445,7 +446,7 @@ class WriteDetectorUnavailable(Exception):
 
 
 # THE PHRASES THE COLD-READ-GRID LIFTS OUT OF A COLD-READ-CELL'S LOG.
-# scripts/cold-read-grid.py deletes a cold-read-cell's stderr log on the
+# nc-systems/cold-read/cold-read-grid.py deletes a cold-read-cell's stderr log on the
 # success path, so a status line it does not lift there is a line nobody
 # ever reads. The cold-read-grid imports these constants rather than copying
 # them, and it matches each one only at the head of a line this program
@@ -457,9 +458,9 @@ class WriteDetectorUnavailable(Exception):
 # (nedschorus#244). So every status line below puts its phrase immediately
 # after `{program}: `, and nothing else may. Pinned as constants because each
 # is a contract with the cold-read-grid, not a sentence to reword in passing;
-# scripts/cold-read-grid-test.py drives each one through a real cold-read-cell.
+# nc-systems/cold-read/tests/cold-read-grid-test.py drives each one through a real cold-read-cell.
 # THE CAUSE OF A FAILED ATTEMPT (nedschorus#413; the design is
-# docs/issues/413-cold-read-grid-cell-failure-handling-design.md, section 4).
+# nc-systems/cold-read/cold-read-grid-cell-failure-handling-design.md, section 4).
 # After every attempt that produced no report, a cold-read-cell program prints
 # one line of its own, `<program>: cause: <class> — <detail>`, as the last line
 # about that attempt. The cold-read-grid lifts the LAST such line from the
@@ -681,14 +682,14 @@ def stray_writes_since(baseline: set, own_report_path=None) -> list[str]:
 # The phrase the cold-read-grid greps this cold-read-cell's stderr log for,
 # so a recovery is visible on the cold-read-grid's own output rather than only
 # in a log the cold-read-grid deletes on success. Kept as a constant because
-# it is a contract with scripts/cold-read-grid.py, not a sentence anyone
+# it is a contract with nc-systems/cold-read/cold-read-grid.py, not a sentence anyone
 # should reword in passing.
 NEAR_MISS_RECOVERY_PHRASE = "recovered a near-miss report"
 
 # The phrase a cold-read-cell prints when its runtime's stdout was
 # taken as the report body. A launcher opts into this by passing
 # `recover_report_from_stdout` to `run_cell`; today only the Antigravity leg
-# (scripts/cold-read-agy-cell.py) does, for a quirk measured on 2026-09-04:
+# (nc-systems/cold-read/cold-read-agy-cell.py) does, for a quirk measured on 2026-09-04:
 # gemini-3.8-flash sometimes answers the whole review in chat instead of
 # writing the file it was told to. The Claude and Codex legs pass nothing and
 # keep failing on that path, because their stdout on a no-report exit has only
@@ -912,7 +913,7 @@ def checkout_commit_for_provenance_stamp(checkout: pathlib.Path) -> str:
     no checkout, a checkout with no commit yet, no `git` on PATH, a call that
     outlives CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS -- returns "", and the caller
     omits the field. It never raises and it never prints: a cold-read-cell's
-    stderr is read by scripts/cold-read-grid.py for phrases it has a contract
+    stderr is read by nc-systems/cold-read/cold-read-grid.py for phrases it has a contract
     with, and a stamp's own trouble is not one of them.
     """
     def git_output(*arguments):
@@ -1039,7 +1040,7 @@ def run_model_chain(
     line in the log as the attempt's.
 
     A CHAIN WHOSE MODELS RUN AT DIFFERENT EFFORTS (2026-09-07). Until the
-    restater judge (scripts/cold-read-restater-judge-cell.py) every chain ran
+    restater judge (nc-systems/cold-read/cold-read-restater-judge-cell.py) every chain ran
     one effort, so `effort` was one string and the stamp used it. The judge's
     chain is the user's ruling of 2026-09-05: Fable 5.1 at xhigh, and Opus 5
     at max when Fable is unavailable. One chain, two efforts -- so a launcher
@@ -1371,7 +1372,7 @@ def report_stray_writes(program: str, baseline, own_report_path=None) -> None:
     anyone got. A runtime whose compliance is never compared cannot be
     reported non-compliant. Here the call sits on the shared path both
     launchers run, so neither runtime can be skipped without deleting the call
-    for both; scripts/cold-read-cell-common-test.py drives a stray write
+    for both; nc-systems/cold-read/tests/cold-read-cell-common-test.py drives a stray write
     through each launcher so a gate cannot be reintroduced quietly.
     """
     if baseline is None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/cold-read-record-ship.py: the four rules, the exits, the
+"""Tests for nc-systems/cold-read/cold-read-record-ship.py: the four rules, the exits, the
 one-line stdout, --all, and the shape of the remote invocation.
 
 Two modes, as the script's docstring says. LOCAL: the destination override
@@ -15,7 +15,7 @@ patched, the only way to reach the ned-box branch -- a subprocess's hostname
 cannot be faked -- where the copy is local but the printed citation must
 still name the host (nedschorus#299). Nothing here touches ned-box.
 
-Run: python3 scripts/cold-read-record-ship-test.py   (exit 0 = all passed)
+Run: python3 nc-systems/cold-read/tests/cold-read-record-ship-test.py   (exit 0 = all passed)
 """
 
 import contextlib
@@ -32,8 +32,10 @@ import sys
 import tempfile
 import time
 
-SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
-SHIP = SCRIPTS_DIR / "cold-read-record-ship.py"
+# This suite sits in nc-systems/cold-read/tests/; the programs it tests are
+# one directory up.
+SYSTEM_DIRECTORY = pathlib.Path(__file__).resolve().parent.parent
+SHIP = SYSTEM_DIRECTORY / "cold-read-record-ship.py"
 DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 RULED_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records"
 
@@ -575,12 +577,12 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     # --all reads cold-read-records/ beside the script's own repository root,
     # so the case runs a copy of the script from a scratch repository.
     scratch_repo = scratch / "repo"
-    # The whole scripts/ directory, __pycache__ aside, so a shared module
+    # The whole nc-systems/cold-read/ directory, __pycache__ aside, so a shared module
     # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
     # md-skills-seat-open-decisions-2026-09-20 item 3).
-    shutil.copytree(SCRIPTS_DIR, scratch_repo / "scripts",
+    shutil.copytree(SYSTEM_DIRECTORY, scratch_repo / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
-    scratch_ship = scratch_repo / "scripts" / SHIP.name
+    scratch_ship = scratch_repo / "nc-systems" / "cold-read" / SHIP.name
     all_store = str(scratch / "store-all" / "cold-read-records")
     good = make_record(scratch_repo / "cold-read-records", "2026-09-01-good", {"r.md": REPORT_A})
     bad = make_record(scratch_repo / "cold-read-records", "2026-09-02-bad", {"r.md": REPORT_B})
