@@ -22,6 +22,15 @@ only when three mechanical checks all pass:
                 working directories at all, the worktree is kept and the
                 reason says the check could not be trusted — it does not
                 claim a process that was never seen.
+  4. quiet    - for a worktree the Agent tool made for a subagent
+                (`agent-<id>`), neither the subagent's transcript nor the
+                worktree itself was written in the last
+                AGENT_WORKTREE_QUIET_SECONDS. The vacancy check cannot see
+                such a subagent: it runs inside its parent `claude` process,
+                whose working directory stays the seat home, and only the
+                short-lived shell of each Bash call sits in the worktree. The
+                subagent's transcript, written on every message, is the one
+                trace of it that lives outside a process.
 
 Anything that fails a check is KEPT, with the failing reason. Worktrees
 outside <repo>/.claude/worktrees/ — agent seat homes, manual checkouts — are
@@ -65,9 +74,11 @@ Usage:
 Exit codes: 0 ok, 1 a removal or a ref deletion failed, 2 bad invocation.
 """
 
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +98,19 @@ DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 # paths on the Mac, 382 on the box), so the only thing a larger number costs is
 # patience on a machine where lsof is genuinely wedged.
 VACANCY_CHECK_TIMEOUT_SECONDS = 120
+
+# How long an Agent-tool subagent's worktree must have gone unwritten -- its
+# transcript and the worktree's own .git file both -- before it can be removed.
+# OBSERVED 2026-09-23 on ned-box, reviewing PR "Each handoff removes the
+# finished worktrees and merged branches": a probe subagent with worktree
+# isolation got .claude/worktrees/agent-a4443cb0b76c9fc83 while its parent
+# claude's cwd stayed /home/nedlern/agents/merge-lane-2, so between Bash calls
+# lsof saw nothing inside the worktree. Its transcript is
+# ~/.claude/projects/<parent's project>/<session>/subagents/agent-<id>.jsonl on
+# both machines. An hour is far longer than any one model turn, and a long
+# tool call is already seen by the vacancy check through its shell.
+AGENT_WORKTREE_QUIET_SECONDS = 3600
+AGENT_WORKTREE_NAME_PREFIX = "agent-"
 
 
 def run_git(repo, *arguments):
@@ -278,6 +302,45 @@ def worktree_vacancy_keep_reason(worktree):
     return None
 
 
+def claude_projects_directory():
+    """Where Claude Code keeps its session transcripts on this machine."""
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(configured) if configured else Path.home() / ".claude"
+    return base / "projects"
+
+
+def agent_worktree_quiet_keep_reason(worktree, now=None):
+    """Why an Agent-tool subagent's worktree must be kept because its subagent
+    may still be working, or None when it has been quiet long enough.
+
+    Only a worktree named agent-<id> is judged here; every other name answers
+    None. The newest of two times counts: the subagent's transcript, found by
+    its id under any project and session, and the worktree's .git file, written
+    when the worktree was made -- so a worktree whose transcript has not been
+    written yet, or has been pruned, is judged by its own age. A time that
+    cannot be read is not evidence of quiet, so it keeps.
+    """
+    if not worktree.name.startswith(AGENT_WORKTREE_NAME_PREFIX):
+        return None
+    agent_id = worktree.name[len(AGENT_WORKTREE_NAME_PREFIX):]
+    now = time.time() if now is None else now
+    written = []
+    try:
+        written.append((worktree / ".git").stat().st_mtime)
+        for transcript in claude_projects_directory().glob(
+                f"*/*/subagents/agent-{agent_id}.jsonl"):
+            written.append(transcript.stat().st_mtime)
+    except OSError as error:
+        return f"its subagent's activity could not be read ({error.strerror})"
+    quiet_seconds = now - max(written)
+    if quiet_seconds < AGENT_WORKTREE_QUIET_SECONDS:
+        return (f"its Agent-tool subagent or the worktree was written "
+                f"{int(quiet_seconds // 60)} min ago, so the subagent may still be "
+                f"working in it (quiet for {AGENT_WORKTREE_QUIET_SECONDS // 60} min "
+                f"before removal)")
+    return None
+
+
 def classify(worktree, branch, main_checkout):
     """Return (done: bool, reason: str) for one worktree."""
     managed_area = (main_checkout / ".claude" / "worktrees").resolve()
@@ -304,6 +367,10 @@ def classify(worktree, branch, main_checkout):
         return False, f"{commits} commit(s) not on origin/main"
 
     keep_reason = worktree_vacancy_keep_reason(worktree)
+    if keep_reason is not None:
+        return False, keep_reason
+
+    keep_reason = agent_worktree_quiet_keep_reason(worktree)
     if keep_reason is not None:
         return False, keep_reason
 

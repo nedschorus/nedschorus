@@ -1759,7 +1759,20 @@ def run_agent_exit_record_cases(workspace: Path):
 def run_handoff_worktree_cleanup_cases(workspace: Path):
     """Each handoff runs scripts/clean-worktrees.py --remove between the
     retiring session's stop and the successor's launch (superwalk item 6,
-    2026-09-23), and nothing the cleaner does can stop the launch."""
+    2026-09-23), and nothing the cleaner does can stop the launch.
+
+    GIT_DIR and GIT_WORK_TREE are removed for these cases and put back after:
+    either one would send this fixture's git commands, and the cleaner's
+    removals, into another repository (GHI 639's hazard)."""
+    redirecting = {name: os.environ.pop(name) for name in ("GIT_DIR", "GIT_WORK_TREE")
+                   if name in os.environ}
+    try:
+        run_handoff_worktree_cleanup_cases_without_git_redirection(workspace)
+    finally:
+        os.environ.update(redirecting)
+
+
+def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     root = workspace / "handoff-worktree-cleanup"
     root.mkdir()
     remote = root / "remote.git"
@@ -1781,6 +1794,15 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
     git_in(["worktree", "add", "--quiet", "-b", "unfinished-branch", str(unfinished)], home)
     (unfinished / "notes.txt").write_text("uncommitted\n", encoding="utf-8")
     git_in(["branch", "orphaned-branch"], home)
+    # An Agent-tool subagent's worktree, clean and landed, made a moment ago:
+    # its subagent runs inside its parent claude process, so no process has
+    # its working directory here between the subagent's Bash calls.
+    live_subagent = home / ".claude" / "worktrees" / "agent-0123456789abcdef0"
+    git_in(["worktree", "add", "--quiet", "-b", "worktree-agent-0123456789abcdef0",
+            str(live_subagent)], home)
+    # Everything the cleaner is to remove is made an hour and a half old.
+    long_ago = time.time() - 5400
+    os.utime(finished / ".git", (long_ago, long_ago))
 
     report = supervisor.remove_finished_worktrees_at_handoff(home)
     branches = git_in(["branch", "--format=%(refname:short)"], home).stdout.split()
@@ -1792,10 +1814,34 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
           f"{report} {branches}")
     check("WORKTREE CLEANUP: a branch with no worktree and nothing beyond main is deleted",
           "orphaned-branch" not in branches, f"{report} {branches}")
-    check("WORKTREE CLEANUP: the report counts what was removed and deleted",
+    check("WORKTREE CLEANUP: a live Agent-tool subagent's clean, landed worktree is kept",
+          live_subagent.exists() and "worktree-agent-0123456789abcdef0" in branches,
+          f"{report} {branches}")
+    check("WORKTREE CLEANUP: the report counts what was removed and every branch deleted, "
+          "the one deleted with its worktree included",
           report == ("worktree cleanup: 1 finished worktree(s) removed, "
-                     "1 branch ref(s) with nothing beyond main deleted"),
+                     "2 branch ref(s) with nothing beyond main deleted"),
           report)
+
+    # With GIT_DIR naming another repository, the cleanup still acts on the
+    # seat's own, and leaves the other alone.
+    other = root / "other-repository"
+    git_in(["clone", "--quiet", str(remote), str(other)], root)
+    git_in(["branch", "other-landed-branch"], other)
+    second_finished = home / ".claude" / "worktrees" / "second-finished-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "second-finished-branch",
+            str(second_finished)], home)
+    os.utime(second_finished / ".git", (long_ago, long_ago))
+    os.environ["GIT_DIR"] = str(other / ".git")
+    try:
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        del os.environ["GIT_DIR"]
+    other_branches = git_in(["branch", "--format=%(refname:short)"], other).stdout.split()
+    check("WORKTREE CLEANUP: GIT_DIR in the supervisor's environment does not "
+          "redirect the cleanup to another repository",
+          not second_finished.exists() and "other-landed-branch" in other_branches,
+          f"{report} {other_branches}")
 
     not_a_checkout = root / "not-a-checkout"
     not_a_checkout.mkdir()
@@ -1811,6 +1857,39 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
     elapsed = time.monotonic() - started
     check("WORKTREE CLEANUP: a cleaner that hangs is stopped at the bound",
           elapsed < 15 and "did not finish in 1 s" in report, f"{elapsed:.1f}s {report}")
+
+    partway = root / "partway-cleaner.py"
+    partway.write_text(
+        "import sys, time\n"
+        "print('agent-early: removed, branch worktree-agent-early deleted', flush=True)\n"
+        "time.sleep(30)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=partway):
+        report = supervisor.remove_finished_worktrees_at_handoff(home, timeout_seconds=2)
+    check("WORKTREE CLEANUP: a cleaner stopped at the bound partway through "
+          "reports what it removed before the stop",
+          report.startswith("worktree cleanup: 1 finished worktree(s) removed, "
+                            "1 branch ref(s)")
+          and "did not finish in 2 s" in report, report)
+
+    crashing = root / "crashing-cleaner.py"
+    crashing.write_text("raise RuntimeError('the cleaner broke')\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=crashing):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner that crashes is reported with its error, "
+          "not as nothing removed",
+          "exited 1" in report and "the cleaner broke" in report, report)
+
+    unusable = root / "unusable-vacancy-cleaner.py"
+    unusable.write_text(
+        "print('agent-x: kept — the vacancy check (lsof) could not be run')\n"
+        "print('done-y: removed, branch done-y-branch left in place "
+        "(git branch -d refused)')\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=unusable):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a branch left in place and an unusable vacancy check "
+          "are named in the report",
+          "1 branch(es) left in place" in report
+          and "kept because the vacancy check could not be run" in report, report)
 
     with supervisor_names_replaced(sys=SimpleNamespace(executable=str(root / "no-such-python"))):
         report = supervisor.remove_finished_worktrees_at_handoff(home)
