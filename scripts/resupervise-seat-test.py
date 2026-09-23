@@ -483,18 +483,24 @@ def run_override_propagation_case(workspace: Path):
 
 
 def run_box_forwarding_case(workspace: Path):
-    """--machine ubuntu forwards the overrides to both of its halves.
+    """--machine ubuntu forwards --handoff-dir to both of its halves, and
+    refuses --agents-root.
 
     The box-side --prepare-only checks and the Mac-side ubuntu launcher each
-    resolve the directories themselves, so a value given here and not
-    forwarded would steer nothing past the argument parser. Values travel
-    verbatim (they are box-local paths; the box expands its own ~) and only
-    when the operator gave them — the machine's own defaults must not be
-    replaced by a Mac-expanded path. Probed in-process with ssh and the exec
-    both captured.
+    resolve the handoff directory themselves, so a value given here and not
+    forwarded would steer nothing past the argument parser. It travels
+    verbatim (a box-local path; the box expands its own ~) and only when the
+    operator gave it — the machine's own default must not be replaced by a
+    Mac-expanded path. An agents root does not travel at all: a box seat is
+    always ~/agents/<name> on the box, because launch-claude-ubuntu reads no
+    agents-root variable (user-ruled 2026-09-22, merge-lane-2's walk), so a
+    root given for a box seat is refused before anything runs. Probed
+    in-process with ssh and the exec both captured.
     """
     import argparse
     import importlib.util
+    import io
+    from contextlib import redirect_stderr
     spec = importlib.util.spec_from_file_location("resupervise_under_test",
                                                   RESUPERVISE_SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -528,23 +534,36 @@ def run_box_forwarding_case(workspace: Path):
 
     arguments = argparse.Namespace(
         name="box-carry", machine="ubuntu", dry_run=False, prepare_only=False,
-        agent_box="testbox", handoff_dir="/box/handoffs", agents_root="/box/agents")
+        agent_box="testbox", handoff_dir="/box/handoffs", agents_root="")
     module.resupervise_box_seat(arguments)
     remote_command = fake_subprocess.calls[0][-1]
     remote_tokens = shlex.split(remote_command)  # parsed as the box shell will
-    check("the box-side checks are given the overrides, verbatim",
-          "/box/handoffs" in remote_tokens and "/box/agents" in remote_tokens
-          and "--handoff-dir" in remote_tokens and "--agents-root" in remote_tokens,
+    check("the box-side checks are given the handoff override, verbatim",
+          "/box/handoffs" in remote_tokens and "--handoff-dir" in remote_tokens,
           remote_command)
     _, _, environment = execve_calls[0]
-    check("the ubuntu launch carries the overrides in its environment",
-          environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agents"
-          and shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
+    check("the ubuntu launch carries the handoff override in its environment",
+          shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
               == ["--handoff-dir", "/box/handoffs"]
           and environment.get("NEDSCHORUS_AGENT_BOX") == "testbox",
           {key: environment.get(key) for key in
-           ("NEDSCHORUS_AGENTS_ROOT", "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS",
-            "NEDSCHORUS_AGENT_BOX")})
+           ("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", "NEDSCHORUS_AGENT_BOX")})
+
+    # The box half forwards no agents root even when handed one: main()
+    # refuses first, and this pins that nothing downstream would carry it.
+    fake_subprocess.calls.clear()
+    execve_calls.clear()
+    arguments = argparse.Namespace(
+        name="box-root", machine="ubuntu", dry_run=False, prepare_only=False,
+        agent_box="testbox", handoff_dir="", agents_root="/box/agents")
+    module.resupervise_box_seat(arguments)
+    remote_command = fake_subprocess.calls[0][-1]
+    _, _, environment = execve_calls[0]
+    check("an agents root reaches neither box half",
+          "--agents-root" not in remote_command
+          and "/box/agents" not in remote_command
+          and "NEDSCHORUS_AGENTS_ROOT" not in environment,
+          (remote_command, environment.get("NEDSCHORUS_AGENTS_ROOT")))
 
     # PR #134 review finding 1, the box halves: an apostrophe path must
     # survive the remote shell's parse and the launcher hook's parse.
@@ -552,19 +571,16 @@ def run_box_forwarding_case(workspace: Path):
     execve_calls.clear()
     arguments = argparse.Namespace(
         name="box-quote", machine="ubuntu", dry_run=False, prepare_only=False,
-        agent_box="testbox", handoff_dir="/box/agent's handoffs",
-        agents_root="/box/agent's root")
+        agent_box="testbox", handoff_dir="/box/agent's handoffs", agents_root="")
     module.resupervise_box_seat(arguments)
     remote_tokens = shlex.split(fake_subprocess.calls[0][-1])
     _, _, environment = execve_calls[0]
-    check("apostrophe paths survive the box remote command's shell parse",
-          "/box/agent's handoffs" in remote_tokens
-          and "/box/agent's root" in remote_tokens,
+    check("an apostrophe path survives the box remote command's shell parse",
+          "/box/agent's handoffs" in remote_tokens,
           fake_subprocess.calls[0][-1])
-    check("apostrophe paths survive the ubuntu launcher hook's shell parse",
+    check("an apostrophe path survives the ubuntu launcher hook's shell parse",
           shlex.split(environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS", ""))
-          == ["--handoff-dir", "/box/agent's handoffs"]
-          and environment.get("NEDSCHORUS_AGENTS_ROOT") == "/box/agent's root",
+          == ["--handoff-dir", "/box/agent's handoffs"],
           environment.get("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"))
 
     fake_subprocess.calls.clear()
@@ -582,9 +598,30 @@ def run_box_forwarding_case(workspace: Path):
           and "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS" not in environment,
           (remote_command, environment.get("NEDSCHORUS_AGENTS_ROOT")))
 
-    # default_agents_root reads the launchers' own variable (the same rule as
-    # recover-crashed-seats.py's twin), so the no-flag checks and the launch
-    # resolve one root.
+    # --machine ubuntu with --agents-root is refused as a bad invocation,
+    # before any ssh and any launch, on the Mac half and on a by-hand
+    # --prepare-only run alike, and the refusal names the box's fixed root.
+    for label, extra in (("", []), (" with --prepare-only", ["--prepare-only"])):
+        fake_subprocess.calls.clear()
+        execve_calls.clear()
+        refusal = io.StringIO()
+        with redirect_stderr(refusal):
+            status = module.main(["box-refused", "--machine", "ubuntu",
+                                  "--agents-root", "/box/agents",
+                                  "--agent-box", "testbox", *extra])
+        check(f"--machine ubuntu --agents-root{label} is refused with exit 2, "
+              "before any ssh or launch",
+              status == 2 and fake_subprocess.calls == [] and execve_calls == [],
+              (status, fake_subprocess.calls, execve_calls))
+        check(f"--machine ubuntu --agents-root{label}: the refusal says to drop the "
+              "flag and names ~/agents/<name> on the box",
+              "re-run without --agents-root" in refusal.getvalue()
+              and "~/agents/<name> on the box" in refusal.getvalue(),
+              refusal.getvalue())
+
+    # default_agents_root reads the Mac launcher's own variable (the same
+    # rule as recover-crashed-seats.py's twin), so the no-flag checks and the
+    # launch resolve one root.
     FakeOs.environ["NEDSCHORUS_AGENTS_ROOT"] = "/elsewhere/agents"
     check("default_agents_root honors NEDSCHORUS_AGENTS_ROOT",
           module.default_agents_root() == Path("/elsewhere/agents"),

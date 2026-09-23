@@ -203,11 +203,14 @@ BOOT_RECOVERY_IGNITION_MARKER = "(Recovered at supervisor boot:"
 
 
 def default_agents_root() -> Path:
-    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as both launchers resolve it.
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as launch-claude-mac resolves it.
     Resolving differently means, on a machine where that variable is set,
     assessing ~/agents while every seat lives elsewhere — recovery then
     refuses on "no seat directory" (PR #131 round-4 review note; user-ruled
-    2026-08-22: allowed overrides must work)."""
+    2026-08-22: allowed overrides must work). launch-claude-ubuntu reads no
+    such variable (user-ruled 2026-09-22, merge-lane-2's walk): a box seat
+    is always ~/agents/<name>, and nothing sets the variable on the box, so
+    this read gives ~/agents there too."""
     return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
@@ -733,10 +736,13 @@ def by_hand_launch_command_for_seat(name: str, seat_directory: Path, handoff_dir
     --first-prompt-file, as launch_seat passes it. On the Mac it runs
     launch-claude-mac; elsewhere it names launch-claude-ubuntu, which is run on
     the Mac and drives the box, and whose --first-prompt-file takes a box-side
-    path — which a file this tool wrote on the box is."""
+    path — which a file this tool wrote on the box is. The box form carries
+    no agents root: launch-claude-ubuntu reads none and always seats the box's
+    ~/agents/<name> (user-ruled 2026-09-22, merge-lane-2's walk)."""
     launcher = launcher_path()
-    words = [
-        f"NEDSCHORUS_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}",
+    words = [] if launcher is None else [
+        f"NEDSCHORUS_AGENTS_ROOT={shlex.quote(str(seat_directory.parent))}"]
+    words += [
         "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS=" + shlex.quote(
             compose_supervisor_arguments_for_seat_launch(handoff_directory,
                                                          extra_supervisor_arguments)),

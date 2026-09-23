@@ -6,9 +6,9 @@
 # one is a real mistake to make.
 #
 # Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
-# type is the whole configuration. The agent's directory is
-# $NEDSCHORUS_AGENTS_ROOT/<name> on the box (default ~/agents/<name>), created
-# on first use. A CLAUDE.local.md in that directory supplies the agent's
+# type is the whole configuration. The agent's directory is ~/agents/<name>
+# on the box, always, created on first use (see the NO AGENTS ROOT note
+# below: no variable moves it). A CLAUDE.local.md in that directory supplies the agent's
 # identity; without one the agent is generic and the name is just a label.
 # choirmaster is not registered anywhere — founding step 6 puts real content in
 # its directory, and this script treats it like any other name.
@@ -53,22 +53,29 @@
 
 set -eu
 
-# AGENTS_ROOT is a BOX-side path. A leading ~ is carried to the box as its
-# $HOME; any other character — spaces and apostrophes included — travels
-# literally, escaped per parse layer below. A ~user/ form is REFUSED rather
-# than half-working: the box shell would treat the quoted value as a literal
-# directory named ~user while the fleet's Python tools expanduser() it to
-# that user's real home — one seat, silently split across two directories
-# (PR #137 review P3, user-ruled 2026-08-22: overrides either work or are
-# blocked). Agent names stay charset-checked: they ride in more places than
-# paths do.
+# NO AGENTS ROOT IS READ HERE (user-ruled 2026-09-22, in merge-lane-2's walk
+# merge-lane-2-questions-concerns-and-suggestions-2026-09-22, carried to PR
+# [The ubuntu launcher reads its own box-side agents root](https://github.com/nedschorus/nedschorus/pull/619)
+# as merge-lane-2's review). The box seat's directory is ~/agents/<name> on
+# the box, always: this Mac sends only the seat name, and the box expands its
+# own $HOME. This launcher used to read NEDSCHORUS_AGENTS_ROOT, a variable
+# naming a path on the machine that reads it, and carry that MAC-side value to
+# the box. It leaked: recover-crashed-seats.py exports the Mac default into
+# launch-claude-mac's environment, every Mac seat inherits it, and a Mac seat
+# that ran this launcher sent /Users/... to a box where it names nothing. The
+# cross-machine override is therefore blocked outright rather than warned
+# about and defaulted, because a warn-and-carry-on launch is the half-working
+# case the 2026-08-22 ruling forbids ("overrides either work or are blocked",
+# review P3 on PR [launch-claude-ubuntu: per-parse-layer escaping of operator
+# values](https://github.com/nedschorus/nedschorus/pull/137)). There is no
+# box-side override either: shells started over ssh do not source
+# ~/.bashrc, so a box-side variable would steer an interactive run and not
+# an ssh-launched seat, which is the split-seat failure that ruling exists
+# to prevent. If a movable box root is ever
+# needed, it goes in a box-side FILE that both paths read; nothing needs one
+# today, and every box seat lives in /home/nedlern/agents. Agent names stay
+# charset-checked: they ride in more places than paths do.
 AGENT_BOX="${NEDSCHORUS_AGENT_BOX:-ned}"
-AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-~/agents}"
-case "$AGENTS_ROOT" in
-    ("~"[!/]*)
-        echo "launch-claude-ubuntu: ~user agents roots are not supported — the box shell and the fleet's Python tools resolve them to different directories, splitting the seat. Use an absolute box-side path." >&2
-        exit 2 ;;
-esac
 
 # The no-name case is the common mistake, so it teaches rather than scolds:
 # what a name is for, and which agents are up on the box right now to pick from
@@ -78,7 +85,7 @@ usage() {
     echo "usage: launch-claude-ubuntu <name> [--no-attach] [--first-prompt-file <box-path>]" >&2
     echo >&2
     echo "Every agent is named, and the name is the whole configuration: it names the" >&2
-    echo "tmux session on the box, the home directory ($AGENTS_ROOT/<name>), and the" >&2
+    echo "tmux session on the box, the home directory (~/agents/<name> on the box), and the" >&2
     echo "agent's handoff files. Running a name that is already up ATTACHES to that" >&2
     echo "agent — you cannot start a second copy of one." >&2
     echo >&2
@@ -161,21 +168,15 @@ escape_remote_double_quote_context() {
     printf "%s" "$1" | sed 's/[$`"\\]/\\&/g'
 }
 
-AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
-# The P1 form, spliced as \"$AGENT_DIRECTORY_REMOTE\": a leading ~ becomes
-# $HOME so the box still resolves its own home inside the quotes (bare ~
-# would stay literal there); ~user/ forms are refused above. Everything
-# else is escaped so P1 neither expands nor splits it.
-case "$AGENTS_ROOT" in
-    ("~") AGENTS_ROOT_REMOTE="\$HOME" ;;
-    ("~/"*) AGENTS_ROOT_REMOTE="\$HOME$(escape_remote_double_quote_context "${AGENTS_ROOT#?}")" ;;
-    (*) AGENTS_ROOT_REMOTE=$(escape_remote_double_quote_context "$AGENTS_ROOT") ;;
-esac
-AGENT_DIRECTORY_REMOTE="$AGENTS_ROOT_REMOTE/$AGENT_NAME"
-# The P2 form, spliced between single quotes inside the pane command: quoted
-# for P2, then made inert through P1's double-quote context. A literal ~
-# reaching the supervisor is fine — it expanduser()s its --cd itself.
-AGENT_DIRECTORY_SUPERVISOR=$(escape_remote_double_quote_context "$(escape_single_quotes "$AGENT_DIRECTORY")")
+# The seat directory, ~/agents/<name> on the box. Neither form needs
+# escaping: AGENT_NAME is charset-checked above, and the rest is fixed text.
+# The P1 form, spliced as \"$AGENT_DIRECTORY_REMOTE\": \$HOME so the box
+# resolves its own home inside the double quotes (a bare ~ would stay literal
+# there).
+AGENT_DIRECTORY_REMOTE="\$HOME/agents/$AGENT_NAME"
+# The P2 form, spliced between single quotes inside the pane command. A
+# literal ~ reaching the supervisor is fine — it expanduser()s its --cd itself.
+AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 
 # Task-list persistence across seat generations — the twin of the same block
 # in scripts/launch-claude-mac, where the mechanism and its two warnings are
@@ -452,21 +453,16 @@ if ! tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null \
 # shell nobody is watching in a detached session would leak, and would turn
 # the "already running" refusal below into a lie automation acts on (review
 # finding, 2026-08-17). The cd target is double-quoted at the PANE shell's
-# parse (P2), one layer deeper than the P1 form: escaped once more so P1
-# passes it through, with a leading ~ carried as a $HOME the pane shell
-# expands. \${SHELL} is escaped so the box, not this Mac, names the shell.
+# parse (P2), one layer deeper than the P1 form: its $HOME is escaped once
+# more so P1 passes it through and the pane shell expands it to the box's
+# home. \${SHELL} is escaped so the box, not this Mac, names the shell.
 # The twin does the same locally, at scripts/launch-claude-mac.
-case "$AGENTS_ROOT" in
-    ("~") AFTER_EXIT_ROOT="\\\$HOME" ;;
-    ("~/"*) AFTER_EXIT_ROOT="\\\$HOME$(escape_remote_double_quote_context "$(escape_remote_double_quote_context "${AGENTS_ROOT#?}")")" ;;
-    (*) AFTER_EXIT_ROOT=$(escape_remote_double_quote_context "$(escape_remote_double_quote_context "$AGENTS_ROOT")") ;;
-esac
 AFTER_EXIT_COMMAND="echo; \
 echo 'launch-claude-ubuntu: the $AGENT_NAME supervisor exited; this shell is in the seat directory'; \
 echo '  fresh supervised seat:  exit, then (from the Mac) launch-claude-ubuntu $AGENT_NAME'; \
 echo '  resume this dialog:     claude --continue — starts NO supervisor, so that'; \
 echo '                          seat can never reincarnate until it is recovered'; \
-cd \\\"$AFTER_EXIT_ROOT/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
+cd \\\"\\\$HOME/agents/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
 
 # The chained set-option calls tell an iTerm2 tab the session name
 # ("gatekeeper" rather than "ssh"). They ride the same tmux invocation

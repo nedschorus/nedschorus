@@ -351,7 +351,9 @@ class SeatFollower:
 
 
 def default_agents_root() -> Path:
-    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as both launchers resolve it —
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as launch-claude-mac resolves it
+    (launch-claude-ubuntu reads no such variable; a box seat is always
+    ~/agents/<name>, and nothing sets the variable on the box) —
     the same read as recover-crashed-seats.py's and resupervise-seat.py's
     same-named twins. A watcher resolving the root differently on a machine
     where that variable is set iterates a directory no seat lives in and

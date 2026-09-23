@@ -362,9 +362,14 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
     supervisor has written the workspace's state file, which clears its exit
     record, so a case must not read that record after calling this."""
     words = shlex.split(command.replace(" (on the Mac)", ""))
-    extra_arguments = words[1].split("=", 1)[1]
+    # Found by name, not position: the Mac form opens with an agents-root
+    # word and the box form has none (launch-claude-ubuntu reads no root).
+    extra_index = next(index for index, word in enumerate(words)
+                       if word.startswith("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="))
+    extra_arguments = words[extra_index].split("=", 1)[1]
+    after_seat_name = words[extra_index + 3:]  # past the launcher and the name
     supervisor_argv = (["--agent", workspace.name, "--cd", str(workspace.seat_directory),
-                        "--agent-command", sys.executable, *words[4:]]
+                        "--agent-command", sys.executable, *after_seat_name]
                        + shlex.split(extra_arguments))
     launched = []
 
@@ -2792,15 +2797,19 @@ with tempfile.TemporaryDirectory() as temporary:
     expected_launcher_word = (str(recovery.launcher_path()) if recovery.launcher_path()
                               else "launch-claude-ubuntu")
     resume_command_words = shlex.split(resume_command.replace(" (on the Mac)", ""))
+    # The agents-root word rides only the Mac form: launch-claude-ubuntu reads
+    # no root (user-ruled 2026-09-22, merge-lane-2's walk).
+    expected_prefix = ([f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}"]
+                       if recovery.launcher_path() else []) + [
+        "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
+        f"--handoff-dir {shlex.quote(str(workspace.handoffs))} --resume-session-id resume-me",
+        expected_launcher_word, workspace.name]
     check("EXIT RECORD: the by-hand resume command parses into the launch_seat environment",
-          resume_command_words[:4] == [
-              f"NEDSCHORUS_AGENTS_ROOT={workspace.agents_root}",
-              "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="
-              f"--handoff-dir {shlex.quote(str(workspace.handoffs))} --resume-session-id resume-me",
-              expected_launcher_word, workspace.name],
+          resume_command_words[:len(expected_prefix)] == expected_prefix,
           resume_command_words)
     check("EXIT RECORD: and passes the launcher its first-prompt file, as launch_seat does",
-          resume_command_words[4:] == ["--first-prompt-file", str(by_hand_prompt_path)],
+          resume_command_words[len(expected_prefix):]
+          == ["--first-prompt-file", str(by_hand_prompt_path)],
           resume_command_words)
     by_hand_prompt = (by_hand_prompt_path.read_text(encoding="utf-8")
                       if by_hand_prompt_path.is_file() else "")
@@ -2835,6 +2844,11 @@ with tempfile.TemporaryDirectory() as temporary:
         patch("launcher_path", real_launcher_path)
     check("EXIT RECORD: off the Mac the by-hand command names launch-claude-ubuntu, on the Mac",
           box_command.endswith(f" launch-claude-ubuntu {workspace.name} (on the Mac)"),
+          box_command)
+    check("EXIT RECORD: off the Mac the by-hand command carries no agents root, which "
+          "launch-claude-ubuntu does not read",
+          "NEDSCHORUS_AGENTS_ROOT" not in box_command
+          and box_command.startswith("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="),
           box_command)
 
     # With nothing to resume, the offer stands in for the ignite and names only

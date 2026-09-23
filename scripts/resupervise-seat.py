@@ -60,9 +60,19 @@ checkout. The box checkout is pulled by hand today (nedschorus#45), so a box
 that has not been pulled since this landed will refuse with a message saying so
 rather than proceeding on a half-done recovery.
 
+A box seat's directory is always ~/agents/<name> on the box, because
+launch-claude-ubuntu reads no agents-root variable (user-ruled 2026-09-22, in
+merge-lane-2's walk merge-lane-2-questions-concerns-and-suggestions-2026-09-22;
+the launcher's NO AGENTS ROOT note has the why). So --machine ubuntu refuses
+--agents-root, on either half: a root given here would steer the box-side
+checks to one directory while the launcher seats the successor in another,
+the split the 2026-08-22 ruling forbids ("overrides either work or are
+blocked"). This script used to forward the value to both halves.
+
 Usage:
   resupervise-seat.py <name> [--machine mac|ubuntu] [--dry-run]
                              [--handoff-dir <path>] [--agents-root <path>]
+                             (--agents-root with --machine mac only)
   resupervise-seat.py <name> --prepare-only        (steps 1-4; run on the seat's
                                                     machine, then launch there)
 
@@ -91,11 +101,13 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 
 
 def default_agents_root() -> Path:
-    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as both launchers resolve it —
+    """${NEDSCHORUS_AGENTS_ROOT:-~/agents}, as launch-claude-mac resolves it —
     the same read as recover-crashed-seats.py's default_agents_root, for the
     same reason: checks that resolve the root one way while the launcher
     resolves it another act on different seats (user-ruled 2026-08-22:
-    allowed overrides must work)."""
+    allowed overrides must work). launch-claude-ubuntu reads no such
+    variable; a box seat is always ~/agents/<name> there, and nothing sets
+    the variable on the box, so this read gives ~/agents there too."""
     return Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT") or "~/agents").expanduser()
 
 
@@ -276,16 +288,14 @@ def resupervise_box_seat(arguments) -> int:
     operator unchanged: nothing is re-judged on this side.
     """
     remote_arguments = ["--prepare-only", "--machine", "ubuntu"]
-    # The override flags are paths on one machine — for a box seat, box-local —
-    # so they travel verbatim (unexpanded, box expands its own ~) and only
-    # when the operator gave them; the defaults stay each machine's own.
+    # The handoff directory is a path on one machine — for a box seat,
+    # box-local — so it travels verbatim (unexpanded, box expands its own ~)
+    # and only when the operator gave it; the default stays the box's own.
     # shlex.quote, because the joined string is parsed once by the box's
     # shell, and a hand-quoted apostrophe path breaks there (PR #134 review,
-    # finding 1).
+    # finding 1). No agents root travels: main() refuses one for a box seat.
     if arguments.handoff_dir:
         remote_arguments += ["--handoff-dir", shlex.quote(arguments.handoff_dir)]
-    if arguments.agents_root:
-        remote_arguments += ["--agents-root", shlex.quote(arguments.agents_root)]
     if arguments.dry_run:
         remote_arguments.append("--dry-run")
     remote = subprocess.run(
@@ -327,14 +337,12 @@ def resupervise_box_seat(arguments) -> int:
     # and otherwise defaults to its own alias. Without this the flag steers both
     # ssh checks above and is then ignored at the decisive step: a non-default
     # box would be cleared, and the successor launched on the default one.
-    # The directory overrides ride the same way when given (box-local paths,
-    # verbatim): the launcher reads NEDSCHORUS_AGENTS_ROOT, and its
-    # extra-arguments hook hands --handoff-dir to the box-side supervisor —
-    # the same closes recover-crashed-seats.py's codex findings A/B made on
-    # the mac side (user-ruled 2026-08-22: allowed overrides must work).
+    # The handoff directory rides the same way when given (a box-local path,
+    # verbatim): the launcher's extra-arguments hook hands --handoff-dir to
+    # the box-side supervisor — the same close recover-crashed-seats.py's
+    # codex finding A made on the mac side (user-ruled 2026-08-22: allowed
+    # overrides must work). No agents root rides: the launcher reads none.
     environment = {**os.environ, "NEDSCHORUS_AGENT_BOX": arguments.agent_box}
-    if arguments.agents_root:
-        environment["NEDSCHORUS_AGENTS_ROOT"] = arguments.agents_root
     if arguments.handoff_dir:
         environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = (
             f"--handoff-dir {shlex.quote(arguments.handoff_dir)}")
@@ -360,8 +368,9 @@ def main(argv=None) -> int:
                         help="handoff directory on this machine only, not committed "
                              "(default ~/.claude/handoffs)")
     parser.add_argument("--agents-root", default="",
-                        help="where seat directories live "
-                             "(default $NEDSCHORUS_AGENTS_ROOT, else ~/agents)")
+                        help="where seat directories live, for --machine mac only "
+                             "(default $NEDSCHORUS_AGENTS_ROOT, else ~/agents); a box "
+                             "seat is always ~/agents/<name> on the box")
     parser.add_argument(
         "--dry-run", action="store_true",
         help="report whether the seat is recoverable and what would happen; change nothing",
@@ -376,6 +385,12 @@ def main(argv=None) -> int:
         help="ssh alias of the Ubuntu agent box, as launch-claude-ubuntu uses it",
     )
     arguments = parser.parse_args(argv)
+
+    if arguments.machine == "ubuntu" and arguments.agents_root:
+        print("resupervise-seat: with --machine ubuntu, re-run without --agents-root: "
+              "a box seat is always ~/agents/<name> on the box and cannot be moved "
+              "from the Mac. Nothing was changed.", file=sys.stderr)
+        return 2
 
     # A box seat's handoff file, supervisor state and tmux session all live on
     # the box. Reading Mac state and killing a Mac tmux session for a box seat

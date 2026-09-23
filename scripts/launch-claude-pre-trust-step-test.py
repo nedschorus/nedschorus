@@ -509,20 +509,20 @@ def main() -> int:
                       for name in sandbox.temporary_leftovers()),
               (sandbox.temporary_leftovers(), sandbox.decoy_contents()))
 
-        # --- 7. Box twin, an agents root with an apostrophe and a $: the
-        # trusted key must be byte-intact. The pre-trust program is spliced
-        # into the same single-quoted region the seat path crosses, so this
-        # is where a quoting mistake in the step would surface as a trusted
-        # directory that is not the seat's.
+        # --- 7. Box twin, an agents root with an apostrophe and a $ set in
+        # the Mac-side environment: launch-claude-ubuntu reads no agents root
+        # (user-ruled 2026-09-22, merge-lane-2's walk), so the trusted key is
+        # the box's own ~/agents/<name> and the odd root is trusted nowhere.
         sandbox = PreTrustSandbox(root / "box-apostrophe-root")
         apostrophe_root = f"{sandbox.home}/agent's $fleet"
         launched, remote, replayed = sandbox.run_ubuntu_replay(
             "seat-odd", agents_root=apostrophe_root)
         facts = sandbox.facts()
-        check("box, apostrophe-and-$ agents root: the trusted key is the "
-              "seat directory, byte-intact",
+        check("box, apostrophe-and-$ agents root in the Mac environment: the "
+              "trusted key is the box's ~/agents/<name>, and the root is not",
               replayed.returncode == 0
-              and is_trusted(facts, f"{apostrophe_root}/seat-odd"),
+              and is_trusted(facts, f"{sandbox.home}/agents/seat-odd")
+              and not is_trusted(facts, f"{apostrophe_root}/seat-odd"),
               (replayed.returncode, replayed.stderr[-200:],
                project_names(facts)))
 
