@@ -3198,6 +3198,35 @@ with tempfile.TemporaryDirectory() as update_workspace:
           "update" not in invocations_of(update_workspace),
           str(invocations_of(update_workspace)))
 
+with tempfile.TemporaryDirectory() as update_workspace:
+    # The supervisor's OWN zero-timeout guard, apart from the helper's. The
+    # cases above cannot tell the two apart: with the supervisor's guard
+    # removed, the helper's guard still skips the update and the lock, so
+    # every one of them passes. Standing in for the helper with a recorder
+    # takes its guard out of play; the supervisor must then neither reach the
+    # helper nor announce an update check it is not making.
+    agent = an_agent_recording_its_invocations(update_workspace)
+    helper_calls = []
+    real_helper = supervisor.agent_binary_update_under_lock.run_agent_binary_update_under_lock
+    supervisor.agent_binary_update_under_lock.run_agent_binary_update_under_lock = (
+        lambda *arguments, **keywords: helper_calls.append(arguments) or 0)
+    captured_output = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(captured_output), \
+                contextlib.redirect_stderr(captured_output):
+            supervisor.update_agent_binary(str(agent), 0)
+            supervisor.launch_agent_session(
+                str(agent), "session-zero-timeout-own-guard", Path(update_workspace),
+                "prompt", update_timeout_seconds=0).wait()
+    finally:
+        supervisor.agent_binary_update_under_lock.run_agent_binary_update_under_lock = (
+            real_helper)
+    check("a zero timeout stops in the supervisor: the update helper is never called",
+          helper_calls == [], str(helper_calls))
+    check("a zero timeout prints no update check, directly or through a launch",
+          "checking for" not in captured_output.getvalue(),
+          captured_output.getvalue())
+
 check("the update timeout defaults to the launchers' own 120 seconds",
       supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS == 120,
       str(supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS))
