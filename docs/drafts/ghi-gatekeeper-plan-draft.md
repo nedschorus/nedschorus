@@ -5,7 +5,7 @@ design-as-of: 2026-08-07
 
 # ghi-gatekeeper — plan for the user's walk
 
-**SUPERSEDED 2026-08-07, user-ruled at walk item 1: neither reads nor writes are gated.** The problem is not unmediated access — it is that an agent about to file or edit an issue does not know which related issues it should have read, and that issues are written carelessly. A gate answers neither. What replaces it: a dedicated agent holding this project's issues in context, asked "which issues should I read?" and answering on exit ([ghi-info-agent-plan-draft.md](ghi-info-agent-plan-draft.md)); the careful-writing half stays with the `ghi-write` skill. This file is kept as the record of the rejected direction — the verified hook mechanics in § Why this cannot be a credential gate remain accurate and reusable if enforcement is ever wanted.
+**SUPERSEDED 2026-08-07, user-ruled at walk item 1: neither reads nor writes are gated.** The problem is not unmediated access — it is that an agent about to file or edit an issue does not know which related issues it should have read, and that issues are written carelessly. A gate answers neither. What replaces it: a dedicated agent holding this project's issues in context, asked "which issues should I read?" and answering on exit (`git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md`)); the careful-writing half stays with the `ghi-write` skill. This file is kept as the record of the rejected direction — the verified hook mechanics in § Why this cannot be a credential gate remain accurate and reusable if enforcement is ever wanted.
 
 How agents work with GitHub issues in nedschorus: one program for every issue write, and the `ghi-write` skill for the judgment the program cannot make. Modelled on [main-gatekeeper-design.md](../../nc-systems/main-gatekeeper/main-gatekeeper-design.md), which is the specification for the same shape on the git side.
 
@@ -76,7 +76,7 @@ Named endings, three-part teaching form: `unknown-issue`, `missing-title`, `miss
 
 The gate takes the checkable half. `ghi-write` keeps what no program can decide: routing by state (queue, GHI, GHI-MD, or bare MD), and the fresh-reader three-test check.
 
-**Consequence for the paused `ghi-write` walk** ([ghi-write-skill-draft.md](ghi-write-skill-draft.md), item 2): with the gate and its hooks in place, an agent about to write an issue is stopped by the hook whether or not the skill triggered, so undertriggering on the write path stops mattering. The residual undertriggering risk sits entirely on the routing trigger, which no hook can reach because no tool call exists at that moment.
+**Consequence for the paused `ghi-write` walk** (`git show 6bd0aa5:docs/drafts/ghi-write-skill-draft.md`, item 2): with the gate and its hooks in place, an agent about to write an issue is stopped by the hook whether or not the skill triggered, so undertriggering on the write path stops mattering. The residual undertriggering risk sits entirely on the routing trigger, which no hook can reach because no tool call exists at that moment.
 
 ## Version 1 cuts
 
