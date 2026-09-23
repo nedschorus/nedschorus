@@ -454,8 +454,10 @@ check("the remote command carries NO path from this machine",
       str(ghi_ask.DEFAULT_SEAT_DIR) not in command
       and str(Path.home()) not in command,
       command)
-check("the seat is resolved box-side by the launcher's own agents-root rule",
-      '"${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/ghi-info"' in command, command)
+check("the seat is resolved box-side at the launcher's fixed box root, $HOME/agents",
+      'seat="$HOME/agents/ghi-info"' in command, command)
+check("the seat path reads no agents-root variable (launch-claude-ubuntu reads none)",
+      "NEDSCHORUS_AGENTS_ROOT" not in command, command)
 check("the box-side run is pinned to --seat-dir \"$PWD\", so it can never "
       "re-delegate to itself (an infinite ssh loop)",
       '--seat-dir "$PWD"' in command, command)

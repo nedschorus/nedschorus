@@ -270,10 +270,14 @@ class LaunchHarness:
         token_file.chmod(0o600)
         return token_file
 
-    def run(self, launcher_arguments, agents_root=None, extra_arguments=None,
-            seat_github_account=None):
+    def run(self, launcher_arguments, mac_environment_agents_root=None,
+            extra_arguments=None, seat_github_account=None):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
-        tmux stub). Returns a dict of everything observable."""
+        tmux stub). Returns a dict of everything observable.
+
+        mac_environment_agents_root sets NEDSCHORUS_AGENTS_ROOT in the
+        launcher's own (Mac-side) environment, the way a Mac seat inherits
+        it, so a case can show the launcher ignores it."""
         for leftover in self.captures.iterdir():
             leftover.unlink()
         environment = {key: value for key, value in os.environ.items()
@@ -281,8 +285,8 @@ class LaunchHarness:
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["LCU_TEST_DIR"] = str(self.captures)
         environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
-        if agents_root is not None:
-            environment["NEDSCHORUS_AGENTS_ROOT"] = agents_root
+        if mac_environment_agents_root is not None:
+            environment["NEDSCHORUS_AGENTS_ROOT"] = mac_environment_agents_root
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         if seat_github_account is not None:
@@ -415,63 +419,46 @@ def main() -> int:
               result["launched"].returncode == 0 and result["remote"],
               (result["launched"].returncode, result["launched"].stderr[:200]))
 
-        # --- 1c. a ~user root is REFUSED before any transport (user-ruled
-        # 2026-08-22: overrides either work or are blocked) — the box shell
-        # and the fleet's Python tools would resolve it to different
-        # directories, silently splitting the seat.
-        harness = LaunchHarness(root / "tilde-user")
-        result = harness.run(["seat-u", "--no-attach"],
-                             agents_root="~alice/agents")
-        check("tilde-user root: refused with exit 2, naming the split",
-              result["launched"].returncode == 2
-              and "not supported" in result["launched"].stderr
-              and "splitting the seat" in result["launched"].stderr,
-              (result["launched"].returncode, result["launched"].stderr[:200]))
-        check("tilde-user root: nothing was sent to the box",
-              result["remote"] == "", result["remote"][:200])
-
-        # --- 1d. a ~/ root with a space rides the supported tilde carry ----
-        harness = LaunchHarness(root / "tilde-space")
-        result = harness.run(["seat-h", "--no-attach"],
-                             agents_root="~/custom agents")
-        check("~/ root with a space: tmux -c resolves under the box home",
-              result["replay"].returncode == 0
-              and result["pane_directory"]
-              == f"{harness.home}/custom agents/seat-h",
-              (result["replay"].returncode, result["pane_directory"]))
-        check("~/ root with a space: supervisor --cd stays the literal ~ path",
-              argv_value(result["supervisor_argv"], "--cd")
-              == "~/custom agents/seat-h",
-              result["supervisor_argv"])
-
-        # --- 2. apostrophe + space in the agents root ----------------------
-        harness = LaunchHarness(root / "apostrophe-root")
-        apostrophe_root = f"{harness.home}/agent's fleet"
-        result = harness.run(["seat-b", "--no-attach"], agents_root=apostrophe_root)
-        check("apostrophe root: the remote string still parses and runs",
-              result["replay"].returncode == 0,
-              (result["replay"].returncode, result["replay"].stderr[:300]))
-        check("apostrophe root: tmux -c carries the path byte-intact",
-              result["pane_directory"] == f"{apostrophe_root}/seat-b",
-              result["pane_directory"])
-        check("apostrophe root: supervisor --cd carries the path byte-intact",
-              argv_value(result["supervisor_argv"], "--cd")
-              == f"{apostrophe_root}/seat-b",
-              result["supervisor_argv"])
-        check("apostrophe root: the seat directory was created where assessed",
-              Path(f"{apostrophe_root}/seat-b").is_dir(), apostrophe_root)
-
-        # --- 3. $ in the agents root is literal, not expanded --------------
-        harness = LaunchHarness(root / "dollar-root")
-        dollar_root = f"{harness.home}/pre$HOME-root"
-        result = harness.run(["seat-c", "--no-attach"], agents_root=dollar_root)
-        check("dollar root: $ in the path survives both parses unexpanded",
-              result["replay"].returncode == 0
-              and argv_value(result["supervisor_argv"], "--cd")
-              == f"{dollar_root}/seat-c"
-              and result["pane_directory"] == f"{dollar_root}/seat-c",
-              (result["pane_directory"],
-               argv_value(result["supervisor_argv"], "--cd")))
+        # --- 1c. the launcher reads NO agents root (user-ruled 2026-09-22,
+        # merge-lane-2's walk; the launcher's NO AGENTS ROOT note has the
+        # why). NEDSCHORUS_AGENTS_ROOT names a path on the machine that reads
+        # it, and every Mac seat inherits the Mac's own value, exported by
+        # recover-crashed-seats.py. Whatever it holds, the box seat lands in
+        # the box's ~/agents/<name>, and the value never reaches the box.
+        # Each root below was honoured, or refused, by the launcher before.
+        # The two absolute ones sit inside the sandbox, beside its HOME, so
+        # a launcher that honoured them (as the old one did) creates nothing
+        # outside the suite's scratch directory: the Mac-shaped one stands in
+        # for /Users/el/agents.
+        for label, seat, leaked_root_under in (
+                ("the Mac's own root, leaked into a Mac seat", "seat-u",
+                 lambda sandbox: f"{sandbox}/Users/el/agents"),
+                ("a ~user root, once refused", "seat-v",
+                 lambda sandbox: "~alice/agents"),
+                ("a root with an apostrophe, a space and a $", "seat-w",
+                 lambda sandbox: f"{sandbox}/agent's $fleet")):
+            harness = LaunchHarness(root / seat)
+            leaked_root = leaked_root_under(harness.home.parent)
+            result = harness.run([seat, "--no-attach"],
+                                 mac_environment_agents_root=leaked_root)
+            check(f"{label}: the launch goes ahead (launcher and P1 exit 0)",
+                  result["launched"].returncode == 0
+                  and result["replay"].returncode == 0,
+                  (result["launched"].returncode, result["launched"].stderr[:200],
+                   result["replay"].returncode, result["replay"].stderr[:200]))
+            check(f"{label}: tmux -c is the box's ~/agents/<name>",
+                  result["pane_directory"] == f"{harness.home}/agents/{seat}",
+                  result["pane_directory"])
+            check(f"{label}: supervisor --cd is the literal ~/agents/<name>",
+                  argv_value(result["supervisor_argv"], "--cd")
+                  == f"~/agents/{seat}",
+                  result["supervisor_argv"])
+            check(f"{label}: the seat directory was created under the box's ~/agents",
+                  (harness.home / "agents" / seat).is_dir(),
+                  str(harness.home / "agents"))
+            check(f"{label}: the value is not in the command sent to the box",
+                  leaked_root not in result["remote"],
+                  result["remote"][:300])
 
         # --- 4. --first-prompt-file with apostrophe and $ -------------------
         harness = LaunchHarness(root / "prompt-file")
@@ -521,22 +508,23 @@ def main() -> int:
               (after_exit_cwd.read_text(encoding="utf-8").strip()
                if after_exit_cwd.is_file() else "no shell recorded"))
 
-        # --- 7. attached launch under an apostrophe root: the after-exit
-        # shell's cd target is the seat directory ---------------------------
-        harness = LaunchHarness(root / "attached-apostrophe")
-        apostrophe_root = f"{harness.home}/agent's fleet"
-        result = harness.run(["seat-g"], agents_root=apostrophe_root)
-        check("attached + apostrophe root: wrapper executes and paths hold",
+        # --- 7. attached launch with the Mac's root leaked in: the pane and
+        # the after-exit shell are both in the box's ~/agents/<name> --------
+        harness = LaunchHarness(root / "attached-leaked-root")
+        result = harness.run(["seat-g"], mac_environment_agents_root=(
+            f"{harness.home.parent}/Users/el/agents"))
+        check("attached + leaked root: wrapper executes in the box's ~/agents",
               result["replay"].returncode == 0
-              and result["pane_directory"] == f"{apostrophe_root}/seat-g"
+              and result["pane_directory"] == f"{harness.home}/agents/seat-g"
               and argv_value(result["supervisor_argv"], "--cd")
-              == f"{apostrophe_root}/seat-g",
-              (result["replay"].returncode, result["replay"].stderr[:300]))
+              == "~/agents/seat-g",
+              (result["replay"].returncode, result["pane_directory"],
+               result["replay"].stderr[:300]))
         after_exit_cwd = harness.captures / "after-exit-cwd.txt"
-        check("attached + apostrophe root: the after-exit shell lands in the seat",
+        check("attached + leaked root: the after-exit shell lands in the box's seat",
               after_exit_cwd.is_file()
               and Path(after_exit_cwd.read_text(encoding="utf-8").strip()).resolve()
-              == Path(f"{apostrophe_root}/seat-g").resolve(),
+              == (harness.home / "agents" / "seat-g").resolve(),
               (after_exit_cwd.read_text(encoding="utf-8").strip()
                if after_exit_cwd.is_file() else "no shell recorded"))
 

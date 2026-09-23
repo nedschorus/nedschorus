@@ -14,10 +14,9 @@ out — prints one line to stderr and exits 1. A failed ask never blocks a
 write (design's own words): the caller's job is to fall down the ghi-write
 skill's fallback ladder, not to treat exit 1 as fatal.
 
-Seat and machine: ghi-info lives ONLY on the Ubuntu box, at
-$NEDSCHORUS_AGENTS_ROOT/ghi-info (default ~/agents/ghi-info) — its mirror,
-session id, and reincarnation counters all live in that one checkout, per the
-design's "wrapper state ... lives there." This script is the SAME file on
+Seat and machine: ghi-info lives ONLY on the Ubuntu box, at ~/agents/ghi-info
+there — its mirror, session id, and reincarnation counters all live in that
+one checkout, per the design's "wrapper state ... lives there." This script is the SAME file on
 both machines (it is checked into the repo, so every checkout — Mac or box
 — carries an identical copy): on the Mac it notices no seat directory
 locally and re-execs itself over `ssh ned`, one hop, so every step below
@@ -25,10 +24,11 @@ locally and re-execs itself over `ssh ned`, one hop, so every step below
 where the mirror and state actually live. On the box, inside a bootstrapped
 seat, it just runs.
 
-Where the box's seat is, is resolved BY THE BOX — its own shell applies the
-same ${NEDSCHORUS_AGENTS_ROOT:-~/agents} rule launch-claude-ubuntu
-documents. This script never sends a path of its own: the first live run
-failed exactly there, having spliced in the Mac's expanded
+Where the box's seat is, is resolved BY THE BOX — its own shell expands
+$HOME/agents/ghi-info, the fixed box root launch-claude-ubuntu seats every
+box seat under (it reads no agents-root variable, user-ruled 2026-09-22 in
+merge-lane-2's walk). This script never sends a path of its own: the first
+live run failed exactly there, having spliced in the Mac's expanded
 /Users/el/agents/ghi-info, which of course does not exist on the box.
 
 There is no wrapper-side auto-bootstrap: if the seat does not exist on the
@@ -730,9 +730,11 @@ def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
     (unlike the launchers, which also cross tmux's pane-command parse), so
     shlex.quote is the whole escaping story for operator values.
 
-    The seat path is resolved BOX-side, by the box's own shell, using the
-    same ${NEDSCHORUS_AGENTS_ROOT:-~/agents} rule launch-claude-ubuntu
-    documents. Splicing this machine's expanded path in instead was the
+    The seat path is resolved BOX-side, by the box's own shell, as
+    $HOME/agents/ghi-info: the fixed box root launch-claude-ubuntu seats
+    every box seat under, reading no agents-root variable (user-ruled
+    2026-09-22, merge-lane-2's walk). A variable read here would steer an
+    interactive box shell and not this ssh one, which sources no ~/.bashrc. Splicing this machine's expanded path in instead was the
     first live run's failure: the Mac sent `cd /Users/el/agents/ghi-info`,
     which of course does not exist on the box.
 
@@ -752,7 +754,7 @@ def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
     invocation += " --repo " + shlex.quote(repo)
     invocation += ' --seat-dir "$PWD"'
     return "\n".join([
-        'seat="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}/ghi-info"',
+        'seat="$HOME/agents/ghi-info"',
         'cd "$seat" || {',
         '  echo "ghi-info-ask: could not enter the ghi-info seat at $seat on this box'
         ' — bootstrap it (a checkout of this repository at that path), then retry" >&2',
