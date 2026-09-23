@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
 """Cases for branch-conflict-check.py.
 
-Every case here is a measurement taken by hand on 2026-09-22 that the prose
-version of this instruction got wrong. They are cases so that the next person
-does not have to re-measure them, and so a regression cannot pass silently.
+Every case in the first half is a measurement taken by hand on 2026-09-22 that
+the prose version of this instruction got wrong. They are cases so that the
+next person does not have to re-measure them, and so a regression cannot pass
+silently.
+
+The second half, added 2026-09-23, pins the whole answer matrix -- every
+combination of git's answer, GitHub's answer, and whether GitHub is answering
+about the commit checked -- by exit code AND whole output, then runs the
+program itself against throwaway repositories and a stub gh. The user ruled
+the behaviour stays as it is and that "this stuff has to carefully tested,
+both success and failure cases" (walk "merge-lane-mac-helper-open-items-and-
+questions-2026-09-23", item 3, 23:07Z).
 
 Run: scripts/branch-conflict-check-test.py
 Exit codes: 0 all passed, 1 any failed.
 """
 
 import importlib.util
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -330,9 +342,12 @@ case("merge-tree is never reached when the fetch fails",
 
 log = []
 run(fake_runner(merge_tree_status=0, log=log))
+# Each ordering assertion checks membership first: a missing command must fail
+# this case, not raise and stop every case after it from running.
+kinds = [c[:2] for c in log]
 case("the fetch happens, and happens before anything is resolved",
-     [c[:2] for c in log].index(["git", "fetch"])
-     < [c[:2] for c in log].index(["git", "rev-parse"]))
+     ["git", "fetch"] in kinds and ["git", "rev-parse"] in kinds
+     and kinds.index(["git", "fetch"]) < kinds.index(["git", "rev-parse"]))
 case("the fetch uses the default remote", ["git", "fetch", "origin"] in log)
 
 log = []
@@ -412,8 +427,9 @@ status, lines = run(
     fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
     pull_request=353, reads=3)
 case("the CONFLICT block stays contiguous ahead of GitHub's lines",
-     lines[3] == "Before pushing, rerun the test suites for what the merge "
-                 "touched." and lines[4].startswith("GITHUB:"))
+     len(lines) >= 5
+     and lines[3] == "Before pushing, rerun the test suites for what the merge "
+                     "touched." and lines[4].startswith("GITHUB:"))
 
 # A commit git cannot read the subject of -- GitHub's pushed head, never
 # fetched -- is named by its hash alone; the run's verdict is unchanged.
@@ -536,6 +552,520 @@ status, lines = run(
 case("an unreadable pull request base leaves git's answer standing",
      status == CHECK.EXIT_CONFLICT
      and any("could not be asked" in l for l in lines))
+
+# --- the whole answer matrix, pinned by exit code and whole output ------------
+# The cases above grew one measurement at a time, so several cells had their
+# exit code pinned and not their lines, or the reverse, and some cells had
+# neither: git clean with GitHub MERGEABLE, the commonest answer of all, was
+# never asserted. Each cell below asserts both, so a regression in either
+# fails. The expected lines are the program's own messages, copied from
+# check() and its helpers, not recomputed by calling them.
+def clean_block(base="origin/main", label=HEAD_LABEL):
+    return ["VERDICT: CLEAN -- %s does not conflict with %s. Nothing to do."
+            % (label, base)]
+
+
+def conflict_block(base="origin/main", label=HEAD_LABEL):
+    return [
+        "VERDICT: CONFLICT -- %s conflicts with %s." % (label, base),
+        "Merge %s into the branch by hand, with the frozen head as first "
+        "parent." % base,
+        "Resolve the conflict and change nothing else in the merge.",
+        "Before pushing, rerun the test suites for what the merge touched.",
+    ]
+
+
+def verdict_block(exit_status, base="origin/main", label=HEAD_LABEL):
+    if exit_status == CHECK.EXIT_CONFLICT:
+        return conflict_block(base, label)
+    return clean_block(base, label)
+
+
+# (git's answer, merge-tree status, the exit git's answer alone gives)
+GIT_ANSWERS = (
+    ("clean", 0, CHECK.EXIT_NO_CONFLICT),
+    ("conflict", 1, CHECK.EXIT_CONFLICT),
+)
+GITHUB_FAILED = "GITHUB: could not be asked (gh failed) -- git's answer stands"
+GITHUB_DECIDES = (
+    "DISCLOSURE: git finds no conflict but GitHub reports CONFLICTING; GitHub "
+    "decides whether the merge is allowed, so the branch still needs the hand "
+    "merge.")
+NOT_ONE_TO_ATTEMPT = (
+    "DISCLOSURE: git finds a conflict but GitHub reports MERGEABLE; treating "
+    "it as a conflict, because a merge that git cannot do is not one to "
+    "attempt.")
+
+
+def github_line(verdict, reads):
+    return "GITHUB: %s after %d read(s)" % (verdict, reads)
+
+
+def unsettled(reads):
+    return ("DISCLOSURE: GitHub had not settled after %d read(s); this verdict "
+            "is git's alone. Say so in the pull request." % reads)
+
+
+def no_fetch_disclosure(base="origin/main"):
+    return ("DISCLOSURE: --no-fetch, so %s is whatever this checkout already "
+            "had; a stale base gives a confident wrong answer." % base)
+
+
+def gh_calls(log):
+    return [c for c in log if c[:1] == ["gh"]]
+
+
+def gh_reads_of(log, field):
+    return sum(1 for c in log if c[:2] == ["gh", "pr"] and field in c)
+
+
+# Axis A absent: no --pull-request. GitHub is never asked, and the output is
+# git's verdict alone, plus the --no-fetch disclosure when the fetch is skipped.
+for git_name, merge_status, git_exit in GIT_ANSWERS:
+    for fetch in (True, False):
+        log = []
+        status, lines = run(fake_runner(merge_tree_status=merge_status, log=log),
+                            fetch=fetch)
+        label = "no --pull-request, git %s, %s" % (
+            git_name, "fetching" if fetch else "--no-fetch")
+        want = verdict_block(git_exit) + ([] if fetch else [no_fetch_disclosure()])
+        case(label + ": the exit is git's", status == git_exit)
+        case(label + ": the whole output", lines == want)
+        case(label + ": gh is never run", gh_calls(log) == [])
+
+# Axis A equal, axis C every answer: GitHub is answering about the checked
+# commit and the branch --base names, so its verdict counts as the docstring
+# says. (GitHub's answer, the mergeability reads it gives, {git's answer: (exit,
+# lines after the verdict block)}, mergeability reads taken, sleeps taken)
+MATCHED_HEAD_CELLS = [
+    ("MERGEABLE at once", [(0, "MERGEABLE")],
+     {"clean": (CHECK.EXIT_NO_CONFLICT, [github_line("MERGEABLE", 1)]),
+      "conflict": (CHECK.EXIT_CONFLICT,
+                   [github_line("MERGEABLE", 1), NOT_ONE_TO_ATTEMPT])},
+     1, 0),
+    ("CONFLICTING at once", [(0, "CONFLICTING")],
+     {"clean": (CHECK.EXIT_CONFLICT,
+                [github_line("CONFLICTING", 1), GITHUB_DECIDES]),
+      "conflict": (CHECK.EXIT_CONFLICT, [github_line("CONFLICTING", 1)])},
+     1, 0),
+    ("UNKNOWN on every read", [(0, "UNKNOWN")] * 3,
+     {"clean": (CHECK.EXIT_NO_CONFLICT,
+                [github_line("UNKNOWN", 3), unsettled(3)]),
+      "conflict": (CHECK.EXIT_CONFLICT,
+                   [github_line("UNKNOWN", 3), unsettled(3)])},
+     3, 2),
+    ("UNKNOWN, then MERGEABLE", [(0, "UNKNOWN"), (0, "MERGEABLE")],
+     {"clean": (CHECK.EXIT_NO_CONFLICT, [github_line("MERGEABLE", 2)]),
+      "conflict": (CHECK.EXIT_CONFLICT,
+                   [github_line("MERGEABLE", 2), NOT_ONE_TO_ATTEMPT])},
+     2, 1),
+    ("UNKNOWN, then CONFLICTING", [(0, "UNKNOWN"), (0, "CONFLICTING")],
+     {"clean": (CHECK.EXIT_CONFLICT,
+                [github_line("CONFLICTING", 2), GITHUB_DECIDES]),
+      "conflict": (CHECK.EXIT_CONFLICT, [github_line("CONFLICTING", 2)])},
+     2, 1),
+    ("gh failing on the first mergeability read", [(1, "")],
+     {"clean": (CHECK.EXIT_NO_CONFLICT, [GITHUB_FAILED]),
+      "conflict": (CHECK.EXIT_CONFLICT, [GITHUB_FAILED])},
+     1, 0),
+    ("UNKNOWN, then gh failing", [(0, "UNKNOWN"), (1, "")],
+     {"clean": (CHECK.EXIT_NO_CONFLICT, [GITHUB_FAILED]),
+      "conflict": (CHECK.EXIT_CONFLICT, [GITHUB_FAILED])},
+     2, 1),
+]
+for github_name, gh_results, by_git, reads_taken, sleeps_taken in MATCHED_HEAD_CELLS:
+    for git_name, merge_status, _git_exit in GIT_ANSWERS:
+        want_exit, tail = by_git[git_name]
+        log, sleeps = [], []
+        status, lines = run(
+            fake_runner(merge_tree_status=merge_status, gh_results=gh_results,
+                        log=log),
+            pull_request=353, reads=3, sleeps=sleeps)
+        label = "heads match, git %s, GitHub %s" % (git_name, github_name)
+        case(label + ": exits %d" % want_exit, status == want_exit)
+        case(label + ": the whole output",
+             lines == verdict_block(want_exit) + tail)
+        case(label + ": %d mergeability read(s)" % reads_taken,
+             gh_reads_of(log, "mergeable") == reads_taken)
+        case(label + ": %d sleep(s) between reads" % sleeps_taken,
+             len(sleeps) == sleeps_taken)
+
+# Axis A different -- the case the user ruled on 2026-09-23 (walk item 3): the
+# commit checked is not the pull request's pushed head, as after a hand merge
+# not yet pushed. The program keeps git's answer and says why in two lines,
+# whatever GitHub would have said: GitHub is not even asked for mergeability.
+MISMATCH_LINES = [
+    "GITHUB: not consulted -- pull request 605's pushed head is commit %s, not "
+    "the %s this run checked" % (OTHER_COMMIT[:12], HEAD_LABEL),
+    "DISCLOSURE: GitHub's mergeability is about pull request 605's pushed head "
+    "commit %s, not the %s checked here, so it cannot overrule git about a "
+    "commit it was never asked about; this verdict is git's alone. Say so in "
+    "the pull request." % (OTHER_COMMIT[:12], HEAD_LABEL),
+]
+for git_name, merge_status, git_exit in GIT_ANSWERS:
+    for github_would_say in ("CONFLICTING", "MERGEABLE", "UNKNOWN"):
+        log = []
+        status, lines = run(
+            fake_runner(merge_tree_status=merge_status, gh_head=OTHER_COMMIT,
+                        gh_results=[(0, github_would_say)] * 3, log=log),
+            pull_request=605, reads=3)
+        label = "heads differ, git %s, GitHub would say %s" % (
+            git_name, github_would_say)
+        case(label + ": the exit is git's", status == git_exit)
+        case(label + ": the whole output is git's verdict and two disclosure lines",
+             lines == verdict_block(git_exit) + MISMATCH_LINES)
+        case(label + ": each disclosure line names both short hashes",
+             len(lines) >= 2 and all(OTHER_COMMIT[:12] in line
+                                     and RESOLVED_HEAD[:12] in line
+                                     for line in lines[-2:]))
+        case(label + ": GitHub is never asked for mergeability",
+             gh_reads_of(log, "mergeable") == 0)
+
+# GitHub's head or base cannot be read -- gh exits non-zero, or prints nothing.
+# Either way GitHub could not be asked, and git's answer stands, said once.
+for git_name, merge_status, git_exit in GIT_ANSWERS:
+    for what, runner_args in (
+            ("head, gh failing", dict(gh_head_status=1)),
+            ("head, gh printing nothing", dict(gh_head="")),
+            ("base, gh failing", dict(gh_base_status=1)),
+            ("base, gh printing nothing", dict(gh_base=""))):
+        log = []
+        status, lines = run(
+            fake_runner(merge_tree_status=merge_status, log=log,
+                        gh_results=[(0, "CONFLICTING")] * 3, **runner_args),
+            pull_request=605, reads=3)
+        label = "GitHub's %s, git %s" % (what, git_name)
+        case(label + ": the exit is git's", status == git_exit)
+        case(label + ": the whole output",
+             lines == verdict_block(git_exit) + [GITHUB_FAILED])
+        case(label + ": GitHub is never asked for mergeability",
+             gh_reads_of(log, "mergeable") == 0)
+
+# The pull request targets another branch than --base names: GitHub's answer
+# is about another merge, so git's stands, whatever GitHub says.
+BASE_MISMATCH_LINES = [
+    "GITHUB: not consulted -- pull request 700 targets release, not the main "
+    "that --base origin/main names",
+    "DISCLOSURE: GitHub's mergeability is about merging into release, so it "
+    "cannot overrule git about merging into origin/main; this verdict is git's "
+    "alone. Say so in the pull request.",
+]
+for git_name, merge_status, git_exit in GIT_ANSWERS:
+    for github_would_say in ("CONFLICTING", "MERGEABLE"):
+        log = []
+        status, lines = run(
+            fake_runner(merge_tree_status=merge_status, gh_base="release",
+                        gh_results=[(0, github_would_say)] * 3, log=log),
+            pull_request=700, reads=3)
+        label = "base branches differ, git %s, GitHub would say %s" % (
+            git_name, github_would_say)
+        case(label + ": the exit is git's", status == git_exit)
+        case(label + ": the whole output",
+             lines == verdict_block(git_exit) + BASE_MISMATCH_LINES)
+        case(label + ": GitHub is never asked for mergeability",
+             gh_reads_of(log, "mergeable") == 0)
+
+# A bare-hash --base, possible only under --no-fetch, names no branch: GitHub
+# is not asked about the base or the mergeability, and says why.
+for git_name, merge_status, git_exit in GIT_ANSWERS:
+    log = []
+    status, lines = run(
+        fake_runner(merge_tree_status=merge_status, full_refs={RESOLVED_BASE: ""},
+                    gh_results=[(0, "CONFLICTING")] * 3, log=log),
+        pull_request=353, reads=3, base=RESOLVED_BASE, fetch=False)
+    label = "a bare-hash --base with a pull request, git %s" % git_name
+    case(label + ": the exit is git's", status == git_exit)
+    case(label + ": the whole output", lines == verdict_block(
+        git_exit, base=RESOLVED_BASE) + [
+        no_fetch_disclosure(RESOLVED_BASE),
+        "GITHUB: not consulted -- --base %s names no branch, so no pull "
+        "request's mergeability is about it" % RESOLVED_BASE,
+        "DISCLOSURE: this verdict is git's alone. Say so in the pull request.",
+    ])
+    case(label + ": GitHub is asked neither the base nor the mergeability",
+         gh_reads_of(log, "baseRefName") == 0
+         and gh_reads_of(log, "mergeable") == 0)
+
+# --no-fetch with a pull request whose verdict counts: the verdict block comes
+# first, then the --no-fetch disclosure, then GitHub's lines.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
+    pull_request=353, reads=3, fetch=False)
+case("--no-fetch, heads match, git clean, GitHub CONFLICTING: exits 1",
+     status == CHECK.EXIT_CONFLICT)
+case("--no-fetch, heads match, git clean, GitHub CONFLICTING: the whole output",
+     lines == conflict_block() + [no_fetch_disclosure(),
+                                  github_line("CONFLICTING", 1), GITHUB_DECIDES])
+
+# Every run that gives no answer stops before GitHub, even with a pull
+# request: a failed fetch, a --base the fetch does not move, a base or head
+# that does not resolve.
+for what, runner_args, run_args in (
+        ("a failed fetch", dict(fetch_status=1), {}),
+        ("a --base the fetch does not move",
+         dict(full_refs={"main": "refs/heads/main"}), dict(base="main")),
+        ("an unresolvable base", dict(base_resolves=False), {}),
+        ("an unresolvable head", dict(head_resolves=False), {})):
+    log = []
+    status, lines = run(
+        fake_runner(merge_tree_status=1, gh_results=[(0, "CONFLICTING")] * 3,
+                    log=log, **runner_args),
+        pull_request=353, reads=3, **run_args)
+    case("%s with a pull request exits 2" % what,
+         status == CHECK.EXIT_BAD_INVOCATION)
+    case("%s with a pull request never runs gh" % what, gh_calls(log) == [])
+    case("%s with a pull request gives no verdict" % what,
+         not any(line.startswith("VERDICT:") for line in lines))
+
+# A mergeability value GitHub does not document ("null", or a word added
+# later) is not a verdict. Pinned here: it never overrules git and is never
+# read as agreement. NOT pinned: what the output says about it. Today the
+# program prints "GITHUB: <value> after N read(s)" and no DISCLOSURE that the
+# verdict is git's alone, which github_mergeable's docstring does not allow
+# (it names CONFLICTING, MERGEABLE, UNKNOWN or None as its only returns).
+# That was reported on 2026-09-23 rather than pinned here as correct.
+for git_name, merge_status, git_exit in GIT_ANSWERS:
+    for value in ("null", "SOMETHING_NEW"):
+        status, lines = run(
+            fake_runner(merge_tree_status=merge_status,
+                        gh_results=[(0, value)] * 3),
+            pull_request=353, reads=3)
+        label = "GitHub answering %r, git %s" % (value, git_name)
+        case(label + ": the exit is git's", status == git_exit)
+        case(label + ": the verdict block is git's",
+             lines[:len(verdict_block(git_exit))] == verdict_block(git_exit))
+        case(label + ": never disclosed as GitHub agreeing or overruling",
+             GITHUB_DECIDES not in lines and NOT_ONE_TO_ATTEMPT not in lines)
+
+
+# --- the program itself, run against real repositories -----------------------
+# Everything above drives check() through a fake git. These cases run the
+# program as a command, the way agents and hooks run it, against throwaway
+# repositories and a stub gh first on PATH. So main()'s wiring -- the flags,
+# the exit status, stdout -- is pinned, and so are the git behaviours the fake
+# encodes: merge-tree exiting 1 for a hash that does not resolve, 128 for
+# unrelated histories, and a fetch that moves origin/main. Nothing here reaches
+# a real repository or GitHub: every GIT_ variable the caller exported is
+# dropped, git's global and system config are switched off, and gh is the stub.
+REAL_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+REAL_ENV.update(
+    GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
+    GIT_AUTHOR_NAME="Case", GIT_AUTHOR_EMAIL="case@example.invalid",
+    GIT_COMMITTER_NAME="Case", GIT_COMMITTER_EMAIL="case@example.invalid")
+
+# The stub answers `gh pr view <n> --json <field> -q .<field>` from
+# STUB_GH_<FIELD>, exits 1 when STUB_GH_FAIL is set, and logs every call.
+STUB_GH_PROGRAM = '''import os, sys
+with open(os.environ["STUB_GH_LOG"], "a") as log:
+    log.write(" ".join(sys.argv[1:]) + "\\n")
+if os.environ.get("STUB_GH_FAIL"):
+    sys.exit(1)
+field = sys.argv[sys.argv.index("--json") + 1]
+print(os.environ.get("STUB_GH_" + field.upper(), ""))
+'''
+
+
+class SetupFailed(Exception):
+    pass
+
+
+def git_in(repo, *args):
+    done = subprocess.run(["git", *args], cwd=repo, env=REAL_ENV,
+                          capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        raise SetupFailed("git %s in %s: %s"
+                          % (" ".join(args), repo, done.stderr.strip()))
+    return done.stdout.strip()
+
+
+def commit_in(repo, name, text, message):
+    (Path(repo) / name).write_text(text)
+    git_in(repo, "add", name)
+    git_in(repo, "commit", "-q", "-m", message)
+    return git_in(repo, "rev-parse", "HEAD")
+
+
+def real_label(commit_hash, subject):
+    return 'commit %s ("%s")' % (commit_hash[:12], subject)
+
+
+def run_program(cwd, stub_bin, gh_log, *args, gh=None):
+    """Run the program as a command: (exit status, stdout lines, gh calls)."""
+    env = dict(REAL_ENV)
+    env["PATH"] = str(stub_bin) + os.pathsep + env.get("PATH", "")
+    env["STUB_GH_LOG"] = str(gh_log)
+    for field, value in (gh or {}).items():
+        env["STUB_GH_" + field] = value
+    gh_log.write_text("")
+    done = subprocess.run(
+        [sys.executable, str(HERE / "branch-conflict-check.py"), *args],
+        cwd=cwd, env=env, capture_output=True, text=True, timeout=120)
+    return done.returncode, done.stdout.splitlines(), gh_log.read_text().splitlines()
+
+
+def real_repository_cases(root):
+    origin, work = root / "origin", root / "work"
+    stub_bin, gh_log = root / "bin", root / "gh-calls.log"
+    stub_bin.mkdir()
+    (root / "stub-gh.py").write_text(STUB_GH_PROGRAM)
+    (stub_bin / "gh").write_text("#!/bin/sh\nexec '%s' '%s' \"$@\"\n"
+                                 % (sys.executable, root / "stub-gh.py"))
+    (stub_bin / "gh").chmod(0o755)
+
+    # origin is an ordinary repository that commits are made in directly, so
+    # the cases never push; work fetches from it as a seat's checkout does.
+    origin.mkdir()
+    git_in(origin, "init", "-q", "-b", "main")
+    commit_in(origin, "f", "one\ntwo\n", "base")
+    git_in(root, "clone", "-q", str(origin), str(work))
+    git_in(work, "checkout", "-q", "-b", "clean-topic")
+    clean_head = commit_in(work, "g", "new file\n", "clean topic")
+    git_in(work, "checkout", "-q", "-b", "conflict-topic", "main")
+    conflict_head = commit_in(work, "f", "one\ntwo, topic\n", "conflict topic")
+    git_in(work, "checkout", "-q", "--orphan", "unrelated-topic")
+    git_in(work, "rm", "-q", "-r", "-f", ".")
+    commit_in(work, "h", "unrelated\n", "unrelated history")
+    git_in(work, "checkout", "-q", "main")
+    # main moves after the clone, so work's origin/main is stale until fetched.
+    main_head = commit_in(origin, "f", "one\ntwo, main\n", "main moves")
+    clean_label = real_label(clean_head, "clean topic")
+    conflict_label = real_label(conflict_head, "conflict topic")
+    main_label = real_label(main_head, "main moves")
+
+    def run_here(*args, cwd=work, gh=None):
+        return run_program(cwd, stub_bin, gh_log, *args, gh=gh)
+
+    # The fetch moves the base. With --no-fetch, the stale origin/main says
+    # the conflicting branch is clean, and says the base was never refreshed;
+    # fetching then finds the conflict.
+    status, lines, calls = run_here("--head", "conflict-topic", "--no-fetch")
+    case("real: --no-fetch against a stale origin/main answers about the stale "
+         "base", status == CHECK.EXIT_NO_CONFLICT
+         and lines == clean_block(label=conflict_label) + [no_fetch_disclosure()])
+    status, lines, calls = run_here("--head", "conflict-topic")
+    case("real: the fetch moves origin/main, and the conflict is found",
+         status == CHECK.EXIT_CONFLICT
+         and lines == conflict_block(label=conflict_label))
+    case("real: without --pull-request gh is never run", calls == [])
+
+    status, lines, _ = run_here("--head", "clean-topic")
+    case("real: a clean branch exits 0 with the one CLEAN line",
+         status == CHECK.EXIT_NO_CONFLICT
+         and lines == clean_block(label=clean_label))
+
+    # The trap: merge-tree exits 1 for a hash it cannot resolve, the same as a
+    # conflict. The program must say UNRESOLVED, exit 2, and never CONFLICT.
+    bad_hash = "d" * 40
+    status, lines, _ = run_here("--head", bad_hash)
+    case("real: a head that resolves to nothing exits 2, not 1",
+         status == CHECK.EXIT_BAD_INVOCATION)
+    case("real: a head that resolves to nothing is UNRESOLVED, not CONFLICT",
+         lines == CHECK.unresolved_lines("head", bad_hash))
+
+    status, lines, _ = run_here("--base", "origin/no-such-branch",
+                                "--head", "clean-topic")
+    case("real: a base that resolves to nothing exits 2 as UNRESOLVED",
+         status == CHECK.EXIT_BAD_INVOCATION
+         and lines == CHECK.unresolved_lines("base", "origin/no-such-branch"))
+
+    status, lines, _ = run_here("--head", "unrelated-topic")
+    case("real: unrelated histories exit 2, not a conflict",
+         status == CHECK.EXIT_BAD_INVOCATION)
+    case("real: unrelated histories are UNANSWERED, with no hand merge",
+         bool(lines) and lines[0].startswith("UNANSWERED: git merge-tree exited ")
+         and "Do not merge by hand on this result." in lines
+         and not any("into the branch by hand" in line for line in lines))
+
+    # A local branch is not moved by fetching origin: refused while fetching,
+    # answered with the disclosure under --no-fetch. Local main never moved.
+    status, lines, _ = run_here("--base", "main", "--head", "conflict-topic")
+    case("real: a local-branch --base while fetching exits 2 as UNMATCHED",
+         status == CHECK.EXIT_BAD_INVOCATION
+         and bool(lines) and lines[0].startswith("UNMATCHED: --base main "))
+    status, lines, _ = run_here("--base", "main", "--head", "conflict-topic",
+                                "--no-fetch")
+    case("real: a local-branch --base under --no-fetch is answered, disclosed",
+         status == CHECK.EXIT_NO_CONFLICT
+         and lines == clean_block(base="main", label=conflict_label)
+         + [no_fetch_disclosure("main")])
+
+    # A linked worktree, where agents and hooks run: the default --head HEAD
+    # is the worktree's own commit.
+    linked = root / "linked"
+    git_in(work, "worktree", "add", "-q", "--detach", str(linked),
+           "conflict-topic")
+    status, lines, _ = run_here(cwd=linked)
+    case("real: in a linked worktree, HEAD is the worktree's commit",
+         status == CHECK.EXIT_CONFLICT
+         and lines == conflict_block(label=conflict_label))
+
+    # A fetch that fails stops the run, even though a stale origin/main is
+    # sitting right there and would resolve.
+    unreachable = root / "unreachable"
+    git_in(root, "clone", "-q", str(origin), str(unreachable))
+    git_in(unreachable, "remote", "set-url", "origin", str(root / "no-such-origin"))
+    status, lines, _ = run_here(cwd=unreachable)
+    case("real: a fetch that fails exits 2 as UNFETCHED",
+         status == CHECK.EXIT_BAD_INVOCATION and lines == [
+             "UNFETCHED: git fetch origin failed; do not act on any conflict "
+             "answer until a run succeeds.",
+             "Fix the fetch, then rerun.",
+             "If origin/main in this checkout is already current, rerun with "
+             "--no-fetch instead.",
+         ])
+
+    pull_request_args = ("--pull-request", "605", "--unknown-reads", "1",
+                         "--unknown-sleep-seconds", "0")
+
+    # Heads match: GitHub's CONFLICTING overrules a clean git, through the CLI.
+    status, lines, calls = run_here(
+        "--head", "clean-topic", *pull_request_args,
+        gh=dict(HEADREFOID=clean_head, BASEREFNAME="main",
+                MERGEABLE="CONFLICTING"))
+    case("real: heads match, GitHub CONFLICTING overrules a clean git",
+         status == CHECK.EXIT_CONFLICT
+         and lines == conflict_block(label=clean_label)
+         + [github_line("CONFLICTING", 1), GITHUB_DECIDES])
+    case("real: heads match, GitHub is asked for mergeability",
+         any("mergeable" in call for call in calls))
+
+    # Heads differ (the user's 2026-09-23 ruling), through the CLI: GitHub's
+    # pushed head is main's commit, the checked commit is the topic's.
+    for head, head_label, head_status, github_says in (
+            ("clean-topic", clean_label, CHECK.EXIT_NO_CONFLICT, "CONFLICTING"),
+            ("conflict-topic", conflict_label, CHECK.EXIT_CONFLICT, "MERGEABLE")):
+        status, lines, calls = run_here(
+            "--head", head, *pull_request_args,
+            gh=dict(HEADREFOID=main_head, BASEREFNAME="main",
+                    MERGEABLE=github_says))
+        label = "real: heads differ, %s, GitHub would say %s" % (head, github_says)
+        case(label + ": the exit is git's", status == head_status)
+        case(label + ": the whole output", lines == verdict_block(
+            head_status, label=head_label) + [
+            "GITHUB: not consulted -- pull request 605's pushed head is %s, "
+            "not the %s this run checked" % (main_label, head_label),
+            "DISCLOSURE: GitHub's mergeability is about pull request 605's "
+            "pushed head %s, not the %s checked here, so it cannot overrule "
+            "git about a commit it was never asked about; this verdict is "
+            "git's alone. Say so in the pull request." % (main_label, head_label),
+        ])
+        case(label + ": GitHub is never asked for mergeability",
+             not any("mergeable" in call for call in calls))
+
+    status, lines, _ = run_here("--head", "clean-topic", *pull_request_args,
+                                gh=dict(FAIL="1"))
+    case("real: gh failing leaves git's answer standing, said once",
+         status == CHECK.EXIT_NO_CONFLICT
+         and lines == clean_block(label=clean_label) + [GITHUB_FAILED])
+
+
+with tempfile.TemporaryDirectory(prefix="branch-conflict-check-test-") as scratch:
+    try:
+        real_repository_cases(Path(scratch).resolve())
+    except (SetupFailed, subprocess.TimeoutExpired, OSError) as exc:
+        case("real: the throwaway repositories could be built and run (%s)" % exc,
+             False)
+
 
 # --- the original defect, pinned so it cannot come back ----------------------
 # Plain `gh pr view <n>` prints no mergeability field, so nothing may key on it.
