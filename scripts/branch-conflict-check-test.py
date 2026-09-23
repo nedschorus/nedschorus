@@ -44,7 +44,8 @@ def case(name, condition):
 
 def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 merge_tree_status=0, gh_results=None, log=None,
-                fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0):
+                fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0,
+                full_refs=None, gh_base="main", gh_base_status=0):
     """A runner that answers git and gh without touching either.
 
     base_resolves and head_resolves override `resolves` for one side, so a case
@@ -57,7 +58,14 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     nothing about it gets a GitHub verdict that counts. gh_results answers only
     the mergeability reads; the headRefOid read is answered from gh_head, so
     adding it did not shift any existing case's queue.
+
+    full_refs maps a rev to what `git rev-parse --symbolic-full-name` prints
+    for it; a rev not in it gets refs/remotes/<rev> when it contains a slash,
+    which is right for origin/main, the base every older case uses. gh_base is
+    the branch the pull request targets, answered apart from the queue for the
+    same reason as gh_head.
     """
+    refs = dict(full_refs or {})
     gh_queue = list(gh_results or [])
     base_ok = resolves if base_resolves is None else base_resolves
     head_ok = resolves if head_resolves is None else head_resolves
@@ -67,9 +75,15 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             log.append(command)
         if command[:2] == ["git", "fetch"]:
             return fetch_status, ""
+        if command[:3] == ["git", "rev-parse", "--symbolic-full-name"]:
+            rev = command[-1]
+            if rev in refs:
+                return (0, refs[rev]) if refs[rev] is not None else (128, "")
+            return 0, ("refs/remotes/" + rev) if "/" in rev else ""
         if command[:2] == ["git", "rev-parse"]:
             rev = command[-1]
-            is_base = rev.startswith("origin/")
+            is_base = rev.startswith("origin/") or rev.startswith("upstream/") \
+                or rev in ("main", "main^{commit}") or rev.startswith(RESOLVED_BASE)
             if not (base_ok if is_base else head_ok):
                 return 1, ""
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
@@ -81,6 +95,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
         if command[:2] == ["gh", "pr"]:
             if "headRefOid" in command:
                 return gh_head_status, (gh_head or "")
+            if "baseRefName" in command:
+                return gh_base_status, (gh_base or "")
             if not gh_queue:
                 return 1, ""
             return gh_queue.pop(0)
@@ -98,9 +114,9 @@ def mergeability_reads(log):
 
 
 def run(runner, pull_request=None, reads=3, sleeps=None, fetch=True,
-        remote=CHECK.DEFAULT_FETCH_REMOTE):
+        remote=CHECK.DEFAULT_FETCH_REMOTE, base="origin/main"):
     return CHECK.check(
-        "HEAD", "origin/main", pull_request,
+        "HEAD", base, pull_request,
         runner=runner,
         sleep=(sleeps.append if sleeps is not None else (lambda _s: None)),
         reads=reads, sleep_seconds=7, fetch=fetch, remote=remote)
@@ -410,6 +426,116 @@ case("an unfetched GitHub head is named by hash alone, the checked head in full"
          in l for l in lines))
 case("a subject that cannot be read does not change the verdict",
      status == CHECK.EXIT_NO_CONFLICT)
+
+# --- the fetch must move the base -------------------------------------------
+# `git fetch origin` moves refs/remotes/origin/* and nothing else, so with
+# `--base main`, a local branch, the fetch runs and the base stays wherever main
+# was left: a confident answer about old code. Raised by the Codex review cell
+# on PR 635 after its merge; ruled "y" as superwalk item 10, 2026-09-23.
+LOCAL_MAIN = {"main": "refs/heads/main"}
+log = []
+status, lines = run(fake_runner(merge_tree_status=0, full_refs=LOCAL_MAIN,
+                                log=log), base="main")
+case("a local-branch --base with fetching on exits 2, not a verdict",
+     status == CHECK.EXIT_BAD_INVOCATION)
+case("a local-branch --base says UNMATCHED", lines[0].startswith("UNMATCHED:"))
+case("a local-branch --base is refused before merge-tree",
+     not any(c[:2] == ["git", "merge-tree"] for c in log))
+case("UNMATCHED text is one instruction per line", lines == [
+    "UNMATCHED: --base main is not a branch of origin, the remote this run "
+    "fetched, so the fetch did not move it; do not act on any conflict answer "
+    "until a run succeeds.",
+    "If you meant origin's branch, rerun with --base origin/<branch>.",
+    "If you meant main exactly as this checkout has it, rerun with --no-fetch.",
+])
+
+# Another remote's branch is not moved by fetching this one either.
+status, lines = run(fake_runner(merge_tree_status=0), remote="upstream")
+case("a --base under a remote other than the fetched one is refused",
+     status == CHECK.EXIT_BAD_INVOCATION and lines[0].startswith("UNMATCHED:"))
+status, lines = run(fake_runner(merge_tree_status=0), remote="upstream",
+                    base="upstream/main")
+case("a --base under the fetched remote is answered",
+     status == CHECK.EXIT_NO_CONFLICT)
+
+# A pinned commit does not move with a fetch: refused with fetching on.
+status, lines = run(fake_runner(merge_tree_status=0,
+                                full_refs={RESOLVED_BASE: ""}),
+                    base=RESOLVED_BASE)
+case("a bare-hash --base with fetching on is refused",
+     status == CHECK.EXIT_BAD_INVOCATION and lines[0].startswith("UNMATCHED:"))
+
+# --no-fetch is the caller's statement that the base is what it wants, so the
+# local branch and the pinned commit are both answered, with the disclosure.
+status, lines = run(fake_runner(merge_tree_status=0, full_refs=LOCAL_MAIN),
+                    base="main", fetch=False)
+case("--no-fetch answers about a local-branch --base",
+     status == CHECK.EXIT_NO_CONFLICT)
+case("--no-fetch with a local-branch --base still discloses it",
+     any(l.startswith("DISCLOSURE:") and "--no-fetch" in l for l in lines))
+
+# A --base that does not resolve at all is still UNRESOLVED, not UNMATCHED:
+# the symbolic lookup fails, and the resolve step reports it.
+status, lines = run(fake_runner(base_resolves=False,
+                                full_refs={"origin/main": None}))
+case("an unresolvable --base is UNRESOLVED, not UNMATCHED",
+     lines[0].startswith("UNRESOLVED:"))
+
+# --- GitHub must be answering about the same base branch ---------------------
+# A pull request's mergeability is computed against the branch it targets. When
+# that is not the branch --base names -- a stacked pull request, a mistyped
+# number -- GitHub's CONFLICTING is about a different merge and cannot
+# overrule git. Same review, same ruling.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_base="release",
+                gh_results=[(0, "CONFLICTING")]),
+    pull_request=700, reads=3)
+case("GitHub CONFLICTING against another base branch does not overrule git",
+     status == CHECK.EXIT_NO_CONFLICT and lines[0].startswith("VERDICT: CLEAN"))
+case("the base-branch mismatch names both branches",
+     any("targets release, not the main" in l for l in lines))
+case("the base-branch mismatch is disclosed as git's alone",
+     any(l.startswith("DISCLOSURE:") and "git's alone" in l for l in lines))
+
+log = []
+run(fake_runner(merge_tree_status=0, gh_base="release",
+                gh_results=[(0, "CONFLICTING")], log=log),
+    pull_request=700, reads=3)
+case("mergeability is not even polled when the base branches differ",
+     mergeability_reads(log) == 0)
+
+# The matching branch, written as the remote's (origin/main) or as a local
+# branch under --no-fetch (main), both count as GitHub's main.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
+    pull_request=353, reads=3)
+case("origin/main matches a pull request targeting main",
+     status == CHECK.EXIT_CONFLICT)
+status, lines = run(
+    fake_runner(merge_tree_status=0, full_refs=LOCAL_MAIN,
+                gh_results=[(0, "CONFLICTING")]),
+    pull_request=353, reads=3, base="main", fetch=False)
+case("a local main under --no-fetch matches a pull request targeting main",
+     status == CHECK.EXIT_CONFLICT)
+
+# A bare hash names no branch, so no pull request's verdict is about it.
+status, lines = run(
+    fake_runner(merge_tree_status=0, full_refs={RESOLVED_BASE: ""},
+                gh_results=[(0, "CONFLICTING")]),
+    pull_request=353, reads=3, base=RESOLVED_BASE, fetch=False)
+case("a bare-hash --base does not take GitHub's verdict",
+     status == CHECK.EXIT_NO_CONFLICT)
+case("a bare-hash --base says GitHub was not consulted",
+     any(l.startswith("GITHUB: not consulted") and "names no branch" in l
+         for l in lines))
+
+# The pull request's base cannot be read: git's answer stands.
+status, lines = run(
+    fake_runner(merge_tree_status=1, gh_base_status=1),
+    pull_request=353, reads=3)
+case("an unreadable pull request base leaves git's answer standing",
+     status == CHECK.EXIT_CONFLICT
+     and any("could not be asked" in l for l in lines))
 
 # --- the original defect, pinned so it cannot come back ----------------------
 # Plain `gh pr view <n>` prints no mergeability field, so nothing may key on it.
