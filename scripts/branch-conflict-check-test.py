@@ -21,6 +21,14 @@ SPEC.loader.exec_module(CHECK)
 
 RESOLVED_HEAD = "a" * 40
 RESOLVED_BASE = "b" * 40
+# Subjects the fake git reports for the two resolved commits. Any other hash
+# (OTHER_COMMIT below, a GitHub head never fetched) has no subject locally.
+COMMIT_SUBJECTS = {
+    RESOLVED_HEAD: "Head commit subject",
+    RESOLVED_BASE: "Base commit subject",
+}
+HEAD_LABEL = 'commit %s ("Head commit subject")' % RESOLVED_HEAD[:12]
+BASE_LABEL = 'commit %s ("Base commit subject")' % RESOLVED_BASE[:12]
 
 failures = []
 case_count = 0
@@ -67,6 +75,9 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, ""
+        if command[:2] == ["git", "log"]:
+            subject = COMMIT_SUBJECTS.get(command[-1])
+            return (0, subject) if subject else (128, "")
         if command[:2] == ["gh", "pr"]:
             if "headRefOid" in command:
                 return gh_head_status, (gh_head or "")
@@ -130,7 +141,8 @@ case("clean says CLEAN", lines[0].startswith("VERDICT: CLEAN"))
 status, lines = run(fake_runner(merge_tree_status=1))
 case("a conflict exits 1", status == CHECK.EXIT_CONFLICT)
 case("a conflict says CONFLICT", lines[0].startswith("VERDICT: CONFLICT"))
-case("a conflict says what to do about it", "by hand" in lines[0])
+case("a conflict says what to do about it",
+     any("into the branch by hand" in l for l in lines))
 
 # A merge-tree status that is neither 0 nor 1 is NO ANSWER, not a conflict.
 # git 2.55.0 exits 129 for an option it does not know and 128 for unrelated
@@ -162,7 +174,7 @@ status, lines = run(fake_runner(merge_tree_status=128))
 case("a no-answer status says the run gave no verdict",
      lines[0].startswith("UNANSWERED:"))
 case("a no-answer status tells the agent not to hand-merge on it",
-     "Do not merge by hand" in lines[0])
+     "Do not merge by hand on this result." in lines)
 
 # GitHub is not consulted when git could not answer: the run returns before the
 # pull-request branch, so no gh call is made and no verdict can overrule a
@@ -291,7 +303,7 @@ case("a failed fetch says UNFETCHED, not CONFLICT or CLEAN",
      lines[0].startswith("UNFETCHED:")
      and "VERDICT" not in lines[0])
 case("a failed fetch names the deliberate way past it",
-     "--no-fetch" in lines[0])
+     any("--no-fetch" in l for l in lines))
 
 log = []
 run(fake_runner(fetch_status=1, log=log))
@@ -319,6 +331,85 @@ case("--no-fetch fetches nothing at all",
 case("--no-fetch still reports a verdict", status == CHECK.EXIT_NO_CONFLICT)
 case("--no-fetch discloses that the base was never refreshed",
      any(l.startswith("DISCLOSURE:") and "--no-fetch" in l for l in lines))
+
+# --- the exact text of each message -----------------------------------------
+# User-ruled 2026-09-22 (walk "merge-lane rulings owed and concerns", item 1):
+# each message an agent acts on is one instruction per line with its condition,
+# the rationale in the module docstring; and a commit is named as
+# commit <hash> ("<subject>"). Pinned whole, so the old one-paragraph messages
+# and bare hashes fail here.
+status, lines = run(fake_runner(fetch_status=1))
+case("UNFETCHED text is one instruction per line", lines == [
+    "UNFETCHED: git fetch origin failed; do not act on any conflict answer "
+    "until a run succeeds.",
+    "Fix the fetch, then rerun.",
+    "If origin/main in this checkout is already current, rerun with "
+    "--no-fetch instead.",
+])
+
+status, lines = run(fake_runner(base_resolves=False))
+case("UNRESOLVED base text is one instruction per line", lines == [
+    "UNRESOLVED: base origin/main does not resolve to a commit; do not act on "
+    "any conflict answer until a run succeeds.",
+    "If origin/main is mistyped, correct --base, then rerun.",
+    "If origin/main is not fetched, fetch it, then rerun.",
+])
+
+status, lines = run(fake_runner(head_resolves=False))
+case("UNRESOLVED head text is one instruction per line", lines == [
+    "UNRESOLVED: head HEAD does not resolve to a commit; do not act on any "
+    "conflict answer until a run succeeds.",
+    "If HEAD is mistyped, correct --head, then rerun.",
+    "If HEAD is not fetched, fetch it, then rerun.",
+])
+
+status, lines = run(fake_runner(merge_tree_status=1))
+case("CONFLICT text is one instruction per line, naming the commit", lines == [
+    "VERDICT: CONFLICT -- %s conflicts with origin/main." % HEAD_LABEL,
+    "Merge origin/main into the branch by hand, with the frozen head as "
+    "first parent.",
+    "Resolve the conflict and change nothing else in the merge.",
+    "Before pushing, rerun the test suites for what the merge touched.",
+])
+
+status, lines = run(fake_runner(merge_tree_status=128))
+case("UNANSWERED text is one instruction per line, naming both commits",
+     lines == [
+    "UNANSWERED: git merge-tree exited 128 merging %s into %s; do not act on "
+    "it as a conflict or as clean." % (HEAD_LABEL, BASE_LABEL),
+    "Do not merge by hand on this result.",
+    "If either commit is missing from this checkout, fetch it, then rerun.",
+    "If the two commits share no history, check that --head and --base name "
+    "the right commits, then rerun.",
+    "If the object database is not writable, run from a checkout where it "
+    "is, then rerun.",
+])
+
+status, lines = run(fake_runner(merge_tree_status=0))
+case("CLEAN names the commit by hash and quoted subject",
+     lines == ["VERDICT: CLEAN -- %s does not conflict with origin/main. "
+               "Nothing to do." % HEAD_LABEL])
+
+# The GitHub-disclosure lines precede nothing: the verdict block stays first
+# and contiguous even when GITHUB and DISCLOSURE lines were collected earlier.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
+    pull_request=353, reads=3)
+case("the CONFLICT block stays contiguous ahead of GitHub's lines",
+     lines[3] == "Before pushing, rerun the test suites for what the merge "
+                 "touched." and lines[4].startswith("GITHUB:"))
+
+# A commit git cannot read the subject of -- GitHub's pushed head, never
+# fetched -- is named by its hash alone; the run's verdict is unchanged.
+status, lines = run(
+    fake_runner(merge_tree_status=0, gh_head=OTHER_COMMIT,
+                gh_results=[(0, "CONFLICTING")]),
+    pull_request=605, reads=3)
+case("an unfetched GitHub head is named by hash alone, the checked head in full",
+     any(("pushed head is commit %s, not the %s" % (OTHER_COMMIT[:12], HEAD_LABEL))
+         in l for l in lines))
+case("a subject that cannot be read does not change the verdict",
+     status == CHECK.EXIT_NO_CONFLICT)
 
 # --- the original defect, pinned so it cannot come back ----------------------
 # Plain `gh pr view <n>` prints no mergeability field, so nothing may key on it.

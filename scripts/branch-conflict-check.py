@@ -85,6 +85,37 @@ GitHub CONFLICTING, which would then read CLEAN, the exact false answer this
 program exists to prevent. The stale-value window is the UNKNOWN window, and the
 poll above already covers it.
 
+WHAT EACH MESSAGE INSTRUCTS, AND WHY. Every message an agent acts on is one
+instruction per line, each with the condition it applies under; the reasons live
+here, where maintainers read them (CLAUDE.md, user-ruled 2026-09-18 on the
+force-push guard's refusal; applied to this program by the user 2026-09-22 in
+the walk "merge-lane rulings owed and concerns", item 1).
+
+  - UNFETCHED: a failed fetch stops the run because a stale base gives a
+    confident wrong answer (WHY IT FETCHES BEFORE IT ANSWERS, above). The
+    --no-fetch line is conditioned on the base already being current, because
+    that is the only case in which skipping the fetch is safe.
+  - UNRESOLVED (base or head): a rev that does not resolve is either mistyped or
+    not fetched, and each gets its own line. It is caught before merge-tree
+    because merge-tree would report it as a conflict (exit 1).
+  - VERDICT: CONFLICT: the hand merge takes the frozen head as first parent
+    because a pushed head is frozen under review, and the resubmission is one
+    commit on top of it, never a rewrite (CLAUDE.md, "How a change reaches
+    main", ruled 2026-09-08). "Resolve the conflict and nothing else" keeps the
+    merge reviewable as a merge. The suites rerun because a resolution is new
+    code that no earlier run tested.
+  - UNANSWERED: only merge-tree statuses 0 (clean) and 1 (conflict) are
+    verdicts; any other status means git could not attempt the merge (see
+    merge_tree_exit_status for the three known triggers). "Do not merge by
+    hand" comes first because a hand merge is the costly wrong response to it.
+
+HOW OUTPUT NAMES A COMMIT. Always as commit <12-char hash> ("<subject>"): the
+hash for the machine, the subject for the reader, who cannot recognise a hash
+(user-ruled 2026-09-22, same walk, item 1). The subject comes from
+`git log -1 --format=%s`. When that fails -- GitHub's pushed head is often not
+in the local checkout -- the commit is named by its hash alone, `commit <hash>`,
+rather than fetching to find a subject, which would change what the run does.
+
 Usage:
   scripts/branch-conflict-check.py [--head REV] [--base REV] [--pull-request N]
                                    [--no-fetch] [--fetch-remote NAME]
@@ -172,6 +203,19 @@ def merge_tree_exit_status(base_hash, head_hash, runner=run):
     return status
 
 
+def commit_label(commit_hash, runner=run):
+    """How output names a commit: commit <short hash> ("<subject>").
+
+    Falls back to commit <short hash> when git cannot read the subject, which
+    happens for a GitHub head that was never fetched. See the module docstring.
+    """
+    short = commit_hash[:12]
+    status, subject = runner(["git", "log", "-1", "--format=%s", commit_hash])
+    if status != 0 or not subject:
+        return "commit %s" % short
+    return 'commit %s ("%s")' % (short, subject)
+
+
 def github_head_commit(pull_request, runner=run):
     """The pushed head commit GitHub's mergeability answer is about, or None.
 
@@ -210,6 +254,16 @@ def github_mergeable(pull_request, runner=run, sleep=time.sleep,
     return verdict or "UNKNOWN", reads
 
 
+def unresolved_lines(side, rev):
+    """The UNRESOLVED message for a --base or --head that names no commit."""
+    return [
+        "UNRESOLVED: %s %s does not resolve to a commit; do not act on any "
+        "conflict answer until a run succeeds." % (side, rev),
+        "If %s is mistyped, correct --%s, then rerun." % (rev, side),
+        "If %s is not fetched, fetch it, then rerun." % rev,
+    ]
+
+
 def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
           reads=GITHUB_UNKNOWN_READS, sleep_seconds=GITHUB_UNKNOWN_SLEEP_SECONDS,
           fetch=True, remote=DEFAULT_FETCH_REMOTE):
@@ -219,10 +273,11 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
     if fetch:
         if not fetch_remote(remote, runner):
             return EXIT_BAD_INVOCATION, [
-                "UNFETCHED: git fetch %s failed, so %s may be stale and any "
-                "verdict against it untrustworthy -- fix the fetch, or pass "
-                "--no-fetch to answer against the checkout as it stands"
-                % (remote, base)
+                "UNFETCHED: git fetch %s failed; do not act on any conflict "
+                "answer until a run succeeds." % remote,
+                "Fix the fetch, then rerun.",
+                "If %s in this checkout is already current, rerun with "
+                "--no-fetch instead." % base,
             ]
     else:
         lines.append(
@@ -231,26 +286,25 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
 
     base_hash = resolve_commit(base, runner)
     if base_hash is None:
-        return EXIT_BAD_INVOCATION, [
-            "UNRESOLVED: base %s does not resolve to a commit -- "
-            "fetch it before trusting any conflict answer" % base
-        ]
+        return EXIT_BAD_INVOCATION, unresolved_lines("base", base)
     head_hash = resolve_commit(head, runner)
     if head_hash is None:
-        return EXIT_BAD_INVOCATION, [
-            "UNRESOLVED: head %s does not resolve to a commit -- "
-            "fetch it before trusting any conflict answer" % head
-        ]
+        return EXIT_BAD_INVOCATION, unresolved_lines("head", head)
 
     merge_status = merge_tree_exit_status(base_hash, head_hash, runner)
     if merge_status not in (MERGE_TREE_CLEAN, MERGE_TREE_CONFLICT):
         return EXIT_BAD_INVOCATION, [
-            "UNANSWERED: git merge-tree exited %d merging %s into %s; only %d "
-            "(clean) and %d (conflict) are verdicts. Check that both commits "
-            "are present and share history, and that the object database is "
-            "writable, then rerun. Do not merge by hand on this result."
-            % (merge_status, head_hash[:12], base_hash[:12],
-               MERGE_TREE_CLEAN, MERGE_TREE_CONFLICT)
+            "UNANSWERED: git merge-tree exited %d merging %s into %s; do not "
+            "act on it as a conflict or as clean."
+            % (merge_status, commit_label(head_hash, runner),
+               commit_label(base_hash, runner)),
+            "Do not merge by hand on this result.",
+            "If either commit is missing from this checkout, fetch it, then "
+            "rerun.",
+            "If the two commits share no history, check that --head and --base "
+            "name the right commits, then rerun.",
+            "If the object database is not writable, run from a checkout where "
+            "it is, then rerun.",
         ]
     conflict = merge_status == MERGE_TREE_CONFLICT
 
@@ -263,13 +317,15 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             lines.append(
                 "GITHUB: not consulted -- pull request %d's pushed head is %s, "
                 "not the %s this run checked"
-                % (pull_request, github_head[:12], head_hash[:12]))
+                % (pull_request, commit_label(github_head, runner),
+                   commit_label(head_hash, runner)))
             lines.append(
                 "DISCLOSURE: GitHub's mergeability is about pull request %d's "
                 "pushed head %s, not the %s checked here, so it cannot overrule "
                 "git about a commit it was never asked about; this verdict is "
                 "git's alone. Say so in the pull request."
-                % (pull_request, github_head[:12], head_hash[:12]))
+                % (pull_request, commit_label(github_head, runner),
+                   commit_label(head_hash, runner)))
         else:
             verdict, taken = github_mergeable(
                 pull_request, runner, sleep, reads, sleep_seconds)
@@ -297,15 +353,18 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
                         "that git cannot do is not one to attempt.")
 
     if conflict:
-        lines.insert(0, "VERDICT: CONFLICT -- %s conflicts with %s. Merge %s into "
-                        "the branch by hand, the frozen head as first parent, "
-                        "resolving the conflict and nothing else, then rerun the "
-                        "suites for what the merge touched before pushing."
-                        % (head_hash[:12], base, base))
+        lines[0:0] = [
+            "VERDICT: CONFLICT -- %s conflicts with %s."
+            % (commit_label(head_hash, runner), base),
+            "Merge %s into the branch by hand, with the frozen head as first "
+            "parent." % base,
+            "Resolve the conflict and change nothing else in the merge.",
+            "Before pushing, rerun the test suites for what the merge touched.",
+        ]
         return EXIT_CONFLICT, lines
 
     lines.insert(0, "VERDICT: CLEAN -- %s does not conflict with %s. Nothing to do."
-                    % (head_hash[:12], base))
+                    % (commit_label(head_hash, runner), base))
     return EXIT_NO_CONFLICT, lines
 
 
