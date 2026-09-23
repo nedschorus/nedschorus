@@ -46,6 +46,7 @@ what that attempt should do.
 Run: python3 scripts/cold-read-restater-judge-cell-test.py
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -56,6 +57,14 @@ import tempfile
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
+
+# The scratch repository every cold-read suite builds, defined once.
+_scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+scratch_repository_fixture = importlib.util.module_from_spec(
+    _scratch_repository_fixture_spec)
+_scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
 
 # The phrase the shared module prints when a chain falls back, spelled out
 # here rather than imported so a reworded line fails here rather than passing
@@ -141,43 +150,22 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def git(repository, *arguments):
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
-        capture_output=True, text=True, check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"git {' '.join(arguments)}: {completed.stderr.strip()}")
-    return completed.stdout
-
-
 def build_scratch_repository(scratch):
     """A git repository the cell scripts believe they live in: the cell
-    derives its repository root from its own path, so a copy is the seam."""
+    derives its repository root from its own path, so a copy is the seam.
+
+    This suite's own seeding only; the scripts copy and the seed commit are
+    the fixture's.
+    """
     repository = scratch / "scratch-checkout"
     if repository.exists():
         shutil.rmtree(repository)
-    # The whole scripts/ directory, __pycache__ aside, so a shared module
-    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
-    # md-skills-seat-open-decisions-2026-09-20 item 3).
-    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
-                    ignore=shutil.ignore_patterns("__pycache__"))
-    (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     for relative_path, text in CASE_FILE_CONTENTS.items():
         path = repository / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    git(repository, "init", "-b", "main")
-    # Auto maintenance off: with the whole scripts/ directory committed, git
-    # 2.55 repacks this repository in the background, and its temporary files
-    # race the deletion of these throwaway checkouts — measured 2026-09-20,
-    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
-    git(repository, "config", "maintenance.auto", "false")
-    git(repository, "config", "user.email", "test@test.invalid")
-    git(repository, "config", "user.name", "cold-read-restater-judge-cell test")
-    git(repository, "add", "-A")
-    git(repository, "commit", "-m", "seed")
-    return repository
+    return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
+        repository)
 
 
 def report_path_for(repository, case_slug, run_number=1):

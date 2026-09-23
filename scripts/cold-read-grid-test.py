@@ -135,6 +135,15 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS_DIR.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
+
+# The scratch repository every cold-read suite builds, defined once.
+_scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
+    "cold_read_scratch_repository_test_fixture",
+    SCRIPTS_DIR / "cold-read-scratch-repository-test-fixture.py")
+scratch_repository_fixture = importlib.util.module_from_spec(
+    _scratch_repository_fixture_spec)
+_scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
 # Every run here ships its record to a scratch log-store inside the scratch
 # repository, through the shipper's destination override, so no case reaches
 # ned-box; the store is real, the copy is the real rsync. A case that wants the
@@ -302,42 +311,19 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def git(repository, *arguments):
-    completed = subprocess.run(
-        ["git", "-C", str(repository), *arguments],
-        capture_output=True, text=True, check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"git {' '.join(arguments)}: {completed.stderr.strip()}")
-    return completed.stdout
-
-
 def build_scratch_repository(scratch, name):
+    """This suite's own seeding only; the scripts copy and the seed commit
+    are the fixture's."""
     repository = scratch / name
-    # The whole scripts/ directory, __pycache__ aside, so a shared module
-    # added tomorrow needs no edit here (user-ruled 2026-09-20, walk
-    # md-skills-seat-open-decisions-2026-09-20 item 3).
-    shutil.copytree(SCRIPTS_DIR, repository / "scripts",
-                    ignore=shutil.ignore_patterns("__pycache__"))
     scratch_prompts = repository / ".claude" / "skills" / "cold-read" / "prompts"
     scratch_prompts.mkdir(parents=True)
     for prompt_path in PROMPTS_DIR.glob("*.md"):
         shutil.copy2(prompt_path, scratch_prompts / prompt_path.name)
-    (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     target = repository / TARGET_RELATIVE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# Target\n\nOne committed line.\n", encoding="utf-8")
-    git(repository, "init", "-b", "main")
-    # Auto maintenance off: with the whole scripts/ directory committed, git
-    # 2.55 repacks this repository in the background, and its temporary files
-    # race the deletion of these throwaway checkouts — measured 2026-09-20,
-    # a FileNotFoundError on a `bitmap-ref-tips` file inside shutil.rmtree.
-    git(repository, "config", "maintenance.auto", "false")
-    git(repository, "config", "user.email", "test@test.invalid")
-    git(repository, "config", "user.name", "cold-read-grid test")
-    git(repository, "add", "-A")
-    git(repository, "commit", "-m", "seed")
-    return repository
+    return scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
+        repository)
 
 
 def write_target(repository, relative_path):
@@ -1365,6 +1351,30 @@ with tempfile.TemporaryDirectory() as scratch:
           f"- ok: `{dotted}`" in reference_check, reference_check)
     check("and nothing in that target is left unresolved",
           "UNRESOLVED" not in reference_check, reference_check)
+
+    # --- A bare file name with more than one dot keeps its whole name --------
+    # The bare-name alternative matched only one word before the extension,
+    # so `CLAUDE.local.md` was cut to `local.md` and reported UNRESOLVED.
+    # User-approved 2026-09-17, backlog-recheck walk item 1, fix 4.
+    repository = build_scratch_repository(scratch, "multi-dot-file-name-reference")
+    (repository / "CLAUDE.local.md").write_text("# Local\n", encoding="utf-8")
+    (repository / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    (repository / TARGET_RELATIVE_PATH).write_text(
+        "# Target\n\nThe seat's rules are in `CLAUDE.local.md`, and a sentence\n"
+        "can end on it: CLAUDE.local.md. A one-dot name still reads: notes.md.\n",
+        encoding="utf-8")
+    run_grid(repository, stubs / "multi-dot-file-name-reference")
+    record_directory = record_directory_of(repository)
+    reference_check = (
+        record_directory / "reference-check.md"
+    ).read_text(encoding="utf-8")
+    check("a bare file name with two dots resolves with its whole name",
+          "- ok: `CLAUDE.local.md`" in reference_check, reference_check)
+    check("a bare file name with one dot still resolves",
+          "- ok: `notes.md`" in reference_check, reference_check)
+    check("and no truncated name is listed",
+          "`local.md`" not in reference_check
+          and "UNRESOLVED" not in reference_check, reference_check)
 
 
 print()

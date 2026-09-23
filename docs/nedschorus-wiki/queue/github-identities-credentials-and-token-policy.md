@@ -19,11 +19,11 @@ review identity, and the machine accounts each host runs as.
 | account | what it is | org standing |
 |---|---|---|
 | `nedlern` | the human owner's own account. Mac seats authenticate as this by default, because it is what `gh` is logged in as on the Mac. | owner |
-| `ned-review-merge` | the merge-lane seat's identity: it reviews other seats' pull requests, approves them, and merges. Formerly the org's second owner, renamed and demoted to member on 2026-08-19. | member |
-| `mac-claude` | the independent reviewer identity. It reviews and approves work the merge-lane seat itself authored — work `ned-review-merge` may not approve, because GitHub refuses an approving review from a pull request's author. | member since 2026-08-24 |
-| `mac-codex` | Mac-side Codex worker. No credential yet. | invited 2026-08-24, pending |
-| `ubuntu-claude` | the Ubuntu box's live credential; box seats act as this. | invited 2026-08-24, pending |
-| `ubuntu-codex` | Ubuntu-side Codex worker. No credential yet. | invited 2026-08-24, pending |
+| `ned-review-merge` | merge-lane-2's identity: it reviews other seats' pull requests, approves them, and merges. Formerly the org's second owner, renamed and demoted to member on 2026-08-19. | member |
+| `mac-claude` | the independent reviewer identity. It reviews and approves work merge-lane-2 itself authored — work `ned-review-merge` may not approve, because GitHub refuses an approving review from a pull request's author. | member since 2026-08-24 |
+| `mac-codex` | Mac-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
+| `ubuntu-claude` | the Ubuntu box's live credential; box seats act as this. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
+| `ubuntu-codex` | Ubuntu-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
 
 **Why the identities are separate at all.** GitHub refuses an approving review
 from a pull request's author, and `main` has required reviews enabled with no

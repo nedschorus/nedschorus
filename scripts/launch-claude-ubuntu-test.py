@@ -19,24 +19,45 @@ must arrive tilde-EXPANDED (the box shell resolves it at P1), while the
 supervisor's --cd arrives as the literal ~ path (handoff-supervisor.py
 expanduser()s it live, handoff-supervisor.py:855).
 
+The seat-credential cases turn that same layer model on a secret, and they
+are why the launcher reads its token file with `IFS= read -r` rather than
+`$(cat ...)`. A `$(...)` in the pane command is run at P1, by the box's
+login shell, which then hands tmux a string with the token substituted
+into it — a `ps` listing on the box carrying the credential for as long as
+the seat lives. So absence is asserted against the tmux argv capture, the
+pane command as tmux received it AFTER P1, and not against the remote
+string the launcher composed: the launcher never holds the value, so the
+remote string is clean under either implementation and a case that looked
+only there would pass on the leaking one. Presence is asserted against the
+supervisor's environment in the same case, so neither half can pass alone.
+
 Run: python3 scripts/launch-claude-ubuntu-test.py
 
-The suite is self-contained (this file plus launch-claude-ubuntu beside it;
-every other participant is stubbed) and runs unmodified ON THE BOX, where
-P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing in —
-the one caveat the PR #137/#139 reviews carried (user-directed 2026-08-22):
-  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py ned:/tmp/x/
+The suite is self-contained (this file plus launch-claude-ubuntu and
+agent-binary-update-under-lock.py beside it; every other participant is
+stubbed, and the helper is copied into the sandbox HOME's checkout path,
+where the box-side command looks for it) and runs unmodified ON THE BOX,
+where P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing
+in — the one caveat the PR #137/#139 reviews carried (user-directed
+2026-08-22):
+  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py scripts/agent-binary-update-under-lock.py ned:/tmp/x/
   ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
 """
 
+import fcntl
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-ubuntu")
+UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
+UPDATE_LOCK_HELPER = Path(__file__).with_name(UPDATE_LOCK_HELPER_NAME)
 
 failures = []
 
@@ -71,10 +92,24 @@ class LaunchHarness:
         self.workdir.mkdir()
         self.stubs = root / "stubs"
         self.stubs.mkdir()
+        # The box-side update runs the update-lock helper from the box's
+        # checkout, $HOME/Projects/nedschorus/scripts, so the helper under
+        # test is copied to that path in the sandbox HOME.
+        checkout_scripts = self.home / "Projects" / "nedschorus" / "scripts"
+        checkout_scripts.mkdir(parents=True)
+        shutil.copy(UPDATE_LOCK_HELPER, checkout_scripts / UPDATE_LOCK_HELPER_NAME)
         write_stub(self.stubs, "ssh",
                    'printf \'%s\\n\' "$@" > "$LCU_TEST_DIR/ssh-argv.txt"\n'
                    'exit 0\n')
         write_stub(self.stubs, "timeout", "exit 0\n")
+        # The helper really runs `claude update`, so claude is stubbed: each
+        # update records whether the release marker of a lock held by the
+        # test (LCU_RELEASE_MARKER) existed yet when it ran.
+        write_stub(self.stubs, "claude",
+                   '[ "${1:-}" = "update" ] || exit 0\n'
+                   'if [ -e "${LCU_RELEASE_MARKER:-/nonexistent}" ]; '
+                   'then echo after-release; else echo before-release; fi '
+                   '>> "$LCU_TEST_DIR/claude-updates.txt"\n')
         write_stub(self.stubs, "git", "exit 0\n")
         # The remote side asks whether the box's own seat restart is still
         # running; "inactive" is the answer on a box that has been up a while,
@@ -87,15 +122,21 @@ class LaunchHarness:
         # the task-list binding is an exported variable, so the only place it
         # can be measured is the environment of the process the pane command
         # actually starts.
+        # The update-lock helper is the one call handed to the REAL
+        # interpreter, keyed on its own name, so every other python3 the
+        # box-side command runs stays stubbed.
         write_stub(self.stubs, "python3",
                    '{ printf \'%s\\n\' "$@"; echo "=== call boundary ==="; } '
                    '>> "$LCU_TEST_DIR/python3-calls.txt"\n'
+                   f'case "${{1:-}}" in (*{UPDATE_LOCK_HELPER_NAME}) '
+                   f'exec "{sys.executable}" "$@";; esac\n'
                    'for argument in "$@"; do\n'
                    '  case "$argument" in (*handoff-supervisor.py*)\n'
                    '    { echo "CLAUDE_CODE_TASK_LIST_ID='
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '      echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
-                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}"; } '
+                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
+                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}"; } '
                    '> "$LCU_TEST_DIR/supervisor-environment.txt";;\n'
                    '  esac\n'
                    'done\n'
@@ -111,7 +152,8 @@ class LaunchHarness:
                    '{ echo "CLAUDE_CODE_TASK_LIST_ID='
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '  echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
-                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}"; } '
+                   '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
+                   '  echo "GH_TOKEN=${GH_TOKEN-<unset>}"; } '
                    '> "$LCU_TEST_DIR/after-exit-environment.txt"\n')
         # has-session answers "no session" so socket selection stays on the
         # per-seat socket; a new-session call records its argv, then replays
@@ -134,15 +176,41 @@ class LaunchHarness:
                    'exit 0\n')
 
     def replay_environment(self):
-        return {
+        environment = {
             "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
             "LCU_TEST_DIR": str(self.captures),
             "LCU_UNIT_STATE": self.unit_state,
+            "LCU_RELEASE_MARKER": str(self.release_marker),
         }
+        # Box-side, as on the real box: the update limit is read from the
+        # box shell's environment, not carried from this Mac.
+        if self.update_timeout_seconds is not None:
+            environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = str(
+                self.update_timeout_seconds)
+        # This whitelist is what keeps the replay clean, so an ambient
+        # GH_TOKEN can only appear here on purpose: it stands in for a box
+        # shell that already carries one, which the seat must not keep.
+        if self.ambient_gh_token is not None:
+            environment["GH_TOKEN"] = self.ambient_gh_token
+        return environment
 
     unit_state = "inactive"
+    update_timeout_seconds = None
+    ambient_gh_token = None
+
+    @property
+    def release_marker(self):
+        return self.captures.parent / "update-lock-released"
+
+    def update_lock_path(self):
+        return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
+
+    def claude_updates(self):
+        path = self.captures / "claude-updates.txt"
+        return (path.read_text(encoding="utf-8").splitlines()
+                if path.is_file() else [])
 
     def seat_exists_on_the_box(self, after_polls: int = 0):
         """Make the tmux stub answer has-session with "exists" — at once, or
@@ -188,7 +256,22 @@ class LaunchHarness:
         calls = self.captures / "python3-calls.txt"
         return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
 
-    def run(self, launcher_arguments, agents_root=None, extra_arguments=None):
+    def write_seat_token(self, account: str, token: str,
+                         trailing_newline: bool = True) -> Path:
+        """Put a token file for one account in the sandbox HOME, which stands
+        in for the BOX's home: the launcher composes ~/.config/nedschorus/,
+        and P1 resolves that ~ against this HOME. Never a real credential —
+        the value is the thing the cases hunt for in the post-P1 command, so
+        it has to be a string this suite invented."""
+        token_file = self.home / ".config" / "nedschorus" / f"{account}.token"
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(token + ("\n" if trailing_newline else ""),
+                              encoding="utf-8")
+        token_file.chmod(0o600)
+        return token_file
+
+    def run(self, launcher_arguments, agents_root=None, extra_arguments=None,
+            seat_github_account=None):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
         tmux stub). Returns a dict of everything observable."""
         for leftover in self.captures.iterdir():
@@ -202,6 +285,8 @@ class LaunchHarness:
             environment["NEDSCHORUS_AGENTS_ROOT"] = agents_root
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
+        if seat_github_account is not None:
+            environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
         launched = subprocess.run(
             [str(LAUNCHER), *launcher_arguments],
             capture_output=True, text=True, check=False, env=environment,
@@ -225,10 +310,15 @@ class LaunchHarness:
                 lines = [line for line in block.splitlines() if line]
                 if any("handoff-supervisor.py" in line for line in lines):
                     supervisor_argv = lines
+        tmux_argv_capture = self.captures / "tmux-argv.txt"
         return {
             "launched": launched,
             "remote": remote,
             "replay": replayed,
+            # The pane command as tmux received it, AFTER P1 — the only
+            # place a P1-substituted secret would show.
+            "tmux_argv": (tmux_argv_capture.read_text(encoding="utf-8")
+                          if tmux_argv_capture.is_file() else ""),
             "pane_directory": (pane_directory_capture.read_text(encoding="utf-8")
                                if pane_directory_capture.is_file() else ""),
             "supervisor_argv": supervisor_argv,
@@ -257,6 +347,38 @@ def argv_value(argv, flag):
         if token == flag and index + 1 < len(argv):
             return argv[index + 1]
     return None
+
+
+class AnotherUpdateHoldsTheLock:
+    """Hold the machine's update lock from this test, as another update would,
+    releasing it after release_after_seconds (None: held until the block ends).
+    The release marker is written BEFORE the lock is released, so an update
+    that ran only after taking the lock always sees it."""
+
+    def __init__(self, lock_path: Path, release_marker: Path,
+                 release_after_seconds=None):
+        self.lock_path = lock_path
+        self.release_marker = release_marker
+        self.release_after_seconds = release_after_seconds
+        self.timer = None
+
+    def release(self):
+        self.release_marker.write_text("released", encoding="utf-8")
+        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file = open(self.lock_path, "a")
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if self.release_after_seconds is not None:
+            self.timer = threading.Timer(self.release_after_seconds, self.release)
+            self.timer.start()
+        return self
+
+    def __exit__(self, *exception):
+        if self.timer is not None:
+            self.timer.join()
+        self.lock_file.close()
 
 
 def main() -> int:
@@ -595,6 +717,205 @@ def main() -> int:
         check("a detached launch does not retry: one ssh, exit 255 passed through",
               result["launched"].returncode == 255 and harness.count("ssh-calls.txt") == 1,
               (result["launched"].returncode, harness.count("ssh-calls.txt")))
+
+        # --- 12. the seat's own GitHub credential (credential ruling C4,
+        # nc-systems/main-gatekeeper/main-gatekeeper-design.md: each agent
+        # host holds a fine-grained token for this repository only, never a
+        # classic all-repository token and never the `workflow` scope).
+        # Measured on the box 2026-09-22: `gh` is logged in as
+        # `ubuntu-claude` — the right identity — but with a CLASSIC token
+        # carrying read:org, repo and workflow, and no `ubuntu-claude.token`
+        # file exists on the box at all. The default account here is the
+        # BOX's.
+        seat_token = "github_pat_UBUNTU_CLAUDE_TEST_ONLY_not-a-real-credential"
+        harness = LaunchHarness(root / "seat-token-present")
+        harness.write_seat_token("ubuntu-claude", seat_token)
+        result = harness.run(["seat-r1", "--no-attach"])
+        check("seat token: the default account is the BOX's, and its token "
+              "reaches the box-side supervisor's environment",
+              result["replay"].returncode == 0
+              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
+              (result["replay"].returncode,
+               result["supervisor_environment"].get("GH_TOKEN"),
+               result["replay"].stderr[:300]))
+
+        # The property the read-not-substitute shape exists for, asserted
+        # where it can actually fail: the tmux argv capture is the pane
+        # command AFTER the box shell parsed it at P1, so a `$(cat ...)`
+        # that P1 ran would show the token there. The remote string the
+        # launcher composed is checked too, but it proves less — the
+        # launcher never holds the value — so the two are asserted together
+        # with the environment half, and no one of them passes alone.
+        check("seat token: the token text is ABSENT from the pane command "
+              "tmux received (post-P1), present only in the environment",
+              seat_token not in result["tmux_argv"]
+              and seat_token not in result["remote"]
+              and seat_token not in result["replay"].stdout
+              and seat_token not in result["replay"].stderr
+              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
+              ("token in the post-P1 pane command"
+               if seat_token in result["tmux_argv"] else
+               "token in the remote string" if seat_token in result["remote"]
+               else "token in the replay output"
+               if (seat_token in result["replay"].stdout
+                   or seat_token in result["replay"].stderr)
+               else result["supervisor_environment"].get("GH_TOKEN")))
+        # The other half of the same property: the pane command names the
+        # token FILE and exports GH_TOKEN from it, so the read happens in the
+        # seat's own shell on the box. Without this, a launcher that simply
+        # never exported anything would satisfy the absence case above.
+        check("seat token: the pane command names the box-side token file and "
+              "defers the read to the seat's own shell",
+              ".config/nedschorus/ubuntu-claude.token" in result["tmux_argv"]
+              and "GH_TOKEN" in result["tmux_argv"],
+              result["tmux_argv"][:400])
+
+        # --- 13. no token file on the box — the box's state today. GH_TOKEN
+        # stays UNSET rather than empty (`gh` falls back to its keyring login
+        # on an unset variable and fails outright on an empty one), the
+        # launch still happens, and the warning comes back down the ssh
+        # connection because it rides the PREPARE step rather than the pane
+        # command: a pane-command warning would land in the seat's tmux pane,
+        # which a detached launch leaves nobody watching.
+        harness = LaunchHarness(root / "seat-token-absent")
+        result = harness.run(["seat-r2", "--no-attach"])
+        check("no seat token: the launch still happens (warn, never refuse)",
+              result["launched"].returncode == 0
+              and result["replay"].returncode == 0
+              and "handoff-supervisor.py" in " ".join(result["supervisor_argv"]),
+              (result["launched"].returncode, result["replay"].returncode,
+               result["replay"].stderr[:300]))
+        check("no seat token: GH_TOKEN is UNSET in the supervisor's environment",
+              result["supervisor_environment"].get("GH_TOKEN") == "<unset>",
+              result["supervisor_environment"])
+        check("no seat token: the warning comes back over the connection, "
+              "naming the account, the box-side path and the fallback",
+              "ubuntu-claude" in result["replay"].stderr
+              and f"{harness.home}/.config/nedschorus/ubuntu-claude.token"
+              in result["replay"].stderr
+              and "GH_TOKEN stays unset" in result["replay"].stderr
+              and "keyring" in result["replay"].stderr,
+              result["replay"].stderr[-900:])
+
+        # --- 14. the override, and the ruling it inherits: an override
+        # either works or is blocked, never a third state (user-ruled
+        # 2026-08-22). Both accounts hold a token file, so the case measures
+        # a CHOICE rather than the only file present.
+        merge_token = "github_pat_NED_REVIEW_MERGE_TEST_ONLY_not-a-real-credential"
+        harness = LaunchHarness(root / "seat-token-override")
+        harness.write_seat_token("ubuntu-claude", seat_token)
+        harness.write_seat_token("ned-review-merge", merge_token)
+        result = harness.run(["seat-r3", "--no-attach"],
+                             seat_github_account="ned-review-merge")
+        check("override: the named account's token is the one exported, not "
+              "the host default's",
+              result["replay"].returncode == 0
+              and result["supervisor_environment"].get("GH_TOKEN") == merge_token,
+              (result["replay"].returncode,
+               result["supervisor_environment"].get("GH_TOKEN")))
+        check("override: neither token text reaches the post-P1 pane command",
+              merge_token not in result["tmux_argv"]
+              and seat_token not in result["tmux_argv"],
+              result["tmux_argv"][:400])
+
+        harness = LaunchHarness(root / "seat-account-refused")
+        result = harness.run(["seat-r4", "--no-attach"],
+                             seat_github_account="../../etc/passwd")
+        check("bad override: refused with exit 2, naming what the value is",
+              result["launched"].returncode == 2
+              and "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result["launched"].stderr
+              and "GitHub account name" in result["launched"].stderr,
+              (result["launched"].returncode,
+               result["launched"].stderr[:300]))
+        check("bad override: nothing was sent to the box",
+              result["remote"] == "", result["remote"][:200])
+
+        # --- 15. the after-exit shell inherits the credential, as it
+        # inherits the task-list pin and for the same reason: the
+        # `claude --continue` that shell offers is the same seat.
+        harness = LaunchHarness(root / "seat-token-attached")
+        harness.write_seat_token("ubuntu-claude", seat_token)
+        result = harness.run(["seat-r5"])
+        check("attached: the supervisor still gets the seat's token",
+              result["replay"].returncode == 0
+              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
+              (result["replay"].returncode,
+               result["supervisor_environment"].get("GH_TOKEN")))
+        check("attached: the after-exit shell keeps the seat's credential",
+              result["after_exit_environment"].get("GH_TOKEN") == seat_token,
+              result["after_exit_environment"].get("GH_TOKEN"))
+
+        # --- 16. an inherited GH_TOKEN is DROPPED box-side, not kept: the
+        # seat's account is decided by this launcher and never inherited
+        # from the shell the pane was started under, or the prepare step's
+        # warning would announce a fallback that did not happen.
+        inherited_token = "github_pat_INHERITED_TEST_ONLY_not-a-real-credential"
+        harness = LaunchHarness(root / "seat-token-ambient-dropped")
+        harness.ambient_gh_token = inherited_token
+        result = harness.run(["seat-r6", "--no-attach"])
+        check("no seat token: an inherited GH_TOKEN is dropped, not passed on",
+              result["replay"].returncode == 0
+              and result["supervisor_environment"].get("GH_TOKEN") == "<unset>",
+              result["supervisor_environment"].get("GH_TOKEN"))
+
+        # --- 17. the real token files carry NO trailing newline (measured
+        # 2026-09-22: 93 bytes, `tail -c1 | wc -l` reports 0). `read` returns
+        # non-zero on such a file AFTER setting the variable, so the value
+        # must still arrive whole through both parses.
+        harness = LaunchHarness(root / "seat-token-no-trailing-newline")
+        harness.write_seat_token("ubuntu-claude", seat_token,
+                                 trailing_newline=False)
+        result = harness.run(["seat-r7", "--no-attach"])
+        check("seat token: a file with no trailing newline still yields the "
+              "whole token",
+              result["replay"].returncode == 0
+              and result["supervisor_environment"].get("GH_TOKEN") == seat_token,
+              (result["replay"].returncode,
+               result["supervisor_environment"].get("GH_TOKEN")))
+
+        # 18. The box-side update runs under the machine-wide lock
+        # (user-approved 2026-09-22): an update that finds another holding
+        # the lock waits for it, then runs; one held past the limit is
+        # skipped with one line, and the seat is still prepared. The lock is
+        # held from this process on the sandbox HOME's lock file, the file
+        # the box-side helper resolves there.
+        harness = LaunchHarness(root / "update-lock-wait")
+        harness.update_timeout_seconds = 30
+        with AnotherUpdateHoldsTheLock(harness.update_lock_path(),
+                                       harness.release_marker,
+                                       release_after_seconds=1.5):
+            result = harness.run(["seat-u", "--no-attach"])
+        check("update lock (box): an update started while another holds the "
+              "lock waits, then runs",
+              harness.claude_updates() == ["after-release"],
+              (harness.claude_updates(), result["replay"].stderr[:400]))
+        check("update lock (box): the waiting update says it is waiting",
+              "launch-claude-ubuntu: waiting for another update on this "
+              "machine to finish" in result["replay"].stderr,
+              result["replay"].stderr[:400])
+        check("update lock (box): the seat is prepared after the wait",
+              result["replay"].returncode == 0 and harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:300]))
+
+        harness = LaunchHarness(root / "update-lock-bound")
+        harness.update_timeout_seconds = 1
+        with AnotherUpdateHoldsTheLock(harness.update_lock_path(),
+                                       harness.release_marker):
+            started = time.monotonic()
+            result = harness.run(["seat-v", "--no-attach"])
+            elapsed = time.monotonic() - started
+        check("update lock (box): a lock held past the limit skips this update",
+              harness.claude_updates() == [], harness.claude_updates())
+        check("update lock (box): the skip is reported in one line naming the limit",
+              "launch-claude-ubuntu: another update on this machine was still "
+              "running after 1s; skipping this update and launching on the "
+              "installed version" in result["replay"].stderr,
+              result["replay"].stderr[:400])
+        check("update lock (box): the seat is still prepared, without hanging",
+              result["replay"].returncode == 0 and harness.prepare_ran()
+              and elapsed < 15,
+              (result["replay"].returncode, f"{elapsed:.1f}s",
+               result["replay"].stderr[:300]))
 
     print()
     if failures:

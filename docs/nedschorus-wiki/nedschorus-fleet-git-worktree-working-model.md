@@ -353,7 +353,13 @@ stays unruled (cherry-picks break ancestry, so the predicate needs care).
 **R16. Binary updates at launch, never in background — built-live
 (accreted, no single PR).** Both launchers update the binary at launch,
 warn-and-proceed on failure; their guarantee is that *they* never swap it
-under a live session. The box's `DISABLE_AUTOUPDATER=1` flag was
+under a live session. **Since 2026-09-22 the handoff-supervisor updates too**,
+before every session it launches — which covers the handoff restart, crash
+recovery and the login restart, the three paths that reach a seat without
+passing a launcher. It was added because a seat restarted by handoff passed
+no update moment at all, so a long-lived seat drifted: both machines sat on
+2.1.278 with 2.1.280 published when the user asked why (user-ruled
+2026-09-22). The box's `DISABLE_AUTOUPDATER=1` flag was
 removed 2026-08-17 (dated backup beside it) when issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62)'s auto-update
 theory was retracted — which left background auto-update ON fleet-wide.
 The same flag returned 2026-08-22 for a different, still-valid reason:

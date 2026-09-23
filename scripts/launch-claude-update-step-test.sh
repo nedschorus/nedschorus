@@ -20,6 +20,17 @@ trap 'rm -rf "$WORKSPACE"' EXIT
 STUBS="$WORKSPACE/stubs"
 mkdir -p "$STUBS" "$WORKSPACE/home" "$WORKSPACE/agents"
 
+# The sandbox HOME gets the seat token the launcher looks for. This suite
+# measures the UPDATE step, and two of its cases turn on whether the launcher
+# wrote ANYTHING to stderr ("a failing update produces no launcher-written
+# warning"); without a token file the launcher writes its missing-credential
+# warning on every launch, which is correct behaviour and a false negative
+# here. Not a credential — those cases live in launch-claude-mac-test.py.
+mkdir -p "$WORKSPACE/home/.config/nedschorus"
+printf 'update-step-test-placeholder-not-a-credential\n' \
+    > "$WORKSPACE/home/.config/nedschorus/mac-claude.token"
+chmod 600 "$WORKSPACE/home/.config/nedschorus/mac-claude.token"
+
 # Stubs. `claude update` behavior comes from CLAUDE_UPDATE_MODE: hang, fail,
 # or ok — each leaves a marker so a test can assert whether update ran.
 cat > "$STUBS/claude" << 'EOF'
@@ -149,12 +160,15 @@ case "$box_command" in
     (*) check "ubuntu box command updates, then prepares the seat" 1 ;;
 esac
 case "$box_command" in
-    (*"claude update || UPDATE_STATUS="*) check "ubuntu box command keeps the update non-blocking" 0 ;;
+    (*"-- claude update || true; }"*) check "ubuntu box command keeps the update non-blocking" 0 ;;
     (*) check "ubuntu box command keeps the update non-blocking" 1 ;;
 esac
+# The box-side update runs under the machine-wide lock, whose helper also
+# owns the timeout and reports it (scripts/agent-binary-update-under-lock.py;
+# its behaviour on the box is measured by scripts/launch-claude-ubuntu-test.py).
 case "$box_command" in
-    (*"UPDATE_STATUS -eq 124"*) check "ubuntu box command reports a timed-out update, by timeout's own status" 0 ;;
-    (*) check "ubuntu box command reports a timed-out update, by timeout's own status" 1 ;;
+    (*"agent-binary-update-under-lock.py"*"--program-name launch-claude-ubuntu"*"--timeout-seconds"*) check "ubuntu box command runs the update under the update lock, with its limit" 0 ;;
+    (*) check "ubuntu box command runs the update under the update lock, with its limit" 1 ;;
 esac
 
 # Per-seat tmux servers on the box (2026-08-21): the remote command must probe

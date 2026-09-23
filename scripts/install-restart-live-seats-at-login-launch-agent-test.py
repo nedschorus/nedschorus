@@ -70,9 +70,9 @@ with tempfile.TemporaryDirectory() as temporary:
     # The plist itself.
     plist = installer.launch_agent_plist("com.nedschorus.restart-live-seats-at-login",
                                          checkout, None, home=home)
-    check("the program is run by the system python from the checkout's scripts/",
+    check("the program is run by Homebrew's python3 link from the checkout's scripts/",
           plist["ProgramArguments"]
-          == ["/usr/bin/python3", str(checkout / "scripts" / "restart-live-seats-at-login.py")],
+          == ["/opt/homebrew/bin/python3", str(checkout / "scripts" / "restart-live-seats-at-login.py")],
           plist["ProgramArguments"])
     check("it runs at load, which at login is once per login",
           plist["RunAtLoad"] is True and "KeepAlive" not in plist

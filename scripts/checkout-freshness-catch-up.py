@@ -16,13 +16,15 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      directory (default 300s between fetches; fetching touches refs only and
      is always safe — it is the MERGE that needs guarding).
   3. Runs the MISBEHAVIOUR detectors, every turn, before anything else: a
-     merge commit from main on the working branch (ruled out 2026-09-14,
-     nedschorus#324), or a pushed head whose history was rewritten (an amend
-     or rebase after a push, ruled out 2026-09-08). What they find is the
-     ONLY thing the user hears from this hook — "If the agents are doing the
-     wrong thing, or not doing the right thing, that's when I probably need
-     to be told" (ruled 2026-09-15). Routine drift is never reported to the
-     user; the stamp carries the numbers for the status line.
+     merge commit from main on the working branch whose parents merge cleanly
+     (ruled out 2026-09-14, nedschorus#324; one whose parents CONFLICT is the
+     hand merge the user allowed 2026-09-21 and is not reported), or a pushed
+     head whose history was rewritten (an amend or rebase after a push, ruled
+     out 2026-09-08). What they find is the ONLY thing the user hears from
+     this hook — "If the agents are doing the wrong thing, or not doing the
+     right thing, that's when I probably need to be told" (ruled 2026-09-15).
+     Routine drift is never reported to the user; the stamp carries the
+     numbers for the status line.
   4. If the branch is behind origin/main and has NEVER been pushed, REBASES
      it onto origin/main here, and tells the agent at its next turn what
      moved and which files changed. Skips a dirty tree; aborts cleanly on a
@@ -89,6 +91,18 @@ STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 GIT_DID_NOT_RUN = -1
 DEFAULT_FETCH_INTERVAL_SECONDS = 300
 
+# `git merge-tree --write-tree` exits 1 for a real conflict AND 1 for an
+# argument it cannot resolve — measured on a deadbeef hash and recorded in
+# scripts/branch-conflict-check.py's docstring. Every other exit — 128 for
+# unrelated histories, 129 from a git too old for --write-tree or for -X,
+# GIT_DID_NOT_RUN when git cannot be launched — is an error, not an answer.
+# A conflict therefore has to prove itself twice: this exit code AND the merged
+# tree's object id on stdout, which --write-tree prints first on a conflict and
+# no error path prints at all.
+MERGE_TREE_CONFLICT_EXIT_CODE = 1
+MERGE_TREE_OID_LENGTHS = (40, 64)  # sha1 and sha256 object ids
+MERGE_TREE_OID_CHARACTERS = "0123456789abcdef"
+
 # In-progress operation markers: the reference fast-forward must not run in
 # a tree that is mid-anything.
 GIT_IN_PROGRESS_MARKERS = (
@@ -133,6 +147,16 @@ NOT_FOR_THE_USER_ADVICE = (
 # agent should care where that is not self-evident (user, 2026-09-15: "explain
 # which files should be updated (and perhaps why, unless that is obvious)").
 # A file's category is decided by path, and the first match wins.
+#
+# nc-systems/ holds the project's systems kept whole — a system's code, its
+# tests and its design of record in one directory — so a change there is
+# neither a loose script nor a document the agent merely cites: the design it
+# builds to may have moved under it. Until 2026-09-22 the directory matched no
+# category and fell to the catch-all, which reported it to every seat under
+# the least informative label available. Observed live that day, when
+# nc-systems/handoff/handoff-design.md changed on main and this hook reported
+# it as "other files". Placed above scripts/ because a system kept whole
+# outranks a loose script, per "most consequential first" above.
 DRIFT_PATH_CATEGORIES = (
     ("your standing instructions",
      lambda path: path == "CLAUDE.md" or path.endswith("/CLAUDE.md")),
@@ -140,6 +164,8 @@ DRIFT_PATH_CATEGORIES = (
      lambda path: path.startswith(".claude/skills/")),
     ("hooks and wiring that run on your work",
      lambda path: path.startswith(".claude/hooks/") or path == ".claude/settings.json"),
+    ("systems you build on, code and design of record",
+     lambda path: path.startswith("nc-systems/")),
     ("scripts your tests run against",
      lambda path: path.startswith("scripts/")),
     ("documents you may cite",
@@ -465,15 +491,101 @@ def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_
     return facts, parts
 
 
+def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str) -> bool:
+    """True only when git, re-merging these two already-resolved parent hashes,
+    reports a CONFLICT. False for a clean merge and false for every error.
+
+    -X NO-RENAMES IS LOAD-BEARING, not tidiness. With git's default rename
+    detection the merge that PR "A conflict is the one case a commit on top
+    cannot clear" (600) made by hand re-merges CLEAN: main had renamed
+    handoff-supervisor.py and its test out of scripts/ while the branch held
+    edits to the old paths, and rename detection follows the move silently.
+    GitHub's merge candidate does not follow it, which is why that branch showed
+    CONFLICTING and had to be merged by hand at all — its merge commit
+    413c1afa51d4 says so. So the conflict the author actually faced is the one
+    seen WITHOUT rename detection, and with detection on this function would
+    return False for the exact case it exists to recognise.
+
+    EXIT 1 IS NOT ENOUGH ON ITS OWN. merge-tree exits 1 for an argument it
+    cannot resolve as well as for a conflict (scripts/branch-conflict-check.py's
+    docstring, measured on a deadbeef hash). That file resolves both arguments
+    first so that exit 1 can only mean conflict, and the caller here does the
+    same — but the cost of being wrong differs by direction, so this one also
+    requires the answer itself: --write-tree prints the merged tree's object id
+    as its first line, on a conflict as much as on a clean merge, and no error
+    path prints one.
+
+    EVERY OTHER OUTCOME IS AN ERROR AND READS AS "NO CONFLICT", so the merge is
+    reported. A git too old for --write-tree (before 2.38) or for -X exits 129
+    on usage, unrelated histories exit 128, an unlaunchable git is
+    GIT_DID_NOT_RUN: on any of them this detector degrades to exactly what it
+    did before this exception existed — it reports every merge from main. A
+    false report is visible to the user and corrects itself in one exchange; a
+    misbehaviour that is skipped is invisible for good (the merge-lane-2 seat's
+    judgement, 2026-09-22; the user ruled the exception, not this error path).
+    Nothing here can block a turn either way: the caller only shortens a list.
+    """
+    remerged = run_git(["merge-tree", "--write-tree", "-X", "no-renames",
+                        first_parent, second_parent], checkout, timeout=60)
+    if remerged.returncode != MERGE_TREE_CONFLICT_EXIT_CODE:
+        return False
+    merged_tree = remerged.stdout.split("\n", 1)[0].strip()
+    return (len(merged_tree) in MERGE_TREE_OID_LENGTHS
+            and all(character in MERGE_TREE_OID_CHARACTERS for character in merged_tree))
+
+
 def merges_from_main(checkout: Path):
     """Short SHAs of merge commits on this branch whose second parent lies on
-    origin/main — the catch-up merge this hook itself used to make, and which
-    nedschorus#324 ruled out after nine landed on frozen heads in five days.
+    origin/main AND whose two parents merge cleanly — the catch-up merge this
+    hook itself used to make, and which nedschorus#324 ruled out after nine
+    landed on frozen heads in five days.
 
     A merge of another topic branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
     A branch that carries pre-#324 merges is flagged once at rollout, which is
     correct: those merges are real and the user has not been told of them.
+
+    WHY A CLEAN RE-MERGE IS THE TEST. The user ruled a narrow exception on
+    2026-09-21: a branch that genuinely CONFLICTS with main merges origin/main
+    in by hand, once, resolves only the conflict, reruns its tests and announces
+    the new head. That merge has the same shape as the banned one — a merge
+    commit whose second parent is on main — so shape alone reports every author
+    who obeys the rule for committing the thing the user banned. It was firing
+    on the head of PR "A conflict is the one case a commit on top cannot clear"
+    (600), the pull request that added the exception. Re-merging the parents
+    tells the two apart: parents that CONFLICT mean the author had no choice,
+    which is the case the user allowed, so the merge is skipped;
+    parents that merge cleanly mean the merge was unnecessary, which is the
+    banned catch-up, and it is still reported. The user approved fixing the
+    hook on 2026-09-22; which test tells the two apart is the merge-lane-2
+    seat's design.
+
+    MEASURED over main's own history before it was written: 81 merge commits
+    sit off main's first-parent line with a second parent that is an ancestor of
+    origin/main — the population this detector's own condition selects. The rule
+    skips 17 of them and still reports 64. Fifteen of the 17 say in their own
+    commit messages that they resolved a conflict, and 16 of the 17 recorded a
+    tree that differs from the clean automatic merge of their parents, so the
+    author edited something while merging. Both hand merges of 2026-09-22 are
+    among the skipped: PR "GHI write create verb: no second issue, no ignored
+    git failure" (605) at 3a8355a66fa7 and PR "Blocks are told apart by whose
+    words clear them" (611) at b1ba4bd102fd.
+
+    413c1afa51d4, the head of PR "A conflict is the one case a commit on top
+    cannot clear" (600), is NOT in those 81 and was measured on its own: that
+    pull request is still open, so the commit is not reachable from origin/main.
+    Re-merging its parents with -X no-renames exits 1 and writes tree
+    754e8337e110, so this rule skips it; the default strategy merges them
+    cleanly to tree 722221eb04f7, which is what the -X is there to prevent.
+
+    ONE SHAPE IT STILL REPORTS FALSELY, recorded rather than fixed: a directory
+    rename produces CONFLICT (file location), which only rename DETECTION can
+    see, so -X no-renames merges it cleanly. Merge 6bd0aa5850ce, which relocated
+    two drafts main had moved under docs/nedschorus-wiki/queue/, is a real
+    conflict resolution that this rule still reports. It is the single such case
+    in the 81; widening the test to "either strategy conflicts" would buy it at
+    the price of skipping catch-up merges that renames alone make look
+    conflicted, which is the direction that loses misbehaviours silently.
     """
     merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
     if merges.returncode != 0:
@@ -485,8 +597,15 @@ def merges_from_main(checkout: Path):
             continue
         on_main = run_git(["merge-base", "--is-ancestor", second.stdout.strip(), "origin/main"],
                           checkout, timeout=15)
-        if on_main.returncode == 0:
-            flagged.append(sha[:12])
+        if on_main.returncode != 0:
+            continue
+        first = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^1"], checkout, timeout=15)
+        # A first parent that does not resolve cannot be re-merged, so the merge
+        # is reported: an error is not an answer.
+        if first.returncode == 0 and merge_parents_conflict(checkout, first.stdout.strip(),
+                                                            second.stdout.strip()):
+            continue
+        flagged.append(sha[:12])
     return flagged
 
 
@@ -540,13 +659,16 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     return "conflict", ", ".join(conflicting) or (rebased.stderr.strip() or "no detail")
 
 
-def fetch_failure_note(stamp: dict) -> str:
+def fetch_failure_note(stamp: dict, what_may_be_stale: str = "this list") -> str:
     """One line when the numbers rest on a fetch that failed, or "".
-    Ruled 2026-09-15: a stale list must say it is stale."""
+    Ruled 2026-09-15: a stale list must say it is stale. The reference
+    checkout's path passes its own subject, because what may be stale there
+    is a count, not a list (approved 2026-09-17, backlog-recheck walk item 1,
+    fix 11)."""
     if stamp.get("fetch_ok", True):
         return ""
     when = time.strftime("%H:%M", time.localtime(stamp.get("fetched_at", 0)))
-    return f"\n(fetch failed at {when}; this list may be stale)"
+    return f"\n(fetch failed at {when}; {what_may_be_stale} may be stale)"
 
 
 def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
@@ -716,12 +838,28 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     a reference with one uncommitted edit named itself to the user at every
     turn end (found before PR #388 merged; it had always repeated, to plain
     stdout that nobody read).
+
+    A failed fetch is a reason like any other. Before 2026-09-22 a reference
+    whose fetch failed counted "0 behind" off the refs that fetch never
+    updated and returned silently, which read as up to date (user-approved
+    2026-09-17, backlog-recheck walk item 1, fix 11). Its reason key is the
+    constant "fetch failed", not the failure's time, so a network that stays
+    down is reported once rather than at every fetch interval; the key is
+    cleared by the next run that is 0 behind off a fetch that worked.
     """
     git_dir = git_directory(reference)
     if git_dir is None:
         return
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(reference, stamp_path, interval_seconds)
+    fetch_note = fetch_failure_note(stamp, "this count")
+
+    def report_reason(reasons, line):
+        """Report a skip or refusal: always for the operator, once per reason
+        for the user."""
+        if operator_facing or stamp.get("last_reference_blockers") != reasons:
+            report(line)
+        stamp["last_reference_blockers"] = reasons
 
     counts = counts_against_main(reference)
     if counts is None:
@@ -735,16 +873,15 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
-        stamp.pop("last_reference_blockers", None)
+        if fetch_note:
+            stamp["last_action"] = "reference fetch failed"
+            report_reason(["fetch failed"],
+                          f"catch-up: reference checkout {reference} is 0 behind origin/main "
+                          f"as last fetched{fetch_note}")
+        else:
+            stamp.pop("last_reference_blockers", None)
         write_stamp(stamp_path, stamp)
         return
-
-    def report_reason(reasons, line):
-        """Report a skip or refusal: always for the operator, once per reason
-        for the user."""
-        if operator_facing or stamp.get("last_reference_blockers") != reasons:
-            report(line)
-        stamp["last_reference_blockers"] = reasons
 
     blockers, branch = merge_blockers(reference, git_dir)
     stamp["branch"] = branch
@@ -759,7 +896,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         stamp["last_action"] = f"reference skipped: {'; '.join(real_blockers)}"
         report_reason(real_blockers,
                       f"catch-up: reference checkout {reference} is {behind} behind and was "
-                      f"left alone — {'; '.join(real_blockers)}")
+                      f"left alone — {'; '.join(real_blockers)}{fetch_note}")
         write_stamp(stamp_path, stamp)
         return
 

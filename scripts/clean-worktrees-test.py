@@ -11,6 +11,18 @@ on a healthy machine, so they run the reaper with a stub lsof first on PATH.
 Those cases guard the reaper's central promise — ambiguity keeps, never
 reaps — which a worktree holding someone's uncommitted work depends on.
 
+The classification cases run against the machine's REAL lsof, and that is the
+one way this suite can fail for a reason that is not a defect. If lsof does not
+answer within clean-worktrees.py's VACANCY_CHECK_TIMEOUT_SECONDS, every done
+worktree is kept with "the vacancy check (lsof) could not be run" — the reaper
+failing safe, correctly — and the cases that expect "done-wt: done" fail with
+it. Seen once, 2026-09-17 ~00:44Z, in a 52-suite run concurrent with five
+subagents and another suite set, against the 30 s timeout that has since become
+120. A run that fails with that phrase in its detail is a load symptom: re-run
+this suite alone before calling anything red. It is deliberately not skipped
+automatically — a suite that hides its own cases under load is worse than one
+that needs a second run.
+
 A last section covers the branch refs whose worktree is already gone: refs
 attached to nothing, refs still carrying unlanded work, refs a live worktree
 or the main checkout holds, a tag shadowing a branch name, remote-tracking
@@ -142,9 +154,18 @@ with tempfile.TemporaryDirectory() as scratch:
     occupied_wt = None
     if shutil.which("lsof"):
         occupied_wt = add_worktree("occupied-wt")
+        # The occupant blocks on stdin rather than sleeping a fixed span, so
+        # its lifetime is not a race against the suite's own runtime. It used
+        # to sleep 120 s, which is less than this suite takes whenever lsof is
+        # slow -- the load this suite's timeout note is about. The occupant
+        # then exited before --remove ran, occupied-wt was vacant, --remove
+        # reaped it, and the suite reported the reaper deleting an occupied
+        # worktree: its central promise appearing to break, from load alone.
+        # The finally below kills it; should this process die without reaching
+        # that, the pipe's write end closes, stdin reads EOF, and it exits.
         occupant = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(120)"],
-            cwd=str(occupied_wt),
+            [sys.executable, "-c", "import sys; sys.stdin.read()"],
+            cwd=str(occupied_wt), stdin=subprocess.PIPE,
         )
     else:
         print("SKIP  occupied cases: lsof is not installed on this machine")

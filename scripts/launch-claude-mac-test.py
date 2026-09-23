@@ -31,18 +31,36 @@ The launcher's own CLAUDE_CODE_* variables are stripped alongside
 NEDSCHORUS_* and LAUNCH_CLAUDE_*: the launcher runs locally and its
 children inherit its environment, so without the strip a suite run from a
 seat that already has CLAUDE_CODE_TASK_LIST_ID set would pass on the
-ambient value rather than the composed one.
+ambient value rather than the composed one. GH_TOKEN is stripped for the
+same reason and it is the sharper case: the merge-lane seat exports its
+own token by hand today, so a suite run from there would see GH_TOKEN in
+the supervisor's environment whether or not the launcher put it there —
+the token-present case passing on the runner's credential, and the
+token-absent case failing for a reason that has nothing to do with the
+launcher.
+
+The credential cases carry one assertion the others do not need: that the
+token's TEXT is absent from the composed command. tmux is handed that
+string, so a token spliced into it stands in every `ps` listing on the
+machine for as long as the seat lives. Absence is asserted against the
+tmux argv capture — the command as tmux received it — and presence against
+the supervisor's environment, in the same case, so neither half can pass
+alone.
 
 Run: python3 scripts/launch-claude-mac-test.py
 """
 
+import fcntl
 import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-mac")
+UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
 
 failures = []
 
@@ -109,8 +127,15 @@ class MacLaunchSandbox:
         # as the fact that it ran. The extra-arguments hook variable is
         # recorded too: it must reach the supervisor as ARGUMENTS and never
         # as an inherited variable (the 2026-09-03 resume leak, below).
+        # The update-lock helper is the one python3 call handed to the REAL
+        # interpreter: it is what runs `claude update`, so a stubbed helper
+        # would leave every update case measuring nothing. Keyed on the
+        # helper's own name, so the trust write, clean-worktrees and the
+        # rest stay stubbed.
         write_stub(self.stubs, "python3",
                    record +
+                   f'case "${{1:-}}" in (*{UPDATE_LOCK_HELPER_NAME}) '
+                   f'exec "{sys.executable}" "$@";; esac\n'
                    'for argument in "$@"; do\n'
                    '  case "$argument" in (*handoff-supervisor.py*)\n'
                    f'    printf \'%s\\n\' "$@" > "{self.captures}/supervisor-argv.txt"\n'
@@ -118,6 +143,9 @@ class MacLaunchSandbox:
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '      echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
+                   '      echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
+                   '      echo "NEDSCHORUS_SEAT_GITHUB_ACCOUNT='
+                   '${NEDSCHORUS_SEAT_GITHUB_ACCOUNT-<unset>}";\n'
                    '      echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
                    '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
                    f'> "{self.captures}/supervisor-environment.txt";;\n'
@@ -136,27 +164,57 @@ class MacLaunchSandbox:
                    '${CLAUDE_CODE_TASK_LIST_ID-<unset>}";\n'
                    '  echo "CLAUDE_CODE_ENABLE_TODO_TOOLS='
                    '${CLAUDE_CODE_ENABLE_TODO_TOOLS-<unset>}";\n'
+                   '  echo "GH_TOKEN=${GH_TOKEN-<unset>}";\n'
+                   '  echo "NEDSCHORUS_SEAT_GITHUB_ACCOUNT='
+                   '${NEDSCHORUS_SEAT_GITHUB_ACCOUNT-<unset>}";\n'
                    '  echo "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS='
                    '${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS-<unset>}"; } '
                    f'> "{self.captures}/after-exit-environment.txt"\n')
 
+    def write_seat_token(self, account: str, token: str,
+                         trailing_newline: bool = True) -> Path:
+        """Put a token file for one account in the sandbox HOME, where the
+        launcher looks. Never a real credential: the value is the thing the
+        cases hunt for in the composed command, so it has to be a string
+        this suite invented."""
+        token_file = self.home / ".config" / "nedschorus" / f"{account}.token"
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(token + ("\n" if trailing_newline else ""),
+                              encoding="utf-8")
+        token_file.chmod(0o600)
+        return token_file
+
     def run(self, agents_root, seat_name="seat-t", attach=False,
-            extra_arguments=None):
+            extra_arguments=None, update_timeout_seconds=None,
+            seat_github_account=None, ambient_gh_token=None):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
-        of ambient LAUNCH_CLAUDE_* values, so the case measures its own."""
+        of ambient LAUNCH_CLAUDE_* values, so the case measures its own.
+        seat_github_account rides NEDSCHORUS_SEAT_GITHUB_ACCOUNT the same
+        way, after the strip of ambient NEDSCHORUS_* values.
+        ambient_gh_token puts a GH_TOKEN in the launcher's environment after
+        the strip, standing in for the shell of a seat that already exports
+        one — which the merge-lane seat does by hand today."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
         environment = {
             **{key: value for key, value in os.environ.items()
-               if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
-                                      "CLAUDE_CODE_"))},
+               if key != "GH_TOKEN"
+               and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
+                                       "CLAUDE_CODE_"))},
             "NEDSCHORUS_AGENTS_ROOT": agents_root,
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
             "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin"}
         if extra_arguments is not None:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
+        if update_timeout_seconds is not None:
+            environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = str(
+                update_timeout_seconds)
+        if seat_github_account is not None:
+            environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
+        if ambient_gh_token is not None:
+            environment["GH_TOKEN"] = ambient_gh_token
         return subprocess.run(
             [str(LAUNCHER), *arguments],
             capture_output=True, text=True, check=False,
@@ -182,10 +240,60 @@ class MacLaunchSandbox:
     def after_exit_environment(self):
         return environment_lines(self.captures / "after-exit-environment.txt")
 
+    def update_lock_path(self):
+        return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
+
+    def claude_records_updates_against(self, release_marker: Path):
+        """Replace the claude stub with one that records, per `update`, whether
+        the other update's release marker existed yet: `after-release` means
+        this update waited for the lock, `before-release` means it did not."""
+        write_stub(self.stubs, "claude",
+                   '[ "${1:-}" = "update" ] || exit 0\n'
+                   f'if [ -e "{release_marker}" ]; then echo after-release; '
+                   'else echo before-release; fi '
+                   f'>> "{self.captures}/claude-updates.txt"\n')
+
+    def claude_updates(self):
+        path = self.captures / "claude-updates.txt"
+        return (path.read_text(encoding="utf-8").splitlines()
+                if path.is_file() else [])
+
     def after_exit_cwd(self):
         path = self.captures / "after-exit-cwd.txt"
         return (path.read_text(encoding="utf-8").strip()
                 if path.is_file() else "")
+
+
+class AnotherUpdateHoldsTheLock:
+    """Hold the machine's update lock from this test, as another update would,
+    releasing it after release_after_seconds (None: held until the block ends).
+    The release marker is written BEFORE the lock is released, so an update
+    that ran only after taking the lock always sees it."""
+
+    def __init__(self, lock_path: Path, release_marker: Path,
+                 release_after_seconds=None):
+        self.lock_path = lock_path
+        self.release_marker = release_marker
+        self.release_after_seconds = release_after_seconds
+        self.timer = None
+
+    def release(self):
+        self.release_marker.write_text("released", encoding="utf-8")
+        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file = open(self.lock_path, "a")
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if self.release_after_seconds is not None:
+            self.timer = threading.Timer(self.release_after_seconds, self.release)
+            self.timer.start()
+        return self
+
+    def __exit__(self, *exception):
+        if self.timer is not None:
+            self.timer.join()
+        self.lock_file.close()
 
 
 def main() -> int:
@@ -250,6 +358,61 @@ def main() -> int:
         check("update step: the launch still completes, reaching tmux",
               result.returncode == 0 and sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
+
+        # --- the update runs under the machine-wide lock (user-approved
+        # 2026-09-22): a launch whose update finds another update holding the
+        # lock waits for it, then runs its own; one held past the limit is
+        # skipped with one line, and the launch still completes. The lock is
+        # held from this process on the sandbox HOME's lock file, which is
+        # the file the launcher's helper resolves there. ---------------------
+        sandbox = MacLaunchSandbox(root / "update-lock-wait")
+        release_marker = root / "update-lock-wait-released"
+        sandbox.claude_records_updates_against(release_marker)
+        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path(), release_marker,
+                                       release_after_seconds=1.5):
+            result = sandbox.run(str(root / "update-lock-wait-agents"),
+                                 update_timeout_seconds=30)
+        check("update lock: an update started while another holds the lock "
+              "waits, then runs",
+              sandbox.claude_updates() == ["after-release"],
+              (sandbox.claude_updates(), result.stderr[:400]))
+        check("update lock: the waiting launch says it is waiting",
+              "launch-claude-mac: waiting for another update on this machine "
+              "to finish" in result.stderr, result.stderr[:400])
+        check("update lock: the launch completes after the wait, reaching tmux",
+              result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[:300]))
+
+        sandbox = MacLaunchSandbox(root / "update-lock-bound")
+        release_marker = root / "update-lock-bound-released"
+        sandbox.claude_records_updates_against(release_marker)
+        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path(), release_marker):
+            started = time.monotonic()
+            result = sandbox.run(str(root / "update-lock-bound-agents"),
+                                 update_timeout_seconds=1)
+            elapsed = time.monotonic() - started
+        check("update lock: a lock held past the limit skips this update",
+              sandbox.claude_updates() == [], sandbox.claude_updates())
+        check("update lock: the skip is reported in one line naming the limit",
+              "launch-claude-mac: another update on this machine was still "
+              "running after 1s; skipping this update and launching on the "
+              "installed version" in result.stderr, result.stderr[:400])
+        check("update lock: the skipped launch still completes, without hanging",
+              result.returncode == 0 and sandbox.tmux_argv() and elapsed < 15,
+              (result.returncode, f"{elapsed:.1f}s", result.stderr[:300]))
+
+        # A limit of 0 skips the update entirely, lock included: nothing
+        # waits, no update runs, and the lock file is never created.
+        sandbox = MacLaunchSandbox(root / "update-lock-zero")
+        sandbox.claude_records_updates_against(root / "update-lock-zero-released")
+        result = sandbox.run(str(root / "update-lock-zero-agents"),
+                             update_timeout_seconds=0)
+        check("update lock: a limit of 0 runs no update and takes no lock",
+              sandbox.claude_updates() == []
+              and not sandbox.update_lock_path().exists()
+              and result.returncode == 0 and sandbox.tmux_argv(),
+              (sandbox.claude_updates(), sandbox.update_lock_path().exists(),
+               result.returncode, result.stderr[:300]))
 
         # --- task-list persistence, detached: both variables reach the
         # supervisor's environment, and the list id is derived from the SEAT
@@ -392,6 +555,202 @@ def main() -> int:
               sandbox.after_exit_environment().get(
                   "LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS") == "<unset>",
               sandbox.after_exit_environment())
+
+        # --- the seat's own GitHub credential (credential ruling C4,
+        # nc-systems/main-gatekeeper/main-gatekeeper-design.md: each agent
+        # host holds a fine-grained token for this repository only). Measured
+        # on this Mac 2026-09-22, and the reason these cases exist: `gh auth
+        # status` reported the login as `nedlern` — the USER — with a classic
+        # token carrying admin:enterprise, admin:org, repo, workflow and
+        # user, so every Mac seat ran with the owner's organization-admin
+        # credential and no server-side record could tell a seat from him.
+        # The default account is the HOST's, `mac-claude`.
+        seat_token = "github_pat_MAC_CLAUDE_TEST_ONLY_not-a-real-credential"
+        sandbox = MacLaunchSandbox(root / "seat-token-present")
+        sandbox.write_seat_token("mac-claude", seat_token)
+        result = sandbox.run("~/agents", seat_name="seat-t1")
+        check("seat token: the default account is the HOST's, and its token "
+              "reaches the supervisor's environment",
+              result.returncode == 0
+              and sandbox.supervisor_environment().get("GH_TOKEN") == seat_token,
+              (result.returncode,
+               sandbox.supervisor_environment().get("GH_TOKEN"),
+               result.stderr[:300]))
+
+        # The property the whole shape exists for: tmux is handed the
+        # composed string, so a token spliced into it would stand in every
+        # `ps` listing on this machine for as long as the seat lives. The
+        # composed string must carry the READ and not the value — and the
+        # same case asserts the value IS in the environment, so neither half
+        # can pass alone (a launcher that exported nothing would satisfy the
+        # absence half by itself).
+        composed_command = "\n".join(sandbox.tmux_argv())
+        check("seat token: the token text is ABSENT from the composed command, "
+              "present only in the environment",
+              seat_token not in composed_command
+              and seat_token not in result.stdout
+              and seat_token not in result.stderr
+              and sandbox.supervisor_environment().get("GH_TOKEN") == seat_token,
+              ("token in tmux argv" if seat_token in composed_command else
+               "token in launcher output" if (seat_token in result.stdout
+                                              or seat_token in result.stderr)
+               else sandbox.supervisor_environment().get("GH_TOKEN")))
+        # The other half of the same property: the composed command names the
+        # token FILE and exports GH_TOKEN from it, so the read is deferred to
+        # the seat's own shell rather than done here. Without this, a
+        # launcher that simply never exported anything would satisfy the
+        # absence case above.
+        check("seat token: the composed command names the token file and "
+              "defers the read to the seat's own shell",
+              ".config/nedschorus/mac-claude.token" in composed_command
+              and "GH_TOKEN" in composed_command,
+              composed_command[:400])
+
+        # --- no token file: GH_TOKEN stays UNSET, not empty (gh falls back
+        # to its keyring login on an unset variable and fails outright on an
+        # empty one), and the launcher says so loudly rather than refusing.
+        # Refusing was rejected by the user 2026-09-22: the box holds no
+        # `ubuntu-claude.token` today, so a hard failure would take every
+        # seat on both machines down over a credential that is an
+        # improvement, not a prerequisite.
+        sandbox = MacLaunchSandbox(root / "seat-token-absent")
+        result = sandbox.run("~/agents", seat_name="seat-t2")
+        check("no seat token: the launch still happens (warn, never refuse)",
+              result.returncode == 0 and sandbox.tmux_argv(),
+              (result.returncode, result.stderr[:300]))
+        check("no seat token: GH_TOKEN is UNSET in the supervisor's environment",
+              sandbox.supervisor_environment().get("GH_TOKEN") == "<unset>",
+              sandbox.supervisor_environment())
+        check("no seat token: the warning names the account, the path it "
+              "looked in, and the fallback",
+              "mac-claude" in result.stderr
+              and f"{sandbox.home}/.config/nedschorus/mac-claude.token"
+              in result.stderr
+              and "GH_TOKEN stays unset" in result.stderr
+              and "keyring" in result.stderr,
+              result.stderr[-900:])
+
+        # --- the override: a seat whose job needs a different identity.
+        # The merge-lane seat must be `ned-review-merge`, because that is the
+        # account main's protection lets merge and GitHub refuses an
+        # approving review from a pull request's author
+        # (docs/nedschorus-wiki/queue/github-identities-credentials-and-token-policy.md).
+        # Both accounts hold a token file here, so the case measures a
+        # CHOICE rather than the only file present.
+        merge_token = "github_pat_NED_REVIEW_MERGE_TEST_ONLY_not-a-real-credential"
+        sandbox = MacLaunchSandbox(root / "seat-token-override")
+        sandbox.write_seat_token("mac-claude", seat_token)
+        sandbox.write_seat_token("ned-review-merge", merge_token)
+        result = sandbox.run("~/agents", seat_name="seat-t3",
+                             seat_github_account="ned-review-merge")
+        check("override: the named account's token is the one exported, not "
+              "the host default's",
+              result.returncode == 0
+              and sandbox.supervisor_environment().get("GH_TOKEN") == merge_token,
+              (result.returncode,
+               sandbox.supervisor_environment().get("GH_TOKEN")))
+        check("override: that token is absent from the composed command too",
+              merge_token not in "\n".join(sandbox.tmux_argv())
+              and seat_token not in "\n".join(sandbox.tmux_argv()),
+              "\n".join(sandbox.tmux_argv())[:400])
+        # The override is CONSUMED, never inherited — the 2026-09-03 leak
+        # class, applied to a variable where it is sharper. The merge-lane
+        # seat is launched with the override set to `ned-review-merge`, an
+        # account on main's push allow-list; an inherited value would give
+        # every seat merge-lane launches from its own Bash tool that same
+        # account, which is a second merge lane. Measured in the environment
+        # the seat's tree actually gets, both halves: the supervisor, and the
+        # after-exit shell where an operator types the next launch.
+        check("override: the supervisor does NOT inherit the override variable",
+              sandbox.supervisor_environment().get(
+                  "NEDSCHORUS_SEAT_GITHUB_ACCOUNT") == "<unset>",
+              sandbox.supervisor_environment())
+
+        sandbox = MacLaunchSandbox(root / "seat-account-not-inherited")
+        sandbox.write_seat_token("mac-claude", seat_token)
+        sandbox.write_seat_token("ned-review-merge", merge_token)
+        result = sandbox.run("~/agents", seat_name="seat-t6", attach=True,
+                             seat_github_account="ned-review-merge")
+        check("override (attached): neither the supervisor nor the after-exit "
+              "shell inherits the override variable",
+              result.returncode == 0
+              and sandbox.supervisor_environment().get(
+                  "NEDSCHORUS_SEAT_GITHUB_ACCOUNT") == "<unset>"
+              and sandbox.after_exit_environment().get(
+                  "NEDSCHORUS_SEAT_GITHUB_ACCOUNT") == "<unset>",
+              (sandbox.supervisor_environment().get(
+                  "NEDSCHORUS_SEAT_GITHUB_ACCOUNT"),
+               sandbox.after_exit_environment().get(
+                   "NEDSCHORUS_SEAT_GITHUB_ACCOUNT")))
+
+        # An override either works or is blocked, never a third state
+        # (user-ruled 2026-08-22, the ruling this launcher already cites for
+        # NEDSCHORUS_AGENTS_ROOT): a value that is not an account name is
+        # refused before any side effect, asserted as measured facts the way
+        # the ~user case above is — no stub invoked, no directory created.
+        sandbox = MacLaunchSandbox(root / "seat-account-refused")
+        result = sandbox.run("~/agents", seat_name="seat-t4",
+                             seat_github_account="../../etc/passwd")
+        check("bad override: refused with exit 2, naming what the value is",
+              result.returncode == 2
+              and "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr
+              and "GitHub account name" in result.stderr,
+              (result.returncode, result.stderr[:300]))
+        check("bad override: refused before any side effect",
+              sandbox.invoked_commands() == ""
+              and not any(sandbox.workdir.iterdir()),
+              (sandbox.invoked_commands()[:200],
+               sorted(str(p) for p in sandbox.workdir.iterdir())))
+
+        # --- the after-exit shell inherits the credential, as it inherits
+        # the task-list pin and for the same reason: the `claude --continue`
+        # that shell offers is the same seat, and a `gh` typed there is the
+        # seat acting rather than the user. Nothing is re-exported for it —
+        # it is the same pane shell.
+        sandbox = MacLaunchSandbox(root / "seat-token-attached")
+        sandbox.write_seat_token("mac-claude", seat_token)
+        result = sandbox.run("~/agents", seat_name="seat-t5", attach=True)
+        check("attached: the supervisor still gets the seat's token",
+              result.returncode == 0
+              and sandbox.supervisor_environment().get("GH_TOKEN") == seat_token,
+              (result.returncode,
+               sandbox.supervisor_environment().get("GH_TOKEN")))
+        check("attached: the after-exit shell keeps the seat's credential",
+              sandbox.after_exit_environment().get("GH_TOKEN") == seat_token,
+              sandbox.after_exit_environment().get("GH_TOKEN"))
+
+        # --- an inherited GH_TOKEN is DROPPED, not kept. The seat's account
+        # is decided by the launcher and never inherited from the shell that
+        # started it — the merge-lane seat exports a token by hand today, so
+        # a seat it launched would otherwise silently keep merge-lane's
+        # credential while the launcher announced a fallback that did not
+        # happen. The ambient value is injected after the suite's own strip,
+        # so this case measures the launcher and not the suite runner.
+        inherited_token = "github_pat_INHERITED_TEST_ONLY_not-a-real-credential"
+        sandbox = MacLaunchSandbox(root / "seat-token-ambient-dropped")
+        result = sandbox.run("~/agents", seat_name="seat-t7",
+                             ambient_gh_token=inherited_token)
+        check("no seat token: an inherited GH_TOKEN is dropped, not passed on",
+              result.returncode == 0
+              and sandbox.supervisor_environment().get("GH_TOKEN") == "<unset>",
+              sandbox.supervisor_environment().get("GH_TOKEN"))
+
+        # --- the real token files carry NO trailing newline (measured
+        # 2026-09-22: 93 bytes, `tail -c1 | wc -l` reports 0). `read` returns
+        # non-zero on that file AFTER setting the variable, so the value must
+        # still arrive whole — the case the comment in the launcher asserts
+        # and nothing else here exercises, since the other cases write the
+        # newline a text editor would add.
+        sandbox = MacLaunchSandbox(root / "seat-token-no-trailing-newline")
+        sandbox.write_seat_token("mac-claude", seat_token,
+                                 trailing_newline=False)
+        result = sandbox.run("~/agents", seat_name="seat-t8")
+        check("seat token: a file with no trailing newline still yields the "
+              "whole token",
+              result.returncode == 0
+              and sandbox.supervisor_environment().get("GH_TOKEN") == seat_token,
+              (result.returncode,
+               sandbox.supervisor_environment().get("GH_TOKEN")))
 
     print()
     if failures:

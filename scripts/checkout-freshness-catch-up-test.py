@@ -687,6 +687,52 @@ with tempfile.TemporaryDirectory() as reference_pull_scratch:
 
 
 # ---------------------------------------------------------------------------
+# A reference whose fetch failed must not read as up to date. It computed
+# "0 behind" off refs the failed fetch never updated, and returned without a
+# word (user-approved fix, 2026-09-17, backlog-recheck walk item 1, fix 11).
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as reference_fetch_scratch:
+    tmp = Path(reference_fetch_scratch)
+    origin = tmp / "origin-repo"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main"], origin)
+    configure_identity(origin)
+    commit_file(origin, "shared.txt", "first\n", "first commit")
+    reference = tmp / "reference-clone"
+    git(["clone", "-q", str(origin), str(reference)], tmp)
+    configure_identity(reference)
+    seat = tmp / "seat-worktree"
+    git(["worktree", "add", "-q", "-b", "seat", str(seat), "main"], reference)
+
+    # origin moves on, and then cannot be reached: local refs still say 0 behind.
+    commit_file(origin, "unseen.txt", "unseen\n", "a commit the failed fetch never saw")
+    git(["remote", "set-url", "origin", str(tmp / "no-such-remote")], reference)
+
+    unreachable_hook = run_catch_up(["--cwd", str(seat)])
+    check("a reference whose fetch failed tells the user its 0 behind may be stale",
+          "reference checkout" in display_text(unreachable_hook)
+          and "fetch failed at" in display_text(unreachable_hook),
+          unreachable_hook.stdout + unreachable_hook.stderr)
+    check("and says it once, not at every turn end while the fetch keeps failing",
+          display_text(run_catch_up(["--cwd", str(seat)])) == "")
+    unreachable_operator = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    unreachable_operator_again = run_catch_up(["--reference-pull", "--repo", str(reference)])
+    check("--reference-pull reports the failed fetch every time",
+          "fetch failed at" in unreachable_operator.stdout
+          and "fetch failed at" in unreachable_operator_again.stdout,
+          unreachable_operator.stdout + unreachable_operator_again.stdout)
+
+    git(["remote", "set-url", "origin", str(origin)], reference)
+    reachable_hook = run_catch_up(["--cwd", str(seat)])
+    check("once the fetch works again the reference catches up and the failure is not repeated",
+          (reference / "unseen.txt").exists() and "fetch failed" not in display_text(reachable_hook),
+          reachable_hook.stdout)
+    check("and the failure's reason key is cleared",
+          "last_reference_blockers" not in stamp_of(reference), str(stamp_of(reference)))
+
+
+# ---------------------------------------------------------------------------
 # changed_here_versus_main: the line names what MOVED, never a fixed list of
 # categories. The first draft asserted "your tests, hooks, skills and documents
 # here are older than main" at every printing; on the seat that built it, ten
@@ -735,6 +781,27 @@ with tempfile.TemporaryDirectory() as naming_scratch:
                    (".claude/settings.json", "wiring")), named())
     check("an uncategorised path is still surfaced rather than hidden",
           "other files (1): Makefile" in named(("Makefile", "a makefile")), named())
+
+    # nc-systems/ holds a system kept whole — its code, its tests and its
+    # design of record in one directory — so a change there is named as what
+    # it is. Until 2026-09-22 the directory matched no category and fell to
+    # the catch-all: observed live that day, when
+    # nc-systems/handoff/handoff-design.md moved on main and this hook
+    # reported it as "other files". The pair is a design AND a program, so the
+    # case proves the category is decided by the path's prefix, not by the
+    # extension; the catch-all still holds this scratch repository's Makefile
+    # from the case above, so what is asserted is that nc-systems/ is not on
+    # that line.
+    systems_listing = named(("nc-systems/handoff/handoff-design.md", "a design of record"),
+                            ("nc-systems/handoff/handoff-supervisor.py", "the system's code"))
+    check("a system kept whole is named as one, its design of record and its code together",
+          "systems you build on, code and design of record (2): "
+          "nc-systems/handoff/handoff-design.md, nc-systems/handoff/handoff-supervisor.py"
+          in systems_listing, systems_listing)
+    catch_all_line = next((line for line in systems_listing.splitlines()
+                           if line.lstrip().startswith("other files")), "")
+    check("and never under the catch-all, the least informative label available",
+          "nc-systems/" not in catch_all_line, catch_all_line or systems_listing)
 
     # A wide gap is capped, or the agent reads a wall and skims it. Its own
     # repository, so the count is exactly what this case put there.
@@ -962,6 +1029,162 @@ with tempfile.TemporaryDirectory() as abort_scratch:
     result = run_catch_up(["--cwd", str(seat)], path_prefix=str(abort_refuses))
     check("a shim intercepts only the abort: a clean rebase still goes through it",
           "was rebased onto origin/main" in agent_text(result), agent_text(result) + result.stderr)
+
+
+# ---------------------------------------------------------------------------
+# The conflict exception (user-ruled 2026-09-21, fix approved 2026-09-22)
+# ---------------------------------------------------------------------------
+# A merge from main whose parents CONFLICT is the hand merge the user allowed —
+# the author had no choice — and is NOT reported. One whose parents merge
+# cleanly is the catch-up nedschorus#324 banned and still is. The rename case
+# below is the head of PR "A conflict is the one case a commit on top cannot
+# clear" (600) in miniature: git's default rename detection re-merges it
+# CLEAN, so without `-X no-renames` the hook would keep reporting the pull
+# request that created the exception. Both not-reported cases FAIL
+# against this script without the fix, and the rename one fails again if the
+# flag alone is dropped — checked by running this file against each, not
+# assumed.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as exception_scratch:
+    exception_tmp = Path(exception_scratch)
+    real_git = shutil.which("git")
+
+    def seat_on_main(name: str):
+        """A fresh origin, reference clone and seat worktree cut from main."""
+        exception_origin = exception_tmp / f"{name}-origin"
+        exception_origin.mkdir()
+        git(["init", "-q", "-b", "main"], exception_origin)
+        configure_identity(exception_origin)
+        commit_file(exception_origin, "shared.txt", "first\n", "first commit")
+        commit_file(exception_origin, "scripts/main-will-move-this.py", "held here\n",
+                    "a script main will later move")
+        exception_reference = exception_tmp / f"{name}-reference"
+        git(["clone", "-q", str(exception_origin), str(exception_reference)], exception_tmp)
+        configure_identity(exception_reference)
+        exception_seat = exception_tmp / f"{name}-seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(exception_seat), "main"],
+            exception_reference)
+        configure_identity(exception_seat)
+        return exception_origin, exception_seat
+
+    def merge_main_into(seat_path: Path):
+        """Merge origin/main by hand, as the 2026-09-21 procedure has an author
+        do it; returns git's exit status so a conflict can be resolved."""
+        git(["fetch", "-q", "origin"], seat_path)
+        return git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "origin/main"],
+                   seat_path).returncode
+
+    def merge_tree_status(seat_path: Path, extra_arguments):
+        """What git says about re-merging the seat's merge commit's two parents."""
+        return git(["merge-tree", "--write-tree", *extra_arguments, "HEAD^1", "HEAD^2"],
+                   seat_path).returncode
+
+    # --- a clean catch-up merge is STILL reported ---------------------------
+    clean_origin, clean_seat = seat_on_main("clean-catch-up")
+    commit_file(clean_seat, "seat-own.txt", "mine\n", "the seat's own work")
+    commit_file(clean_origin, "scripts/unrelated.py", "main's\n", "main advances elsewhere")
+    check("(fixture) a catch-up merge of main lands without a conflict",
+          merge_main_into(clean_seat) == 0)
+    check("(fixture) and its parents re-merge cleanly",
+          merge_tree_status(clean_seat, ["-X", "no-renames"]) == 0)
+    clean_result = run_catch_up(["--cwd", str(clean_seat)])
+    check("a catch-up merge whose parents merge cleanly is still reported to the USER",
+          "carries 1 merge commit(s) from main" in display_text(clean_result),
+          clean_result.stdout)
+
+    # --- a merge that RESOLVED a conflict is not reported --------------------
+    def hand_resolved_seat(name: str):
+        """A seat that merged main by hand and resolved a real conflict — the
+        2026-09-21 procedure, end to end."""
+        its_origin, its_seat = seat_on_main(name)
+        commit_file(its_seat, "shared.txt", "the seat's line\n", "the seat edits shared")
+        commit_file(its_origin, "shared.txt", "main's line\n", "main edits shared")
+        conflicted = merge_main_into(its_seat) != 0
+        (its_seat / "shared.txt").write_text("resolved by hand\n", encoding="utf-8")
+        git(["add", "shared.txt"], its_seat)
+        git(["-c", "core.editor=true", "commit", "-q", "--no-edit"], its_seat)
+        return its_seat, conflicted
+
+    conflict_seat, conflicted = hand_resolved_seat("hand-resolved")
+    check("(fixture) merging main by hand conflicts, as it did on the two hand "
+          "merges of 2026-09-22", conflicted)
+    check("(fixture) the resolution is a merge commit whose second parent is on main",
+          git(["rev-list", "--merges", "--count", "origin/main..HEAD"],
+              conflict_seat).stdout.strip() == "1")
+    conflict_result = run_catch_up(["--cwd", str(conflict_seat)])
+    check("a merge that resolved a real conflict is NOT reported: the author had no choice",
+          "merge commit(s) from main" not in display_text(conflict_result),
+          conflict_result.stdout)
+
+    # --- the shape of that pull request's head: a file main RENAMED out ----
+    # Rename detection merges this silently, so the author's own git reported no
+    # conflict while GitHub reported CONFLICTING and refused the merge. The
+    # conflict that forced the hand merge is the one seen WITHOUT rename
+    # detection, which is why the flag is load-bearing.
+    rename_origin, rename_seat = seat_on_main("renamed-under-the-branch")
+    commit_file(rename_seat, "scripts/main-will-move-this.py", "the seat's edit\n",
+                "the seat edits the script at its old path")
+    (rename_origin / "nc-systems").mkdir()
+    git(["mv", "scripts/main-will-move-this.py", "nc-systems/main-moved-it-here.py"],
+        rename_origin)
+    git(["commit", "-q", "-m", "main moves the script out of scripts/"], rename_origin)
+    merge_main_into(rename_seat)
+    check("(fixture) the parents re-merge CLEAN under git's default rename detection",
+          merge_tree_status(rename_seat, []) == 0)
+    check("(fixture) and CONFLICT with rename detection off — the conflict GitHub saw",
+          merge_tree_status(rename_seat, ["-X", "no-renames"]) == 1)
+    rename_result = run_catch_up(["--cwd", str(rename_seat)])
+    check("the hand merge of a file main renamed away is NOT reported — the shape "
+          "of the head of the pull request that added the exception",
+          "merge commit(s) from main" not in display_text(rename_result),
+          rename_result.stdout)
+
+    # --- an error from merge-tree is not an answer: the merge is reported ----
+    # merge-tree exits 1 for a conflict AND for an argument it cannot resolve,
+    # and a git too old for --write-tree or for -X exits 129 on usage. Neither
+    # may read as "conflict", or a misbehaviour disappears silently. Each shape
+    # is produced by a `git` shim first on PATH that intercepts only merge-tree.
+    def merge_tree_shim(name: str, body: str) -> Path:
+        directory = exception_tmp / name
+        directory.mkdir()
+        script = directory / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "merge-tree" ]; then\n'
+            f"{body}\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n',
+            encoding="utf-8")
+        script.chmod(0o755)
+        return directory
+
+    unresolvable = merge_tree_shim(
+        "merge-tree-exits-one-with-nothing",
+        '  printf "shimmed: not something we can merge\\n" >&2\n'
+        "  exit 1")
+    old_git = merge_tree_shim(
+        "merge-tree-unsupported",
+        '  printf "shimmed: unknown option --write-tree\\n" >&2\n'
+        "  exit 129")
+
+    # A seat each, because a finding is reported once per stamp: the second run
+    # on one seat would be silent for that reason, not for the shim's.
+    old_git_seat, _ = hand_resolved_seat("merge-tree-unsupported-seat")
+    old_git_result = run_catch_up(["--cwd", str(old_git_seat)], path_prefix=str(old_git))
+    check("a git too old for the re-merge reports the merge, as the hook did before the exception",
+          "carries 1 merge commit(s) from main" in display_text(old_git_result),
+          old_git_result.stdout + old_git_result.stderr)
+    unresolvable_seat, _ = hand_resolved_seat("merge-tree-exits-one-seat")
+    unresolvable_result = run_catch_up(["--cwd", str(unresolvable_seat)],
+                                       path_prefix=str(unresolvable))
+    check("merge-tree exiting 1 with no answer is an error, not a conflict: still reported",
+          "carries 1 merge commit(s) from main" in display_text(unresolvable_result),
+          unresolvable_result.stdout + unresolvable_result.stderr)
+    check("and the hook still exits 0 under both, blocking no turn",
+          old_git_result.returncode == 0 and unresolvable_result.returncode == 0
+          and never_blocks(old_git_result) and never_blocks(unresolvable_result),
+          f"{old_git_result.returncode} {unresolvable_result.returncode}")
 
 
 print()

@@ -1,6 +1,6 @@
 # `ghi` — seat instructions
 
-Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it defines the words used here — seat, approved-by-walk, handoff.
+Read [the seat model](../nedschorus-wiki/nedschorus-agent-seat-model.md) first: it is how agent-seats work. The words used here — agent-seat, approved-by-walk, session-handoff — are defined in [the project glossary](../nedschorus-wiki/nedschorus-glossary.md), which the seat model itself defers to.
 
 Your work is **GitHub-issue knowledge and the tooling around it**. "GHI" is this project's shorthand for a GitHub issue. Most of this seat's work shares one doctrine — how the project decides what becomes an issue, what goes in a GHI-MD (`docs/issues/<n>-<slug>.md`), and what waits in a queue — and one design document, `docs/issues/46-ghi-info-agent-design.md`. Do not use the doctrine as a test of what belongs to you; use the issues this brief assigns: #46 and its companions #41 and #42.
 

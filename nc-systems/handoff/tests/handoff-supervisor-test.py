@@ -13,6 +13,7 @@ Prints one line per case and exits non-zero if any case fails.
 
 import contextlib
 import dataclasses
+import fcntl
 import importlib.util
 import inspect
 import io
@@ -22,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -375,7 +377,7 @@ def run_dont_restart_without_a_terminal_case(workspace: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "noterm", "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
     check("dont-restart without a terminal exits cleanly, not on EOFError",
@@ -408,7 +410,7 @@ def run_first_prompt_file_cases(workspace: Path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
          "--handoff-dir", str(workspace / "prompt-handoffs"),
-         "--agent-command", str(stub_agent),
+         "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0",
          "--first-prompt-file", str(workspace / "no-such-prompt.txt")],
         capture_output=True, text=True, check=False, timeout=30,
     )
@@ -418,7 +420,7 @@ def run_first_prompt_file_cases(workspace: Path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "promptcase", "--cd", str(workspace),
          "--handoff-dir", str(workspace / "prompt-handoffs"),
-         "--agent-command", str(stub_agent),
+         "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0",
          "--first-prompt-file", str(prompt_path)],
         capture_output=True, text=True, check=False, timeout=30,
     )
@@ -1496,7 +1498,7 @@ def run_no_seat_recycle_refusal_case(workspace: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "noseat", "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
     check("a handoff without a seat stops the supervisor cleanly",
@@ -1584,7 +1586,7 @@ def run_agent_exit_record_cases(workspace: Path):
         before = datetime.now(timezone.utc).replace(microsecond=0)
         result = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
-             "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+             "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
         )
         state = supervisor.read_supervisor_state(state_path)
@@ -1623,7 +1625,7 @@ def run_agent_exit_record_cases(workspace: Path):
     stub_agent.chmod(0o755)
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=90,
     )
     state = supervisor.read_supervisor_state(handoff_directory / f"{name}-supervisor-state.json")
@@ -1661,9 +1663,14 @@ def run_agent_exit_record_cases(workspace: Path):
         supervisor.AGENT_EXIT_CODE_STATE_KEY: 0,
         supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY: "2026-01-01T00:00:00+00:00"})
     snapshots = []
+    # No terminal, stated rather than inherited: exit code 9 is a death the
+    # 2026-09-21 ruling resumes, and the no-terminal refusal is what
+    # holds this case to the one launch it counts. Left to the real stdin it
+    # would pass under a redirect and resume under a developer's terminal,
+    # exhausting the one-session list below.
     with supervisor_names_replaced(
             launch_agent_session=launch_recording([StubLaunchedSession(9)], snapshots, settings),
-            sync_working_branch_with_main=no_branch_sync), \
+            sync_working_branch_with_main=no_branch_sync, stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
@@ -1749,6 +1756,353 @@ def run_agent_exit_record_cases(workspace: Path):
           and supervisor.agent_exit_record_from_supervisor_state(state) is not None
           and state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY) == -15,
           str(state))
+
+
+def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
+    """The ruling of 2026-09-21 (GHI [The handoff-supervisor resumes a session
+    that died without a handoff, instead of stopping the seat](https://github.com/nedschorus/nedschorus/issues/613)):
+    a session that dies without writing a handoff is resumed, chosen by how it
+    died, under a budget of one resume that produces no new work.
+
+    The behaviour it answers: on 2026-09-21 the MD-skills seat was terminated
+    with exit code 143 beside an intact 6.4 MB transcript, its supervisor wrote
+    the exit record and stopped as designed, and the seat stayed dark until the
+    user happened to look.
+
+    The budget is the case that matters, because a resume loop is unattended
+    automation that spends money on every launch. The budget is one resume
+    (user-ruled 2026-09-22): a seat whose transcript never grows gets its
+    original launch and one resume — two launches — and the second resume is
+    refused.
+    The scripted launcher below raises rather than looping when the supervisor
+    asks for a launch past the script, so a budget that stopped counting fails
+    these cases instead of running forever.
+    """
+    # --- The ruling's table, against the pure function --------------------
+    # Both spellings of each signal death: subprocess reports -15, a shell 143.
+    # A rule that recognised one and not the other would stop the seat on the
+    # other, which is why the ruling's table lists both.
+    for exit_code, expect_resume, reason_fragment, row in (
+            (0, False, "exited cleanly", "exit code 0 (a clean exit is a decision)"),
+            (143, True, "SIGTERM", "exit code 143 (SIGTERM, as a shell reports it)"),
+            (-15, True, "SIGTERM", "exit code -15 (SIGTERM, as subprocess reports it)"),
+            (137, True, "SIGKILL", "exit code 137 (SIGKILL, as a shell reports it)"),
+            (-9, True, "SIGKILL", "exit code -9 (SIGKILL, as subprocess reports it)"),
+            (3, True, "error status", "exit code 3 (another non-zero status)"),
+            (None, False, "adopted session", "exit code None (an adopted session)")):
+        decision = supervisor.resume_or_stop_after_a_death_without_a_handoff(exit_code)
+        check(f"RULING TABLE: {row} -> {'resume' if expect_resume else 'stop'}",
+              decision.resume is expect_resume and reason_fragment in decision.reason,
+              str(decision))
+
+    # --- The growth measure the budget resets on --------------------------
+    transcript_directory = workspace / "death-resume-turn-count"
+    transcript_directory.mkdir(parents=True, exist_ok=True)
+    with supervisor_names_replaced(
+            project_directory_for_working_directory=lambda _: transcript_directory):
+        check("BUDGET: a session with no transcript at all counts no work",
+              supervisor.substantive_turn_count_of_session_transcript(
+                  "no-such-session", workspace) == 0)
+        # A launch's prompt reaches the transcript as a user record — the record
+        # first_user_turn_text reads. Counting bytes or lines would read that
+        # bookkeeping as new work and hand the budget back for it.
+        prompt_only = transcript_directory / "prompt-only.jsonl"
+        prompt_only.write_text(
+            json.dumps({"type": "user",
+                        "message": {
+                            "content":
+                                supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF}})
+            + "\n", encoding="utf-8")
+        check("BUDGET: a transcript holding only the resume prompt counts no work",
+              supervisor.substantive_turn_count_of_session_transcript(
+                  "prompt-only", workspace) == 0)
+        with prompt_only.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(
+                {"type": "assistant", "message": {"model": "claude", "content": "work"}}) + "\n")
+        check("BUDGET: an assistant turn on top of it counts as work",
+              supervisor.substantive_turn_count_of_session_transcript(
+                  "prompt-only", workspace) == 1)
+
+    # --- The loop: what the supervisor actually does at a death -----------
+    directory = workspace / "death-resume"
+    directory.mkdir(parents=True, exist_ok=True)
+    no_branch_sync = lambda working_directory: (
+        "branch sync: not a git checkout, nothing to sync")
+    first_prompt = "You are the seat. Do the work."
+
+    def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
+                                            adopted_session=None, handoffs_after_launches=(),
+                                            resume_session_id="", seat_first_prompt=None,
+                                            transcripts_before_the_supervisor=None):
+        """Supervise a seat whose every session ends without a handoff.
+
+        `deaths` is one (exit_code, substantive_turns_written) per launch, in
+        order: the code that launch dies with, and how much work it writes to
+        its transcript first. Every launch also writes the prompt it was given
+        as a user record — the shape a launch's prompt takes on disk — so a
+        case that writes no work still grows the file, and a budget measured in
+        bytes would pass these cases while stopping nothing.
+
+        A launch past the end of the script raises: that is the runaway the
+        budget exists to stop, and it must fail a case rather than spin.
+
+        `handoffs_after_launches` names launches, counted from 1, whose session
+        writes a handoff after its work instead of dying, so a case can put a
+        reincarnation between two deaths; the successor gets the id
+        `successor-<generation>`. `transcripts_before_the_supervisor` maps a
+        session id to the substantive turns its transcript already holds when
+        the supervisor starts, which is what a startup resume resumes.
+        """
+        case_projects = workspace / f"death-resume-projects-{case}"
+        case_projects.mkdir(parents=True, exist_ok=True)
+        case_directory = directory / case
+        case_directory.mkdir(parents=True, exist_ok=True)
+        settings = supervisor.SupervisorSettings(
+            agent=f"death{case}", working_directory=workspace,
+            handoff_directory=case_directory, agent_command="unused-stub-agent",
+            first_prompt=first_prompt if seat_first_prompt is None else seat_first_prompt,
+            adopted_session=adopted_session, resume_session_id=resume_session_id)
+        launches, state_at_each_launch = [], []
+        for earlier_session_id, earlier_turns in (transcripts_before_the_supervisor or {}).items():
+            with (case_projects / f"{earlier_session_id}.jsonl").open("w", encoding="utf-8") as stream:
+                stream.write(json.dumps(
+                    {"type": "user", "message": {"content": "do the thing"}}) + "\n")
+                for _ in range(earlier_turns):
+                    stream.write(json.dumps(
+                        {"type": "assistant",
+                         "message": {"model": "claude", "content": "work"}}) + "\n")
+        real_wait_for_handoff = supervisor.wait_for_handoff
+
+        def wait_for_handoff(process, *arguments):
+            if len(launches) in handoffs_after_launches:
+                return {"restart-counter": str(len(launches))}
+            return real_wait_for_handoff(process, *arguments)
+
+        def launch(agent_command, session_id, working_directory, prompt, **kwargs):
+            if len(launches) >= len(deaths):
+                raise RuntimeError(
+                    f"launch {len(launches) + 1} past the {len(deaths)} this case scripted")
+            exit_code, substantive_turns_written = deaths[len(launches)]
+            launches.append((session_id, prompt, kwargs.get("resume")))
+            state_at_each_launch.append(
+                json.loads(settings.state_path.read_text(encoding="utf-8")))
+            with (case_projects / f"{session_id}.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(
+                    {"type": "user", "message": {"content": prompt}}) + "\n")
+                for _ in range(substantive_turns_written):
+                    stream.write(json.dumps(
+                        {"type": "assistant",
+                         "message": {"model": "claude", "content": "work"}}) + "\n")
+            return StubLaunchedSession(exit_code)
+
+        console, overran = io.StringIO(), ""
+        with supervisor_names_replaced(
+                launch_agent_session=launch,
+                project_directory_for_working_directory=lambda _: case_projects,
+                sync_working_branch_with_main=no_branch_sync,
+                wait_for_handoff=wait_for_handoff,
+                stop_session=lambda process: None,
+                carry_over_to_successor=lambda settings, retiring, fields, generation: (
+                    f"successor-{generation}", None),
+                stdin_isatty=stdin_isatty), \
+                contextlib.redirect_stdout(console):
+            try:
+                supervisor.supervise_sessions(settings)
+            except RuntimeError as overrun:
+                overran = str(overrun)
+        state = supervisor.read_supervisor_state(settings.state_path)
+        return SimpleNamespace(
+            launches=launches, state_at_each_launch=state_at_each_launch,
+            printed=console.getvalue(), overran=overran, state=state,
+            record=supervisor.agent_exit_record_from_supervisor_state(state))
+
+    # 1. A clean exit stops. The ruling: /exit or a headless turn ending is a
+    # decision, not a crash, so it gets the seat stood down as before.
+    clean = supervise_a_seat_whose_sessions_die("clean", [(0, 1)])
+    check("TABLE IN THE LOOP: a clean exit stops the supervisor after one launch",
+          len(clean.launches) == 1 and not clean.overran
+          and "session ended without a handoff; supervisor stopping" in clean.printed,
+          f"{clean.launches} {clean.overran} {clean.printed[-300:]}")
+    check("TABLE IN THE LOOP: the clean stop still writes the exit record recovery reads",
+          clean.record is not None and clean.record[0] == 0,
+          f"{clean.state}")
+
+    # 2. Each resuming row of the table, both spellings of each signal. With a
+    # transcript that never grows, every one of them spends the budget and
+    # stops after the original launch and one resume.
+    for case, exit_code, row in (
+            ("sigtermnegative", -15, "SIGTERM as subprocess reports it (-15)"),
+            ("sigtermshell", 143, "SIGTERM as a shell reports it (143)"),
+            ("sigkillnegative", -9, "SIGKILL as subprocess reports it (-9)"),
+            ("sigkillshell", 137, "SIGKILL as a shell reports it (137)"),
+            ("othernonzero", 3, "another non-zero status (3)")):
+        died = supervise_a_seat_whose_sessions_die(case, [(exit_code, 0)] * 3)
+        check(f"TABLE IN THE LOOP: {row} is resumed",
+              len(died.launches) >= 2 and died.launches[1][2] is True
+              and not died.overran,
+              f"{died.launches} {died.overran} {died.printed[-300:]}")
+        check(f"TABLE IN THE LOOP: the resume after {row} continues the same session",
+              len({launched[0] for launched in died.launches}) == 1,
+              str(died.launches))
+        check(f"TABLE IN THE LOOP: the resume after {row} carries the resume prompt",
+              died.launches[1][1] == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF
+              and died.launches[0][1] == first_prompt,
+              str(died.launches))
+
+    # 3. An adopted session's code is None — this supervisor never owned it —
+    # so its death stops the seat, and nothing is launched over it.
+    adopted = supervise_a_seat_whose_sessions_die(
+        "adopted", [(0, 0)], adopted_session=supervisor.AdoptedSession("adopted-session", 99999999))
+    check("TABLE IN THE LOOP: an adopted session's death stops without launching anything",
+          adopted.launches == [] and not adopted.overran
+          and "exit code is unknown" in adopted.printed,
+          f"{adopted.launches} {adopted.printed[-300:]}")
+    check("TABLE IN THE LOOP: the adopted stop still writes the exit record, code unknown",
+          adopted.record is not None
+          and adopted.state.get(supervisor.AGENT_EXIT_CODE_STATE_KEY, "absent") is None,
+          str(adopted.state))
+
+    # 4. THE BUDGET STOPS A LOOP. A session that dies again and again without
+    # adding a single turn gets its launch and one resume, and no more. The
+    # script holds four deaths, so a third launch would be taken rather than
+    # raising: the count below is the assertion, not merely that it stopped.
+    looping = supervise_a_seat_whose_sessions_die("budget", [(-15, 0)] * 4)
+    check("BUDGET: a seat whose transcript never grows gets its launch and one resume, no more",
+          len(looping.launches) == 2 and not looping.overran,
+          f"{looping.launches} {looping.overran} {looping.printed[-400:]}")
+    check("BUDGET: the launch after the first is a resume of the same session",
+          [launched[2] for launched in looping.launches] == [False, True]
+          and len({launched[0] for launched in looping.launches}) == 1,
+          str(looping.launches))
+    check("BUDGET: the refusal says the resumes added nothing and names the cost",
+          "added nothing to this session's transcript" in looping.printed
+          and "costs money" in looping.printed, looping.printed[-400:])
+    check("BUDGET: the stop that spends the budget still writes the exit record",
+          looping.record is not None and looping.record[0] == -15, str(looping.state))
+    check("BUDGET: a resume advances no generation and keeps the launched session id",
+          looping.state.get("generation") == 0
+          and looping.state.get(supervisor.LAUNCHED_SESSION_ID_STATE_KEY)
+          == looping.launches[0][0],
+          str(looping.state))
+    check("BUDGET: no resume leaves an exit record behind, which would read as a stop",
+          all(supervisor.AGENT_EXIT_CODE_STATE_KEY not in launched_state
+              for launched_state in looping.state_at_each_launch),
+          str(looping.state_at_each_launch))
+
+    # 5. THE BUDGET RESETS. The second session does real work before dying, so
+    # the resume that produced it is not a workless one and the budget comes
+    # back whole: this seat gets three launches where the looping seat got
+    # two. Without the reset a long-lived seat would eventually refuse to
+    # recover at all.
+    recovered = supervise_a_seat_whose_sessions_die(
+        "budgetreset", [(-15, 2), (-15, 3), (-15, 0), (-15, 0), (-15, 0)])
+    check("BUDGET RESETS: a resumed session that works before dying gets the budget back",
+          len(recovered.launches) == 3 and not recovered.overran,
+          f"{recovered.launches} {recovered.overran} {recovered.printed[-400:]}")
+    check("BUDGET RESETS: and it is the same session resumed each time",
+          len({launched[0] for launched in recovered.launches}) == 1
+          and [launched[2] for launched in recovered.launches] == [False, True, True],
+          str(recovered.launches))
+    check("BUDGET RESETS: the run still ends on the budget rather than running on",
+          "added nothing to this session's transcript" in recovered.printed
+          and recovered.record is not None and recovered.record[0] == -15,
+          f"{recovered.state} {recovered.printed[-400:]}")
+
+    # 5a. A SUCCESSOR STARTS WITH THE BUDGET WHOLE. The predecessor spends its
+    # one resume, works, and writes a handoff; the successor works and dies.
+    # Found at c7419d4 by merge-lane-2's review of PR [The handoff-supervisor
+    # resumes a session that died without a handoff](https://github.com/nedschorus/nedschorus/pull/651):
+    # the successor was measured against its predecessor's turn count and
+    # spent budget, refused, and the seat went dark.
+    reincarnated = supervise_a_seat_whose_sessions_die(
+        "budgetacrosshandoff", [(-15, 5), (0, 3), (-15, 2), (-15, 0), (-15, 0)],
+        handoffs_after_launches=(2,))
+    check("BUDGET ACROSS A HANDOFF: a successor that worked and died is resumed",
+          [(launched[0], launched[2]) for launched in reincarnated.launches][:4]
+          == [(reincarnated.launches[0][0], False), (reincarnated.launches[0][0], True),
+              ("successor-1", False), ("successor-1", True)]
+          and not reincarnated.overran,
+          f"{reincarnated.launches} {reincarnated.overran} {reincarnated.printed[-400:]}")
+    check("BUDGET ACROSS A HANDOFF: and the successor's own workless resume still ends the run",
+          len(reincarnated.launches) == 4
+          and "added nothing to this session's transcript" in reincarnated.printed,
+          f"{reincarnated.launches} {reincarnated.printed[-400:]}")
+
+    # 5b. A STARTUP RESUME IS CHARGED. --resume-session-id (which
+    # recover-crashed-seats.py and the login-time restart pass) makes the first
+    # launch a resume, and that launch is the one resume the budget allows.
+    # Found at c7419d4 by mac-claude's and merge-lane-2's reviews: a startup
+    # resume that did nothing was resumed a second time.
+    startup_workless = supervise_a_seat_whose_sessions_die(
+        "startupresumeworkless", [(-15, 0), (-15, 0)],
+        resume_session_id="crashed-session",
+        transcripts_before_the_supervisor={"crashed-session": 7})
+    check("STARTUP RESUME: a --resume-session-id launch that does nothing is not resumed again",
+          [(launched[0], launched[2]) for launched in startup_workless.launches]
+          == [("crashed-session", True)] and not startup_workless.overran
+          and "added nothing to this session's transcript" in startup_workless.printed,
+          f"{startup_workless.launches} {startup_workless.overran} "
+          f"{startup_workless.printed[-400:]}")
+    startup_working = supervise_a_seat_whose_sessions_die(
+        "startupresumeworking", [(-15, 2), (-15, 0)],
+        resume_session_id="crashed-session",
+        transcripts_before_the_supervisor={"crashed-session": 7})
+    check("STARTUP RESUME: a --resume-session-id launch that works before dying is resumed",
+          [(launched[0], launched[2]) for launched in startup_working.launches]
+          == [("crashed-session", True), ("crashed-session", True)]
+          and not startup_working.overran,
+          f"{startup_working.launches} {startup_working.overran} "
+          f"{startup_working.printed[-400:]}")
+    # The by-hand resume: no first prompt, no handoff, no recorded exit, and a
+    # real transcript on disk, so the first launch resumes it.
+    by_hand_workless = supervise_a_seat_whose_sessions_die(
+        "byhandresumeworkless", [(-15, 0), (-15, 0)], seat_first_prompt="",
+        transcripts_before_the_supervisor={"last-real-session": 7})
+    check("STARTUP RESUME: a by-hand resume that does nothing is not resumed again",
+          [(launched[0], launched[2]) for launched in by_hand_workless.launches]
+          == [("last-real-session", True)] and not by_hand_workless.overran,
+          f"{by_hand_workless.launches} {by_hand_workless.overran} "
+          f"{by_hand_workless.printed[-400:]}")
+    by_hand_working = supervise_a_seat_whose_sessions_die(
+        "byhandresumeworking", [(-15, 2), (-15, 0)], seat_first_prompt="",
+        transcripts_before_the_supervisor={"last-real-session": 7})
+    check("STARTUP RESUME: a by-hand resume that works before dying is resumed",
+          [(launched[0], launched[2]) for launched in by_hand_working.launches]
+          == [("last-real-session", True), ("last-real-session", True)]
+          and not by_hand_working.overran,
+          f"{by_hand_working.launches} {by_hand_working.overran} "
+          f"{by_hand_working.printed[-400:]}")
+
+    # 5c. A transcript cut off inside a multibyte character still counts. The
+    # death path reads it before the exit record is written, so a decode error
+    # there would crash the supervisor with the seat unrecorded. Raised as a
+    # question by merge-lane-2's review and the Codex cell; nobody has seen
+    # Claude Code write such a file, and tolerating it costs one argument.
+    cut_directory = workspace / "cut-mid-character"
+    cut_directory.mkdir(parents=True, exist_ok=True)
+    cut_transcript = cut_directory / "cut-session.jsonl"
+    cut_transcript.write_bytes(
+        (json.dumps({"type": "assistant", "message": {"model": "claude", "content": "work"}})
+         + "\n").encode("utf-8")
+        + '{"type": "assistant", "message": {"content": "café'.encode("utf-8")[:-1])
+    try:
+        cut_count = supervisor.worth_resuming.substantive_turn_count(cut_transcript)
+    except UnicodeDecodeError as decode_error:
+        cut_count = decode_error
+    check("CUT TRANSCRIPT: a transcript cut mid-character counts its whole turns, not a crash",
+          cut_count == 1, repr(cut_count))
+
+    # 6. The no-terminal refusal holds for a resume exactly as for a successor:
+    # a resumed session inherits this supervisor's stdio, and without a
+    # terminal it reads EOF at its first need for input (observed 2026-08-14).
+    seatless = supervise_a_seat_whose_sessions_die("noterminal", [(-15, 0), (-15, 0)],
+                                                   stdin_isatty=False)
+    check("NO TERMINAL: a death that would be resumed is refused without a seat",
+          len(seatless.launches) == 1 and not seatless.overran
+          and "no terminal to seat a resumed session on" in seatless.printed,
+          f"{seatless.launches} {seatless.printed[-400:]}")
+    check("NO TERMINAL: the refusal still writes the exit record recovery reads",
+          seatless.record is not None and seatless.record[0] == -15, str(seatless.state))
 
 
 def run_by_hand_resume_cases(workspace: Path):
@@ -1877,6 +2231,26 @@ def run_by_hand_resume_cases(workspace: Path):
           resume is not True and session_id != crashed.stem,
           (session_id, resume))
 
+    # 5. --resume-session-id, the flag scripts/recover-crashed-seats.py and the
+    # login-time restart pass. No case ran it through the loop until the
+    # 2026-09-21 ruling renamed the flag it sets, so this one holds the path
+    # that rename touched: the named session is resumed, not a fresh id, and a
+    # handoff waiting on disk is marked consumed rather than igniting over it.
+    settings = settings_for("resume-session-id")
+    settings.resume_session_id = "session-named-by-recovery"
+    supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
+    settings.handoff_path.write_text(
+        "# Handoff\nrestart-counter: 4\nnext-step: carry on\n", encoding="utf-8")
+    session_id, prompt, resume = launch_once(settings)
+    check("RESUME-SESSION-ID: the first launch resumes the session the flag names",
+          session_id == "session-named-by-recovery" and resume is True,
+          (session_id, resume))
+    check("RESUME-SESSION-ID: and tells it the previous session ended without a handoff",
+          prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
+    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, not ignited over the resume",
+          supervisor.read_supervisor_state(settings.state_path).get("consumed_counter") == 4,
+          str(supervisor.read_supervisor_state(settings.state_path)))
+
 
 def run_boot_ignition_case(workspace: Path):
     """A fresh boot that finds an unconsumed handoff ignites from it directly.
@@ -1912,7 +2286,7 @@ def run_boot_ignition_case(workspace: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", "bootignite", "--cd", str(workspace),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=60,
     )
     check("boot with an unconsumed handoff exits cleanly after the ignition session",
@@ -1989,7 +2363,7 @@ def run_appended_system_prompt_cases(workspace: Path):
         finished = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(workspace),
              "--handoff-dir", str(handoff_directory),
-             "--agent-command", str(stub_agent)] + extra_arguments,
+             "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"] + extra_arguments,
             capture_output=True, text=True, check=False,
             stdin=subprocess.DEVNULL, timeout=60,
         )
@@ -2197,7 +2571,7 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     environment["NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"] = "decoy-outer-session"
     subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(seat_directory),
-         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent)],
+         "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
         capture_output=True, text=True, check=False,
         stdin=subprocess.DEVNULL, timeout=60, env=environment,
     )
@@ -2569,6 +2943,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_dont_restart_without_a_terminal_case(Path(temporary_directory))
     run_no_seat_recycle_refusal_case(Path(temporary_directory))
     run_agent_exit_record_cases(Path(temporary_directory))
+    run_resume_after_a_death_without_a_handoff_cases(Path(temporary_directory))
     run_by_hand_resume_cases(Path(temporary_directory))
     run_boot_ignition_case(Path(temporary_directory))
     run_appended_system_prompt_cases(Path(temporary_directory))
@@ -2608,6 +2983,225 @@ check("the extractor is still under scripts/, not inside this system",
 check("the appended-system-prompt default resolves under docs/agents",
       supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH.is_file(),
       str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH))
+
+# -- the agent binary is updated immediately before each launch ---------------
+# User-ruled 2026-09-22. A handoff restart passed no update moment, so a
+# long-lived seat drifted behind the published Claude Code while background
+# auto-update stayed off by the 2026-08-22 ruling (R16). update_agent_binary
+# carries the whole reasoning; these cases pin its behaviour and its wiring.
+
+
+def an_agent_recording_its_invocations(directory, body="exit 0"):
+    """A stub agent that appends the arguments of every invocation to a file."""
+    log = Path(directory) / "invocations"
+    path = Path(directory) / "recording-agent"
+    path.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "' + str(log) + '"\n' + body + "\n",
+        encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def invocations_of(directory):
+    log = Path(directory) / "invocations"
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+# Every update case below takes the machine-wide update lock, so the lock is
+# pointed into a directory of this suite's own for the rest of the file: a
+# suite run must neither wait on this machine's real updates nor delay them.
+update_lock_sandbox = tempfile.TemporaryDirectory()
+supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
+    Path(update_lock_sandbox.name) / "agent-binary-update.lock")
+sandboxed_update_lock_path = (
+    supervisor.agent_binary_update_under_lock.agent_binary_update_lock_path())
+
+
+class AnotherUpdateHoldsTheLock:
+    """Hold the update lock from this test, as another update would, releasing
+    it after release_after_seconds (None: held until the block ends). The
+    release marker is written BEFORE the lock is released, so an update that
+    ran only after taking the lock always sees it."""
+
+    def __init__(self, lock_path, release_marker, release_after_seconds=None):
+        self.lock_path = Path(lock_path)
+        self.release_marker = Path(release_marker)
+        self.release_after_seconds = release_after_seconds
+        self.timer = None
+
+    def release(self):
+        self.release_marker.write_text("released", encoding="utf-8")
+        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file = open(self.lock_path, "a")
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if self.release_after_seconds is not None:
+            self.timer = threading.Timer(self.release_after_seconds, self.release)
+            self.timer.start()
+        return self
+
+    def __exit__(self, *exception):
+        if self.timer is not None:
+            self.timer.join()
+        self.lock_file.close()
+
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    agent = an_agent_recording_its_invocations(update_workspace)
+
+    supervisor.update_agent_binary(str(agent), 0)
+    check("a zero update timeout runs no update at all",
+          invocations_of(update_workspace) == [],
+          str(invocations_of(update_workspace)))
+
+    supervisor.update_agent_binary(str(agent), 30)
+    check("the update invokes the agent command with the update subcommand",
+          invocations_of(update_workspace) == ["update"],
+          str(invocations_of(update_workspace)))
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # A hung update is killed at the timeout and the launch proceeds. The
+    # launchers allow 120s for a real download; 1s here bounds the case.
+    agent = an_agent_recording_its_invocations(update_workspace, body="sleep 30")
+    started = time.monotonic()
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        supervisor.update_agent_binary(str(agent), 1)
+    elapsed = time.monotonic() - started
+    check("a hung update is killed at the timeout rather than blocking the launch",
+          elapsed < 15, f"{elapsed:.1f}s")
+    check("a killed update says so, because the supervisor is what killed it",
+          "was stopped" in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # A non-zero status is deliberately silent: the agent prints its own
+    # diagnosis, so a paraphrase here would add nothing and could mislead.
+    agent = an_agent_recording_its_invocations(update_workspace, body="exit 3")
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        supervisor.update_agent_binary(str(agent), 30)
+    check("a failing update is silent and does not raise",
+          captured.getvalue() == "", captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # An agent command that cannot be run at all must not stop the seat coming
+    # back, which is what catching OSError is for.
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        supervisor.update_agent_binary(
+            str(Path(update_workspace) / "no-such-command"), 30)
+    check("an agent command that cannot be run is reported, not raised",
+          "could not be run" in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # The wiring. launch_agent_session is the ONE site every restart path
+    # reaches a session through: the supervisor's relaunch after a handoff,
+    # recover-crashed-seats.py, and the login restart, which goes through
+    # recovery. An adopted session never passes through here, which is what
+    # keeps the update off the adopted path structurally rather than by
+    # where the call happens to sit.
+    agent = an_agent_recording_its_invocations(update_workspace)
+    supervisor.launch_agent_session(
+        str(agent), "session-without-update", Path(update_workspace), "prompt",
+        update_timeout_seconds=0).wait()
+    check("launching with the update switched off invokes no update",
+          "update" not in invocations_of(update_workspace),
+          str(invocations_of(update_workspace)))
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    agent = an_agent_recording_its_invocations(update_workspace)
+    supervisor.launch_agent_session(
+        str(agent), "session-with-update", Path(update_workspace), "prompt",
+        update_timeout_seconds=30).wait()
+    check("a launch updates the binary before it starts the session",
+          invocations_of(update_workspace)[:1] == ["update"],
+          str(invocations_of(update_workspace)))
+
+# -- every update on a machine runs under one lock ------------------------------
+# User-approved 2026-09-22 (superwalk item 2). A login restart starts one
+# supervisor about 6 s after the last, and each first launch runs `claude
+# update`, so two could overlap. scripts/agent-binary-update-under-lock.py
+# carries the reasoning; these cases pin the supervisor's side of it.
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    release_marker = Path(update_workspace) / "released"
+    agent = an_agent_recording_its_invocations(
+        update_workspace,
+        body=f'if [ -e "{release_marker}" ]; then echo after-release; '
+             f'else echo before-release; fi >> "{update_workspace}/order"')
+    captured = io.StringIO()
+    with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path, release_marker,
+                                   release_after_seconds=1.5):
+        with contextlib.redirect_stderr(captured):
+            supervisor.update_agent_binary(str(agent), 30)
+    order_log = Path(update_workspace) / "order"
+    order = order_log.read_text(encoding="utf-8").splitlines() if order_log.exists() else []
+    check("an update started while another holds the lock waits, then runs",
+          invocations_of(update_workspace) == ["update"] and order == ["after-release"],
+          str((invocations_of(update_workspace), order)))
+    check("an update waiting for the lock says so",
+          "handoff-supervisor: waiting for another update on this machine to finish"
+          in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    agent = an_agent_recording_its_invocations(update_workspace)
+    captured = io.StringIO()
+    with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path,
+                                   Path(update_workspace) / "released"):
+        started = time.monotonic()
+        with contextlib.redirect_stderr(captured):
+            supervisor.update_agent_binary(str(agent), 1)
+        elapsed = time.monotonic() - started
+    check("a lock held past the limit skips the update rather than blocking the launch",
+          invocations_of(update_workspace) == [] and elapsed < 15,
+          f"{invocations_of(update_workspace)} after {elapsed:.1f}s")
+    check("the skipped update is reported in one line naming the limit",
+          "handoff-supervisor: another update on this machine was still running "
+          "after 1s; skipping this update and launching on the installed version\n"
+          in captured.getvalue(), captured.getvalue())
+
+with tempfile.TemporaryDirectory() as update_workspace:
+    # Timeout 0 is --agent-update-timeout-seconds 0, which every supervisor
+    # case in this file passes: it must skip the update entirely, lock
+    # included. Held lock: returning at once proves it neither waited nor
+    # reported. Fresh path: the lock file never even being created proves it
+    # was never opened.
+    agent = an_agent_recording_its_invocations(update_workspace)
+    captured = io.StringIO()
+    with AnotherUpdateHoldsTheLock(sandboxed_update_lock_path,
+                                   Path(update_workspace) / "released"):
+        started = time.monotonic()
+        with contextlib.redirect_stderr(captured):
+            supervisor.update_agent_binary(str(agent), 0)
+        elapsed = time.monotonic() - started
+    check("a zero timeout does not wait on a held lock, and says nothing",
+          elapsed < 0.5 and captured.getvalue() == ""
+          and invocations_of(update_workspace) == [],
+          f"{elapsed:.2f}s {captured.getvalue()!r} {invocations_of(update_workspace)}")
+    unused_lock_path = Path(update_workspace) / "unused-lock" / "agent-binary-update.lock"
+    supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
+        unused_lock_path)
+    try:
+        supervisor.update_agent_binary(str(agent), 0)
+        supervisor.launch_agent_session(
+            str(agent), "session-zero-timeout", Path(update_workspace), "prompt",
+            update_timeout_seconds=0).wait()
+    finally:
+        supervisor.agent_binary_update_under_lock.AGENT_BINARY_UPDATE_LOCK_PATH = str(
+            sandboxed_update_lock_path)
+    check("a zero timeout takes no lock: the lock file is never created",
+          not unused_lock_path.exists() and not unused_lock_path.parent.exists(),
+          str(unused_lock_path))
+    check("a zero timeout runs no update, directly or through a launch",
+          "update" not in invocations_of(update_workspace),
+          str(invocations_of(update_workspace)))
+
+check("the update timeout defaults to the launchers' own 120 seconds",
+      supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS == 120,
+      str(supervisor.AGENT_BINARY_UPDATE_TIMEOUT_SECONDS))
+
 
 if "--canary" in sys.argv:
     print("\n-- live pre-seed canaries (launching real sessions) --")

@@ -77,6 +77,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # uncommitted state and keeps the worktree.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
+# How long the vacancy check waits for lsof, which enumerates every process on
+# the machine. A timeout is an unusable answer, so it keeps every done worktree
+# and the report says the check could not be run -- correct, and a false red in
+# a suite run. OBSERVED 2026-09-17 ~00:44Z: a 52-suite run concurrent with
+# three backlog-recheck subagents, two reviewer subagents and another suite set
+# exceeded the 30 s this used to be; re-run alone at the same commit it passed
+# twice. A healthy run answers in about a second (measured 2026-08-19: 397 cwd
+# paths on the Mac, 382 on the box), so the only thing a larger number costs is
+# patience on a machine where lsof is genuinely wedged.
+VACANCY_CHECK_TIMEOUT_SECONDS = 120
+
 
 def run_git(repo, *arguments):
     return subprocess.run(
@@ -241,7 +252,8 @@ def worktree_vacancy_keep_reason(worktree):
     try:
         cwd_listing = subprocess.run(
             ["lsof", "-a", "-d", "cwd", "-F", "n"],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, check=False,
+            timeout=VACANCY_CHECK_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired):
         return "the vacancy check (lsof) could not be run"
