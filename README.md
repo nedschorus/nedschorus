@@ -21,7 +21,7 @@ nedschorus keeps it that way: start from the simple system that works, cherry-pi
 ## The actors
 
 - **The user** — the human. Reads every checked-in document, admits every rung of automation, owns every judgment only a human can make.
-- **Agent-seats** — the named, long-lived agents that do the work, one subject area each; the merge-lane seat reviews and merges every pull request. Why the work is divided this way: `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
+- **Agent-seats** — the named, long-lived agents that do the work, one subject area each; the seat merge-lane-2 reviews and merges every pull request. Why the work is divided this way: `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
 
 ## The agent model
 
