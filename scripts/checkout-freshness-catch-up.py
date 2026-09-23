@@ -659,13 +659,16 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     return "conflict", ", ".join(conflicting) or (rebased.stderr.strip() or "no detail")
 
 
-def fetch_failure_note(stamp: dict) -> str:
+def fetch_failure_note(stamp: dict, what_may_be_stale: str = "this list") -> str:
     """One line when the numbers rest on a fetch that failed, or "".
-    Ruled 2026-09-15: a stale list must say it is stale."""
+    Ruled 2026-09-15: a stale list must say it is stale. The reference
+    checkout's path passes its own subject, because what may be stale there
+    is a count, not a list (approved 2026-09-17, backlog-recheck walk item 1,
+    fix 11)."""
     if stamp.get("fetch_ok", True):
         return ""
     when = time.strftime("%H:%M", time.localtime(stamp.get("fetched_at", 0)))
-    return f"\n(fetch failed at {when}; this list may be stale)"
+    return f"\n(fetch failed at {when}; {what_may_be_stale} may be stale)"
 
 
 def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
@@ -835,12 +838,28 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     a reference with one uncommitted edit named itself to the user at every
     turn end (found before PR #388 merged; it had always repeated, to plain
     stdout that nobody read).
+
+    A failed fetch is a reason like any other. Before 2026-09-22 a reference
+    whose fetch failed counted "0 behind" off the refs that fetch never
+    updated and returned silently, which read as up to date (user-approved
+    2026-09-17, backlog-recheck walk item 1, fix 11). Its reason key is the
+    constant "fetch failed", not the failure's time, so a network that stays
+    down is reported once rather than at every fetch interval; the key is
+    cleared by the next run that is 0 behind off a fetch that worked.
     """
     git_dir = git_directory(reference)
     if git_dir is None:
         return
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(reference, stamp_path, interval_seconds)
+    fetch_note = fetch_failure_note(stamp, "this count")
+
+    def report_reason(reasons, line):
+        """Report a skip or refusal: always for the operator, once per reason
+        for the user."""
+        if operator_facing or stamp.get("last_reference_blockers") != reasons:
+            report(line)
+        stamp["last_reference_blockers"] = reasons
 
     counts = counts_against_main(reference)
     if counts is None:
@@ -854,16 +873,15 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     stamp["behind"], stamp["ahead"] = behind, ahead
 
     if behind == 0:
-        stamp.pop("last_reference_blockers", None)
+        if fetch_note:
+            stamp["last_action"] = "reference fetch failed"
+            report_reason(["fetch failed"],
+                          f"catch-up: reference checkout {reference} is 0 behind origin/main "
+                          f"as last fetched{fetch_note}")
+        else:
+            stamp.pop("last_reference_blockers", None)
         write_stamp(stamp_path, stamp)
         return
-
-    def report_reason(reasons, line):
-        """Report a skip or refusal: always for the operator, once per reason
-        for the user."""
-        if operator_facing or stamp.get("last_reference_blockers") != reasons:
-            report(line)
-        stamp["last_reference_blockers"] = reasons
 
     blockers, branch = merge_blockers(reference, git_dir)
     stamp["branch"] = branch
@@ -878,7 +896,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
         stamp["last_action"] = f"reference skipped: {'; '.join(real_blockers)}"
         report_reason(real_blockers,
                       f"catch-up: reference checkout {reference} is {behind} behind and was "
-                      f"left alone — {'; '.join(real_blockers)}")
+                      f"left alone — {'; '.join(real_blockers)}{fetch_note}")
         write_stamp(stamp_path, stamp)
         return
 
