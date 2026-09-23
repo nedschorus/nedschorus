@@ -40,7 +40,7 @@ Operating rules:
 
 - Both runtimes on every audit — the claude CLI (claude-fable-5-1, falling
   back to claude-opus-5 when Fable produces no review) and
-  gpt-5.6-sol (the codex CLI), at xhigh reasoning effort. Each audit
+  gpt-6-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
   `<audit>-<runtime>` in this runner's output. The claude CLI runs with
   `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
@@ -222,7 +222,8 @@ IGNORED_PATH_STATUS_CODE = "!!"
 # That module is not imported here: it is built around the cold-read cell's
 # command line and report file, and this runner has neither.
 CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
-CODEX_MODEL = "gpt-5.6-sol"
+# gpt-6-sol since 2026-09-22, matching cold-read-codex-cell.py's `deep` tier.
+CODEX_MODEL = "gpt-6-sol"
 # xhigh for both runtimes: user calibration 2026-08-03 for codex, confirmed
 # for both by the 2026-08-17 tier probe (max earned neither slot).
 REASONING_EFFORT = "xhigh"

@@ -205,7 +205,7 @@ def build_runner_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-5.6-sol, claude-opus-5)")
+             "its models (gemini-3.8-flash-low, gpt-6-sol, claude-opus-5)")
     parser.add_argument(
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
