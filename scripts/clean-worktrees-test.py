@@ -29,6 +29,11 @@ or the main checkout holds, a tag shadowing a branch name, remote-tracking
 refs, and a git branch -d refusal — the ordinary state of a checkout whose
 local main lags origin/main.
 
+A closing section covers the Agent-tool subagent's worktree, which the vacancy
+check cannot see into: kept while its transcript or the worktree itself was
+written in the last hour, removable after. It runs the reaper under a scratch
+HOME so the transcripts it reads are the suite's own.
+
 Run: python3 scripts/clean-worktrees-test.py
 """
 
@@ -37,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 CLEAN_SCRIPT = Path(__file__).with_name("clean-worktrees.py")
@@ -419,6 +425,98 @@ with tempfile.TemporaryDirectory() as scratch:
         if occupant is not None:
             occupant.kill()
             occupant.wait()
+
+
+def run_clean_with_claude_home(repo, home, *flags, claude_config_directory=None):
+    """Run the reaper with HOME, and CLAUDE_CONFIG_DIR when given, pointed at
+    a scratch directory, so the subagent transcripts it reads are this suite's
+    and never the machine's."""
+    environment = dict(os.environ)
+    environment["HOME"] = str(home)
+    environment.pop("CLAUDE_CONFIG_DIR", None)
+    if claude_config_directory is not None:
+        environment["CLAUDE_CONFIG_DIR"] = str(claude_config_directory)
+    return subprocess.run(
+        [sys.executable, str(CLEAN_SCRIPT), "--repo", str(repo), *flags],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+
+
+# --- An Agent-tool subagent's worktree is kept while its subagent may live --
+# The subagent runs inside its parent claude process, whose working directory
+# is the seat home, so the vacancy check sees nothing inside its worktree
+# between Bash calls (measured on ned-box 2026-09-23). Its transcript is the
+# evidence of life, and the worktree's own age stands in when there is none.
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch)
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)],
+                   capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    fake_home = scratch / "home"
+    config_directory = scratch / "claude-config"
+    two_hours_ago = time.time() - 7200
+
+    def add_agent_worktree(name, aged):
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"worktree-{name}", str(path), "origin/main")
+        if aged:
+            os.utime(path / ".git", (two_hours_ago, two_hours_ago))
+        return path
+
+    def write_transcript(base, agent_id, aged):
+        transcript = (base / "projects" / "-home-seat" / "session-uuid" / "subagents"
+                      / f"agent-{agent_id}.jsonl")
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text("{}\n", encoding="utf-8")
+        if aged:
+            os.utime(transcript, (two_hours_ago, two_hours_ago))
+
+    just_made = add_agent_worktree("agent-aaaaaaaaaaaaaaaa1", aged=False)
+    talking = add_agent_worktree("agent-aaaaaaaaaaaaaaaa2", aged=True)
+    write_transcript(fake_home / ".claude", "aaaaaaaaaaaaaaaa2", aged=False)
+    quiet = add_agent_worktree("agent-aaaaaaaaaaaaaaaa3", aged=True)
+    write_transcript(fake_home / ".claude", "aaaaaaaaaaaaaaaa3", aged=True)
+    configured = add_agent_worktree("agent-aaaaaaaaaaaaaaaa4", aged=True)
+    write_transcript(config_directory, "aaaaaaaaaaaaaaaa4", aged=False)
+    git(checkout, "worktree", "add", "-b", "fresh-session-branch",
+        str(managed / "fresh-session-wt"), "origin/main")
+
+    report = run_clean_with_claude_home(checkout, fake_home).stdout
+    check("an Agent-tool subagent's worktree made a moment ago is kept",
+          "agent-aaaaaaaaaaaaaaaa1: kept" in report and "subagent" in report, report)
+    check("an Agent-tool subagent's worktree whose transcript was just written is kept",
+          "agent-aaaaaaaaaaaaaaaa2: kept" in report, report)
+    check("an Agent-tool subagent's worktree quiet for over an hour is done",
+          "agent-aaaaaaaaaaaaaaaa3: done" in report, report)
+    check("a worktree not named agent-<id> is not judged by its age",
+          "fresh-session-wt: done" in report, report)
+    check("without CLAUDE_CONFIG_DIR, a transcript under it is not read",
+          "agent-aaaaaaaaaaaaaaaa4: done" in report, report)
+
+    configured_report = run_clean_with_claude_home(
+        checkout, fake_home, claude_config_directory=config_directory).stdout
+    check("with CLAUDE_CONFIG_DIR set, the subagent transcripts are read under it",
+          "agent-aaaaaaaaaaaaaaaa4: kept" in configured_report, configured_report)
+
+    removal = run_clean_with_claude_home(checkout, fake_home, "--remove")
+    check("--remove keeps both live subagents' worktrees",
+          just_made.exists() and talking.exists(), removal.stdout)
+    check("--remove removes the quiet subagent's worktree and its branch",
+          not quiet.exists()
+          and git(checkout, "branch", "--list", "worktree-agent-aaaaaaaaaaaaaaaa3").strip() == "",
+          removal.stdout)
 
 print()
 if failures:

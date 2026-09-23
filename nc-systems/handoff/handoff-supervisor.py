@@ -156,6 +156,16 @@ PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 # directory: a supervisor resolves this path at import, so a running one
 # would lose it the moment the file moved. It joins this system in step 2.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
+# The cleaner each handoff runs with --remove, between the retiring session's
+# stop and the successor's launch (user-ruled 2026-09-23, merge-lane superwalk
+# item 6: "itme 6 - approve"). It removes only what passes all four of its
+# checks (clean, landed, vacant, and for an Agent-tool subagent's worktree,
+# quiet for an hour) and deletes only branches already on main. The bound is on
+# the whole run, which calls lsof once per candidate worktree, each call allowed
+# VACANCY_CHECK_TIMEOUT_SECONDS (120 s); a run stopped at the bound has removed
+# what it reported before the stop, and the handoff goes on without the rest.
+CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
+FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS = 180
 HANDOFF_POLL_SECONDS = 2.0
 GENERATIONS_KEPT = 2
 
@@ -1284,6 +1294,91 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
 
 
+def remove_finished_worktrees_at_handoff(
+        working_directory: Path,
+        timeout_seconds: int = FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS) -> str:
+    """Run scripts/clean-worktrees.py --remove against the seat's repository,
+    and return one line of report. Never raises, and never stops the handoff.
+
+    Why at a handoff: the launchers already run the cleaner at boot, but only
+    to report (--only-done), and nothing removed what it named. On 2026-09-23
+    the repository held 73 worktrees and over 300 local branches, 19 of them
+    worktree-agent-* refs; one --remove took it to 55 and 112 and lost
+    nothing. A handoff is the one moment every seat passes through
+    regularly, so running it there keeps the pile from growing back.
+
+    It runs after the retiring session is stopped and before the successor
+    launches, and it sweeps the whole machine's .claude/worktrees/, other
+    seats' included. Seat homes (outside .claude/worktrees/) are never
+    touched. A worktree a live process is inside is kept by the vacancy
+    check, and an Agent-tool subagent's worktree is kept by the quiet check,
+    because such a subagent runs inside its parent claude process and so is
+    invisible to the vacancy check between its Bash calls (measured on ned-box
+    2026-09-23 by the reviewer of PR "Each handoff removes the finished
+    worktrees and merged branches").
+
+    Every failure is reported and passed over: a cleaner that is missing,
+    cannot run, times out or exits nonzero changes nothing about the launch.
+    The cleaner runs with GIT_DIR and GIT_WORK_TREE removed from its
+    environment, because either one would point its `git -C` calls, removals
+    included, at another repository (GHI 639's hazard).
+    """
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    try:
+        finished = subprocess.run(
+            [sys.executable, str(CLEAN_WORKTREES_PATH), "--remove",
+             "--repo", str(working_directory)],
+            capture_output=True, text=True, check=False, timeout=timeout_seconds,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as stopped:
+        partial = stopped.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        return (summarize_worktree_cleanup_output(partial.splitlines())
+                + f"; clean-worktrees.py --remove did not finish in {timeout_seconds} s "
+                  f"and was stopped, so the counts cover only what it did before the stop")
+    except (OSError, subprocess.SubprocessError) as error:
+        return (f"worktree cleanup: clean-worktrees.py could not be run: "
+                f"{type(error).__name__}: {error}")
+    report = summarize_worktree_cleanup_output(finished.stdout.splitlines())
+    if finished.returncode != 0 and "FAILED" not in finished.stdout:
+        detail = finished.stderr.strip().splitlines()[-1:] or ["no detail"]
+        report += f"; clean-worktrees.py exited {finished.returncode}: {detail[0]}"
+    return report
+
+
+def summarize_worktree_cleanup_output(lines) -> str:
+    """One report line from the lines clean-worktrees.py --remove printed.
+
+    Counts every branch deleted, the ones deleted with their worktree
+    (`<name>: removed, branch <b> deleted`) as well as the orphaned refs
+    (`branch <b>: deleted ...`), and names what went wrong: failures, branches
+    git refused to delete, and worktrees kept because the vacancy check could
+    not be run.
+    """
+    removed = sum(1 for line in lines if ": removed" in line)
+    deleted = sum(1 for line in lines
+                  if (line.startswith("branch ") and ": deleted" in line)
+                  or (": removed" in line and line.endswith(" deleted")))
+    failed = [line for line in lines if "FAILED" in line]
+    refused = [line for line in lines if "left in place" in line]
+    unchecked = [line for line in lines
+                 if ": kept — " in line
+                 and ("(lsof)" in line or "lsof is not installed" in line)]
+    report = (f"worktree cleanup: {removed} finished worktree(s) removed, "
+              f"{deleted} branch ref(s) with nothing beyond main deleted")
+    if failed:
+        report += f"; {len(failed)} failed: " + "; ".join(failed)
+    if refused:
+        report += f"; {len(refused)} branch(es) left in place: " + "; ".join(refused)
+    if unchecked:
+        report += (f"; {len(unchecked)} worktree(s) kept because the vacancy check "
+                   f"could not be run: " + unchecked[0].split(": kept — ", 1)[-1])
+    return report
+
+
 # The line that ends the editor notes in an appended-system-prompt file.
 APPENDED_SYSTEM_PROMPT_EDITOR_NOTES_SEPARATOR_LINE = "---"
 
@@ -2068,6 +2163,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             # unconsumed, so recovery still defers to boot-ignition over this record.
             record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             return 0
+
+        # Here, and only on the handoff path: the retiring session is stopped
+        # and the successor not yet launched. A first launch is left to the
+        # launchers' boot report.
+        print(f"handoff-supervisor: "
+              f"{remove_finished_worktrees_at_handoff(settings.working_directory)}")
 
         state["consumed_counter"] = counter_from(handoff_fields)
         session_id = successor_session_id
