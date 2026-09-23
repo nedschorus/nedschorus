@@ -340,19 +340,24 @@ def read_task_lists(machines, store, scratch, runner):
     return sorted(locations), problems, machines_read
 
 
-def task_lists_or_refuse(locations, machines):
+def task_lists_or_refuse(locations, machines_read):
     """The task lists found, or the refusal that says none were.
 
     Defined once and called by every entry path. It was written out twice
     once before, and mutation testing showed only one copy was pinned by a
     case: emptying the other one left every case green. What could not be
     read is added to this and to every other refusal in one place, in main.
+
+    It names the machines READ, not the machines asked for. Given the ones
+    asked for, a run whose only machine was unreadable said "on the machines
+    read: ned-box" above a line saying ned-box was not read (Codex's P2,
+    carried by merge-lane-2 on pull request [The task viewer names only the
+    machines it actually read](https://github.com/nedschorus/nedschorus/pull/655)).
     """
     if locations:
         return locations
-    raise SystemExit(
-        f"No task lists on the machines read: "
-        f"{', '.join(machine_shown(m) for m in machines)}.")
+    shown = ", ".join(machine_shown(m) for m in machines_read) or "none"
+    raise SystemExit(f"No task lists on the machines read: {shown}.")
 
 
 def seat_of(list_id):
@@ -692,7 +697,7 @@ def main(argv=None, runner=None):
         locations, problems, machines_read = read_task_lists(
             machines, store, Path(scratch), runner)
         try:
-            task_lists = task_lists_or_refuse(locations, machines)
+            task_lists = task_lists_or_refuse(locations, machines_read)
 
             if arguments.seats:
                 unreadable_seen = report_seats(task_lists)
