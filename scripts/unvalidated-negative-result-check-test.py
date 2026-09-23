@@ -168,8 +168,9 @@ check("a stderr holding only the harness's cwd note is silent",
       not judge("grep -rn needle docs/", exit_code=0, stdout="",
                 stderr="\nShell cwd was reset to /Users/el/agents/merge-lane"
                 ).fires,
-      "measured 2026-09-23: that note was the whole of stderr on eleven of "
-      "the sample's pairs, and it is the harness talking, not the search")
+      "measured 2026-09-23: twelve empty search results had anything at all "
+      "on stderr, and in all twelve it was this note, which is the harness "
+      "talking rather than the search failing")
 
 
 # ---------------------------- a swallowed exit status, alone, is not enough
@@ -185,6 +186,11 @@ check("a swallowed exit status fires when stderr was not captured",
       check_module.CORROBORATING_ONLY in
       judge("grep -n needle notes.md | head -12", exit_code=0, stdout="",
             stderr="", stderr_was_captured=False).signals)
+check("a swallowed exit status alone is silent when the streams were merged",
+      not judge("grep -n needle notes.md | head", exit_code=1, stdout="",
+                stderr_was_captured=False).fires,
+      "a merged empty output already proves an empty stderr, so the same "
+      "reasoning applies as when stderr was captured")
 check("a swallowed exit status is reported beside a signal that does fire",
       check_module.CORROBORATING_ONLY in
       judge("grep -n needle notes.md 2>/dev/null | head -12", exit_code=0,

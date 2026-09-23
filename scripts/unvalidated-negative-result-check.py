@@ -108,24 +108,40 @@ THE SIGNALS.
       backticks or `$(` -- so nothing but a bare read-only search is ever run.
 
 MEASURED NOISE, 2026-09-23, on transcripts that already existed -- nothing was
-recorded for it and nothing waited a day. 29,665 Bash command/result pairs
-(27,913 on the Mac under ~/.claude/projects, 1,752 on ned-box under
+recorded for it and nothing waited a day. 29,694 Bash command/result pairs
+(27,937 on the Mac under ~/.claude/projects, 1,757 on ned-box under
 /home/nedlern/.claude/projects), which is roughly two months of this fleet's
 work. The funnel:
 
-  29,665 pairs replayed
-  11,111 carried a search stage
+  29,694 pairs replayed
+  11,117 carried a search stage
      124 of those returned an empty result
-      25 fired
+      24 fired
 
-That is 0.84 firings per thousand commands, about one every day or two at this
+That is 0.81 firings per thousand commands, about one every day or two at this
 fleet's rate -- not the hundreds a day that would argue against ever wiring it.
 Per signal, counting a pair once per signal it raised:
 
-      24  stderr-discarded-by-the-search-stage      (4 of them alone)
-      20  search-exit-status-discarded-by-a-later-stage (1 alone, on a pair
-              whose streams the transcript had merged)
-       1  exit-status-reports-an-error-not-an-absence
+      24  stderr-discarded-by-the-search-stage           (4 of them alone)
+      19  search-exit-status-discarded-by-a-later-stage  (0 alone, by the rule
+              above)
+       1  exit-status-reports-an-error-not-an-absence    (0 alone)
+
+Of the 24, one is proven rather than judged: a ned-box `grep -rn "settings.local"
+... 2>/dev/null` that exited 2, so grep errored and the pipeline discarded the
+reason. About four are noise of one kind -- the complaint is formally right and
+the negative was true anyway. One of those was checked at its own commit: a
+2026-09-02 grep for four seat-name spellings across
+scripts/handoff-supervisor.py and scripts/clean-worktrees.py, its stderr sent
+to /dev/null, at a commit where both files existed and neither held any of the
+four.
+
+THE GATE IS NARROW, and this is the measurement's other result. 10,385
+search-shaped commands on the Mac produced only 89 empty results, because this
+fleet writes compound commands -- `echo "==="; grep ...; echo` -- and a search's
+own emptiness is invisible inside one. The check sees a search only where the
+search is the whole command. Widening it means attributing output to stages,
+which is not built here.
 
 The control run is not exercised by this measurement: the corpora those
 commands searched are gone, and re-running thousands of searches is not a
@@ -139,9 +155,11 @@ separate decision for the user, to be made after reading the measurement.
 USAGE.
 
   unvalidated-negative-result-check.py --command CMD [--exit-code N]
-      [--stdout-file PATH] [--stderr-file PATH] [--run-control]
+      [--stdout-file PATH] [--stderr-file PATH] [--stderr-not-captured]
+      [--run-control]
       judge one command and its result; prints the instructions it would hand
-      an agent.
+      an agent. Pass --stderr-not-captured when the two streams were merged
+      before you saw them, or an empty stderr is read as proof of no error.
 
   unvalidated-negative-result-check.py --replay-fixtures [DIR] [--run-control]
       judge every fixture in the directory (default: the fixtures directory
@@ -241,9 +259,10 @@ def split_diagnostics(text):
 COUNT_LINE = re.compile(r"^(?P<path>.*):(?P<count>\d+)$")
 
 # Lines the harness writes on stderr that are not the command's error output.
-# Measured 2026-09-23: of the ten pairs where stderr was written and stdout was
-# empty, eleven stderr bodies across the sample were this note and nothing else,
-# so without this the signal is a harness artefact rather than a search fault.
+# Measured 2026-09-23 over the Mac's transcripts: twelve empty search results
+# had anything at all on stderr, and in all twelve that stderr was this note
+# and nothing else. Without this the signal reports the harness talking, not a
+# search that failed.
 HARNESS_NOTE_ON_STDERR = re.compile(r"^\s*Shell cwd was reset to \S+\s*$")
 
 # A signal that is real but not sufficient on its own. Measured 2026-09-23 over
@@ -719,7 +738,8 @@ def judge_command_result(command, exit_code=None, stdout="", stderr="",
         if instruction not in seen_instructions:
             seen_instructions.append(instruction)
 
-    stderr_observable = stderr_was_captured or "2>&1" in command
+    stderr_observable = (stderr_was_captured or "2>&1" in command
+                         or streams_were_merged)
     if ordered == [CORROBORATING_ONLY] and stderr_observable and not own_stderr:
         return Verdict(True, empty_kind=empty_kind, signals=[],
                        corroboration=ordered,
@@ -948,6 +968,9 @@ def main(argv=None):
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--stdout-file")
     parser.add_argument("--stderr-file")
+    parser.add_argument("--stderr-not-captured", action="store_true",
+                        help="stderr was not kept as its own stream, so an "
+                             "empty one is no proof the search did not error")
     parser.add_argument("--ran-elsewhere", action="store_true",
                         help="the command ran on another machine, so this "
                              "machine's PATH says nothing about it")
@@ -992,7 +1015,8 @@ def main(argv=None):
     verdict = judge_command_result(
         arguments.command, exit_code=arguments.exit_code, stdout=stdout,
         stderr=stderr, ran_on_this_machine=not arguments.ran_elsewhere,
-        control_corpus_root=corpus)
+        control_corpus_root=corpus,
+        stderr_was_captured=not arguments.stderr_not_captured)
     if arguments.json:
         print(json.dumps(verdict.as_dict(), indent=2))
     elif verdict.fires:
