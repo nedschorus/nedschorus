@@ -1,0 +1,10 @@
+{
+  "case": "a search run over ned-box returned empty because rg is not installed there",
+  "provenance": "Failure 3 of the four. A search run over ned-box returned empty three times because `rg` is not installed there; the `rg: command not found` on stderr was discarded by `2>/dev/null` and the empty stdout was read as a clean result. Run in this form against the real ned-box on 2026-09-23: stdout empty, status 0, and the stderr the pipeline threw away was `bash: line 1: rg: command not found`. The same shape is in the fleet's own Mac transcripts as `timeout: command not found`, for instance `timeout 540 python3 scripts/git-gatekeeper-test.py 2>&1 | tail -15; echo \"exit=${PIPESTATUS[0]}\"`, which printed the not-found line and `exit=` and was read as a test run.",
+  "command": "ssh nedlern@ned-box 'rg -n \"handoff-supervisor\" ~/agents' 2>/dev/null | head -5",
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "ran_on_this_machine": false,
+  "must_fire": true
+}

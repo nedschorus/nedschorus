@@ -1,0 +1,11 @@
+{
+  "case": "a file move was cleared by searching for the old path, which no composed reference holds",
+  "provenance": "Failure 4 of the four. The handoff system's move into nc-systems/handoff/ (commit 9f8cc38e, 'The handoff system moves into nc-systems/handoff/, except what a live seat holds') was checked by searching the codebase for the old path `scripts/handoff-supervisor.py`. The search printed nothing, the move was declared clean and merged, and two references broke: they are composed at run time as `Path(__file__).with_name(\"handoff-supervisor.py\")`, which holds no folder for a path search to match, and one of them broke crash recovery on ned-box. Pinned to that commit so it reproduces from any clone: at 9f8cc38e the old path matches nothing, while the file's name alone matches in twenty files, scripts/checkout-freshness-catch-up.py and nc-systems/handoff/handoff-write-and-check-supervisor.py among them. Run in this worktree on 2026-09-23.",
+  "command": "git grep -n \"scripts/handoff-supervisor.py\" 9f8cc38e",
+  "exit_code": 1,
+  "stdout": "",
+  "stderr": "",
+  "ran_on_this_machine": true,
+  "control_corpus_root": ".",
+  "must_fire": true
+}
