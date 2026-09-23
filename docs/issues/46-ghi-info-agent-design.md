@@ -5,7 +5,7 @@ design-as-of: 2026-08-11
 
 # ghi-info — the GHI knowledge agent (design)
 
-How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is preserved at [ghi-gatekeeper-plan-draft.md](../drafts/ghi-gatekeeper-plan-draft.md).
+How agents work with GitHub issues (GHIs) in nedschorus: `ghi-info`, a long-lived knowledge agent over the issue corpus; a script-maintained local mirror; a write path whose hook routes raw writes through the project write tool; and the `ghi-write` skill carrying the judgment none of the machinery can. Throughout, **GHI author** means whichever agent is filing or editing an issue. Decision trail: `git show 6c9b437:docs/drafts/ghi-info-agent-plan-draft.md` (per-item dispositions, 2026-08-07) and [git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md](../../git show db917b5:md-review-records/2026-08-09-ghi-info-agent-design-2/dispositions.md); the rejected single-gate direction is kept in § Why issue writes cannot be a credential gate, below, and in full at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`.
 
 The organizing idea: instead of building a vector or graph database of the GHIs, we use a modern agent — the corpus fits in its context window (measured 2026-08-07: 45 issues ≈ 109 KB). Mechanical work is script work — fetch, format, measure, filter; `ghi-info` spends model turns only on judgment.
 
@@ -237,6 +237,16 @@ Every deny path shares one shape — refused, the reason, the way(s) forward —
 **Over-length instruction** (appended when the landed body exceeds the limit):
 
 > This body is \<count\> words; the limit is \<limit\>. Keep a good summary in the body; merge the substance into the linked GHI-MD (the markdown document paired with the issue), creating or updating it. Ask ghi-info what to link.
+
+## Why issue writes cannot be a credential gate
+
+Kept from the single-gate plan the user rejected on 2026-08-07, one program holding the only path to every issue write. The rest of that plan is at `git show 0860628:docs/drafts/ghi-gatekeeper-plan-draft.md`. This section is the part to read before proposing anything gate-shaped: the hook mechanics it records were verified and remain accurate if enforcement is ever wanted.
+
+The git gate's guarantee rests on branch protection: one credential can push, so the program holding it is the only door. Issues have no server-side counterpart — as main-gatekeeper-design.md records, the repository is public, so opening and commenting need no repository permission. The gate is therefore enforced by three weaker legs, and the threat model stays cooperative — the same honest-singleton framing the git design uses, not an external-attacker analysis:
+
+1. **Pre-tool hooks in both runtimes** deny raw issue writes and name the gate in the refusal. In Claude Code this is a `PreToolUse` hook: `matcher` filters by tool name, the `if` field filters arguments with permission-rule syntax (`Bash(gh issue *)`), and the hook returns `hookSpecificOutput.permissionDecision: "deny"` with a `permissionDecisionReason` the agent reads (verified 2026-08-07, https://code.claude.com/docs/en/hooks). Codex has pre-tool hooks as well; its field names are verified at build, not assumed here. Hook coverage is pattern enumeration — `gh issue`, `gh api` against the issues endpoint, and any MCP GitHub tool — and each path missed is a silent hole.
+2. **The dedicated-identity rung**, as on the git side: agent sessions hold no issue-write credential, and the gate holds the only one. Whether this closes fully on a public repository is verified at build — an agent holding any GitHub account can comment on a public issue, so this rung may bound the residual rather than remove it.
+3. **A footer-absence audit**, mirroring the git side's trailer-absence audit: scan issues for bodies lacking the gate's footer and file a `draft` issue naming them. The residual is detected, not prevented.
 
 ## Deliberately not in version 1
 
