@@ -359,10 +359,10 @@ def parse_handoff_file(handoff_path: Path) -> dict:
     return fields
 
 
-# The session this supervisor LAUNCHED, which is not the same thing as the
-# session running now. It is written only at a launch, so a session that takes
-# over the worktree mid-life leaves it naming a session that has ended, until
-# the next launch overwrites it.
+# The session this supervisor launched or adopted, which is not the same thing
+# as the session running now. It is written when a session is launched or
+# adopted, so a session that takes over the worktree mid-life leaves it naming a
+# session that has ended, until the next launch overwrites it.
 #
 # It was called "session_id" until 2026-09-21, and that name is what went
 # wrong. This seat read it as "the session", twice told the user consequences
