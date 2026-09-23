@@ -235,7 +235,13 @@ WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 # Appended to sync_working_branch_with_main's one-line result in the ignition
 # prompt. The wording is the user's; only the sync line it follows is computed.
 # The open-pull-requests sentence is the 2026-08-30 ruling on a rendered mock
-# of the prompt. The branch-state sentence was replaced by the user on
+# of the prompt; its reviewer and fix-round clauses were replaced on
+# 2026-09-23 ("y", item 2.2 of the merge-lane walk
+# merge-lane-mac-helper-open-items-and-questions-2026-09-23), because
+# merge-lane-2 has been the only merger since 2026-09-22 and CLAUDE.md's
+# "How a change reaches main" bullet (ruled 2026-09-22) has the author
+# dispatch a forked subagent for a review's findings, not a fresh agent.
+# The branch-state sentence was replaced by the user on
 # 2026-09-16 ("y", item 1 of nedschorus#418) to match nedschorus#324, the
 # 2026-09-14 ruling that working branches never get merges from main — the
 # rule scripts/checkout-freshness-catch-up.py enforces: a never-pushed branch
@@ -248,9 +254,9 @@ BRANCH_STATE_INSTRUCTION = (
     "before your first substantive action and rerun the tests for what you "
     "touched. If it is pushed, leave it as it is, and start new work on a "
     "branch from origin/main. If this seat has "
-    "open pull requests, check their state with `gh`: merge-lane reviews and "
-    "merges them; a changes-requested one gets a fix round from a fresh agent "
-    "— never extend a head you've already announced."
+    "open pull requests, check their state with `gh`: merge-lane-2 reviews "
+    "and merges them; when one has a review with findings, dispatch a forked "
+    "subagent to fix it — never extend a head you've already announced."
 )
 
 # The pointer at the script that composed the prompt, carried by every set of

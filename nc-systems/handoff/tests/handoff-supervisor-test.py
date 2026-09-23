@@ -1015,9 +1015,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "before your first substantive action and rerun the tests for what you "
               "touched. If it is pushed, leave it as it is, and start new work on a "
               "branch from origin/main. If this seat has "
-              "open pull requests, check their state with `gh`: merge-lane reviews and "
-              "merges them; a changes-requested one gets a fix round from a fresh agent "
-              "\u2014 never extend a head you've already announced."),
+              "open pull requests, check their state with `gh`: merge-lane-2 reviews "
+              "and merges them; when one has a review with findings, dispatch a forked "
+              "subagent to fix it \u2014 never extend a head you've already announced."),
           repr(supervisor.BRANCH_STATE_INSTRUCTION))
     # This fixture passes no roster and its verbatim block is not
     # unterminated, so the branch-state segment ends the preamble and only the
@@ -1037,9 +1037,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "first substantive action and rerun the tests for what you touched. "
               "If it is pushed, leave it as it is, and start new work on a branch "
               "from origin/main. If this seat has "
-              "open pull requests, check their state with `gh`: merge-lane reviews "
-              "and merges them; a changes-requested one gets a fix round from a "
-              "fresh agent — never extend a head you've already announced.",
+              "open pull requests, check their state with `gh`: merge-lane-2 reviews "
+              "and merges them; when one has a review with findings, dispatch a "
+              "forked subagent to fix it — never extend a head you've already announced.",
               expected_rest_after_the_branch_state_line),
           "rest after the pinned line: "
           + repr(synced_prompt.split("already announced.", 1)[-1])
@@ -1063,9 +1063,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "it onto origin/main before your first substantive action and rerun the "
               "tests for what you touched. If it is pushed, leave it as it is, and "
               "start new work on a branch from origin/main. If this seat has open "
-              "pull requests, check their state with `gh`: merge-lane reviews and "
-              "merges them; a changes-requested one gets a fix round from a fresh "
-              "agent — never extend a head you've already announced."),
+              "pull requests, check their state with `gh`: merge-lane-2 reviews and "
+              "merges them; when one has a review with findings, dispatch a forked "
+              "subagent to fix it — never extend a head you've already announced."),
           repr(boot_recovery_prompt))
     # The branch-state half of that instruction, pinned as its own exact line
     # (user-ruled 2026-09-16, "y", item 1 of nedschorus#418, verbatim). It
@@ -2518,9 +2518,9 @@ def run_boot_ignition_case(workspace: Path):
           "before your first substantive action and rerun the tests for what "
           "you touched. If it is pushed, leave it as it is, and start new work "
           "on a branch from origin/main. If this seat has open pull requests, "
-          "check their state with `gh`: merge-lane reviews and merges them; a "
-          "changes-requested one gets a fix round from a fresh agent — never "
-          "extend a head you've already announced."
+          "check their state with `gh`: merge-lane-2 reviews and merges them; "
+          "when one has a review with findings, dispatch a forked subagent to "
+          "fix it — never extend a head you've already announced."
           in launched,
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
