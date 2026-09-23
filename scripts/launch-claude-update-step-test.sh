@@ -149,12 +149,15 @@ case "$box_command" in
     (*) check "ubuntu box command updates, then prepares the seat" 1 ;;
 esac
 case "$box_command" in
-    (*"claude update || UPDATE_STATUS="*) check "ubuntu box command keeps the update non-blocking" 0 ;;
+    (*"-- claude update || true; }"*) check "ubuntu box command keeps the update non-blocking" 0 ;;
     (*) check "ubuntu box command keeps the update non-blocking" 1 ;;
 esac
+# The box-side update runs under the machine-wide lock, whose helper also
+# owns the timeout and reports it (scripts/agent-binary-update-under-lock.py;
+# its behaviour on the box is measured by scripts/launch-claude-ubuntu-test.py).
 case "$box_command" in
-    (*"UPDATE_STATUS -eq 124"*) check "ubuntu box command reports a timed-out update, by timeout's own status" 0 ;;
-    (*) check "ubuntu box command reports a timed-out update, by timeout's own status" 1 ;;
+    (*"agent-binary-update-under-lock.py"*"--program-name launch-claude-ubuntu"*"--timeout-seconds"*) check "ubuntu box command runs the update under the update lock, with its limit" 0 ;;
+    (*) check "ubuntu box command runs the update under the update lock, with its limit" 1 ;;
 esac
 
 # Per-seat tmux servers on the box (2026-08-21): the remote command must probe

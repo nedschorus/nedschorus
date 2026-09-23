@@ -170,6 +170,15 @@ command -v claude >/dev/null 2>&1 || {
 # block starting an agent: `|| true` is what holds that under `set -eu`,
 # not decoration.
 #
+# The update runs under the machine-wide lock in
+# scripts/agent-binary-update-under-lock.py, which the supervisor takes too,
+# so no two updates on this Mac overlap (user-approved 2026-09-22): a login
+# restart otherwise starts one supervisor's update about 6 s after the last.
+# That file owns the timeout as well, and says why the perl alarm that was
+# here had to go: kept outside it, the alarm would kill the Python holding
+# the lock and orphan a still-running update. The one budget covers waiting
+# for the lock and running the update together.
+#
 # The launcher writes no warning of its own. The one removed here claimed
 # to report a failed update but could not see the failure that actually
 # happened: on 2026-08-31 this Mac was found frozen at 2.1.241 for a week
@@ -180,26 +189,19 @@ command -v claude >/dev/null 2>&1 || {
 # The install was repaired instead, to the native build at ~/.local/bin that
 # both launchers already assume (user-ruled 2026-08-31).
 #
-# The timeout is the ONE case the launcher still reports, and the only one it
-# can honestly report: the command is killed mid-flight, so it says nothing,
-# and the launcher is what killed it. Reporting only what this script itself
-# observed is what the removed message failed to do.
+# The helper reports only what it causes, prefixed with this launcher's name:
+# an update it killed at the limit, a wait for the lock, and an update it
+# skipped because the lock stayed held past the limit.
 # 120 seconds, raised from 45 (user-ruled 2026-08-31): a slow but WORKING
 # update killed at the limit leaves the machine silently on its old version,
 # which is the same outcome as the refused update above and just as quiet.
 # The limit exists to bound a hung update, not to race a real download, so it
-# is set well clear of one.
+# is set well clear of one. A limit of 0 skips the update.
 UPDATE_TIMEOUT="${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120}"
 echo "launch-claude-mac: checking for a Claude Code update"
-UPDATE_STATUS=0
-perl -e 'alarm shift; exec @ARGV' "$UPDATE_TIMEOUT" claude update || UPDATE_STATUS=$?
-# 142 is 128 + SIGALRM (14): the alarm fired and killed the update. Measured,
-# not assumed. Every other non-zero status left the command's own diagnosis on
-# the terminal, so the launcher stays quiet for those. The `if` is what keeps a
-# non-timeout status from reaching `set -e`.
-if [ "$UPDATE_STATUS" -eq 142 ]; then
-    echo "launch-claude-mac: the update was still running after ${UPDATE_TIMEOUT}s and was stopped; launching on the installed version" >&2
-fi
+python3 "$SCRIPT_DIRECTORY/agent-binary-update-under-lock.py" \
+    --program-name launch-claude-mac --timeout-seconds "$UPDATE_TIMEOUT" \
+    -- claude update || true
 
 AGENT_DIRECTORY="$AGENTS_ROOT/$AGENT_NAME"
 mkdir -p "$AGENT_DIRECTORY"

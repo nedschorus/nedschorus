@@ -21,22 +21,31 @@ expanduser()s it live, handoff-supervisor.py:855).
 
 Run: python3 scripts/launch-claude-ubuntu-test.py
 
-The suite is self-contained (this file plus launch-claude-ubuntu beside it;
-every other participant is stubbed) and runs unmodified ON THE BOX, where
-P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing in —
-the one caveat the PR #137/#139 reviews carried (user-directed 2026-08-22):
-  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py ned:/tmp/x/
+The suite is self-contained (this file plus launch-claude-ubuntu and
+agent-binary-update-under-lock.py beside it; every other participant is
+stubbed, and the helper is copied into the sandbox HOME's checkout path,
+where the box-side command looks for it) and runs unmodified ON THE BOX,
+where P1 is parsed by the real /bin/sh (dash) instead of macOS sh standing
+in — the one caveat the PR #137/#139 reviews carried (user-directed
+2026-08-22):
+  scp scripts/launch-claude-ubuntu scripts/launch-claude-ubuntu-test.py scripts/agent-binary-update-under-lock.py ned:/tmp/x/
   ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
 """
 
+import fcntl
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-ubuntu")
+UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
+UPDATE_LOCK_HELPER = Path(__file__).with_name(UPDATE_LOCK_HELPER_NAME)
 
 failures = []
 
@@ -71,10 +80,24 @@ class LaunchHarness:
         self.workdir.mkdir()
         self.stubs = root / "stubs"
         self.stubs.mkdir()
+        # The box-side update runs the update-lock helper from the box's
+        # checkout, $HOME/Projects/nedschorus/scripts, so the helper under
+        # test is copied to that path in the sandbox HOME.
+        checkout_scripts = self.home / "Projects" / "nedschorus" / "scripts"
+        checkout_scripts.mkdir(parents=True)
+        shutil.copy(UPDATE_LOCK_HELPER, checkout_scripts / UPDATE_LOCK_HELPER_NAME)
         write_stub(self.stubs, "ssh",
                    'printf \'%s\\n\' "$@" > "$LCU_TEST_DIR/ssh-argv.txt"\n'
                    'exit 0\n')
         write_stub(self.stubs, "timeout", "exit 0\n")
+        # The helper really runs `claude update`, so claude is stubbed: each
+        # update records whether the release marker of a lock held by the
+        # test (LCU_RELEASE_MARKER) existed yet when it ran.
+        write_stub(self.stubs, "claude",
+                   '[ "${1:-}" = "update" ] || exit 0\n'
+                   'if [ -e "${LCU_RELEASE_MARKER:-/nonexistent}" ]; '
+                   'then echo after-release; else echo before-release; fi '
+                   '>> "$LCU_TEST_DIR/claude-updates.txt"\n')
         write_stub(self.stubs, "git", "exit 0\n")
         # The remote side asks whether the box's own seat restart is still
         # running; "inactive" is the answer on a box that has been up a while,
@@ -87,9 +110,14 @@ class LaunchHarness:
         # the task-list binding is an exported variable, so the only place it
         # can be measured is the environment of the process the pane command
         # actually starts.
+        # The update-lock helper is the one call handed to the REAL
+        # interpreter, keyed on its own name, so every other python3 the
+        # box-side command runs stays stubbed.
         write_stub(self.stubs, "python3",
                    '{ printf \'%s\\n\' "$@"; echo "=== call boundary ==="; } '
                    '>> "$LCU_TEST_DIR/python3-calls.txt"\n'
+                   f'case "${{1:-}}" in (*{UPDATE_LOCK_HELPER_NAME}) '
+                   f'exec "{sys.executable}" "$@";; esac\n'
                    'for argument in "$@"; do\n'
                    '  case "$argument" in (*handoff-supervisor.py*)\n'
                    '    { echo "CLAUDE_CODE_TASK_LIST_ID='
@@ -134,15 +162,35 @@ class LaunchHarness:
                    'exit 0\n')
 
     def replay_environment(self):
-        return {
+        environment = {
             "PATH": f"{self.stubs}:/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": str(self.home),
             "SHELL": str(self.stubs / "record-shell"),
             "LCU_TEST_DIR": str(self.captures),
             "LCU_UNIT_STATE": self.unit_state,
+            "LCU_RELEASE_MARKER": str(self.release_marker),
         }
+        # Box-side, as on the real box: the update limit is read from the
+        # box shell's environment, not carried from this Mac.
+        if self.update_timeout_seconds is not None:
+            environment["LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS"] = str(
+                self.update_timeout_seconds)
+        return environment
 
     unit_state = "inactive"
+    update_timeout_seconds = None
+
+    @property
+    def release_marker(self):
+        return self.captures.parent / "update-lock-released"
+
+    def update_lock_path(self):
+        return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
+
+    def claude_updates(self):
+        path = self.captures / "claude-updates.txt"
+        return (path.read_text(encoding="utf-8").splitlines()
+                if path.is_file() else [])
 
     def seat_exists_on_the_box(self, after_polls: int = 0):
         """Make the tmux stub answer has-session with "exists" — at once, or
@@ -257,6 +305,38 @@ def argv_value(argv, flag):
         if token == flag and index + 1 < len(argv):
             return argv[index + 1]
     return None
+
+
+class AnotherUpdateHoldsTheLock:
+    """Hold the machine's update lock from this test, as another update would,
+    releasing it after release_after_seconds (None: held until the block ends).
+    The release marker is written BEFORE the lock is released, so an update
+    that ran only after taking the lock always sees it."""
+
+    def __init__(self, lock_path: Path, release_marker: Path,
+                 release_after_seconds=None):
+        self.lock_path = lock_path
+        self.release_marker = release_marker
+        self.release_after_seconds = release_after_seconds
+        self.timer = None
+
+    def release(self):
+        self.release_marker.write_text("released", encoding="utf-8")
+        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+
+    def __enter__(self):
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file = open(self.lock_path, "a")
+        fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if self.release_after_seconds is not None:
+            self.timer = threading.Timer(self.release_after_seconds, self.release)
+            self.timer.start()
+        return self
+
+    def __exit__(self, *exception):
+        if self.timer is not None:
+            self.timer.join()
+        self.lock_file.close()
 
 
 def main() -> int:
@@ -595,6 +675,50 @@ def main() -> int:
         check("a detached launch does not retry: one ssh, exit 255 passed through",
               result["launched"].returncode == 255 and harness.count("ssh-calls.txt") == 1,
               (result["launched"].returncode, harness.count("ssh-calls.txt")))
+
+        # 12. The box-side update runs under the machine-wide lock
+        # (user-approved 2026-09-22): an update that finds another holding
+        # the lock waits for it, then runs; one held past the limit is
+        # skipped with one line, and the seat is still prepared. The lock is
+        # held from this process on the sandbox HOME's lock file, the file
+        # the box-side helper resolves there.
+        harness = LaunchHarness(root / "update-lock-wait")
+        harness.update_timeout_seconds = 30
+        with AnotherUpdateHoldsTheLock(harness.update_lock_path(),
+                                       harness.release_marker,
+                                       release_after_seconds=1.5):
+            result = harness.run(["seat-u", "--no-attach"])
+        check("update lock (box): an update started while another holds the "
+              "lock waits, then runs",
+              harness.claude_updates() == ["after-release"],
+              (harness.claude_updates(), result["replay"].stderr[:400]))
+        check("update lock (box): the waiting update says it is waiting",
+              "launch-claude-ubuntu: waiting for another update on this "
+              "machine to finish" in result["replay"].stderr,
+              result["replay"].stderr[:400])
+        check("update lock (box): the seat is prepared after the wait",
+              result["replay"].returncode == 0 and harness.prepare_ran(),
+              (result["replay"].returncode, result["replay"].stderr[:300]))
+
+        harness = LaunchHarness(root / "update-lock-bound")
+        harness.update_timeout_seconds = 1
+        with AnotherUpdateHoldsTheLock(harness.update_lock_path(),
+                                       harness.release_marker):
+            started = time.monotonic()
+            result = harness.run(["seat-v", "--no-attach"])
+            elapsed = time.monotonic() - started
+        check("update lock (box): a lock held past the limit skips this update",
+              harness.claude_updates() == [], harness.claude_updates())
+        check("update lock (box): the skip is reported in one line naming the limit",
+              "launch-claude-ubuntu: another update on this machine was still "
+              "running after 1s; skipping this update and launching on the "
+              "installed version" in result["replay"].stderr,
+              result["replay"].stderr[:400])
+        check("update lock (box): the seat is still prepared, without hanging",
+              result["replay"].returncode == 0 and harness.prepare_ran()
+              and elapsed < 15,
+              (result["replay"].returncode, f"{elapsed:.1f}s",
+               result["replay"].stderr[:300]))
 
     print()
     if failures:
